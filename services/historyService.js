@@ -387,3 +387,5 @@ class HistoryService {
     }
   }
 }
+
+module.exports = HistoryService;
