@@ -1,0 +1,327 @@
+/* responsive.css - Responsive design rules for the WMS system */
+
+/* ===== Mobile First Approach ===== */
+
+/* Base styles for small screens (mobile) */
+/* These styles apply to all screen sizes by default */
+
+.hide-on-mobile {
+    display: none !important;
+  }
+  
+  .mobile-only {
+    display: block;
+  }
+  
+  /* Menu styles for mobile */
+  .mobile-menu {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 80%;
+    max-width: 300px;
+    height: 100%;
+    background-color: var(--color-card-bg);
+    box-shadow: var(--shadow-lg);
+    z-index: 1000;
+    transform: translateX(100%);
+    transition: transform var(--transition-medium);
+  }
+  
+  .mobile-menu.active {
+    transform: translateX(0);
+  }
+  
+  .mobile-menu-button {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 1001;
+    background-color: var(--color-primary);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+  }
+  
+  .mobile-menu-button .hamburger {
+    width: 20px;
+    height: 14px;
+    position: relative;
+  }
+  
+  .mobile-menu-button .hamburger span {
+    display: block;
+    position: absolute;
+    height: 2px;
+    width: 100%;
+    background-color: white;
+    border-radius: 2px;
+    transition: all 0.25s ease-in-out;
+  }
+  
+  .mobile-menu-button .hamburger span:nth-child(1) {
+    top: 0;
+  }
+  
+  .mobile-menu-button .hamburger span:nth-child(2) {
+    top: 6px;
+  }
+  
+  .mobile-menu-button .hamburger span:nth-child(3) {
+    top: 12px;
+  }
+  
+  .mobile-menu-button.active .hamburger span:nth-child(1) {
+    transform: rotate(45deg);
+    top: 6px;
+  }
+  
+  .mobile-menu-button.active .hamburger span:nth-child(2) {
+    opacity: 0;
+  }
+  
+  .mobile-menu-button.active .hamburger span:nth-child(3) {
+    transform: rotate(-45deg);
+    top: 6px;
+  }
+  
+  /* Layout adjustments for mobile */
+  .container {
+    padding: 0 var(--spacing-sm);
+  }
+  
+  .row {
+    margin: 0 -var(--spacing-sm);
+  }
+  
+  .col {
+    padding: 0 var(--spacing-sm);
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+  
+  .card {
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+  }
+  
+  /* Stack form elements on mobile */
+  .form-group {
+    display: block;
+  }
+  
+  .form-label {
+    margin-bottom: var(--spacing-xs);
+  }
+  
+  .btn {
+    display: block;
+    width: 100%;
+    margin-bottom: var(--spacing-sm);
+  }
+  
+  /* ===== Tablet Styles ===== */
+  @media screen and (min-width: 768px) {
+    .hide-on-mobile {
+      display: block !important;
+    }
+  
+    .mobile-only {
+      display: none !important;
+    }
+  
+    .hide-on-tablet {
+      display: none !important;
+    }
+  
+    .tablet-only {
+      display: block !important;
+    }
+  
+    /* Layout adjustments for tablet */
+    .container {
+      padding: 0 var(--spacing-md);
+    }
+  
+    .row {
+      margin: 0 -var(--spacing-md);
+    }
+  
+    .col {
+      padding: 0 var(--spacing-md);
+    }
+  
+    .col-md-6 {
+      flex-basis: 50%;
+      max-width: 50%;
+    }
+  
+    .col-md-4 {
+      flex-basis: 33.333%;
+      max-width: 33.333%;
+    }
+  
+    .col-md-8 {
+      flex-basis: 66.667%;
+      max-width: 66.667%;
+    }
+  
+    /* Button adjustments */
+    .btn {
+      display: inline-block;
+      width: auto;
+      margin-bottom: 0;
+    }
+  
+    /* Menu adjustments */
+    .mobile-menu-button {
+      display: none;
+    }
+  
+    .desktop-menu {
+      display: flex;
+    }
+  
+    /* Form layout adjustments */
+    .form-row {
+      display: flex;
+      margin: 0 -var(--spacing-sm);
+    }
+  
+    .form-col {
+      flex: 1;
+      padding: 0 var(--spacing-sm);
+    }
+  }
+  
+  /* ===== Desktop Styles ===== */
+  @media screen and (min-width: 1200px) {
+    .hide-on-desktop {
+      display: none !important;
+    }
+  
+    .desktop-only {
+      display: block !important;
+    }
+  
+    /* Layout adjustments for desktop */
+    .container {
+      max-width: 1140px;
+    }
+  
+    .col-lg-3 {
+      flex-basis: 25%;
+      max-width: 25%;
+    }
+  
+    .col-lg-4 {
+      flex-basis: 33.333%;
+      max-width: 33.333%;
+    }
+  
+    .col-lg-6 {
+      flex-basis: 50%;
+      max-width: 50%;
+    }
+  
+    .col-lg-8 {
+      flex-basis: 66.667%;
+      max-width: 66.667%;
+    }
+  
+    .col-lg-9 {
+      flex-basis: 75%;
+      max-width: 75%;
+    }
+  
+    /* Two-column layout for the main content */
+    .main-content {
+      display: flex;
+    }
+  
+    .main-column {
+      flex: 3;
+      padding-right: var(--spacing-lg);
+    }
+  
+    .side-column {
+      flex: 1;
+    }
+  
+    /* Enhanced form layouts */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--spacing-md);
+    }
+  
+    .form-grid-3 {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  
+    .form-span-2 {
+      grid-column: span 2;
+    }
+  
+    .form-span-3 {
+      grid-column: span 3;
+    }
+  }
+  
+  /* ===== Large Desktop Styles ===== */
+  @media screen and (min-width: 1400px) {
+    .container {
+      max-width: 1320px;
+    }
+  
+    /* Enhanced table layouts */
+    .table-responsive {
+      overflow-x: visible;
+    }
+  
+    /* More room for complex layouts */
+    .card {
+      padding: var(--spacing-xl);
+    }
+  }
+  
+  /* ===== Print Styles ===== */
+  @media print {
+    body {
+      background: none;
+      color: black;
+    }
+  
+    .no-print {
+      display: none !important;
+    }
+  
+    .container {
+      width: 100%;
+      max-width: none;
+      padding: 0;
+      margin: 0;
+    }
+  
+    .card {
+      box-shadow: none;
+      border: 1px solid #ddd;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+  
+    .table {
+      border-collapse: collapse;
+    }
+  
+    .table th,
+    .table td {
+      border: 1px solid #ddd;
+    }
+  }
