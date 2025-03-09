@@ -1,5 +1,5 @@
 {
-    "name": "warehouse-management-system",
+    "name": "eckwms",
     "version": "1.0.0",
     "description": "Warehouse Management System with RMA handling and inventory tracking",
     "main": "server.js",
