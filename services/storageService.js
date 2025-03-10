@@ -20,6 +20,8 @@ class StorageService {
     this.initialized = false;
     this.historyRetentionDays = 90; // Keep 90 days of history in memory
     this.caseInsensitiveMap = new Map(); // Map for case-insensitive lookups
+    this.autoSaveInterval = null; // Interval for automatic saving
+    this.dirtyCollections = new Set(); // Collections that have changes to be saved
   }
 
   /**
@@ -89,6 +91,13 @@ class StorageService {
         this.serialB = 1;
         this.serialP = 1;
       }
+      
+      // Set up auto-save interval
+      this.autoSaveInterval = setInterval(() => {
+        this.saveAll().catch(error => {
+          logger.error(`Auto-save failed: ${error.message}`);
+        });
+      }, 5 * 60 * 1000); // 5 minutes
       
       this.initialized = true;
       logger.info('Storage service initialized successfully');
@@ -334,8 +343,434 @@ class StorageService {
     }
   }
   
-  // Keep the rest of the StorageService implementation as is...
-  // [The rest of the StorageService.js file would continue here]
+  /**
+   * Get a collection by name
+   * @param {string} collectionName - Name of the collection
+   * @returns {Map|null} The collection or null if not found
+   */
+  getCollection(collectionName) {
+    if (!this.initialized) {
+      logger.error('Storage service not initialized');
+      return null;
+    }
+    
+    if (!this.dataCollections.has(collectionName)) {
+      logger.error(`Collection not found: ${collectionName}`);
+      return null;
+    }
+    
+    return this.dataCollections.get(collectionName);
+  }
+  
+  /**
+   * Get an item from a collection
+   * @param {string} collectionName - Name of the collection
+   * @param {string} id - Item ID
+   * @returns {Object|null} The item or null if not found
+   */
+  getItem(collectionName, id) {
+    if (!this.initialized) {
+      logger.error('Storage service not initialized');
+      return null;
+    }
+    
+    if (!this.dataCollections.has(collectionName)) {
+      logger.error(`Collection not found: ${collectionName}`);
+      return null;
+    }
+    
+    const collection = this.dataCollections.get(collectionName);
+    
+    // Try direct lookup first
+    if (collection.has(id)) {
+      return collection.get(id);
+    }
+    
+    // Try case-insensitive lookup for items and boxes
+    if ((collectionName === 'items' || collectionName === 'boxes') && id) {
+      const lowerCaseId = id.toLowerCase();
+      const canonicalId = this.caseInsensitiveMap.get(lowerCaseId);
+      
+      if (canonicalId && collection.has(canonicalId)) {
+        return collection.get(canonicalId);
+      }
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Save an item to a collection
+   * @param {string} collectionName - Name of the collection
+   * @param {string} id - Item ID
+   * @param {Object} item - Item to save
+   * @returns {boolean} Success status
+   */
+  saveItem(collectionName, id, item) {
+    if (!this.initialized) {
+      logger.error('Storage service not initialized');
+      return false;
+    }
+    
+    if (!this.dataCollections.has(collectionName)) {
+      logger.error(`Collection not found: ${collectionName}`);
+      return false;
+    }
+    
+    if (!id) {
+      logger.error('Cannot save item with null or undefined ID');
+      return false;
+    }
+    
+    const collection = this.dataCollections.get(collectionName);
+    
+    // Add or update the item
+    collection.set(id, item);
+    
+    // Update case-insensitive map for items and boxes
+    if (collectionName === 'items' || collectionName === 'boxes') {
+      const lowerCaseId = id.toLowerCase();
+      this.caseInsensitiveMap.set(lowerCaseId, id);
+    }
+    
+    // Mark collection as dirty for auto-save
+    this.dirtyCollections.add(collectionName);
+    
+    return true;
+  }
+  
+  /**
+   * Delete an item from a collection
+   * @param {string} collectionName - Name of the collection
+   * @param {string} id - Item ID
+   * @returns {boolean} Success status
+   */
+  deleteItem(collectionName, id) {
+    if (!this.initialized) {
+      logger.error('Storage service not initialized');
+      return false;
+    }
+    
+    if (!this.dataCollections.has(collectionName)) {
+      logger.error(`Collection not found: ${collectionName}`);
+      return false;
+    }
+    
+    const collection = this.dataCollections.get(collectionName);
+    
+    // Try direct lookup first
+    if (collection.has(id)) {
+      collection.delete(id);
+      
+      // Mark collection as dirty for auto-save
+      this.dirtyCollections.add(collectionName);
+      
+      // Remove from case-insensitive map if needed
+      if (collectionName === 'items' || collectionName === 'boxes') {
+        const lowerCaseId = id.toLowerCase();
+        this.caseInsensitiveMap.delete(lowerCaseId);
+      }
+      
+      return true;
+    }
+    
+    // Try case-insensitive lookup for items and boxes
+    if ((collectionName === 'items' || collectionName === 'boxes') && id) {
+      const lowerCaseId = id.toLowerCase();
+      const canonicalId = this.caseInsensitiveMap.get(lowerCaseId);
+      
+      if (canonicalId && collection.has(canonicalId)) {
+        collection.delete(canonicalId);
+        this.caseInsensitiveMap.delete(lowerCaseId);
+        
+        // Mark collection as dirty for auto-save
+        this.dirtyCollections.add(collectionName);
+        
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Generate a new serial number
+   * @param {string} prefix - Serial number prefix ('i' for item, 'b' for box, 'p' for place)
+   * @returns {string} Generated serial number
+   */
+  generateSerialNumber(prefix) {
+    if (!this.initialized) {
+      logger.error('Storage service not initialized');
+      return null;
+    }
+    
+    let counter;
+    
+    // Select the appropriate counter based on prefix
+    switch (prefix) {
+      case 'i':
+        counter = ++this.serialI;
+        break;
+      case 'b':
+        counter = ++this.serialB;
+        break;
+      case 'p':
+        counter = ++this.serialP;
+        break;
+      default:
+        logger.error(`Invalid serial number prefix: ${prefix}`);
+        return null;
+    }
+    
+    // Format the serial number
+    const serialNumber = `${prefix}${counter.toString().padStart(18, '0')}`;
+    
+    // Save updated counters
+    this.saveSerialNumbers();
+    
+    return serialNumber;
+  }
+  
+  /**
+   * Save serial number counters
+   * @returns {Promise<boolean>} Success status
+   */
+  async saveSerialNumbers() {
+    try {
+      const filePath = path.resolve(path.join(this.baseDirectory, 'base', 'ini.json'));
+      
+      // Prepare data
+      const data = {
+        serialIi: this.serialIi,
+        serialI: this.serialI,
+        serialB: this.serialB,
+        serialP: this.serialP
+      };
+      
+      // Write to file
+      await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+      
+      logger.debug('Serial numbers saved successfully');
+      return true;
+    } catch (error) {
+      logger.error(`Failed to save serial numbers: ${error.message}`);
+      return false;
+    }
+  }
+  
+  /**
+   * Save all dirty collections to disk
+   * @returns {Promise<boolean>} Success status
+   */
+  async saveAll() {
+    if (!this.initialized) {
+      logger.error('Storage service not initialized');
+      return false;
+    }
+    
+    if (this.dirtyCollections.size === 0) {
+      logger.debug('No dirty collections to save');
+      return true;
+    }
+    
+    logger.info(`Saving ${this.dirtyCollections.size} dirty collections`);
+    
+    try {
+      // Process each dirty collection
+      for (const collectionName of this.dirtyCollections) {
+        try {
+          await this.saveCollection(collectionName);
+        } catch (error) {
+          logger.error(`Failed to save collection ${collectionName}: ${error.message}`);
+          // Continue with other collections even if one fails
+        }
+      }
+      
+      // Clear dirty collections set
+      this.dirtyCollections.clear();
+      
+      logger.info('All collections saved successfully');
+      return true;
+    } catch (error) {
+      logger.error(`Error saving collections: ${error.message}`);
+      return false;
+    }
+  }
+  
+  /**
+   * Save a specific collection to disk
+   * @param {string} collectionName - Name of the collection
+   * @returns {Promise<boolean>} Success status
+   */
+  async saveCollection(collectionName) {
+    try {
+      const collection = this.dataCollections.get(collectionName);
+      
+      if (!collection) {
+        logger.error(`Collection not found: ${collectionName}`);
+        return false;
+      }
+      
+      // Determine file name
+      const fileName = `${collectionName}.json`;
+      const filePath = path.resolve(path.join(this.baseDirectory, 'base', fileName));
+      
+      // Create temp file path
+      const tempFilePath = `${filePath}.tmp`;
+      
+      // Create write stream for temp file
+      const writeStream = createWriteStream(tempFilePath);
+      
+      // Write each item to the file
+      for (const item of collection.values()) {
+        const jsonString = JSON.stringify(item) + '\n';
+        writeStream.write(jsonString);
+      }
+      
+      // Close the write stream
+      await new Promise((resolve, reject) => {
+        writeStream.end(err => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      // Rename temp file to actual file (atomic operation)
+      await fs.rename(tempFilePath, filePath);
+      
+      logger.info(`Saved ${collection.size} items to ${fileName}`);
+      return true;
+    } catch (error) {
+      logger.error(`Failed to save collection ${collectionName}: ${error.message}`);
+      return false;
+    }
+  }
+  
+  /**
+   * Update item location
+   * @param {string} itemId - Item ID
+   * @param {string} locationId - Location ID
+   * @returns {boolean} Success status
+   */
+  updateItemLocation(itemId, locationId) {
+    if (!this.initialized) {
+      logger.error('Storage service not initialized');
+      return false;
+    }
+    
+    // Get the item
+    const item = this.getItem('items', itemId);
+    
+    if (!item) {
+      logger.error(`Item not found: ${itemId}`);
+      return false;
+    }
+    
+    // Update location
+    if (typeof item.setLocation === 'function') {
+      item.setLocation(locationId);
+    } else {
+      // Fallback if method doesn't exist
+      if (!item.loc || !Array.isArray(item.loc)) {
+        item.loc = [];
+      }
+      
+      const timestamp = Math.floor(Date.now() / 1000);
+      item.loc.push([locationId, timestamp]);
+      
+      // Limit history size
+      if (item.loc.length > 10) {
+        item.loc = item.loc.slice(-10);
+      }
+    }
+    
+    // Save the item
+    return this.saveItem('items', itemId, item);
+  }
+  
+  /**
+   * Cleanup old history data
+   * @returns {Promise<boolean>} Success status
+   */
+  async cleanupHistory() {
+    if (!this.initialized) {
+      logger.error('Storage service not initialized');
+      return false;
+    }
+    
+    try {
+      // Get collections with history
+      const historyCollections = Array.from(this.historyCollections.keys());
+      
+      for (const collectionName of historyCollections) {
+        try {
+          // Get the history collection
+          const historyCollection = this.historyCollections.get(collectionName);
+          
+          // Get current date for retention calculation
+          const now = new Date();
+          const cutoffTime = Math.floor(now.getTime() / 1000) - (this.historyRetentionDays * 24 * 60 * 60);
+          
+          // Find old entries to delete
+          const oldEntries = [];
+          
+          for (const [key, entry] of historyCollection.entries()) {
+            if (entry.timestamp < cutoffTime) {
+              oldEntries.push(key);
+            }
+          }
+          
+          // Delete old entries
+          for (const key of oldEntries) {
+            historyCollection.delete(key);
+          }
+          
+          logger.info(`Removed ${oldEntries.length} old history entries for ${collectionName}`);
+        } catch (error) {
+          logger.error(`Error cleaning up history for ${collectionName}: ${error.message}`);
+          // Continue with other collections even if one fails
+        }
+      }
+      
+      logger.info('History cleanup completed successfully');
+      return true;
+    } catch (error) {
+      logger.error(`History cleanup failed: ${error.message}`);
+      return false;
+    }
+  }
+  
+  /**
+   * Close the storage service
+   * @returns {Promise<boolean>} Success status
+   */
+  async close() {
+    if (!this.initialized) {
+      logger.warn('Storage service not initialized, nothing to close');
+      return true;
+    }
+    
+    try {
+      // Stop auto-save interval
+      if (this.autoSaveInterval) {
+        clearInterval(this.autoSaveInterval);
+        this.autoSaveInterval = null;
+      }
+      
+      // Save all dirty collections
+      await this.saveAll();
+      
+      // Save serial numbers
+      await this.saveSerialNumbers();
+      
+      this.initialized = false;
+      logger.info('Storage service closed successfully');
+      return true;
+    } catch (error) {
+      logger.error(`Error closing storage service: ${error.message}`);
+      return false;
+    }
+  }
 }
 
 module.exports = StorageService;

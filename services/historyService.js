@@ -7,6 +7,7 @@ const logger = require('../utils/logging');
 
 /**
  * Service for managing entity history
+ * Handles storing, retrieving, and managing historical data for entities
  */
 class HistoryService {
   /**
