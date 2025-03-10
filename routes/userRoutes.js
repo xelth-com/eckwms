@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateJWT, requireAdmin } = require('../middleware/auth');
-const { body, param, checkValidationResult } = require('../utils/validators');
+const { validateUserId, validateUserCreate, validateUserUpdate, validatePasswordChange, validateLogin, checkValidationResult } = require('../utils/validators');
 const userController = require('../controllers/userController');
 
 /**
@@ -23,7 +23,7 @@ router.get('/',
  */
 router.get('/:userId', 
   authenticateJWT,
-  param('userId').trim().notEmpty().withMessage('User ID is required'),
+  validateUserId(),
   checkValidationResult,
   userController.getUserById
 );
@@ -36,15 +36,7 @@ router.get('/:userId',
 router.post('/', 
   authenticateJWT,
   requireAdmin,
-  [
-    body('username').trim().notEmpty().withMessage('Username is required')
-      .isLength({ min: 3, max: 50 }).withMessage('Username must be between 3 and 50 characters'),
-    body('password').trim().notEmpty().withMessage('Password is required')
-      .isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
-    body('email').trim().notEmpty().withMessage('Email is required')
-      .isEmail().withMessage('Invalid email format'),
-    body('role').optional().isIn(['u', 'p', 'a']).withMessage('Invalid role')
-  ],
+  validateUserCreate(),
   checkValidationResult,
   userController.createUser
 );
@@ -56,17 +48,8 @@ router.post('/',
  */
 router.put('/:userId', 
   authenticateJWT,
-  param('userId').trim().notEmpty().withMessage('User ID is required'),
-  [
-    body('email').optional().isEmail().withMessage('Invalid email format'),
-    body('company').optional().trim(),
-    body('phone').optional().trim(),
-    body('street').optional().trim(),
-    body('postalCode').optional().trim(),
-    body('city').optional().trim(),
-    body('country').optional().trim(),
-    body('role').optional().isIn(['u', 'p', 'a']).withMessage('Invalid role')
-  ],
+  validateUserId(),
+  validateUserUpdate(),
   checkValidationResult,
   userController.updateUser
 );
@@ -78,12 +61,8 @@ router.put('/:userId',
  */
 router.put('/:userId/password', 
   authenticateJWT,
-  param('userId').trim().notEmpty().withMessage('User ID is required'),
-  [
-    body('currentPassword').optional(),
-    body('newPassword').trim().notEmpty().withMessage('New password is required')
-      .isLength({ min: 8 }).withMessage('New password must be at least 8 characters')
-  ],
+  validateUserId(),
+  validatePasswordChange(),
   checkValidationResult,
   userController.changePassword
 );
@@ -96,7 +75,7 @@ router.put('/:userId/password',
 router.delete('/:userId', 
   authenticateJWT,
   requireAdmin,
-  param('userId').trim().notEmpty().withMessage('User ID is required'),
+  validateUserId(),
   checkValidationResult,
   userController.deleteUser
 );
@@ -107,10 +86,7 @@ router.delete('/:userId',
  * @access Public
  */
 router.post('/login', 
-  [
-    body('username').trim().notEmpty().withMessage('Username is required'),
-    body('password').trim().notEmpty().withMessage('Password is required')
-  ],
+  validateLogin(),
   checkValidationResult,
   userController.login
 );
