@@ -1,0 +1,20 @@
+[2025-03-10T01:06:56.847Z] INFO: Starting data migration
+[2025-03-10T01:06:56.869Z] INFO: Mode: Full Migration
+[2025-03-10T01:06:56.871Z] INFO: Starting migration initialization
+[2025-03-10T01:06:56.877Z] INFO: Migration environment initialized successfully
+[2025-03-10T01:06:56.878Z] INFO: Connecting to database
+[2025-03-10T01:06:57.131Z] INFO: Database connection established
+[2025-03-10T01:06:57.132Z] INFO: Step 1: Migrating classes
+[2025-03-10T01:06:57.133Z] INFO: Reading legacy data for collection: classes
+[2025-03-10T01:06:57.150Z] INFO: Read 638 items from classes
+[2025-03-10T01:06:57.182Z] INFO: Inserting 638 records into classes
+[2025-03-10T01:06:57.212Z] ERROR: Failed to insert data into classes error: fehlerhafte Arraykonstante: »[{"number":"216090500000","type":"m3"}]«
+    at C:\Users\xelth\eckwms\node_modules\pg\lib\client.js:535:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async insertData (C:\Users\xelth\eckwms\scripts\migrate.js:712:26)
+    at async migrate (C:\Users\xelth\eckwms\scripts\migrate.js:941:5)
+[2025-03-10T01:06:57.217Z] ERROR: Migration failed error: fehlerhafte Arraykonstante: »[{"number":"216090500000","type":"m3"}]«
+    at C:\Users\xelth\eckwms\node_modules\pg\lib\client.js:535:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async insertData (C:\Users\xelth\eckwms\scripts\migrate.js:712:26)
+    at async migrate (C:\Users\xelth\eckwms\scripts\migrate.js:941:5)
