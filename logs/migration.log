@@ -221,3 +221,82 @@
 [2025-03-10T02:50:28.441Z] INFO: Initializing serial counters
 [2025-03-10T02:50:28.446Z] INFO: Serial counters initialized successfully
 [2025-03-10T02:50:28.446Z] INFO: Migration completed successfully
+[2025-03-10T05:29:50.826Z] INFO: Starting data migration
+[2025-03-10T05:29:50.835Z] INFO: Mode: Full Migration
+[2025-03-10T05:29:50.835Z] INFO: Starting migration initialization
+[2025-03-10T05:29:50.838Z] INFO: Migration environment initialized successfully
+[2025-03-10T05:29:50.838Z] INFO: Connecting to database
+[2025-03-10T05:29:51.105Z] INFO: Database connection established
+[2025-03-10T05:29:51.106Z] INFO: Step 1: Migrating classes
+[2025-03-10T05:29:51.107Z] INFO: Reading legacy data for collection: classes
+[2025-03-10T05:29:51.124Z] INFO: Read 638 items from classes
+[2025-03-10T05:29:51.149Z] INFO: Inserting 638 records into classes
+[2025-03-10T05:29:51.164Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T05:29:51.173Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T05:29:51.181Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T05:29:51.189Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T05:29:51.194Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T05:29:51.201Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T05:29:51.204Z] INFO: Inserted batch of 38 records into classes
+[2025-03-10T05:29:51.205Z] INFO: Successfully inserted 0 records into classes
+[2025-03-10T05:29:51.209Z] INFO: Writing 638 items to classes.json
+[2025-03-10T05:29:51.225Z] INFO: Successfully wrote 638 items to classes.json
+[2025-03-10T05:29:51.225Z] INFO: Step 2: Migrating places
+[2025-03-10T05:29:51.226Z] INFO: Reading legacy data for collection: places
+[2025-03-10T05:29:51.227Z] INFO: Read 43 items from places
+[2025-03-10T05:29:51.231Z] INFO: Inserting 43 records into places
+[2025-03-10T05:29:51.234Z] INFO: Inserted batch of 43 records into places
+[2025-03-10T05:29:51.235Z] INFO: Successfully inserted 0 records into places
+[2025-03-10T05:29:51.236Z] INFO: Writing 43 items to places.json
+[2025-03-10T05:29:51.239Z] INFO: Successfully wrote 43 items to places.json
+[2025-03-10T05:29:51.239Z] INFO: Step 3: Migrating users
+[2025-03-10T05:29:51.239Z] INFO: Reading legacy data for collection: users
+[2025-03-10T05:29:51.241Z] INFO: Read 4 items from users
+[2025-03-10T05:29:51.242Z] INFO: Inserting 4 records into users
+[2025-03-10T05:29:51.244Z] INFO: Inserted batch of 4 records into users
+[2025-03-10T05:29:51.245Z] INFO: Writing 4 items to users.json
+[2025-03-10T05:29:51.245Z] INFO: Successfully inserted 0 records into users
+[2025-03-10T05:29:51.247Z] INFO: Step 4: Migrating items
+[2025-03-10T05:29:51.247Z] INFO: Successfully wrote 4 items to users.json
+[2025-03-10T05:29:51.247Z] INFO: Reading legacy data for collection: items
+[2025-03-10T05:29:51.253Z] INFO: Read 689 items from items
+[2025-03-10T05:29:51.263Z] INFO: Inserting 689 records into items
+[2025-03-10T05:29:51.270Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T05:29:51.278Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T05:29:51.285Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T05:29:51.291Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T05:29:51.297Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T05:29:51.304Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T05:29:51.309Z] INFO: Inserted batch of 89 records into items
+[2025-03-10T05:29:51.310Z] INFO: Successfully inserted 0 records into items
+[2025-03-10T05:29:51.313Z] INFO: Writing 689 items to items.json
+[2025-03-10T05:29:51.323Z] INFO: Successfully wrote 689 items to items.json
+[2025-03-10T05:29:51.323Z] INFO: Step 5: Migrating boxes
+[2025-03-10T05:29:51.324Z] INFO: Reading legacy data for collection: boxes
+[2025-03-10T05:29:51.327Z] INFO: Read 157 items from boxes
+[2025-03-10T05:29:51.330Z] INFO: Inserting 157 records into boxes
+[2025-03-10T05:29:51.342Z] INFO: Inserted batch of 100 records into boxes
+[2025-03-10T05:29:51.345Z] INFO: Inserted batch of 57 records into boxes
+[2025-03-10T05:29:51.346Z] INFO: Successfully inserted 0 records into boxes
+[2025-03-10T05:29:51.348Z] INFO: Writing 157 items to boxes.json
+[2025-03-10T05:29:51.353Z] INFO: Successfully wrote 157 items to boxes.json
+[2025-03-10T05:29:51.353Z] INFO: Step 6: Migrating orders
+[2025-03-10T05:29:51.353Z] INFO: Reading legacy data for collection: orders
+[2025-03-10T05:29:51.355Z] INFO: Read 122 items from orders
+[2025-03-10T05:29:51.357Z] INFO: Inserting 122 records into orders
+[2025-03-10T05:29:51.363Z] INFO: Inserted batch of 100 records into orders
+[2025-03-10T05:29:51.365Z] INFO: Inserted batch of 22 records into orders
+[2025-03-10T05:29:51.367Z] INFO: Writing 122 items to orders.json
+[2025-03-10T05:29:51.366Z] INFO: Successfully inserted 0 records into orders
+[2025-03-10T05:29:51.372Z] INFO: Step 7: Migrating dictionaries
+[2025-03-10T05:29:51.371Z] INFO: Successfully wrote 122 items to orders.json
+[2025-03-10T05:29:51.372Z] INFO: Reading legacy data for collection: dicts
+[2025-03-10T05:29:51.373Z] INFO: Read 0 items from dicts
+[2025-03-10T05:29:51.373Z] INFO: Writing 0 items to dicts.json
+[2025-03-10T05:29:51.374Z] INFO: Successfully wrote 0 items to dicts.json
+[2025-03-10T05:29:51.374Z] INFO: Step 8: Initializing serial counters
+[2025-03-10T05:29:51.375Z] INFO: Initializing serial counters
+[2025-03-10T05:29:51.380Z] INFO: Serial counters initialized successfully
+[2025-03-10T05:29:51.381Z] INFO: Writing 0 items to uppers.json
+[2025-03-10T05:29:51.382Z] INFO: Successfully wrote 0 items to uppers.json
+[2025-03-10T05:29:51.384Z] INFO: Migration completed successfully

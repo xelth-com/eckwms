@@ -1,0 +1,638 @@
+{"cl":"216090500000","desc":["ANTENNA MAIN+WLAN+GPS_BLACK","ANTENNA_RKA1317-0000AA"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["216090500000","m3"]]}
+{"cl":"216050512006","desc":["ANTENNA WLAN DUAL_M3 BLACK","ANTENNA_RKA1407-0000AA"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["216050512006","m3"]]}
+{"cl":"217100210001","desc":["MODULE SCANNER(SE-955, HW)_SYMBOL","1D SCANNER"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["217100210001","m3"]]}
+{"cl":"217100210021","desc":["MODULE SCANNER(SE-965, HW)_SYMBOL","1D SCANNER"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["217100210021","m3"]]}
+{"cl":"221020201035","desc":["CABLE FFC_12PIN_55mm(MIRROR)_0.5PITCH","KFI6-12/55 (MIRROR)"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["221020201035","m3"]]}
+{"cl":"224990399001","desc":["BATTERY BACKUP 150mA/h","LI-ION 252730 - 8005 Series"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["224990399001","m3"]]}
+{"cl":"221020201036","desc":["CABLE FFC_30PIN_45mm_0.5PITCH","MM3 I/O CONNECTOR"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["221020201036","m3"]]}
+{"cl":"219020300013","desc":["NTL35DQVGALP138","MODULE LCD NNH(3.5\")_BK10, OX10 1G","1G"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["219020300013","m3"]]}
+{"cl":"219020300012","desc":["MODULE LCD NNH(3.5\")_BLACK","NTL35DVGALP113","1G"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["219020300012","m3"]]}
+{"cl":"217110510067","desc":["MODULE CAMERA 5.0M_BLACKï¿½","AUTO FOCUS(M3 BLACK_5M AF)","1G"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["217110510067","m3"]]}
+{"cl":"217100210033","desc":["MODULE SCANNER(SE-4500SR)_SYMBOL","2D SCANNER / BLACK"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["217100210033","m3"]]}
+{"cl":"217100240022","desc":["MODULE SCANNER(5600SR, SW)_HONEYWE","2D SCANNER"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["217100240022","m3"]]}
+{"cl":"221110201000","desc":["CABLE FPCB 21PIN 90mm","M3 BLACK 2D SCAN"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["221110201000","m3"]]}
+{"cl":"3205S1000000","desc":["M3 BLACK 5600 2D CABLE ASSY, V1.0","FPCB SMD"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["3205S1000000","m3"]]}
+{"cl":"310030201212","desc":["FRONT COVER SUB ASSY M3 BLACK NUMERI","RUBBER"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["310030201212","m3"]]}
+{"cl":"310030201420","desc":["FRONT COVER SUB ASSY M3 BLACK QWER","RUBBER"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["310030201420","m3"]]}
+{"cl":"221030601005","desc":["CABLE RF WLAN 50mm_ORANGE","RF CABLE_C188-RF-014-50mm"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["221030601005","m3"]]}
+{"cl":"221030601045","desc":["CABLE RF 45mm_BLACK 2.0","C188-RF-100-2C-L045-BK-081-P7"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["221030601045","m3"]]}
+{"cl":"221030601004","desc":["CABLE RF GSM/HSDPA 41mm_ORANGE/SMART","RF CABLE_C188-RF-027-41mm\n/ (HSPA+ MODULE + MAIN PCB)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["221030601004","m3"]]}
+{"cl":"100300610502","desc":["PAD BRACKET LCD M3 BLACK","PAD 0.5T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300610502","m3"]]}
+{"cl":"100300310300","desc":["RUBBER LCD M3 BLACK","SILICONE, BLACK"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300310300","m3"]]}
+{"cl":"100301510200","desc":["BRACKET LCD M3 BLACK","Mg, SILVER"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100301510200","m3"]]}
+{"cl":"100300610200","desc":["PAD LCD M3 BLACK","silicone PAD 1.0T, BOTH SIDE"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300610200","m3"]]}
+{"cl":"100300612300","desc":["PAD LCD QVGA M3 BLACK","silicone,0.7T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300612300","m3"]]}
+{"cl":"310030201021","desc":["REAR COVER SUB ASSY M3 BLACK NUMERIC","MOLDING+ RUBBER"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["310030201021","m3"]]}
+{"cl":"100300310700","desc":["RUBBER SEALING PARTING M3 BLACK","SILICONE, GRAY"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300310700","m3"]]}
+{"cl":"100300611200","desc":["SHEET REAR","PC SHEET 0.3T EDGE GLUDING , BLACK"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300611200","m3"]]}
+{"cl":"100300611300","desc":["PAD CAMERA M3 BLACK","EMI NIKEL CUSHION 8.5X8.5X1.0T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300611300","m3"]]}
+{"cl":"100300111400","desc":["BRACKET SCANNER 1D M3 BLACK","PC, BLACK"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300111400","m3"]]}
+{"cl":"100300111500","desc":["BRACKET SCANNER 2D M3 BLACK","PC, BLACK"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300111500","m3"]]}
+{"cl":"100300611400","desc":["TAPE EMI CAMERA M3 BLACK","EMI NIKEL CUSHION 20X6X0.6T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300611400","m3"]]}
+{"cl":"100300611500","desc":["PAD FLASH M3 BLACK","PSR 2.0T, BOTH SIDE GLUDING"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300611500","m3"]]}
+{"cl":"100300310400","desc":["KEY PAD NUMERIC M3 BLACK","PC+SILICONE"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300310400","m3"]]}
+{"cl":"100300310500","desc":["KEY PAD QWERTY M3 BLACK","PC+SILICONE"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300310500","m3"]]}
+{"cl":"100301610100","desc":["DOME SHEET NUMERIC M3 BLACK","SUS+SHEET"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100301610100","m3"]]}
+{"cl":"100301610200","desc":["DOME SHEET QWERTY M3 BLACK","SUS+SHEET"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100301610200","m3"]]}
+{"cl":"100300611600","desc":["TAPE DOME M3 BLACK","7X3, PE SHEET (0.05t)ï¿½"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300611600","m3"]]}
+{"cl":"100300210100","desc":["SHILED CAN A M3 BLACK","SUS 0.2T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300210100","m3"]]}
+{"cl":"100300210200","desc":["SHILED CAN B M3 BLACK","SUS 0.2T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300210200","m3"]]}
+{"cl":"100300210300","desc":["SHILED CAN C M3 BLACK","SUS 0.2T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300210300","m3"]]}
+{"cl":"100300611700","desc":["PAD SHILED CAN A","PSR 49.5X21.5X0.3T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300611700","m3"]]}
+{"cl":"100300622000","desc":["PAD SHILED CAN B","EMI GASKET, 49.5X21.5X0.7T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300622000","m3"]]}
+{"cl":"100300611800","desc":["PAD HEAT SHILED CAN C","HEAT SHEETï¿½ 0.5T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300611800","m3"]]}
+{"cl":"100300611900","desc":["PAD SHILED CAN C","LM 46X5X1.8T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300611900","m3"]]}
+{"cl":"100200613700","desc":["PAD RFID ANTENNA COVER","PSR 30X18X0.5T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100200613700","m3"]]}
+{"cl":"188000611400","desc":["RF INSULATOR TAPE","KEPTON (20X6 / 0.05t,단면접착)"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["188000611400","m3"]]}
+{"cl":"161000612000","desc":["CONTACT PCB INSULATOR TAPE MC-6000S","SP65, BLACK, 0.05T"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["161000612000","m3"]]}
+{"cl":"100300110800","desc":["BRACKET WINDOW SCANNER M3 BLACK","PC, BLACK"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300110800","m3"]]}
+{"cl":"100300910300","desc":["WINDOW SCANNERï¿½ M3 BLACK","ACRYLE 1.0T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300910300","m3"]]}
+{"cl":"100301710400","desc":["WINDOW NONE SCANNERï¿½ M3 BLACK","BLACKï¿½ ACRYLE 1.0T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100301710400","m3"]]}
+{"cl":"100300910400","desc":["WINDOW CAMERA M3 BLACK","ACRYLE 1.0T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100300910400","m3"]]}
+{"cl":"100301710500","desc":["WINDOW NONE CAMERA M3 BLACK","BLACK ACRYLE 1.0T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["100301710500","m3"]]}
+{"cl":"175100610400","desc":["MOTOR PAD MC-7500S RFID","LM(단면접착), ï¿½10, 2.5T"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["175100610400","m3"]]}
+{"cl":"913117033502","desc":["SCREW","BH, NYLOK, M 1.7 X 3.0, ï¿½3.5, WHITE\n/ (HSDPA INTENNA ASSY + REAR COVER)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["913117033502","m3"]]}
+{"cl":"951217033502","desc":["SCREW","BH M1.7 X 3L Ф3.5 SILVER"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["951217033502","m3"]]}
+{"cl":"320502023000","desc":["M3 BLACK MAIN PCB ASSY, V2.0","PCB SMD, W/ S, 45N"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["320502023000","m3"]]}
+{"cl":"320511000000","desc":["M3 BLACK NUMERIC KEY PCB ASSY, V1.0","PCB SMD, NUMERIC"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["320511000000","m3"]]}
+{"cl":"320531000000","desc":["320531000000","M3 BLACK QWERTY KEY PCB ASSY, V1.0"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["320531000000","m3"]]}
+{"cl":"320571000000","desc":["M3 BLACK FLASH PCB ASSY, V1.0","PCB SMD"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["320571000000","m3"]]}
+{"cl":"217100240047","desc":["MODULE SCANNER(N5600HD, SW)_HHP","2D SCANNER(servicePlus)"],"prop":[],"rel":[["partOf","BK10"]],"pn":[["217100240047","m3"]]}
+{"cl":"310020201010","desc":["FRONT COVER SUB ASSY M3 ORANGE NUMERIC","BLACK, NUMERIC","A/N"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["310020201010","m3"]]}
+{"cl":"310020201550","desc":["FRONT COVER SUB ASSY M3 ORANGE QWERTY","BLACK, QWERTY","QWERTY"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["310020201550","m3"]]}
+{"cl":"100200310400","desc":["KEY PAD M3 ORANGE NUMERIC","SILICON RUBBER(H 70'), BLACK, NUMERIC","A/N"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200310400","m3"]]}
+{"cl":"100200311200","desc":["KEY PAD M3 ORANGE QWERTY(B)","SILICON RUBBER(H 70'), BLACK, QWERTY","QWERTY"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200311200","m3"]]}
+{"cl":"100201510100","desc":["LCD BRACKET M3 ORANGE","MG, 70.8 X 155.6,ï¿½"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100201510100","m3"]]}
+{"cl":"161000610500","desc":["LCD PROTECTION TAPE MC-6000S [LCD 보호 TAPE(공용)]","PVC, 연질, 84X64X0.15T"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["161000610500","m3"]]}
+{"cl":"161000630100","desc":["VEHICLE USB COVER SHEET M3 SKY","PC 0.25BK+SK800BS 18.8 X 11"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["161000630100","m3"]]}
+{"cl":"100200610202","desc":["LCD PAD M3 ORANGE_NK_B","3M 5068(양면접착), 86.4X64.6X0.7T"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200610202","m3"]]}
+{"cl":"100200310600","desc":["CONTACT PIN BRACKET RUBBER M3 ORANGE"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200310600","m3"]]}
+{"cl":"100201610100","desc":["DOME SHEET M3 ORANGE","3.54X4.83, 27KEY, NUMERIC","A/N"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100201610100","m3"]]}
+{"cl":"100201610200","desc":["DOME SHEET M3 ORANGE QWERTY","QWERTY","QWERTY"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100201610200","m3"]]}
+{"cl":"213030700000","desc":["MICRO-PHONE, PIN TYPE, Ф4.0 / MICROPHONE(M3 SKY/T/ORANGE/MM3)","OBG-415A44C1033"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["213030700000","m3"]]}
+{"cl":"221020301007","desc":["CABLE FPC_40PIN_30mm_0.5PITCH","ORANGE KEY\n/ (KEY PCB + MAIN PCB)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["221020301007","m3"]]}
+{"cl":"310020201040","desc":["CONTACT PIN ASSY M3 ORANGE","사출 +PIN"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["310020201040","m3"]]}
+{"cl":"911117043501","desc":["SCREW","BH M 1.7 X 4.0, ï¿½3.5, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","UL20"],["purpose","Trigger + Speaker Sub PCB"]],"pn":[["911117043501","m3"]]}
+{"cl":"911217033501","desc":["SCREW","BH T 1.7 X 3.0, ï¿½3.5, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","UL20"],["purpose","rear nfc"]],"pn":[["911217033501","m3"]]}
+{"cl":"317500201053","desc":["SIDE DOME KEY ASSY ORANGE","2KEY"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["317500201053","m3"]]}
+{"cl":"100200210100","desc":["SHIELD CAN A M3 ORANGE","SUS, 58.7X38.3X0.25T"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200210100","m3"]]}
+{"cl":"100200210200","desc":["SHIELD CAN B M3 ORANGE","SUS, 27.5X46.45X0.25T"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200210200","m3"]]}
+{"cl":"224020312000","desc":["BATTERY BACKUP 200mA/h","LI-POLYMER AEC422030"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["224020312000","m3"]]}
+{"cl":"911117053503","desc":["SCREW","BH,NYLOCK M 1.7 X 5.0, ï¿½3.5, WHITE"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["911117053503","m3"]]}
+{"cl":"216070213003","desc":["ANTENNA GPS(SGAA1313G18)_ORANGE NEW","ACTIVE ANTENNA_1500MHz"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["216070213003","m3"]]}
+{"cl":"161000611700","desc":["MOTOR PAD MC-6100S","ï¿½10 PORON 1.0t(단면접착)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["161000611700","m3"]]}
+{"cl":"100200310500","desc":["RECEIVER COVER RUBBER M3 ORANGE","SILICON (H 60'), BLACK"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200310500","m3"]]}
+{"cl":"213020200004","desc":["RECEIVER(DR-1107SC, NEW)_ORANGE","RECEIVER_32ohm"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["213020200004","m3"]]}
+{"cl":"216040517002","desc":["ANTENNA HSDPA FCC/CE (RKA1311-0000AA)\n_ORANGE PLUS","ANTENNA_850/900/1800/1900/2100MHz"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["216040517002","m3"]]}
+{"cl":"100200610501","desc":["W-LAN EMI CUSHION A","EMI_NIKEL_18mm*5mm*1.5t"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200610501","m3"]]}
+{"cl":"216059911001","desc":["ANTENNA WLAN(RKA1302-0000AA)_ORANGE PLUS","FPCB ANTENNA_2.4GHz (RKA1302-0000AA)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["216059911001","m3"]]}
+{"cl":"161000612400","desc":["ANT COVER","PORON 3T"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["161000612400","m3"]]}
+{"cl":"100200614700","desc":["PAD_WIFI_ORANGE","EVA HARD 5.95X23X10"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200614700","m3"]]}
+{"cl":"100200610140","desc":["TAPE_REAR_WIFI_ANT","3M_FOAM_TAPE_1.0T"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200610140","m3"]]}
+{"cl":"323691000860","desc":["M3 OX10 WLAN MODULE ASSY, V1.0","PCB SMD, SUMMIT SSD45N"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["323691000860","m3"]]}
+{"cl":"317500201350","desc":["M3 GREEN CAMERA FLASH PCB ASSY, V1.0","PCB SMD"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["317500201350","m3"]]}
+{"cl":"221040801000","desc":["CABLE HARNESS_2PIN_20mm(1WAY)","RED/GREEN/SKY/ORANGE/MM3/POS CAM FLASH_RED/BLACK"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["221040801000","m3"]]}
+{"cl":"100200110503","desc":["SCANNER BRACKET B M3 ORANGE_eco3","PC 사출 BKT / PC, BLACK, SYMBOL,se4500 적용 ,5M 카메라적용","1D(HW)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200110503","m3"]]}
+{"cl":"100200112502","desc":["SCANNER BRACKET M3 ORANGE 2D_eco2","HONEY WELL/ 2D / 5M 카메라적용 ECO"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200112502","m3"]]}
+{"cl":"217100240046","desc":["MODULE SCANNER(5100HD, SW)_HHP","2D SCANNER","2D"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["217100240046","m3"]]}
+{"cl":"221020202001","desc":["CABLE FFC_12PIN_152mm_0.5PITCH","1D SCANNER(HW DECODER)\n/ (SCANNER(SE-955) + MAIN PCB)","1D(HW)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["221020202001","m3"]]}
+{"cl":"221020201011","desc":["CABLE FPC_22PIN_50mm_0.3PITCH","ALL/2D SCANNER\n/ (SCANNER MODULE + MAIN PCB)","2D"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["221020201011","m3"]]}
+{"cl":"100200611301","desc":["CAMERA PAD M3 ORANGE PLUS","8.3 x 8.3 x2.5 LM tape"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200611301","m3"]]}
+{"cl":"164000611000","desc":["CAMERA BRACKET PAD MC-6400S","HM +SK800, 3.6X8.5, 0.6T, 2M CAM"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["164000611000","m3"]]}
+{"cl":"100200611100","desc":["FLASH PAD M3 ORANGE","PORON, 7.4X6.4X1.2T,ï¿½"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200611100","m3"]]}
+{"cl":"217110510068","desc":["MODULE CAMERA 3.2M_SMART/SKY/ORANGE","AUTO FOCUS(MT9T112)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["217110510068","m3"]]}
+{"cl":"100200116100","desc":["WINDOW_SCANNER_ORANGE_PLUS","TRANSPARENT"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200116100","m3"]]}
+{"cl":"100200116200","desc":["WINDOW_SCANNER_ORANGE_PLUS_BLACK","BLACK"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200116200","m3"]]}
+{"cl":"100200115900","desc":["WINDOW_CAMERA_ORANGE_PLUS","TRANSPARENT"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200115900","m3"]]}
+{"cl":"100200116000","desc":["WINDOW_CAMERA_ORANGE_PLUS_BLACK","BLACK"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200116000","m3"]]}
+{"cl":"951117033501","desc":["SCREW","SH M 1.7 X 3.0, ï¿½3.5, BLACK, STAR T6x40"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["951117033501","m3"]]}
+{"cl":"100200210300","desc":["SPEAKER COVER BRACKET M3 ORANGE","SUS, 45.4X26.4X0.5T"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200210300","m3"]]}
+{"cl":"100200311000","desc":["RESET BUTTON M3 ORANGE","SILICON (H 60'), BLACK,ï¿½"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200311000","m3"]]}
+{"cl":"213010200005","desc":["SPEAKER(SHT1708B-66W)_ORANGE","SPEAKER_8ohm_1.0W"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["213010200005","m3"]]}
+{"cl":"223020000012","desc":["MOTOR COIN 10PI, 2.7mm(h), 80mm(cable)_C1027","COIN MOTOR","Revise 2018.10.04"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["223020000012","m3"]]}
+{"cl":"310020202303","desc":["REAR COVER SUB ASSY BLACK M3 ORANGE PLUS02","사출 + RUBBER + 부자재 / BLACK / RESET 각인 / 스타일러스본딩강화 / SIM SOCKET RIB 추가","Revise 2018.10.15"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["310020202303","m3"]]}
+{"cl":"3231H2100000","desc":["M3 ORANGE PLUS PISTOL CONTACT PCB ASSY, V2.1","PCB SMD, PISTOL CONTACT"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["3231H2100000","m3"]]}
+{"cl":"221020201029","desc":["CABLE FFC_6PIN_100mm(MIRROR)_0.5PITCH","FOR ORANGE PLUS PISTOL CONTACT PCB"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["221020201029","m3"]]}
+{"cl":"100200115400","desc":["COVER_BAT_M3_ORANGE_PLUS_BALCK","PC, BLACK"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200115400","m3"]]}
+{"cl":"931120053002","desc":["SCREW","FH M 2.0 X 5.0, ï¿½3.0, WHITE"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["931120053002","m3"]]}
+{"cl":"911117033502","desc":["SCREW","BH M 1.7 X 3.0, ï¿½3.5, WHITE"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["911117033502","m3"]]}
+{"cl":"952117083501","desc":["SCREW","SH, EPOXY, M 1.7 X 8.0, ï¿½3.5, BLACK, STAR T6x40\n/ (REAR COVER + FRONT COVER)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["952117083501","m3"]]}
+{"cl":"320020201010","desc":["M3 ORANGE RFID HF PCB ASSY, V1.2","PCB SMD, HF, Dual SAM+6Pin Connector","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["320020201010","m3"]]}
+{"cl":"310020201215","desc":["M3 ORANGE RFID CAEN UHF PCB ASSY, V1.0","PCB SMD, UHF(CAEN)","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["310020201215","m3"]]}
+{"cl":"310020201235","desc":["INTENNA ASSY(HSDPA/ 1D, 2D, UHF, C)\nM3 ORANGE","850/900/1800/1900/2100MHz, RKA1112-0000AA","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["310020201235","m3"]]}
+{"cl":"217130960000","desc":["MODULE RFID UHF_ORANGE","RFID MODULE_900MHz","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["217130960000","m3"]]}
+{"cl":"216081001000","desc":["ANTENNA RFID CAEN UHF(CE)_ORANGE","CERAMIC ANTENNA_867MHz(MPAC34SC867PS-TA)","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["216081001000","m3"]]}
+{"cl":"221020201023","desc":["CABLE FFC_6PIN_55mm_0.5PITCH","SKY RFID NEW/ORANGE CAEN UHF\n/ (RFID PCB + MAIN PCB)","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["221020201023","m3"]]}
+{"cl":"100200114500","desc":["COVER_UHFANTENA_M3_ORANGE","PC_NONE_51x43.3x11.8","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200114500","m3"]]}
+{"cl":"100200614400","desc":["CUSHION_B_UHFANT_M3_ORANGE_CAEN","PSR 1.0T 양면 TAPE","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200614400","m3"]]}
+{"cl":"911220063501","desc":["SCREW","BH T 2.0 X 6.0, ï¿½3.5, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","US20W"],["purpose","REAR COVER and NFC ANTENNA assembly screws"]],"pn":[["911220063501","m3"]]}
+{"cl":"100200614000","desc":["UHF_PCB_EMI_PAD_A","NIKEL SPONGE_9.0X13.0X2.5T","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200614000","m3"]]}
+{"cl":"100200614300","desc":["UHF_PCB_EMI_TAPE","TAPE_12.0X30.0X0.5T","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200614300","m3"]]}
+{"cl":"310020201027","desc":["REAR COVER SUB ASSY CAEN M3 ORANGE BLACK DEL EJ","caen uhf / SIM SOCKET RIB 추가","RFID\n(UHF)\n\nRevise 2018.10.15"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["310020201027","m3"]]}
+{"cl":"100201710600","desc":["WINDOW_SCANNER_M3_ORANGE_CAEN","AR 코팅 ACYLE 1.0T","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100201710600","m3"]]}
+{"cl":"100200610110","desc":["WINDOW_SCANNER_M3_ORANGE_CAEN_B","ACYLE 1.0T 1D/2D","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200610110","m3"]]}
+{"cl":"100201710700","desc":["WINDOW_CAMERA_M3_ORANGE_CAEN","ACYLE_0.8T_ARCOATING","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100201710700","m3"]]}
+{"cl":"100200610120","desc":["WINDOW_CAMERA_M3_ORANGE_CAEN_B","AR 코팅 ACYLE 0.8T","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200610120","m3"]]}
+{"cl":"100200114300","desc":["COVER_BAT_M3_ORANGE_CAEN","PC_BLACK_BLASTER 69.0x46.1x6.1","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200114300","m3"]]}
+{"cl":"100200614200","desc":["GPS_ANTENNA_EMI_PAD_CAEN","NIKEL_SPONGE_5.7X12.0X7.0T","RFID\n(UHF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200614200","m3"]]}
+{"cl":"216080714001","desc":["ANTENNA RFID HF(TRA-1000)_ORANGE","LOOP ANTENNA_13.56MHz","RFID\n(HF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["216080714001","m3"]]}
+{"cl":"100200112701","desc":["RFID ANTENNA COVER M3 ORANGE 2D RFID","PC, BLACK","RFID\n(HF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200112701","m3"]]}
+{"cl":"953117053501","desc":["SCREW","SH, NYLOK, M 1.7 X 5.0, ï¿½3.5, BLACK, STAR T6x40\n/ (REAR COVER + FRONT COVER)","RFID\n(HF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["953117053501","m3"]]}
+{"cl":"175001710100","desc":["CAMERA WINDOW A MC-7500S, ORANGE","TRANSPARENT","RFID\n(HF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["175001710100","m3"]]}
+{"cl":"175001710500","desc":["CAMERA WINDOW B MC-7500S, ORANGE","BLACK","RFID\n(HF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["175001710500","m3"]]}
+{"cl":"175001710200","desc":["FLASH WINDOW A MC-7500S, ORANGE","TRANSPARENT","RFID\n(HF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["175001710200","m3"]]}
+{"cl":"175001710600","desc":["FLASH WINDOW B MC-7500S, ORANGE","BLACK","RFID\n(HF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["175001710600","m3"]]}
+{"cl":"310020201890","desc":["HAND STRAP ASSY 2D RFID M3 ORANGE","HAND STRAP","RFID\n(HF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["310020201890","m3"]]}
+{"cl":"310020201930","desc":["INTENNA ASSY(HSDPA/ 2D RFID)- M3 ORANGE","850/900/1800/1900/2100MHz, RKY1007-00000AA","RFID\n(HF)"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["310020201930","m3"]]}
+{"cl":"100100610601","desc":["INSULATOR TAPE B M3 SMART","CAPTON(단면접착 ), 14.0 X 8.0","1G"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100100610601","m3"]]}
+{"cl":"100201013900","desc":["EMI CUSHION CPU OX-10X","EMI CUSHION 30.0 X 13.5 X 1.6T","1G"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100201013900","m3"]]}
+{"cl":"100200614100","desc":["PAD LCD BRACKET A VGA M3 ORANGE","PORON(양면접착 )","1G"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200614100","m3"]]}
+{"cl":"100200614500","desc":["PAD LCD BRACKET B VGA M3 ORANGE","PORON(양면접착 )","1G"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200614500","m3"]]}
+{"cl":"100201014200","desc":["TAPE_EMI NICKEL_LCD_OX10","EMI TAPE 0.2T","1G"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100201014200","m3"]]}
+{"cl":"323601123000","desc":["PCB SMD, W/S","1G"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["323601123000","m3"]]}
+{"cl":"323622000001","desc":["M3 OX10 1G KEY PCB ASSY, V2.0_R1","PCB SMD, NUMERIC","1G\nRevise 2019.01.01"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["323622000001","m3"]]}
+{"cl":"323632000001","desc":["M3 OX10 1G KEY PCB ASSY, V2.0_R1","PCB SMD, QWERTY","1G\nRevise 2019.01.01"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["323632000001","m3"]]}
+{"cl":"221030601080","desc":["CABLE RF GSM/HSDPA 80mm_ORANGE/SMARTï¿½","C188-RF-097-2C-L080-BK-113","1G"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["221030601080","m3"]]}
+{"cl":"100200115901","desc":["WINDOW_CAMERA_ORANGE_PLUS_5M","Camera Window","1G"],"prop":[],"rel":[["partOf","OX10"]],"pn":[["100200115901","m3"]]}
+{"cl":"811100000031","desc":["PF","SL10 MAIN PCB ASSY_V1ï¿½","PHA.EMM3216110A, _MB_PCB_V11R1, 2G/ 32G"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000031","m3"]]}
+{"cl":"811100000220","desc":["HF\nPF","FRONT COVER SUB ASSY, SL10"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000220","m3"]]}
+{"cl":"217100210055","desc":["MODULE 2D SCANNER(SE4710SR)_ZEBRA"],"prop":[["material","METAL\nFR4\nGLASS"]],"rel":[["partOf","US20W"],["purpose","SE4710SR scanner module"]],"pn":[["217100210055","m3"]]}
+{"cl":"811100000231","desc":["PF","REAR COVER SUB ASSY, SL10_V1","SS3.T52BKY00A"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000231","m3"]]}
+{"cl":"811100000040","desc":["HF\nPF","SL10 KEY PCB ASSY"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000040","m3"]]}
+{"cl":"811100000110","desc":["HF\nPF","Volume/Scanner/Key FPCB","WF0.S2Z4973A01A, S2Z4973A"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000110","m3"]]}
+{"cl":"811100000120","desc":["HF\nPF","Power/Scanner/Key FPCB","WF0.S2Z4972A00A, S2Z4972A"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000120","m3"]]}
+{"cl":"811100000130","desc":["HF\nPF","Main Keypad Dome Sheet","WW9.S2Z5033A00A, S2Z5033A"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000130","m3"]]}
+{"cl":"811100000060","desc":["HF\nPF","Front Camera Module 2MP_V1.0","EZ9.CMY1027DK1A, CMY1027DK1-V1.0 (SP2509)"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000060","m3"]]}
+{"cl":"811100000070","desc":["HF\nPF","Rear Camera Module 8MP","EZ9.CMY1012MB0A, CMY1012MA1-V1.0"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000070","m3"]]}
+{"cl":"811100000080","desc":["HF\nPF","Motor COIN","WF6.KPD1020000A, KPD-FLAT-1020, 2pin Length 25mm"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000080","m3"]]}
+{"cl":"811100000090","desc":["HF\nPF","Receiver","WF2.DMSPJ02000A, DMSP1115BB-J-02"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000090","m3"]]}
+{"cl":"811100000050","desc":["SUB LED Flash PCB ASSY","PHA.M3SGD27000W, S2Z7688A, LED Flash : NLW2016-XGK1-B60>1.5A"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811100000050","m3"]]}
+{"cl":"811100000140","desc":["Main to Sub RF Cable"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811100000140","m3"]]}
+{"cl":"811100000150","desc":["HF\nPF","Main Keypad FPC_V1.0","WF0.S2Z5035A10A, S2Z5035A"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000150","m3"]]}
+{"cl":"811100000160","desc":["CABLE SL10 2D SCANNER (SE4710)","WF0.S2Z6897A00A, S2Z6897A"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811100000160","m3"]]}
+{"cl":"811100000161","desc":["PF","CABLE SL10 2D SCANNER (SE4710)","WF0.S2Z6897A00A, S2Z6897A"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000161","m3"]]}
+{"cl":"811100000170","desc":["HF\nPF","LTE(4G) Antenna"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000170","m3"]]}
+{"cl":"811100000180","desc":["HF\nPF","4G Diversity Antenna"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000180","m3"]]}
+{"cl":"811100000190","desc":["HF\nPF","GPS Antenna"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000190","m3"]]}
+{"cl":"811100000201","desc":["PF","WIFI+BT Antenna _V1.1"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000201","m3"]]}
+{"cl":"811100000250","desc":["HF\nPF","4G Main Antenna Bracket","SS7.6216215000A, PC+ABS, Black"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000250","m3"]]}
+{"cl":"811100000261","desc":["PF","Receiver Bracket"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000261","m3"]]}
+{"cl":"811100000240","desc":["HF\nPF","BATTERY Cover","SS9.8836051200A, SL10, BLACK"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000240","m3"]]}
+{"cl":"811100000210","desc":["HF\nPF","NFC Antenna_V1.0"],"prop":[],"rel":[["partOf","SL10PF"]],"pn":[["811100000210","m3"]]}
+{"cl":"811200000011","desc":["SL10K MAIN PCB ASSY_V1","PHA.M3T42MB00NA, M3_MB_PCB_V10, 2G/32G"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000011","m3"]]}
+{"cl":"811200000180","desc":["FRONT COVER SUB ASSY, SL10K"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000180","m3"]]}
+{"cl":"811200000191","desc":["REAR COVER SUB ASSY, SL10K_V1","SS3.M3T42BKB00A"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000191","m3"]]}
+{"cl":"811200000020","desc":["SL10K KEY PCB ASSY"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000020","m3"]]}
+{"cl":"811200000080","desc":["Volume Key FPC","WF0.S2Z7831A00A, S2Z7831A"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000080","m3"]]}
+{"cl":"811200000090","desc":["Power/Scanner/Key FPC","WF0.S2Z6003A00A, S2Z6003A"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000090","m3"]]}
+{"cl":"811200000100","desc":["ï¿½8112000","Main Keypad Dome Sheet"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000100","m3"]]}
+{"cl":"811200000050","desc":["Front Camera Module 2MP_V1.0","EZ9.0VX2646F00A, OVX2646-F-SP2509 V2.0"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000050","m3"]]}
+{"cl":"811200000060","desc":["Rear Camera Module 8MP","EZ9.0VX2648B00A, OVX2648-B-IMX219 V2.0"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000060","m3"]]}
+{"cl":"811200000030","desc":["Motor COIN","WF6.FPD1020001A, FPD-FCAT-1020, 2pin Length 25mm"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000030","m3"]]}
+{"cl":"811200000040","desc":["Receiver","WF2.DMSP111B00A, DMSP111B-01-WP"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000040","m3"]]}
+{"cl":"811200000120","desc":["Main Keypad FPC_V1.0","WF0.S2Z7612A00A, S2Z7612A"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000120","m3"]]}
+{"cl":"811200000130","desc":["LTE(4G) Antenna"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000130","m3"]]}
+{"cl":"811200000150","desc":["4G Diversity Antenna"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000150","m3"]]}
+{"cl":"811200000160","desc":["GPS Antenna"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000160","m3"]]}
+{"cl":"811200000140","desc":["WIFI+BT Antenna"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000140","m3"]]}
+{"cl":"811200000220","desc":["4G Main Antenna Bracket","SS7.5861715000A, PC+ABS, Black"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000220","m3"]]}
+{"cl":"811200000230","desc":["Receiver Bracket","SS7.624581M500A, PC+ABS, Black"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000230","m3"]]}
+{"cl":"811200000200","desc":["Scanner Bracket","SS7.3317011000A, PC+ABS, Black"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000200","m3"]]}
+{"cl":"811200000210","desc":["BATTERY Cover","SS9.9061516000A, SL10K, Black"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000210","m3"]]}
+{"cl":"811200000170","desc":["NFC Antenna"],"prop":[],"rel":[["partOf","SL10K"]],"pn":[["811200000170","m3"]]}
+{"cl":"2209A0210000","desc":["PCBA","T0452_A1_MB_V1.0B"],"prop":[["material","FR-4"]],"rel":[["partOf","SL20"],["purpose","motherboard"]],"pn":[["2209A0210000","m3"]]}
+{"cl":"2209A0210001","desc":["T0452_B1_MB_V1.0B","T0452_B1_MB_V1.0B","W"],"prop":[],"rel":[["partOf","SL20"]],"pn":[["2209A0210001","m3"]]}
+{"cl":"2209A3110000","desc":["PCBA","T0452_SUB_A1_V.1.0A"],"prop":[["material","FR-4"]],"rel":[["partOf","SL20"],["purpose","Subboard"]],"pn":[["2209A3110000","m3"]]}
+{"cl":"219069900000","desc":["T0452_TP+LCM","144.13*69.08, silk screen black, IC: GT1151QM; 5.45hd\nips(720*1440)NTSC:65%mi"],"prop":[["material","Glass\nFCCL\nMETAL"]],"rel":[["partOf","SL20"],["purpose","LCD"]],"pn":[["219069900000","m3"]]}
+{"cl":"100600110200","desc":["T0452_FRONT_ASSY","Material：LG_PC+10%GF ；Injection molding; color: black matte"],"prop":[["material","PC"]],"rel":[["partOf","SL20"],["purpose","FRONT_ASSY"]],"pn":[["100600110200","m3"]]}
+{"cl":"100600110300","desc":["T0452_REAR_ASSY","Material：LG_PC+10%GF；Injection molding; color: black matte"],"prop":[["material","PC"]],"rel":[["partOf","SL20"],["purpose","REAR_ASSY"]],"pn":[["100600110300","m3"]]}
+{"cl":"2209A9910000","desc":["T0452 Power FPC","FPC SIDE KEY POWER FPC,\nCopper leakage (shrapnel contact)"],"prop":[["material","FCCL"]],"rel":[["partOf","SL20"],["purpose","Power FPC"]],"pn":[["2209A9910000","m3"]]}
+{"cl":"2209A2210000","desc":["T0452 Flash FPC","FPC FLASH FPC, copper leakage (shrapnel touch)"],"prop":[["material","FCCL"]],"rel":[["partOf","SL20"],["purpose","Flash FPC"]],"pn":[["2209A2210000","m3"]]}
+{"cl":"2209A2610000","desc":["T0452 SPK FPC","FPC SPK FPC, copper leakage (shrapnel contact)"],"prop":[["material","FCCL"]],"rel":[["partOf","SL20"],["purpose","SPK FPC"]],"pn":[["2209A2610000","m3"]]}
+{"cl":"2209A2610001","desc":["T0452 POGO FPC","FPC POGO FPC(NEW),30Pin\nBTB connector"],"prop":[["material","FCCL"]],"rel":[["partOf","SL20"],["purpose","POGO FPC"]],"pn":[["2209A2610001","m3"]]}
+{"cl":"2209A3110001","desc":["T0452 Main FPC","FPC MAIN FPC,30Pin BTB\nConnector, MB end is partially blacked out"],"prop":[["material","FCCL"]],"rel":[["partOf","SL20"],["purpose","Main FPC"]],"pn":[["2209A3110001","m3"]]}
+{"cl":"217111000170","desc":["T0452_Back Camera 13M","Structure size: 8.5*8.5MM body height is 3.8MM 13M, BTB connection method\nS5K3L6XX03-FGX9"],"prop":[["material","Metal\nFCCL\nSUS"]],"rel":[["partOf","SL20"],["purpose","Back Cameraï¿½"]],"pn":[["217111000170","m3"]]}
+{"cl":"217111000171","desc":["T0452_Front Camera 5M","Structure size: 6.5*6.5MM this\nBody height is 3.8MM 5M ZIF connection mode, GC5035 COM"],"prop":[["material","Metal\nFCCL\nSUS"]],"rel":[["partOf","SL20"],["purpose","Front Camera"]],"pn":[["217111000171","m3"]]}
+{"cl":"223990000000","desc":["MOTOR","Lead type flat motor (stranded wire), diameter 8mm, body height 3mm, with foam, welding wire"],"prop":[["material","Copper wire+stainless steel"]],"rel":[["partOf","SL20"],["purpose","MOTOR"]],"pn":[["223990000000","m3"]]}
+{"cl":"221110201010","desc":["T0211 SCAN FPC SE4710","30Pin BTB connector OK-\n118RM030/2-35, sweep the dock\n27P ZIF"],"prop":[["material","FCCL"]],"rel":[["partOf","SL20"],["purpose","SCAN FPC"]],"pn":[["221110201010","m3"]]}
+{"cl":"221039999000","desc":["T0211 RF Cable","Fourth generation connector, wire diameter 0.81mm"],"prop":[["material","ï¿½plastic"]],"rel":[["partOf","SL20"],["purpose","RF Cable"]],"pn":[["221039999000","m3"]]}
+{"cl":"224020399001","desc":["T0121_Backup Battery","Structure size: 19.7*9.3MM thickness 5.1MM, 60mAh"],"prop":[["material","Lithium ion polymer"]],"rel":[["partOf","SL20"],["purpose","Backup Battery"]],"pn":[["224020399001","m3"]]}
+{"cl":"217101000172","desc":["B0881_V1.2_SCAN","Scan dock + decoder board + FFC, scan dock size: 22*10.78*8.0;"],"prop":[["material","METAL\nFR4\nGLASS"]],"rel":[["partOf","SL20"],["purpose","scanner module"]],"pn":[["217101000172","m3"]]}
+{"cl":"221119999001","desc":["T0452-SUB POGO FPC","FPC SUB POGO FPC"],"prop":[["material","FCCL"]],"rel":[["partOf","SL20"],["purpose","Used at the bottom of the terminal\nSUB POGO FPC"]],"pn":[["221119999001","m3"]]}
+{"cl":"100600110400","desc":["T0452_BATTERY_ASSY_5000","Material：LG_PC+10%GF; work\nArt: material free of spray color: black matte"],"prop":[["material","LG_PC+10%GF"]],"rel":[["partOf","SL20"],["purpose","battery cover"]],"pn":[["100600110400","m3"]]}
+{"cl":"216111119000","desc":["T0452_SCAN_ANT_ASSY","Material：PC ；Injection molding"],"prop":[["material","PC"]],"rel":[["partOf","SL20"],["purpose","SCAN_ANT_ASSY"]],"pn":[["216111119000","m3"]]}
+{"cl":"216111119003","desc":["T0452_SCAN_ANT_ASSY","Material：PC ；Injection molding","W"],"prop":[],"rel":[["partOf","SL20"]],"pn":[["216111119003","m3"]]}
+{"cl":"216001117000","desc":["T0452_SCAN_MAIN_ANT_ASS Y","Material：PC ;Injection molding"],"prop":[["material","PC"]],"rel":[["partOf","SL20"],["purpose","Bottom of terminal SCAN_MAIN_ANT_ASS Y"]],"pn":[["216001117000","m3"]]}
+{"cl":"100600110500","desc":["T0452_POGO_BRACKET_ASSY","Material：PC ;Injection molding"],"prop":[["material","PC"]],"rel":[["partOf","SL20"],["purpose","POGO_BRACKET_ASSY"]],"pn":[["100600110500","m3"]]}
+{"cl":"100600310100","desc":["T0452_SCAN_BTB_FRAME","Material： Magnesium alloy_die-casting molding;"],"prop":[["material","Magnesium alloy"]],"rel":[["partOf","SL20"],["purpose","SCAN_BTB_FRAME"]],"pn":[["100600310100","m3"]]}
+{"cl":"100600110600","desc":["T0452_CAM_LENS","Material: glass; thickness: T=0.7 MM; appearance treatment: silk screen;"],"prop":[["material","ACRYL"]],"rel":[["partOf","SL20"],["purpose","camera window"]],"pn":[["100600110600","m3"]]}
+{"cl":"100600410100","desc":["T0452_LIGHT_RUBBER","Material: Silicone; Injection molding; Color: black"],"prop":[["material","silicone"]],"rel":[["partOf","SL20"],["purpose","LIGHT_RUBBER"]],"pn":[["100600410100","m3"]]}
+{"cl":"100600410200","desc":["T0452_MAIN_MIC_RUBBER","Material: Silicone; Injection molding; Color: black"],"prop":[["material","silicone"]],"rel":[["partOf","SL20"],["purpose","MAIN_MIC_RUBBER"]],"pn":[["100600410200","m3"]]}
+{"cl":"100600410300","desc":["T0452_SECOND_MIC_RUBBER","Material: Silicone; Injection molding; Color: black"],"prop":[["material","silicone"]],"rel":[["partOf","SL20"],["purpose","SECOND_MIC_RUBBER"]],"pn":[["100600410300","m3"]]}
+{"cl":"100600410400","desc":["T0452_MAIN_RUBBER","Material: Silicone; Injection molding; Color: Red"],"prop":[["material","silicone"]],"rel":[["partOf","SL20"],["purpose","MAIN_RUBBER"]],"pn":[["100600410400","m3"]]}
+{"cl":"100600110700","desc":["T0452_SCAN_VOLUME_KEY_A SSY","Material: P+R; injection molding;\nColor: see process description or film for details"],"prop":[["material","P+R"]],"rel":[["partOf","SL20"],["purpose","SCAN_VOLUME_KEY_A SSY"]],"pn":[["100600110700","m3"]]}
+{"cl":"100600110800","desc":["T0452_SCAN_FUNCTION_KEY_ASSY","Material: P+R; injection molding; color: see process description or film for details"],"prop":[["material","P+R"]],"rel":[["partOf","SL20"],["purpose","SCAN_FUNCTION_KEY_ASSY"]],"pn":[["100600110800","m3"]]}
+{"cl":"100601010100","desc":["T0452_SPK_CONN","Material: conductive foam, single-sided adhesive"],"prop":[["material","EMI"]],"rel":[["partOf","SL20"],["purpose","SPK_CONN"]],"pn":[["100601010100","m3"]]}
+{"cl":"100601010200","desc":["T0452_REAR_CAM_CONN","Material: conductive foam, single-sided adhesive"],"prop":[["material","EMI"]],"rel":[["partOf","SL20"],["purpose","REAR_CAM_CONN"]],"pn":[["100601010200","m3"]]}
+{"cl":"100601010300","desc":["T0452_FH_MB_CONDUCTIVE","Material: conductive sponge, single-sided adhesive"],"prop":[["material","EMI"]],"rel":[["partOf","SL20"],["purpose","For attachment to the top of the front case"]],"pn":[["100601010300","m3"]]}
+{"cl":"100601010400","desc":["T0452_FH_SUB_CON","Material: Conductive cloth, double-sided conductive adhesive"],"prop":[["material","EMI"]],"rel":[["partOf","SL20"],["purpose","For attachment to the bottom of the front case"]],"pn":[["100601010400","m3"]]}
+{"cl":"100601010500","desc":["T0452_TP_ADH","Material: IP67 waterproof adhesive black; Model: Sekisui 5230_PSB"],"prop":[["material","PSB"]],"rel":[["partOf","SL20"],["purpose","LCD tape"]],"pn":[["100601010500","m3"]]}
+{"cl":"100601010600","desc":["T0452_CAM_LENS_ADH","Material: IP67 waterproof adhesive black; Model: Sekisui 5220_PSB"],"prop":[["material","PSB"]],"rel":[["partOf","SL20"],["purpose","camera window tape"]],"pn":[["100601010600","m3"]]}
+{"cl":"100601010700","desc":["T0452_MAIN_PCB_PC","Material: PC sheet, black, single-sided adhesive, black matte"],"prop":[["material","PC"]],"rel":[["partOf","SL20"],["purpose","Attached to the bottom of the motherboard"]],"pn":[["100601010700","m3"]]}
+{"cl":"100611010700","desc":["T0452_MAIN_PCB_PC","Material: PC sheet, black, single-sided adhesive, black matte","W"],"prop":[],"rel":[["partOf","SL20"]],"pn":[["100611010700","m3"]]}
+{"cl":"100601010800","desc":["T0452_PC-SPK","Material: PC sheet, black, single-sided adhesive"],"prop":[["material","PC"]],"rel":[["partOf","SL20"],["purpose","SCAN_ANT_ASSY Attachment Tape"]],"pn":[["100601010800","m3"]]}
+{"cl":"100601010900","desc":["T0452_rev_SPONGE","Material: PORON foam"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20"],["purpose","SCAN_ANT_ASSY Attachment Tape"]],"pn":[["100601010900","m3"]]}
+{"cl":"100601011000","desc":["T0452_SPK_SPONGE","Material: PORON foam"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20"],["purpose","SCAN_ANT_ASSY Attachment Tape"]],"pn":[["100601011000","m3"]]}
+{"cl":"100601011100","desc":["T0452_RF_SUS_SPONGE","Material: PORON foam"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20"],["purpose","Rear case attachment tape\nRF_SUS_SPONGE"]],"pn":[["100601011100","m3"]]}
+{"cl":"100601011200","desc":["T0452_LCM_FPC_BTB_SPONG E","Material: PORON foam"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20"],["purpose","LCM_FPC_BTB_SPONG"]],"pn":[["100601011200","m3"]]}
+{"cl":"100601011300","desc":["T0452_REAR_CAM_SPONGE","Material: PORON foam"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20"],["purpose","_REAR_CAM_SPONGE"]],"pn":[["100601011300","m3"]]}
+{"cl":"100601011400","desc":["T0452_MAIN_FPC_BTB_SPON GE","Material: PORON foam"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20"],["purpose","MAIN_FPC_BTB_SPON"]],"pn":[["100601011400","m3"]]}
+{"cl":"100601011500","desc":["T0452_REAR_CAM_BTB_SPON GE","Material: PORON foam"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20"],["purpose","_REAR_CAM_BTB_SPON"]],"pn":[["100601011500","m3"]]}
+{"cl":"100601011600","desc":["T0452_RF_MAIN_SPONGE","Material: PORON foam"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20"],["purpose","MAIN_SPONGE"]],"pn":[["100601011600","m3"]]}
+{"cl":"100601011700","desc":["T0452_FH_CAM_ZF_SPONGE","Material: PORON foam"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20"],["purpose","CAM_ZF_SPONGE"]],"pn":[["100601011700","m3"]]}
+{"cl":"100601011800","desc":["M3_BAT_SPONGE","Material: PORON foam"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20"],["purpose","BTB_SPONG"]],"pn":[["100601011800","m3"]]}
+{"cl":"100601011900","desc":["T0452_SCAN_COND","Material: Conductive cloth, single-sided conductive adhesive"],"prop":[["material","EMI"]],"rel":[["partOf","SL20"],["purpose","SCAN_ANT_ASSY Attachment Tape"]],"pn":[["100601011900","m3"]]}
+{"cl":"100601012000","desc":["T0452_BAT_ADH","Material: tesa 68547 double-sided tape, thickness: 0.1mm"],"prop":[["material","tesa 68547 double-sided tape"]],"rel":[["partOf","SL20"],["purpose","SCAN_ANT_ASSY Attachment Tape"]],"pn":[["100601012000","m3"]]}
+{"cl":"100601012100","desc":["T0452_SPK_GND_FOAM","Material: soft foam, free thickness 0.3MM, single side with glue\nGrid: 10*6.5"],"prop":[["material","soft foam"]],"rel":[["partOf","SL20"],["purpose","SCAN_ANT_ASSY Attachment Tape"]],"pn":[["100601012100","m3"]]}
+{"cl":"100601110100","desc":["Water proof label","Moisture sensitive paper, red, round, 3mm in diameter"],"prop":[["material","Water proof Felt"]],"rel":[["partOf","SL20"],["purpose","Water proof label"]],"pn":[["100601110100","m3"]]}
+{"cl":"100601012200","desc":["T0452_POGO_COND","Material: Wrapped conductive foam, single-sided conductive adhesive"],"prop":[["material","EMI"]],"rel":[["partOf","SL20"],["purpose","POGO_COND"]],"pn":[["100601012200","m3"]]}
+{"cl":"100601012300","desc":["T0452_SCAN FPC_COND","Material: Conductive cloth + PI high temperature tape, single-sided conductive adhesive"],"prop":[["material","PI"]],"rel":[["partOf","SL20"],["purpose","Scanner cable attachment tape"]],"pn":[["100601012300","m3"]]}
+{"cl":"100601012400","desc":["T0452_SCAN_MYLAR","Material: PI insulation tape"],"prop":[["material","PI"]],"rel":[["partOf","SL20"],["purpose","Scanner cable attachment tape"]],"pn":[["100601012400","m3"]]}
+{"cl":"216089914000","desc":["T0452 NFC","FPC thickness 0.3mm, NFC, black\n,Single-sided adhesive"],"prop":[["material","FPC"]],"rel":[["partOf","SL20"],["purpose","For attaching the battery cover"]],"pn":[["216089914000","m3"]]}
+{"cl":"221119999002","desc":["T0452_LCM FPC_COND","Material: Single-sided adhesive conductive cloth\nT=0.05mm size: 55.0*26.0"],"prop":[["material","EMI"]],"rel":[["partOf","SL20"],["purpose","T0452 Main FPC EMI tape"]],"pn":[["221119999002","m3"]]}
+{"cl":"100601012500","desc":["T0452_BATTERY_FOAM","Material: Free Height\nT=0.3mm, PSR soft foam size: 70.0*50.0"],"prop":[["material","PSR soft foam"]],"rel":[["partOf","SL20"],["purpose","For attaching the battery cover"]],"pn":[["100601012500","m3"]]}
+{"cl":"100601110200","desc":["Screw Label","D2.3mm, fragile, S type"],"prop":[["material","Fragile paper"]],"rel":[["partOf","SL20"],["purpose","Screw Label"]],"pn":[["100601110200","m3"]]}
+{"cl":"100601110300","desc":["T0452_JSBT_TB","Material: PET sheet, screen printing on the surface"],"prop":[["material","PET sheet"]],"rel":[["partOf","SL20"],["purpose","scanner phrase"]],"pn":[["100601110300","m3"]]}
+{"cl":"100600310200","desc":["T0452_SD_TOP","Material: Zinc alloy_die-casting+vacuum plating_black matte;"],"prop":[["material","Zinc alloy"]],"rel":[["partOf","SL20"],["purpose","wrist band holder"]],"pn":[["100600310200","m3"]]}
+{"cl":"913116353001","desc":["M1.6_SCREW_M1.6_3.5","Machine screw M1.6*L3.5 screw\nCap diameter 3.0*0.5MM cross round head surface galvanized black, plus resistance to falling"],"prop":[["material","steel"]],"rel":[["partOf","SL20"],["purpose","SCREW"]],"pn":[["913116353001","m3"]]}
+{"cl":"911116453001","desc":["T0121_M1.6-SCREW-T5","M1.6*L4.5 Screw cap diameter 3.0*0.8MM round head surface galvanized\nBlack matte, durable"],"prop":[["material","steel"]],"rel":[["partOf","SL20"],["purpose","SCREW"]],"pn":[["911116453001","m3"]]}
+{"cl":"912116453001","desc":["SCREW_M1.6*L4.5MM","M1.6*L4.5mm;Screw cap: diameter D=3.0mm*thickness T=0.5MM round head;\nSurface galvanized black; drop resistance: 270"],"prop":[["material","steel"]],"rel":[["partOf","SL20"],["purpose","SCREW"]],"pn":[["912116453001","m3"]]}
+{"cl":"912116253001","desc":["M1.6_SCREW_M1.6_2.5","Machine screw M1.6*L2.5 screw\nCap diameter 3.0*0.8MM cross round head surface galvanized black, plus drop resistance"],"prop":[["material","steel"]],"rel":[["partOf","SL20"],["purpose","SCREW"]],"pn":[["912116253001","m3"]]}
+{"cl":"911114252501","desc":["SCREW_M14_D25_H25","Machine screw M1.4*L2.5 MM\nScrew cap diameter 2.5*0.5MM round head, surface galvanized silver, plus drop resistance"],"prop":[["material","steel"]],"rel":[["partOf","SL20"],["purpose","SCREW"]],"pn":[["911114252501","m3"]]}
+{"cl":"100601110400","desc":["T0452_M3-Mobile_Device label","T0452_M3-Mobile_Device label"],"prop":[["material","Synthetic paper+printable matte film"]],"rel":[["partOf","SL20"],["purpose","Device label"]],"pn":[["100601110400","m3"]]}
+{"cl":"2209B0210000","desc":["SL20K_PCBA WIFI","T1622_A2_MAIN_V1.0B","WIFI"],"prop":[["material","FR-4"]],"rel":[["partOf","SL20KW"],["purpose","motherboard"]],"pn":[["2209B0210000","m3"]]}
+{"cl":"2209B0210001","desc":["SL20K_PCBA LTE","T1622_A2_MAIN_V1.0C","LTE"],"prop":[["material","FR-4"]],"rel":[["partOf","SL20KX"],["purpose","motherboard"]],"pn":[["2209B0210001","m3"]]}
+{"cl":"2209B0310000","desc":["SL20K_KEY_PCBA WIFI","T1622_A2_KEYPCBA_V1.0B","WIFI"],"prop":[["material","FR-4"]],"rel":[["partOf","SL20KW"],["purpose","keypcb"]],"pn":[["2209B0310000","m3"]]}
+{"cl":"2209B0310001","desc":["SL20K_KEY_PCBA LTE","T1622_A1_KEYPCBA_V1.0B","LTE"],"prop":[["material","FR-4"]],"rel":[["partOf","SL20KX"],["purpose","keypcb"]],"pn":[["2209B0310001","m3"]]}
+{"cl":"100700510100","desc":["T1621_KEY_DOME_SL20K","KEY_DOME"],"prop":[["material","PET, SUS"]],"rel":[["partOf","SL20K"],["purpose","DOME SHEET attached on keypcb"]],"pn":[["100700510100","m3"]]}
+{"cl":"2209B3110000","desc":["SL20K_SUB_PCBA","T1622_A1_TYPEC板_V1.0D"],"prop":[["material","FR-4"]],"rel":[["partOf","SL20K"],["purpose","Subboard"]],"pn":[["2209B3110000","m3"]]}
+{"cl":"100701010303","desc":["T1622_SUB PCB_conductive tape_SL20K","TAPE"],"prop":[["material","PSB"]],"rel":[["partOf","SL20K"],["purpose","SUB PCB conductive tape"]],"pn":[["100701010303","m3"]]}
+{"cl":"219050300000","desc":["T1622_LCD_TP_SL20K","LCD MODULE"],"prop":[["material","Glass\nFCCL\nMETAL"]],"rel":[["partOf","SL20K"],["purpose","LCD"]],"pn":[["219050300000","m3"]]}
+{"cl":"100701010308","desc":["T1622_LCD TAPE_SL20K","TAPE"],"prop":[["material","PSB"]],"rel":[["partOf","SL20K"],["purpose","LCD_TAPE"]],"pn":[["100701010308","m3"]]}
+{"cl":"100700110200","desc":["T1622_FRONT_HSG_ASSY","Injectionmoldinmg ; color : black matte"],"prop":[["material","PC"]],"rel":[["partOf","SL20K"],["purpose","FRONT_ASSY"]],"pn":[["100700110200","m3"]]}
+{"cl":"100700110300","desc":["T1622_REAR_ASSY WIFI","Injectionmolding ; color : black matte","WIFI"],"prop":[["material","PC"]],"rel":[["partOf","SL20KW"],["purpose","Rear case speaker related parts\nREAR_ASSY"]],"pn":[["100700110300","m3"]]}
+{"cl":"100700110301","desc":["T1622_REAR_ASSY LTE","Injectionmolding ; color : black matte","LTE"],"prop":[["material","PC"]],"rel":[["partOf","SL20KX"],["purpose","Rear case speaker related parts\nREAR_ASSY"]],"pn":[["100700110301","m3"]]}
+{"cl":"100701610300","desc":["T1622_Speaker Deco_2_SL20K","DECO"],"prop":[["material","PSB"]],"rel":[["partOf","SL20K"],["purpose","Rear case speaker related parts"]],"pn":[["100701610300","m3"]]}
+{"cl":"100701610301","desc":["T1622_Seaker Deco_1_SL20K","DECO"],"prop":[["material","Zinc alloy"]],"rel":[["partOf","SL20K"],["purpose","Rear case speaker related parts"]],"pn":[["100701610301","m3"]]}
+{"cl":"100701010309","desc":["T1622_Speaker Deco 1 tape _SL20K","TAPE"],"prop":[["material","PSB"]],"rel":[["partOf","SL20K"],["purpose","Rear case speaker related parts"]],"pn":[["100701010309","m3"]]}
+{"cl":"100700310300","desc":["T1622_MESH_FOR_SPK_L_SL20K","DECO"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20K"],["purpose","MESH FOR SPK L"]],"pn":[["100700310300","m3"]]}
+{"cl":"100700310400","desc":["T1622_MESH_FOR_SPK_R_SL20K","DECO"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20K"],["purpose","MESH FOR SPK R"]],"pn":[["100700310400","m3"]]}
+{"cl":"100700110600","desc":["T1622_Camera Lens_SL20K","Lens"],"prop":[["material","ACRYL"]],"rel":[["partOf","SL20K"],["purpose","Camera window"]],"pn":[["100700110600","m3"]]}
+{"cl":"100701010311","desc":["T1622_Camera Window tape_SL20K","Tape"],"prop":[["material","PSB"]],"rel":[["partOf","SL20K"],["purpose","Camera Window tape"]],"pn":[["100701010311","m3"]]}
+{"cl":"100701010312","desc":["T1622_Camera protection cushion_SL20K","Cushion"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20K"],["purpose","Camera Cushion"]],"pn":[["100701010312","m3"]]}
+{"cl":"100700910101","desc":["T1622_SCANNER_LENS_SL20K","LENZ"],"prop":[["material","ACRYL"]],"rel":[["partOf","SL20K"],["purpose","SCANNER WINDOW"]],"pn":[["100700910101","m3"]]}
+{"cl":"100701010400","desc":["T1622_ADHESIVE_FOR_SCANNER_LENS_SL20K","ADHESIVE_SCAN_WINDOW"],"prop":[["material","PSB"]],"rel":[["partOf","SL20K"],["purpose","ï¿½SCAN WINDOW TAPE"]],"pn":[["100701010400","m3"]]}
+{"cl":"217111000713","desc":["T1622_FRONT_CAM_5M","SL20K_FRONT_CAMERA"],"prop":[["material","Metal\nFCCL\nSUS"]],"rel":[["partOf","SL20K"],["purpose","Front Camera"]],"pn":[["217111000713","m3"]]}
+{"cl":"217111000714","desc":["T1622_REAR_CAM_13M","SL20K_REAR_CAM"],"prop":[["material","Metal\nFCCL\nSUS"]],"rel":[["partOf","SL20K"],["purpose","Back Cameraï¿½"]],"pn":[["217111000714","m3"]]}
+{"cl":"100701010318","desc":["T1622_FOAM_FOR_FLASH_SL20K","CUSHION"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20K"],["purpose","FOAM FOR FLASH"]],"pn":[["100701010318","m3"]]}
+{"cl":"100701010310","desc":["T1622_Flash protection cushion_SL20K","Cushion"],"prop":[["material","soft foam"]],"rel":[["partOf","SL20K"],["purpose","Flash protection cushion"]],"pn":[["100701010310","m3"]]}
+{"cl":"221110201011","desc":["T1622_SE4710_FPCB_SL20K","FPCB"],"prop":[["material","FCCL"]],"rel":[["partOf","SL20K"],["purpose","SCAN FPC"]],"pn":[["221110201011","m3"]]}
+{"cl":"221110300000","desc":["T1622_MAIN to SUB_FPCB_SL20K","40PIN"],"prop":[["material","FCCL"]],"rel":[["partOf","SL20K"],["purpose","Bottom PCB Top PCB connection cable"]],"pn":[["221110300000","m3"]]}
+{"cl":"100701010500","desc":["T1622_MAIN_KEY_FILM","Film"],"prop":[["material","PSB"]],"rel":[["partOf","SL20K"],["purpose","Waterproof Key Film"]],"pn":[["100701010500","m3"]]}
+{"cl":"100700610100","desc":["T1622_30KEY PAD_SL20K","KEYPAD"],"prop":[["material","PC, silicone"]],"rel":[["partOf","SL20K"],["purpose","KEYPAD"]],"pn":[["100700610100","m3"]]}
+{"cl":"100700110400","desc":["T1622_30Key Plate_SL20K","Plate"],"prop":[["material","PC"]],"rel":[["partOf","SL20K"],["purpose","PLATE for fixing KEY PAD"]],"pn":[["100700110400","m3"]]}
+{"cl":"100701010316","desc":["T1622_30Key Sheet_SL20K","Sheet"],"prop":[["material","PC"]],"rel":[["partOf","SL20K"],["purpose","SHEET attached to PLATE"]],"pn":[["100701010316","m3"]]}
+{"cl":"214210600000","desc":["T1621 Kato","sim card tray","LTE"],"prop":[["material","PC"]],"rel":[["partOf","SL20KX"],["purpose","sim card tray"]],"pn":[["214210600000","m3"]]}
+{"cl":"221031801006","desc":["T1522-coaxial line","RF CABLE","LTE"],"prop":[["material","ï¿½plastic"]],"rel":[["partOf","SL20KX"],["purpose","RF CABLE"]],"pn":[["221031801006","m3"]]}
+{"cl":"224020399002","desc":["T1622_Backup Battery_SL20K","SL20K"],"prop":[["material","Lithium ion polymer"]],"rel":[["partOf","SL20K"],["purpose","BACKUP BATTERY"]],"pn":[["224020399002","m3"]]}
+{"cl":"100701010317","desc":["T1622_FRAME_FOR_BACKUP_BTY_SL20K","Battery Connect sheet"],"prop":[["material","soft foam"]],"rel":[["partOf","SL20K"],["purpose","BACKUP BATTERY Cushion"]],"pn":[["100701010317","m3"]]}
+{"cl":"223990000001","desc":["SL20K_MOTOR"],"prop":[["material","Copper wire+stainless steel"]],"rel":[["partOf","SL20K"],["purpose","Vibration motor"]],"pn":[["223990000001","m3"]]}
+{"cl":"100700410200","desc":["T1622_USB_RUBBER_SL20K","USB_RUBBER"],"prop":[["material","P+R"]],"rel":[["partOf","SL20K"],["purpose","USB RUBBER"]],"pn":[["100700410200","m3"]]}
+{"cl":"100701010300","desc":["T1622_LCD_conductive tape_SL20K","TAPE(2)"],"prop":[["material","EMI"]],"rel":[["partOf","SL20K"],["purpose","LCD conductive tape"]],"pn":[["100701010300","m3"]]}
+{"cl":"100701010301","desc":["T1622_conductive tape_SL20K","TAPE"],"prop":[["material","EMI"]],"rel":[["partOf","SL20K"],["purpose","conductive tape"]],"pn":[["100701010301","m3"]]}
+{"cl":"100701010302","desc":["T1622_KEY_conductive tape_SL20K","TAPE"],"prop":[["material","EMI"]],"rel":[["partOf","SL20K"],["purpose","KEY conductive tape"]],"pn":[["100701010302","m3"]]}
+{"cl":"100701010304","desc":["T1622_Connector Cusion_SL20K","CUSION"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20K"],["purpose","Connector Cusion"]],"pn":[["100701010304","m3"]]}
+{"cl":"100701010305","desc":["T1622_Main Connector cusion_SL20K","CUSION"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20K"],["purpose","Main Connector cusion"]],"pn":[["100701010305","m3"]]}
+{"cl":"100701010306","desc":["T1622_FRONT_Conductive sheet_SL20K","SHEET"],"prop":[["material","EMI"]],"rel":[["partOf","SL20K"],["purpose","FRONT Conductive sheet"]],"pn":[["100701010306","m3"]]}
+{"cl":"100701010307","desc":["T1622_MIC waterproof tape_SL20K","TAPE"],"prop":[["material","PORON foam"]],"rel":[["partOf","SL20K"],["purpose","MIC waterproof tape"]],"pn":[["100701010307","m3"]]}
+{"cl":"100700110500","desc":["T1622_LIGHT_GUIDE_COLUMN","LIGHT_GUIDE"],"prop":[["material","ACRYL"]],"rel":[["partOf","SL20K"],["purpose","LIGHT GUIDE COLUMN"]],"pn":[["100700110500","m3"]]}
+{"cl":"100700410100","desc":["T1622_RUBBER_FOR_MAIN_MIC","RUBBER"],"prop":[["material","silicone"]],"rel":[["partOf","SL20K"],["purpose","RUBBER FOR MAIN MIC"]],"pn":[["100700410100","m3"]]}
+{"cl":"100700410101","desc":["T1622_RUBBER_FOR_P_SENSOR","SENSOR RUBBER"],"prop":[["material","silicone"]],"rel":[["partOf","SL20K"],["purpose","sensor guide"]],"pn":[["100700410101","m3"]]}
+{"cl":"100700410102","desc":["T1622_RUBBER_FRO_SUB_MIC_SL20K","Mic Rubber"],"prop":[["material","silicone"]],"rel":[["partOf","SL20K"],["purpose","RUBBER FRO SUB MIC"]],"pn":[["100700410102","m3"]]}
+{"cl":"100700410400","desc":["T1622_Main Rubber_SL20K","Rubber"],"prop":[["material","silicone"]],"rel":[["partOf","SL20K"],["purpose","Main Rubber"]],"pn":[["100700410400","m3"]]}
+{"cl":"100700110700","desc":["T1622_Scan_Volume key_SL20K","Button"],"prop":[["material","P+R"]],"rel":[["partOf","SL20K"],["purpose","Scan Volume key"]],"pn":[["100700110700","m3"]]}
+{"cl":"100700110800","desc":["T1622_Scan_Function Key_SL20K","Button"],"prop":[["material","P+R"]],"rel":[["partOf","SL20K"],["purpose","Scan Function Key"]],"pn":[["100700110800","m3"]]}
+{"cl":"100700110900","desc":["T1622_HOLDER_FOR_SPK_SL20K","Bracket for Speaker"],"prop":[["material","PC"]],"rel":[["partOf","SL20K"],["purpose","HOLDER FOR SPK"]],"pn":[["100700110900","m3"]]}
+{"cl":"100701010319","desc":["T1622_FOAM_FOR_SPK_SL20K","TAPE"],"prop":[["material","PSB"]],"rel":[["partOf","SL20K"],["purpose","FOAM FOR SPK"]],"pn":[["100701010319","m3"]]}
+{"cl":"100701010313","desc":["T1622_MAIN FPC Protection Cushion_SL20K","Cushion"],"prop":[["material","soft foam"]],"rel":[["partOf","SL20K"],["purpose","MAIN FPC Protection Cushion"]],"pn":[["100701010313","m3"]]}
+{"cl":"100701010314","desc":["T1622_Scanner Protection Cushion_SL20K","Cushion"],"prop":[["material","soft foam"]],"rel":[["partOf","SL20K"],["purpose","Scanner Protection Cushion"]],"pn":[["100701010314","m3"]]}
+{"cl":"100701010315","desc":["T1622_RF Protection Cushion_SL20K","Cushion"],"prop":[["material","soft foam"]],"rel":[["partOf","SL20K"],["purpose","RF Protection Cushion"]],"pn":[["100701010315","m3"]]}
+{"cl":"100701010502","desc":["T1622_Handpiece Mylar","Cushion"],"prop":[["material","soft foam"]],"rel":[["partOf","SL20K"]],"pn":[["100701010502","m3"]]}
+{"cl":"2209A2610002","desc":["T1622_POGO FPC_SL20K","POGO FPCB"],"prop":[["material","FCCL"]],"rel":[["partOf","SL20K"],["purpose","POGO FPC"]],"pn":[["2209A2610002","m3"]]}
+{"cl":"216040500008","desc":["T1622_MAIN_ANT_FRAME_ASM_WIFI","Antenna","WIFI"],"prop":[["material","PC"]],"rel":[["partOf","SL20KW"],["purpose","MAIN ANT"]],"pn":[["216040500008","m3"]]}
+{"cl":"216001117001","desc":["T1622_SCANNER_HOLDER_WIFI_ANT_SL20K","Scanner bracket / WIFI Ant","WIFI"],"prop":[["material","PC"]],"rel":[["partOf","SL20KW"],["purpose","SCANNER HOLDER WIFI ANT"]],"pn":[["216001117001","m3"]]}
+{"cl":"216040500009","desc":["T1622_Main antenna bracket assembly","Antenna","LTE"],"prop":[["material","PC"]],"rel":[["partOf","SL20KX"],["purpose","MAIN ANT"]],"pn":[["216040500009","m3"]]}
+{"cl":"216001117002","desc":["T1622_Sweeping dock bracket","Scanner bracket / WIFI Ant","LTE"],"prop":[["material","PC"]],"rel":[["partOf","SL20KX"],["purpose","SCANNER HOLDER WIFI ANT"]],"pn":[["216001117002","m3"]]}
+{"cl":"100701010100","desc":["T1622_E_FOAM_FOR_SCANNER_SL20K","EMI CUSHION"],"prop":[["material","EMI"]],"rel":[["partOf","SL20K"],["purpose","E FOAM FOR SCANNER"]],"pn":[["100701010100","m3"]]}
+{"cl":"100701010200","desc":["T1622_E_FOAM_FOR_BACK_CAM_SL20K","CUSHION"],"prop":[["material","EMI"]],"rel":[["partOf","SL20K"],["purpose","E FOAM FOR BACK CAM"]],"pn":[["100701010200","m3"]]}
+{"cl":"100701110100","desc":["T1622_Water proof label","Moisture sensitive paper"],"prop":[["material","Water proof Felt"]],"rel":[["partOf","SL20K"],["purpose","Water proof label"]],"pn":[["100701110100","m3"]]}
+{"cl":"100701110200","desc":["T1622_Screw Label_SL20K","Label"],"prop":[["material","Fragile paper"]],"rel":[["partOf","SL20K"],["purpose","Screw Label"]],"pn":[["100701110200","m3"]]}
+{"cl":"911112253001","desc":["M1.2*L2.5","Screw(4)"],"prop":[["material","steel"]],"rel":[["partOf","SL20K"],["purpose","SCREW"]],"pn":[["911112253001","m3"]]}
+{"cl":"911114303001","desc":["M1.4*L3_BLACK","Screw(12)"],"prop":[["material","steel"]],"rel":[["partOf","SL20K"],["purpose","SCREW"]],"pn":[["911114303001","m3"]]}
+{"cl":"962116452802","desc":["CM1.6X4.5(H=2.8X0.95;T-5)","Screw(2)"],"prop":[["material","steel"]],"rel":[["partOf","SL20K"],["purpose","SCREW"]],"pn":[["962116452802","m3"]]}
+{"cl":"962116552801","desc":["CM1.6X5.5(H=2.8X0.8;T-5)","Screw(12)"],"prop":[["material","steel"]],"rel":[["partOf","SL20K"],["purpose","SCREW"]],"pn":[["962116552801","m3"]]}
+{"cl":"911116353002","desc":["M1.6*L3.5","Screw(6)"],"prop":[["material","steel"]],"rel":[["partOf","SL20K"],["purpose","SCREW"]],"pn":[["911116353002","m3"]]}
+{"cl":"911114252002","desc":["SCREW_M14_D25_H20","Screw(2)"],"prop":[["material","steel"]],"rel":[["partOf","SL20K"],["purpose","SCREW"]],"pn":[["911114252002","m3"]]}
+{"cl":"100700310200","desc":["T1622_Strap Guide_SL20K","Handstrap"],"prop":[["material","Zinc alloy"]],"rel":[["partOf","SL20K"],["purpose","Strap Guide"]],"pn":[["100700310200","m3"]]}
+{"cl":"100701110300","desc":["T1622_Laser Caution label_SL20K","Label"],"prop":[["material","PET sheet"]],"rel":[["partOf","SL20K"],["purpose","Laser Caution label"]],"pn":[["100701110300","m3"]]}
+{"cl":"100701110400","desc":["T1622_M3-MOBILE_Device label_SL20KX","Label","X"],"prop":[["material","Synthetic paper+printable matte film"]],"rel":[["partOf","SL20KX"],["purpose","Device label X"]],"pn":[["100701110400","m3"]]}
+{"cl":"100701110401","desc":["T1622_M3-MOBILE_Device label_SL20KW","Label","W"],"prop":[["material","Synthetic paper+printable matte film"]],"rel":[["partOf","SL20KW"],["purpose","Device label W"]],"pn":[["100701110401","m3"]]}
+{"cl":"323702303001","desc":["SM10 LTE_MAIN PCB ASSY V2.3","PCB SMD,N/W/S/C/B/P/R"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["323702303001","m3"]]}
+{"cl":"3238T2300000","desc":["M3 SM15 SUB PCB ASSY V2.3"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["3238T2300000","m3"]]}
+{"cl":"3235U2300000","desc":["M3 SM15 KEY PCB ASSY V2.3"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["3235U2300000","m3"]]}
+{"cl":"217110510074","desc":["MODULE CAMERA 8M_SM10 LTE","CLOV80-CB01-A0"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["217110510074","m3"]]}
+{"cl":"217110560078","desc":["GC50-8005-F0","SM10 LTE(WIN10) FRONT CAMERA 5M"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["217110560078","m3"]]}
+{"cl":"3235W1200000","desc":["SM10_AUDIO JACK FPCB V1.2","AUDIO JACK PCB SMD"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["3235W1200000","m3"]]}
+{"cl":"100240510101","desc":["METAL_DOME_SHEET_SM10","DOME+SHEET+TAPE"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100240510101","m3"]]}
+{"cl":"219040000002","desc":["NTL50WHDLP134","MODULE LCD NH(5.0\")_SM10 LTE"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["219040000002","m3"]]}
+{"cl":"100241010103","desc":["TAPE_LCM_sekisuwi_a","양면 TAPE/LCD_ 세끼스위방수테잎 0.4t 2 장사용 0.8t"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100241010103","m3"]]}
+{"cl":"310024200304","desc":["FRONT COVER SUB ASSY_SM15","사출 + 부자재 +RUBBER+ 기타 / 12-21 일 리비젼 / 인서트변경 / 블랙 90 프로"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["310024200304","m3"]]}
+{"cl":"310024200407","desc":["REAR COVER SUB ASSY_SM10","사출 + 부자재 +RUBBER+ 기타 / 2016 년 12 월 리비젼 /ETHERNET/ 오삽방지"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["310024200407","m3"]]}
+{"cl":"310024200408","desc":["REAR COVER SUB ASSY_SM10","사출 + 부자재 +RUBBER+ 기타 / 2016 년 12 월 리비젼 /ETHERNET/ 오삽방지 /none scanner"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["310024200408","m3"]]}
+{"cl":"100240111201","desc":["WINDOW_CAMERA_SM10","pc투명"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100240111201","m3"]]}
+{"cl":"310024070201","desc":["TERMINAL_10PIN_SM10_PISTOL","사출 + 포고핀 10pin"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["310024070201","m3"]]}
+{"cl":"100240410701","desc":["ORING_10PIN_PISTOL_SM10","o링 / 고무 / 실리콘"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240410701","m3"]]}
+{"cl":"213010200007","desc":["SPEAKER(SHT2008F-52P)_SM10","SPEAKER_8ohm_1.0W"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["213010200007","m3"]]}
+{"cl":"100240210201","desc":["BKT_SPK_SM10","press"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240210201","m3"]]}
+{"cl":"100270210400","desc":["METAL_BAR_STEEL_SM20","STEEL(SPCC)+무광BLACK 도장"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100270210400","m3"]]}
+{"cl":"100270210300","desc":["METAL_BAR_AL_SM20","AL+무광 BLACK 도장"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100270210300","m3"]]}
+{"cl":"100271013000","desc":["TAPE_METAL_BAR_SM20","TAPE_METAL_BAR"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100271013000","m3"]]}
+{"cl":"100240110702","desc":["SCAN_CAM_BKT_1D_SE955","pc난연 _se955 장착용 / 후레쉬관련수정"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100240110702","m3"]]}
+{"cl":"100240110802","desc":["SCAN_CAM_BKT_2D_SE4500","pc난연 _se4500 장착용 / 후레쉬관련수정"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100240110802","m3"]]}
+{"cl":"217100280044","desc":["MODULE SCANNER(SE-4750SR)_ZEBRA","2D SCANNER"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["217100280044","m3"]]}
+{"cl":"221110900022","desc":["CABLE FPCB_SM10 SCANNER 1D(SE955, SE965) V1.2","SE955(SE965) TO MAIN"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["221110900022","m3"]]}
+{"cl":"221110900033","desc":["CABLE FPCB_SM10 SCANNER 2D(SE4500, SE4750) V1.","SE4500(SE4750) TO MAIN"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["221110900033","m3"]]}
+{"cl":"221110900038","desc":["CABLE FPCB_SM15 2D SCANNER (SE4750) V1.2","SE4750 TO MAIN"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["221110900038","m3"]]}
+{"cl":"221110900011","desc":["CABLE FPCB_SM10 MAIN TO SUB V1.2","MAIN TO SUB"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["221110900011","m3"]]}
+{"cl":"221110900077","desc":["CABLE FPCB_SM10 LTE MODULE TO MAIN I/O V1.0","3PS021-B1-FPC_V1.00_PCB"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["221110900077","m3"]]}
+{"cl":"216040500002","desc":["ANTENNA WLAN+BT_SM10","ANTENNA_WLAN+BT"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["216040500002","m3"]]}
+{"cl":"216040500003","desc":["ANTENNA GPS_SM10","ANTENNA_GPS"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["216040500003","m3"]]}
+{"cl":"221110900055","desc":["CABLE FPCB_SM10 DC CHARGER V1.2","DC CHARGER"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["221110900055","m3"]]}
+{"cl":"3235V1400000","desc":["SM10_FRONT FPCB V1.4","SENSOR, MIC, LED PCB SMD"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["3235V1400000","m3"]]}
+{"cl":"100241012001","desc":["TAPE_EMI_FRONTFPCB_SM10","30.7X16X0.1T"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100241012001","m3"]]}
+{"cl":"100240610101","desc":["4KEY_ASSY","key_rubber_ 레이져인쇄 _ 어셈블리"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100240610101","m3"]]}
+{"cl":"310024200901","desc":["FRONT COVER KEY SUB ASSY","MOLD+ 방수 PAD\n# INCLUDE(21,22)"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["310024200901","m3"]]}
+{"cl":"100241610301","desc":["SHEET DECO FRONT L","아크릴 + 양면 TAPE"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241610301","m3"]]}
+{"cl":"100241610401","desc":["SHEET DECO FRONT R","아크릴 데코 + 양면 TAPE"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241610401","m3"]]}
+{"cl":"100240110601","desc":["BUTTON_SCAN","pc_난연 _ 우레탄이중사출"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100240110601","m3"]]}
+{"cl":"100240110901","desc":["BUTTON_POWER","pc 난연 _ 전원버튼"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240110901","m3"]]}
+{"cl":"100240111001","desc":["BUTTON_FUNCTION","pc 난연 _ 기능버튼"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240111001","m3"]]}
+{"cl":"100240111101","desc":["BUTTON_VOLUME","pc 난연 _ 볼륨버튼"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240111101","m3"]]}
+{"cl":"216040500006","desc":["HWI-LTMULTI-MSM10","LTE MAIN ANTENNA"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["216040500006","m3"]]}
+{"cl":"221031801001","desc":["CABLE RF 40mm_SM10 LTE GPS","SCMP(G)-B081G3-SCMP(G)-40"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["221031801001","m3"]]}
+{"cl":"221031801002","desc":["CABLE RF 30mm_SM10 LTE WLAN 5G","SCMP(G)-B081G3-SCMP(G)-30"],"prop":[["material","ï¿½plastic"]],"rel":[["partOf","UL20"],["purpose","WLAN 5G"]],"pn":[["221031801002","m3"]]}
+{"cl":"221031801000","desc":["CABLE RF 71.5mm(R)_SM10 LTE MAIN","SCMP(G)-B081G3-SCMP(G)-71.5R"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["221031801000","m3"]]}
+{"cl":"100241011801","desc":["TAPE_EMI_LCD_SM10","50X70X0.1T"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241011801","m3"]]}
+{"cl":"171000610300","desc":["COLD PLATE INSULATOR TAPE MC-7100S","SP65, 청색 , 11.0X20.0X0.05T,ï¿½"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["171000610300","m3"]]}
+{"cl":"100241010801","desc":["GASKET_EMI_SUBBD_A","EMI+SPONGE+GASKET+ 전도 TAPE"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241010801","m3"]]}
+{"cl":"100241012201","desc":["TAPE_EMI_SUBFPCB_SM10","43.5X62.7X0.1T"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100241012201","m3"]]}
+{"cl":"100241110101","desc":["PRODUCT_LABEL_SM10","제품라벨"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241110101","m3"]]}
+{"cl":"213010200200","desc":["RECEIVER(SHT-1206BR-33P)_SM10","RECEIVER_32ohm"],"prop":[["material","METAL ( in coil )"]],"rel":[["partOf","UL20"],["purpose","RECEIVER"]],"pn":[["213010200200","m3"]]}
+{"cl":"100241013701","desc":["PAD_RECEIVER_SM10","hm 2.05t"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241013701","m3"]]}
+{"cl":"100240410402","desc":["RUBBER SENSOR_SM10","6.5X5.0X4.0T RUBBER 실리콘 80도"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240410402","m3"]]}
+{"cl":"100241010901","desc":["CUSHION_REAR_CAMERA","LM 8.5X8.5X3.0T"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241010901","m3"]]}
+{"cl":"100241013801","desc":["SHEET_SCANNER BKT_SM10","pc sheet 0.4t"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241013801","m3"]]}
+{"cl":"100241010401","desc":["GASKET_SMODULE_SM10","EMI+SPONGE+GASKET+전도 TAPE 30X5X1.5T"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100241010401","m3"]]}
+{"cl":"100241011001","desc":["CUSHION_FRONT_CAMERA","LM 6.0X6.0X3.5"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241011001","m3"]]}
+{"cl":"100241110401","desc":["label_dummy_bd","유포지 _ 블랙 23.5x6.5x0.1t"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241110401","m3"]]}
+{"cl":"167000614200","desc":["WLAN CUSHION(30AG) M3 T","PORON HM 2.5T+SK800( 단면접착 ) 12.0X8.0"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["167000614200","m3"]]}
+{"cl":"100241012401","desc":["CUSHION_CONNECTOR_SUPPORT","PORON HM 3.0X9.0X1.0T"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100241012401","m3"]]}
+{"cl":"100241011101","desc":["CUSHION_SUBCON","PORN LM"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100241011101","m3"]]}
+{"cl":"100241013101","desc":["CUSHION_PROTECT_SCANNER_SM10","12x20x2.5t psr"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100241013101","m3"]]}
+{"cl":"100241013301","desc":["SHEET MOTOR SM10LTE","PC SHEET 5X3X0.2T"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100241013301","m3"]]}
+{"cl":"100241013401","desc":["EMI GASKET USB SM10LTE","EMI GASKET 6.5X9.0X5T"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241013401","m3"]]}
+{"cl":"100241013501","desc":["EMI_TAPE_USB_SM10LTE","EMI TAPE 0.1T 11X5"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241013501","m3"]]}
+{"cl":"100241110201","desc":["SCANNER_LABEL_SM10","유포지 스케너 주의 라벨"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241110201","m3"]]}
+{"cl":"100241013601","desc":["CUSHION_LCD_SM10","HM2.5T"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["100241013601","m3"]]}
+{"cl":"180000610400","desc":["RFID HOLE SHEET MM3 / FRONT SHEET","PC SHEET(단면접착), 1.7X12.5, 0.15"],"prop":[],"rel":[["partOf","SM10LTE"]],"pn":[["180000610400","m3"]]}
+{"cl":"100240110302","desc":["COVER_BATTERY_STANDARD_sm15","pc_ 난연 _ 표준배터리형"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240110302","m3"]]}
+{"cl":"216040500004","desc":["ANTENNA NFC STD_SM10","ANTENNA_NFC STD"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["216040500004","m3"]]}
+{"cl":"100240110402","desc":["COVER_BATTERY_EXTENSION_sm15","pc_ 난연 _ 대용량배터리형"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240110402","m3"]]}
+{"cl":"216040500005","desc":["ANTENNA NFC EXT_SM10","ANTENNA_NFC EXT"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["216040500005","m3"]]}
+{"cl":"911214042501","desc":["SCREW","BH T 1.4 X 4.0, ï¿½2.5, BLACK"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["911214042501","m3"]]}
+{"cl":"954117063501","desc":["SCREW","SH, NYLOK, M 1.7 X 6.0, ï¿½3.5, BLACK, STAR T6x40,방수링"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["954117063501","m3"]]}
+{"cl":"911214032501","desc":["SCREW","BH T 1.4 X 3.0, ï¿½2.5, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","US20W"],["purpose","FRONT COVER and FPCB SENSOR assembly screws"]],"pn":[["911214032501","m3"]]}
+{"cl":"911217043501","desc":["SCREW","BH T 1.7 X 4.0, ï¿½3.5, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","US20W"],["purpose","REAR COVER and SUB PBA assembly screws"]],"pn":[["911217043501","m3"]]}
+{"cl":"911220044001","desc":["SCREW","BH T 2.0 X 4.0, ï¿½4.0, BLACK"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["911220044001","m3"]]}
+{"cl":"913117043501","desc":["SCREW","BH M 1.7 X 4.0, ï¿½3.5, BLACK (nylock)"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["913117043501","m3"]]}
+{"cl":"324003105120","desc":["M3 SM15W MAIN PCB ASSY, V3.1","PBA, W / S / C / B / P / R"],"prop":[],"rel":[["partOf","SM15W"]],"pn":[["324003105120","m3"]]}
+{"cl":"323903103122","desc":["M3 SM15N MAIN PCB ASSY, V3.1"],"prop":[],"rel":[["partOf","SM15N"]],"pn":[["323903103122","m3"]]}
+{"cl":"324103103126","desc":["M3 SM15X MAIN PCB ASSY, V3.1","PBA, N / W / S / C / B / P / R, PN553(AN8~10), Camera LDO 수정"],"prop":[],"rel":[["partOf","SM15X"]],"pn":[["324103103126","m3"]]}
+{"cl":"219040000010","desc":["TD050FHM-A0_M3","SM15 MODULE LCD KDX(5.0\"), FHD/600cd/OCA/, LOGO : M3"],"prop":[],"rel":[["partOf","SM15X"]],"pn":[["219040000010","m3"]]}
+{"cl":"100241014300","desc":["Emi Cushion lcd_sm15","EMI 전도 양면 TPAE_fhd 에 사용"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100241014300","m3"]]}
+{"cl":"217110560070","desc":["SAA6-SM15-A3","REAR CAMERA MODULE_16M_PDAF"],"prop":[],"rel":[["partOf","SM15X"]],"pn":[["217110560070","m3"]]}
+{"cl":"217110560071","desc":["SM15 REAR CAMERA MODULE_13M","CLSAA3-SM15-A0 ( 13M )"],"prop":[],"rel":[["partOf","SM15N/W"]],"pn":[["217110560071","m3"]]}
+{"cl":"217110560079","desc":["SM15 FRONT CAMERA MODULE_5M","GC50-SM15-F2"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["217110560079","m3"]]}
+{"cl":"310024200411","desc":["REAR COVER SUB ASSY_SM15_rev11","사출+부자재+RUBBER+기타 simcard 소켓변경"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["310024200411","m3"]]}
+{"cl":"310024200412","desc":["REAR COVER SUB ASSY_SM15_rev11_Block scanner wind","사출 + 부자재 +RUBBER+ 기타 /ETHERNET/ 오삽방지 /Spray"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["310024200412","m3"]]}
+{"cl":"3238V1000000","desc":["M3 SM20 FRONT SENSOR FPCB V1.0","SMD SENSOR, MIC, LEDï¿½ / possible use sm15"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["3238V1000000","m3"]]}
+{"cl":"100240111202","desc":["WINDOW_CAMERA_SM10_ECO","pc투명_AR코팅_전용/ FLSAH부인쇄삭제 / 니토 아크릴"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240111202","m3"]]}
+{"cl":"100241610302","desc":["SHEET DECO FRONT L_titan","SM15 DECO SHEET"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100241610302","m3"]]}
+{"cl":"100241610402","desc":["SHEET DECO FRONT R_titan","SM15 DECO SHEET"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100241610402","m3"]]}
+{"cl":"310024200902","desc":["FRONT COVER KEY SUB ASSY_SM15","MOLD+ 방수 PAD/spray"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["310024200902","m3"]]}
+{"cl":"100240110602","desc":["BUTTON_SCAN_SM15","블랙 90 프로"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240110602","m3"]]}
+{"cl":"221031801003","desc":["CABLE RF 73mm(R)_SM15","73R"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["221031801003","m3"]]}
+{"cl":"216070520000","desc":["HWI-GPS-SM15","GPS, GLONASS 1560~1615.5MHz"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["216070520000","m3"]]}
+{"cl":"216040500007","desc":["HWI-LTMULTI-DSM10","LTE DIV ANTENNA"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["216040500007","m3"]]}
+{"cl":"221110900012","desc":["CABLE FPCB_SM15 MAIN TO SUB V2.0","MAIN TO SUB"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["221110900012","m3"]]}
+{"cl":"217110210056","desc":["MODULE 2D SCANNER(SE4750SR_LM100R)_ZEBRA","2D SCANNER, ZEBRA, LED, MIPI"],"prop":[["material","METAL\nFR4\nGLASS"]],"rel":[["partOf","UL20"],["purpose","SE4750SR"]],"pn":[["217110210056","m3"]]}
+{"cl":"217102800530","desc":["MODULE 2D SCANNER(N6600SR_W3_103)_Honeywell","HONEYWELL"],"prop":[["material","METAL\nFR4\nGLASS"]],"rel":[["partOf","UL20"],["purpose","N6600SR"]],"pn":[["217102800530","m3"]]}
+{"cl":"3241D1000191","desc":["CABLE SM15 N660X SCANNER CABLE V1.0","SE4750 TO MAIN"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["3241D1000191","m3"]]}
+{"cl":"3241D1000190","desc":["CABLE SM15 2D SCANNER (SE4710) V1.0","CABLE SM15 2D SCANNER (SE4710) V1.0"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["3241D1000190","m3"]]}
+{"cl":"3241D1000192","desc":["CABLE SM15 2D SCANNER (SE4750) V1.2","SE4750 TO MAIN"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["3241D1000192","m3"]]}
+{"cl":"100241014200","desc":["SPONGE_SUBBATTERY_SM15","SPONGE_서브배터리 조립용"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100241014200","m3"]]}
+{"cl":"324150000131","desc":["LI-POLY BACKUP BATTERY, 35mAh","SM15 Back Up Battery, 210210"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["324150000131","m3"]]}
+{"cl":"100241110801","desc":["PRODUCT_LABEL_SM15","유포지"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100241110801","m3"]]}
+{"cl":"161000611500","desc":["LABEL A/S MC-6000S / 침수라벨","ï¿½3.0, flooding label"],"prop":[["material","PAPER"]],"rel":[["partOf","UL20"],["purpose","flooding label"]],"pn":[["161000611500","m3"]]}
+{"cl":"931223064001","desc":["SCREW","FH T 2.3 X 6.0, ï¿½4.0, BLACK"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["931223064001","m3"]]}
+{"cl":"100241110301","desc":["SCANNER_LABEL_SM10_영문","유포지_영문"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100241110301","m3"]]}
+{"cl":"100240110806","desc":["SCAN_CAM_BKT_2D_A_SM15","4710/6600_Fcam_모둘변경_사출"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240110806","m3"]]}
+{"cl":"100240110805","desc":["SCAN_CAM_BKT_2D_A_SM15","SE4750ï¿½"],"prop":[],"rel":[["partOf","SM15"]],"pn":[["100240110805","m3"]]}
+{"cl":"3248010031020","desc":["M3 SM20 MAIN PCB ASSY V1.0","SMD PCB, N / W / S / C / B / P / R"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["3248010031020","m3"]]}
+{"cl":"219040000011","desc":["M3 SM20 LCD MODULE NH(5.0\")","NTL50WHDLP179_HD / 450cd / OCA"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["219040000011","m3"]]}
+{"cl":"100271010400","desc":["TAPE_LCD_SM20","SEKISUI 0.4t"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100271010400","m3"]]}
+{"cl":"100271010200","desc":["TAPE_EMI_FRONT_A_SM20","EMI_TAPE"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100271010200","m3"]]}
+{"cl":"310027201020","desc":["FRONT_SUB_ASSY_SM20","FRONT_SUB_ASSY"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["310027201020","m3"]]}
+{"cl":"100271010300","desc":["TAPE_EMI_FRONT_B_SM20","EMI TAPE"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100271010300","m3"]]}
+{"cl":"3248U1000130","desc":["M3 SM20 KEY FPCB, V1.0","SMD, LED ESD"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["3248U1000130","m3"]]}
+{"cl":"100270510100","desc":["DOME_SHEET_SM20","4.5파이 DR DOME"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100270510100","m3"]]}
+{"cl":"100271010500","desc":["SHEET_WATERPROOF_KEY_SM20","투명 FILM+양면TAPE 0.1t"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100271010500","m3"]]}
+{"cl":"100241010301","desc":["PAD_MIC_WP","발수시트"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100241010301","m3"]]}
+{"cl":"100270610100","desc":["KEYPAD_SM20","PC+RUBBER"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100270610100","m3"]]}
+{"cl":"100240410301","desc":["RUBBER_SILLING_MAIN_SM10","실리콘"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100240410301","m3"]]}
+{"cl":"217110560170","desc":["SAA6-SM15-A3","REAR CAMERA MODULE_16M_PDAF"],"prop":[["material","Metal\nFCCL\nSUS"]],"rel":[["partOf","US20W"],["purpose","camera"]],"pn":[["217110560170","m3"]]}
+{"cl":"3248T1000130","desc":["M3 SM20 SUB PCB ASSY,ï¿½ V1.0","PBA"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["3248T1000130","m3"]]}
+{"cl":"3248T1000131","desc":["M3 SM20 MIC SUB PCB ASSY, V1.0","PBA"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["3248T1000131","m3"]]}
+{"cl":"221110900056","desc":["M3 SM20 POWER FPCB V1.0","DC CHARGER FPCB"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["221110900056","m3"]]}
+{"cl":"213020300000","desc":["RECEIVER_KR-1307-8T-SW1P","13X7XT3.05_Waterproof type micro dynamic speaker.","REAR ASS`Y 작업"],"prop":[["material","METAL ( in coil )"]],"rel":[["partOf","US20W"],["purpose","RECEIVER"]],"pn":[["213020300000","m3"]]}
+{"cl":"100241012002","desc":["TAPE_EMI_FRONTFPCB_SM10_ECO1","32.7 x 16 x 0.1t"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100241012002","m3"]]}
+{"cl":"220975410000","desc":["M3 SM20 MAIN TO SUB FPCB V1.0","SMD CONNECTOR"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["220975410000","m3"]]}
+{"cl":"100271010900","desc":["TAPE_EMI_MAIN_TO_SUB_SM20","EMI_TAPE"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100271010900","m3"]]}
+{"cl":"100271014000","desc":["PRODUCT_LABEL_SM20","유포지"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100271014000","m3"]]}
+{"cl":"100271610100","desc":["THERMAL_PAD_SM20","MAIN_PCB_THERMAL_PAD"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100271610100","m3"]]}
+{"cl":"221031801004","desc":["Cable RF 107mm(R)_SM20"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["221031801004","m3"]]}
+{"cl":"100271011000","desc":["GASKET_SMODULE_SM20","EMI_GASKET"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["100271011000","m3"]]}
+{"cl":"911117033501","desc":["SCREW","BH M 1.7 X 3.0, ï¿½3.5, BLACK"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["911117033501","m3"]]}
+{"cl":"911114033501","desc":["SCREW","BH M 1.4 X 3.0, ï¿½3.5, BLACK"],"prop":[],"rel":[["partOf","SM20"]],"pn":[["911114033501","m3"]]}
+{"cl":"324301405122","desc":["M3 UL20 F MAIN PCB ASSY, V1.4","PBA, W / S / C / B / P / R, SAMSUNG","F"],"prop":[["material","FR-4"]],"rel":[["partOf","UL20F"],["purpose","F MAIN PCB"]],"pn":[["324301405122","m3"]]}
+{"cl":"324201303120","desc":["M3 UL20 W MAIN PCB ASSY, V1.3","PBA, W / S / C / B / P / R","W"],"prop":[["material","FR-4"]],"rel":[["partOf","UL20W"],["purpose","W MAIN PCB"]],"pn":[["324201303120","m3"]]}
+{"cl":"324302005120","desc":["M3 UL20 F MAIN PCB ASSY, V2.0","PBA, W / S / C / B / P / R, SAMSUNG","F"],"prop":[["material","FR-4"]],"rel":[["partOf","UL20F"],["purpose","F MAIN PCB"]],"pn":[["324302005120","m3"]]}
+{"cl":"324202005120","desc":["M3 UL20W MAIN PCB ASSY, V2.0","PBA, W / S / C / B / P / R","W"],"prop":[["material","FR-4"]],"rel":[["partOf","UL20W"],["purpose","W MAIN PCB"]],"pn":[["324202005120","m3"]]}
+{"cl":"325002003120","desc":["M3 UL20FX MAIN PCB ASSY, V2.0","PBA, N / W / S / C / B / P / R, SAMSUNG","X,FX"],"prop":[["material","FR-4"]],"rel":[["partOf","UL20FX"],["purpose","X MAIN PCBï¿½"]],"pn":[["325002003120","m3"]]}
+{"cl":"219040300001","desc":["LCD_UL20_BOE","5\" FHD, TFT, Driver(HX8399C)+CTP(GT1151Q)"],"prop":[["material","Glass\nFCCL\nMETAL"]],"rel":[["partOf","UL20"],["purpose","LCD"]],"pn":[["219040300001","m3"]]}
+{"cl":"190011010100","desc":["LCD_TAPE_UL20_UROTECH","Dual tape"],"prop":[["material","PE foam"]],"rel":[["partOf","UL20"],["purpose","LCD_TAPE"]],"pn":[["190011010100","m3"]]}
+{"cl":"190011011401","desc":["LCD EMI TAPE_UL20","conduction tape"],"prop":[["material","EMI"]],"rel":[["partOf","UL20"],["purpose","LCD EMI TAPE"]],"pn":[["190011011401","m3"]]}
+{"cl":"190011011101","desc":["LCD BKT EMI CUSHION","conduction cushion"],"prop":[["material","EMI"]],"rel":[["partOf","UL20"],["purpose","LCD BKT EMI CUSHION"]],"pn":[["190011011101","m3"]]}
+{"cl":"201310005000","desc":["LCD BACK PI FILM HEATER_(CJ-M3-01)","98.21X63.48_5ohm+/-7%_25mm(2PIN)","F"],"prop":[["material","PI"]],"rel":[["partOf","UL20F"],["purpose","F-only LCD FILM HEATER"]],"pn":[["201310005000","m3"]]}
+{"cl":"190010310100","desc":["LCD_BKT_UL20","CAST"],"prop":[["material","AL"]],"rel":[["partOf","UL20"],["purpose","LCD_BKT"]],"pn":[["190010310100","m3"]]}
+{"cl":"319001201022","desc":["FRONT COVER SUB ASSY_UL20","FRONT COVER SUB ASSY_UL20_28,35,53Key","28,35,53Key"],"prop":[["material","PC"]],"rel":[["partOf","UL20"],["purpose","FRONT COVERï¿½"]],"pn":[["319001201022","m3"]]}
+{"cl":"319001201081","desc":["REAR_COVER_SUB_ASSY_UL20","Injection + Subsidiary Materials + Windows","W,X"],"prop":[["material","PC"]],"rel":[["partOf","UL20X"],["purpose","REAR_COVER"]],"pn":[["319001201081","m3"]]}
+{"cl":"319001201200","desc":["REAR_COVER_SUB_ASSY_UL20_F","Injection + Subsidiary Materials + Windows","F"],"prop":[["material","PC"]],"rel":[["partOf","UL20F"],["purpose","REAR_COVER"]],"pn":[["319001201200","m3"]]}
+{"cl":"190010910101","desc":["WINDOW_CAMERA_UL20","."],"prop":[["material","ACRYL"]],"rel":[["partOf","UL20"],["purpose","WINDOW_CAMERA"]],"pn":[["190010910101","m3"]]}
+{"cl":"319001201091","desc":["CAP_SIM_ASSY","CAP"],"prop":[["material","PC"]],"rel":[["partOf","UL20"],["purpose","CAP_SIM"]],"pn":[["319001201091","m3"]]}
+{"cl":"190011110201","desc":["PRODUCT LABEL SIM","label"],"prop":[["material","Synthetic paper+printable matte film"]],"rel":[["partOf","UL20"],["purpose","PRODUCT LABEL SIM"]],"pn":[["190011110201","m3"]]}
+{"cl":"3242S1000191","desc":["UL20 SCANNER_CABLE_N6603_V1.0","N6603 TO MAIN","Only for 6600 SCANNER"],"prop":[["material","FCCL"]],"rel":[["partOf","UL20"],["purpose","ï¿½SCANNER_CABLE_N6603"]],"pn":[["3242S1000191","m3"]]}
+{"cl":"190010110401","desc":["ADAPTOR_660X","UL20","Only for 6600 SCANNER"],"prop":[["material","PC"]],"rel":[["partOf","UL20"],["purpose","ADAPTOR_660X"]],"pn":[["190010110401","m3"]]}
+{"cl":"217100210057","desc":["SE4850ER-IM00R","20-4850-OEM_INTEGRATION_ENGINE"],"prop":[["material","METAL\nFR4\nGLASS"]],"rel":[["partOf","US20W"],["purpose","SE4850ER scanner module"]],"pn":[["217100210057","m3"]]}
+{"cl":"3242S1100190","desc":["UL20 SCANNER_CABLE_SE4850_V1.1","SE4850 TO MAIN","only for 4850 SCANNER"],"prop":[["material","FCCL"]],"rel":[["partOf","UL20"],["purpose","CABLE_SE4850"]],"pn":[["3242S1100190","m3"]]}
+{"cl":"190010110301","desc":["ASSY_BKT_SCAN_BASE_UL20_4850","sponge and sub-assembly","Only for 4850 SCANNERï¿½"],"prop":[["material","PC"]],"rel":[["partOf","UL20"],["purpose","BKT_SCAN 4850"]],"pn":[["190010110301","m3"]]}
+{"cl":"190011012301","desc":["cushion 4850 UL20","cushion 4850 UL20ï¿½ 3EA 신청하기","Only for 4850 SCANNERï¿½"],"prop":[["material","poron"]],"rel":[["partOf","UL20"],["purpose","BKT_SCAN 4850 cushion"]],"pn":[["190011012301","m3"]]}
+{"cl":"3242S1000192","desc":["UL20 SCANNER_CABLE_SE4750SR_V1.0","SE4750SR TO MAIN","Only for 4750 SCANNER"],"prop":[["material","FCCL"]],"rel":[["partOf","UL20"],["purpose","CABLE_SE4750SR"]],"pn":[["3242S1000192","m3"]]}
+{"cl":"190010111000","desc":["4750_ADAPTOR_UL20","PC, 4750(DP), UL20F","only for 4750 Scanner"],"prop":[["material","PC"]],"rel":[["partOf","UL20"],["purpose","4750_ADAPTOR"]],"pn":[["190010111000","m3"]]}
+{"cl":"167000611900","desc":["CAMERA TAPE M3 T","DOUBLE TAPE, 8.5X8.5, 0.1T"],"prop":[["material","DOUBLE TAPE"]],"rel":[["partOf","UL20"],["purpose","CAMERA TAPE"]],"pn":[["167000611900","m3"]]}
+{"cl":"190011013800","desc":["CAMERA_FPCB_TAPE_UL20F","Doubled TAPE 12.9 x 8.6 x 0.2T","F"],"prop":[["material","EMI"]],"rel":[["partOf","UL20F"],["purpose","CAMERA SUB FPCB Attachment Tape"]],"pn":[["190011013800","m3"]]}
+{"cl":"190011014000","desc":["sheet_temp_sensor_ul20f","pc sheet","F"],"prop":[["material","PC"]],"rel":[["partOf","UL20F"],["purpose","F CAMERA SUB PCB fixing tape"]],"pn":[["190011014000","m3"]]}
+{"cl":"324281100150","desc":["M3 UL20 F CAMERA SUB FPCB V1.1","PCB SMD, FLASH LED, CONNECTOR, Temp Sensor","F"],"prop":[["material","FCCL\nSUS"]],"rel":[["partOf","UL20F"],["purpose","CAMERA SUB FPCB"]],"pn":[["324281100150","m3"]]}
+{"cl":"324281100130","desc":["M3 UL20 CAMERA SUB FPCB V1.1","PCB SMD, FLASH LED, CONNECTOR"],"prop":[["material","FCCL\nSUS"]],"rel":[["partOf","UL20"],["purpose","CAMERA SUB FPCB"]],"pn":[["324281100130","m3"]]}
+{"cl":"190011011703","desc":["KEYPDA LOWER FILM","SILICONE TAPE"],"prop":[],"rel":[["partOf","UL20"]],"pn":[["190011011703","m3"]]}
+{"cl":"3242X1000130","desc":["M3 UL20 28 KEY PCB ASSY, V1.0","PBA"],"prop":[["material","FR-4"]],"rel":[["partOf","UL20"],["purpose","KEY PCB"]],"pn":[["3242X1000130","m3"]]}
+{"cl":"190010510200","desc":["KEY_DOME_SHEET_28KEY_UL20","Dome sheet"],"prop":[["material","PET, SUS"]],"rel":[["partOf","UL20"],["purpose","KEY_DOME_SHEET"]],"pn":[["190010510200","m3"]]}
+{"cl":"190010610300","desc":["28KEYPAD_ASSY_UL20","Keypad assembly"],"prop":[["material","PC, silicone"]],"rel":[["partOf","UL20"],["purpose","KEYPAD"]],"pn":[["190010610300","m3"]]}
+{"cl":"190010110900","desc":["COVER_PLATE_KEY_28","Injection"],"prop":[["material","PC"]],"rel":[["partOf","UL20"],["purpose","COVER_PLATE"]],"pn":[["190010110900","m3"]]}
+{"cl":"190011013500","desc":["SHEET_KEY_PAD_28_UL20_F","solid sheet","F"],"prop":[["material","PC SHEET"]],"rel":[["partOf","UL20F"],["purpose","SHEET_KEY_PAD"]],"pn":[["190011013500","m3"]]}
+{"cl":"190011013000","desc":["SHEET_KEY_PAD_28","solid sheet"],"prop":[["material","PC SHEET"]],"rel":[["partOf","UL20"],["purpose","SHEET_KEY_PAD"]],"pn":[["190011013000","m3"]]}
+{"cl":"3242U1200130","desc":["M3 UL20 35 KEY PCB ASSY, V1.2","PBA"],"prop":[["material","FR-4"]],"rel":[["partOf","UL20"],["purpose","KEY PCB"]],"pn":[["3242U1200130","m3"]]}
+{"cl":"190010510100","desc":["KEY_DOME_SHEET_35KEY_UL20","Dome sheet"],"prop":[["material","PET, SUS"]],"rel":[["partOf","UL20"],["purpose","KEY_DOME_SHEET"]],"pn":[["190010510100","m3"]]}
+{"cl":"190010610800","desc":["35KEYPAD_ASSY_UL20","Keypad assembly"],"prop":[["material","PC, silicone"]],"rel":[["partOf","UL20"],["purpose","KEYPAD"]],"pn":[["190010610800","m3"]]}
+{"cl":"190010110700","desc":["COVER_PLATE_KEY_35","Injection"],"prop":[["material","PC"]],"rel":[["partOf","UL20"],["purpose","COVER_PLATE"]],"pn":[["190010110700","m3"]]}
+{"cl":"190011013400","desc":["SHEET_KEY_PAD_35_UL20_F","solid sheet","F"],"prop":[["material","PC SHEET"]],"rel":[["partOf","UL20F"],["purpose","SHEET_KEY_PAD"]],"pn":[["190011013400","m3"]]}
+{"cl":"190011012100","desc":["SHEET_KEY_PAD 35","solid sheet"],"prop":[["material","PC SHEET"]],"rel":[["partOf","UL20"],["purpose","SHEET_KEY_PAD"]],"pn":[["190011012100","m3"]]}
+{"cl":"190010510300","desc":["KEY_DOME_SHEET_53KEY_UL20","DOME_SHEET"],"prop":[["material","PET, SUS"]],"rel":[["partOf","UL20"],["purpose","KEY_DOME_SHEET"]],"pn":[["190010510300","m3"]]}
+{"cl":"190010610900","desc":["53KEYPAD_ASSY_UL20","Keypad assembly"],"prop":[["material","PC, silicone"]],"rel":[["partOf","UL20"],["purpose","KEYPAD"]],"pn":[["190010610900","m3"]]}
+{"cl":"190010110800","desc":["COVER_PLATE_KEY_53","Injection"],"prop":[["material","PC"]],"rel":[["partOf","UL20"],["purpose","COVER_PLATE"]],"pn":[["190010110800","m3"]]}
+{"cl":"190011013600","desc":["SHEET_KEY_PAD_53_UL20_F","solid sheet","F"],"prop":[["material","PC SHEET"]],"rel":[["partOf","UL20F"],["purpose","SHEET_KEY_PAD"]],"pn":[["190011013600","m3"]]}
+{"cl":"190011012900","desc":["SHEET_KEY_PAD_53_UL20","solid sheet"],"prop":[["material","PC SHEET"]],"rel":[["partOf","UL20"],["purpose","SHEET_KEY_PAD"]],"pn":[["190011012900","m3"]]}
+{"cl":"190010710501","desc":["pogo_battery_7pin_ul20f","7핀 3.5파이 F버전 전용","F"],"prop":[["material","PA46ï¿½ GF30%\nC3604/C4926"]],"rel":[["partOf","UL20F"],["purpose","pogo_battery"]],"pn":[["190010710501","m3"]]}
+{"cl":"190010710101","desc":["BATTERY POGO 9P UL20","."],"prop":[["material","PA46ï¿½ GF30%\nC3604/C4926"]],"rel":[["partOf","UL20"],["purpose","pogo_battery"]],"pn":[["190010710101","m3"]]}
+{"cl":"3242N1000130","desc":["M3 UL20 IO PCB ASSY, V1.0","PBA"],"prop":[["material","FR4"]],"rel":[["partOf","UL20"],["purpose","I/O PCB"]],"pn":[["3242N1000130","m3"]]}
+{"cl":"190010710201","desc":["IO POGO 20P UL20","."],"prop":[["material","PA46ï¿½ GF30%\nC3604/C4926"]],"rel":[["partOf","US20W"],["purpose","Parts for pogo pin charging and sinking"]],"pn":[["190010710201","m3"]]}
+{"cl":"190011010400","desc":["WP_IO_UL20","세끼스위방수tape"],"prop":[["material","silicone"]],"rel":[["partOf","US20W"],["purpose","I/O waterproof tape"]],"pn":[["190011010400","m3"]]}
+{"cl":"221020201039","desc":["FFC CABLE, 30PIN,50mm(0.5mm PITCH)","UL20 IO,KEY CABLE"],"prop":[["material","FFC"]],"rel":[["partOf","UL20"],["purpose","UL20 IO,KEY CABLE"]],"pn":[["221020201039","m3"]]}
+{"cl":"213010700000","desc":["TDM28C-8-L140","WATER PROOF SPEAKER / 8 ohm / 1.2W- 2W"],"prop":[["material","METAL ( in coil )"]],"rel":[["partOf","UL20"],["purpose","SPEAKER"]],"pn":[["213010700000","m3"]]}
+{"cl":"221040201000","desc":["UL20 SPK, Trigger Harness wire cable","4PIN, Speaker, Trigger connect"],"prop":[["material","PFA"]],"rel":[["partOf","UL20"],["purpose","SPK, Trigger Harness wire cable"]],"pn":[["221040201000","m3"]]}
+{"cl":"190010410200","desc":["RUBBER_RECEIVER","rubber silicon"],"prop":[["material","silicon"]],"rel":[["partOf","UL20"],["purpose","RUBBER_RECEIVER"]],"pn":[["190010410200","m3"]]}
+{"cl":"190011010200","desc":["WP_RECEIVER_UL20","Gore - tex"],"prop":[["material","Gore - tex"]],"rel":[["partOf","UL20"],["purpose","WP_RECEIVER"]],"pn":[["190011010200","m3"]]}
+{"cl":"3242V1000000","desc":["M3 UL20 SENSOR FPCB V1.0","PCB SMD, MIC, ALS P SENSOR"],"prop":[["material","ï¿½FPCB"]],"rel":[["partOf","UL20"],["purpose","SENSOR FPCB"]],"pn":[["3242V1000000","m3"]]}
+{"cl":"3242V1100000","desc":["M3 UL20 SENSOR FPCB V1.1","PCB SMD, MIC, ALS P SENSOR"],"prop":[["material","ï¿½FPCB"]],"rel":[["partOf","UL20"],["purpose","SENSOR FPCB"]],"pn":[["3242V1100000","m3"]]}
+{"cl":"190010410401","desc":["sensor_rubber_ul20","rubber silicon"],"prop":[["material","silicone"]],"rel":[["partOf","US20W"],["purpose","sensor guide"]],"pn":[["190010410401","m3"]]}
+{"cl":"190011011301","desc":["BD EMI CUSHION S","emi cushion"],"prop":[["material","EMI"]],"rel":[["partOf","UL20"],["purpose","Attached to the top of the motherboard"]],"pn":[["190011011301","m3"]]}
+{"cl":"190011011201","desc":["BD EMI CUSHION L","emi cushion"],"prop":[["material","EMI"]],"rel":[["partOf","UL20"],["purpose","Attached to the top of the motherboard"]],"pn":[["190011011201","m3"]]}
+{"cl":"190011011001","desc":["PAD_CON_UL20","sillicon pad","10X6X2T"],"prop":[["material","sillicon"]],"rel":[["partOf","UL20"],["purpose","lcd connector pad"]],"pn":[["190011011001","m3"]]}
+{"cl":"190011011900","desc":["PAD_CON_CAM_UL20","LM camera connector","10X4X2T"],"prop":[["material","LM"]],"rel":[["partOf","UL20"],["purpose","lcd connector pad"]],"pn":[["190011011900","m3"]]}
+{"cl":"190011010801","desc":["Emi_cushion_ap_ul20","emi cushion"],"prop":[["material","EMI"]],"rel":[["partOf","UL20"],["purpose","Emi_cushion_ap"]],"pn":[["190011010801","m3"]]}
+{"cl":"221030501014","desc":["CABLE RF WLAN 68mm_UL20","RF CABLE"],"prop":[["material","ï¿½plastic"]],"rel":[["partOf","US20W"],["purpose","Cable used to transmit signals"]],"pn":[["221030501014","m3"]]}
+{"cl":"221030501015","desc":["UL20 RF LTE CABLE 58mm","RF CABLE"],"prop":[["material","ï¿½plastic"]],"rel":[["partOf","US20W"],["purpose","Cable used to transmit signals"]],"pn":[["221030501015","m3"]]}
+{"cl":"216099919002","desc":["UL20FW_MAIN ANTENNA CARRIER","WIFI+GPS","F,W"],"prop":[["material","PC"]],"rel":[["partOf","UL20W"],["purpose","MAIN ANTENNA"]],"pn":[["216099919002","m3"]]}
+{"cl":"216099919001","desc":["UL20_MAIN ANTENNA CARRIER","MAIN+WIFI+GPS","X,FX"],"prop":[["material","PC"]],"rel":[["partOf","UL20FX"],["purpose","MAIN ANTENNA"]],"pn":[["216099919001","m3"]]}
+{"cl":"224020399000","desc":["M3 UL20 LI-POLY BACKUP BATTERY / HPL802030","400mA, Connector 51021-0200, 30mm"],"prop":[["material","Lithium ion polymer"]],"rel":[["partOf","UL20"],["purpose","BACKUP BATTERY"]],"pn":[["224020399000","m3"]]}
+{"cl":"223030000000","desc":["MOTOR CYLINDER(Z6SH3B0060711)_M3 T/MM3","MOTOR"],"prop":[["material","PA46ï¿½ GF30%\nC3604/C4926"]],"rel":[["partOf","UL20"],["purpose","MOTOR"]],"pn":[["223030000000","m3"]]}
+{"cl":"190011110101","desc":["M3 UL20 LASER CAUTION LABEL","Yellow"],"prop":[["material","PET sheet"]],"rel":[["partOf","UL20"],["purpose","ï¿½LASER CAUTION LABEL"]],"pn":[["190011110101","m3"]]}
+{"cl":"190011110301","desc":["TAPE CON UL20","Insulating TAPE"],"prop":[["material","Insulating TAPE"]],"rel":[["partOf","UL20"],["purpose","TAPE CON"]],"pn":[["190011110301","m3"]]}
+{"cl":"3242T1000000","desc":["M3 UL20 Trigger + Speaker Sub PCB ASSY, V1.0","PBA"],"prop":[["material","FR4"]],"rel":[["partOf","UL20"],["purpose","Trigger + Speaker Sub PCB"]],"pn":[["3242T1000000","m3"]]}
+{"cl":"931226064001","desc":["SCREW","FH T 2.6 X 6.0, ï¿½4.0, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","UL20"],["purpose","For lcd bracket"]],"pn":[["931226064001","m3"]]}
+{"cl":"911117053501","desc":["SCREW","BH M 1.7 X 5.0, ï¿½3.5, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","UL20"],["purpose","Assemble COVER_PLATE and FRONT COVER ASSY"]],"pn":[["911117053501","m3"]]}
+{"cl":"911220053001","desc":["SCREW","BH T 2.0 X 5.0, ï¿½3.0, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","UL20"],["purpose","SCREW for MAINBD and CARRIER ASSY"]],"pn":[["911220053001","m3"]]}
+{"cl":"912120054001","desc":["SCREW","BH, EPOXY, M 2.0 X 5.0, ï¿½4.0, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","UL20"],["purpose","Front + mainboard assembly"]],"pn":[["912120054001","m3"]]}
+{"cl":"911125044501","desc":["SCREW","BH, EPOXY, M 2.5 X 4.0, ï¿½4.5, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","US20W"],["purpose","4850 scanner assembly screw"]],"pn":[["911125044501","m3"]]}
+{"cl":"911126605001","desc":["SCREW","BH,EPOXY, M 2.6 X 6.0, ï¿½ 5.0, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","UL20"],["purpose","Scanner bracket motherboard assembly"]],"pn":[["911126605001","m3"]]}
+{"cl":"952120053501","desc":["SCREW","SH, EPOXY, M 2.0 X 5.0, ï¿½3.5, BLACK, STAR T6x40"],"prop":[["material","steel"]],"rel":[["partOf","UL20"],["purpose","rear lower i/o"]],"pn":[["952120053501","m3"]]}
+{"cl":"911223064501","desc":["SCREW","BH T 2.3 X 6.0, ï¿½4.5, BLACK"],"prop":[["material","steel"]],"rel":[["partOf","UL20"],["purpose","2p adapter + main bracket"]],"pn":[["911223064501","m3"]]}
+{"cl":"951120084301","desc":["SCREW","SH, EPOXY, M 2.0 X 8.0, ï¿½4.3, BLACK, STAR T6x40,\nWaterproofï¿½"],"prop":[["material","steel"]],"rel":[["partOf","UL20"],["purpose","rear case"]],"pn":[["951120084301","m3"]]}
+{"cl":"319001201130","desc":["MD SIDE KEY DOME ASSY L","Assy"],"prop":[["material","FCCL"]],"rel":[["partOf","UL20"],["purpose","SIDE KEY"]],"pn":[["319001201130","m3"]]}
+{"cl":"319001201140","desc":["MD SIDE KEY DOME ASSY R","ASSY"],"prop":[["material","FCCL"]],"rel":[["partOf","UL20"],["purpose","SIDE KEY"]],"pn":[["319001201140","m3"]]}
+{"cl":"216080500000","desc":["UL20 NFC ANTENNA","NFC"],"prop":[["material","FCCL"]],"rel":[["partOf","UL20"],["purpose","NFC ANTENNA"]],"pn":[["216080500000","m3"]]}
+{"cl":"3242S1000000","desc":["UL20_LCD Adapter","Apply after inquiry"],"prop":[["material","FCCL"]],"rel":[["partOf","UL20"],["purpose","LCD Adapter"]],"pn":[["3242S1000000","m3"]]}
+{"cl":"319001201600","desc":["UL20F SCANNER WINDOW FOR AS","HEAT SCAN WINDOW + WINDOW BKT","F"],"prop":[["material","PC"]],"rel":[["partOf","UL20F"],["purpose","F SCANNER WINDOW"]],"pn":[["319001201600","m3"]]}
+{"cl":"190011013900","desc":["Tape_rear_window_UL20F","0.1T","F"],"prop":[["material","DOUBLE TAPE"]],"rel":[["partOf","UL20F"],["purpose","F Tape_rear_window"]],"pn":[["190011013900","m3"]]}
+{"cl":"324701005122","desc":["M3 US20W MAIN PCB ASSY, V1.0","PBA, W / S / C / B / P / R","US20W MAIN"],"prop":[["material","FR-4"]],"rel":[["partOf","US20W"],["purpose","motherboard"]],"pn":[["324701005122","m3"]]}
+{"cl":"324701003122","desc":["M3 US20X MAIN PCB ASSY, V1.0","PBA, N / W / S / C / B / P / R","US20X MAINï¿½"],"prop":[["material","FR-4"]],"rel":[["partOf","US20W"],["purpose","motherboard"]],"pn":[["324701003122","m3"]]}
+{"cl":"319002201020","desc":["FRONT_COVER_CH_LCD ASSY_US20","FRONT_COVER_CH_LCD ASSY_US20"],"prop":[["material","PC"]],"rel":[["partOf","US20W"],["purpose","Front+LCD"]],"pn":[["319002201020","m3"]]}
+{"cl":"217100210058","desc":["SE4770-IM000R","MIPI-Interface, Laser Aimer, Red Illumination"],"prop":[["material","METAL\nFR4\nGLASS"]],"rel":[["partOf","US20W"],["purpose","SE4770 scanner module"]],"pn":[["217100210058","m3"]]}
+{"cl":"3247D1200191","desc":["M3 US20 SCANNER_CABLE_SE4770_V1.2","SE4770 TO MAIN","4770 SCANNER ONLY"],"prop":[["material","FCCL"]],"rel":[["partOf","US20W"],["purpose","4770 SCANNER dedicated cable"]],"pn":[["3247D1200191","m3"]]}
+{"cl":"3247D1000193","desc":["M3 US20 SCANNER_CABLE_SE4710_V1.0","4710 SCANNER ONLY"],"prop":[["material","FCCL"]],"rel":[["partOf","US20W"],["purpose","4710 dedicated cable"]],"pn":[["3247D1000193","m3"]]}
+{"cl":"3247D1000192","desc":["M3 US20 SCANNER_CABLE_SE4850_V1.0","SE4850 TO MAIN","4850 SCANNER ONLY"],"prop":[["material","FCCL"]],"rel":[["partOf","US20W"],["purpose","4850 dedicated cable"]],"pn":[["3247D1000192","m3"]]}
+{"cl":"217102000400","desc":["SE5500-IM000R","MIPI INTERFACE / Laser type / Auto focus control"],"prop":[["material","METAL\nFR4\nGLASS"]],"rel":[["partOf","US20W"],["purpose","5500 scanner module"]],"pn":[["217102000400","m3"]]}
+{"cl":"3247D1000194","desc":["CABLE FPCB_US20 2D SCANNER ( SE5500 ) V1.0","FPCB + STIFFNER : 0.3mm / Total Length : 66.3mm","5500 SCANNER ONLY"],"prop":[["material","FCCL"]],"rel":[["partOf","US20W"],["purpose","5500 dedicated cable"]],"pn":[["3247D1000194","m3"]]}
+{"cl":"3247U1020130","desc":["M3 US20 30 KEY PCB ASSY, V1.0","PBA","KEY"],"prop":[["material","FR-4"]],"rel":[["partOf","US20W"],["purpose","keypcb"]],"pn":[["3247U1020130","m3"]]}
+{"cl":"190020510200","desc":["30KEY_DOME_SHEET_US20","ï¿½4 DOME SHEET"],"prop":[["material","PET, SUS"]],"rel":[["partOf","US20W"],["purpose","DOME SHEET attached on keypcb"]],"pn":[["190020510200","m3"]]}
+{"cl":"190020610100","desc":["30KEY_PAD_US20","silicone, PC_Flame Retardant V0"],"prop":[["material","PC, silicone"]],"rel":[["partOf","US20W"],["purpose","51KEY_PAD"]],"pn":[["190020610100","m3"]]}
+{"cl":"190020110400","desc":["30KEY_PLATE_US20","PC_Flame Retardant V0"],"prop":[["material","PC"]],"rel":[["partOf","US20W"],["purpose","PLATE for fixing KEY PAD"]],"pn":[["190020110400","m3"]]}
+{"cl":"190021010300","desc":["30KEY_SHEET_US20","PC SHEET 0.25T, Double faced tape 0.1T"],"prop":[["material","PC SHEET"]],"rel":[["partOf","US20W"],["purpose","ï¿½ SHEET attached to PLATE"]],"pn":[["190021010300","m3"]]}
+{"cl":"3247U1020131","desc":["M3 US20 42 KEY PCB ASSY, V1.0","PCB, 2LAYER, 0.6T, 1X2 ARRAY, FR-4","KEY"],"prop":[["material","FR-4"]],"rel":[["partOf","US20W"],["purpose","keypcb"]],"pn":[["3247U1020131","m3"]]}
+{"cl":"190020510300","desc":["42KEY_DOME_SHEET_US20","ï¿½4 DOME SHEET"],"prop":[["material","PC SHEET"]],"rel":[["partOf","US20W"],["purpose","ï¿½ SHEET attached to PLATE"]],"pn":[["190020510300","m3"]]}
+{"cl":"190020610200","desc":["42KEY_PAD_US20","silicone, PC_Flame Retardant V0"],"prop":[["material","PC, silicone"]],"rel":[["partOf","US20W"],["purpose","51KEY_PAD"]],"pn":[["190020610200","m3"]]}
+{"cl":"190020112100","desc":["42KEY_PLATE_US20","PC_Flame Retardant V0"],"prop":[["material","PC"]],"rel":[["partOf","US20W"],["purpose","PLATE for fixing KEY PAD"]],"pn":[["190020112100","m3"]]}
+{"cl":"190021012400","desc":["42KEY_SHEET_US20","PC SHEET 0.25T, Double faced tape 0.1T"],"prop":[["material","PET, SUS"]],"rel":[["partOf","US20W"],["purpose","DOME SHEET attached on keypcb"]],"pn":[["190021012400","m3"]]}
+{"cl":"3247U1020132","desc":["M3 US20 51 KEY PCB ASSY, V1.0","PCB, 2LAYER, 0.6T, 1X2 ARRAY, FR-4","KEY"],"prop":[["material","FR-4"]],"rel":[["partOf","US20W"],["purpose","keypcb"]],"pn":[["3247U1020132","m3"]]}
+{"cl":"190020510400","desc":["51KEY_DOME_SHEET_US20","ï¿½4 DOME SHEET"],"prop":[["material","PET, SUS"]],"rel":[["partOf","US20W"],["purpose","DOME SHEET attached on keypcb"]],"pn":[["190020510400","m3"]]}
+{"cl":"190020610300","desc":["51KEY_PAD_US20","silicone, PC_Flame Retardant V0"],"prop":[["material","PC, silicone"]],"rel":[["partOf","US20W"],["purpose","51KEY_PAD"]],"pn":[["190020610300","m3"]]}
+{"cl":"190020112200","desc":["51KEY_PLATE_US20","PC_Flame Retardant V0"],"prop":[["material","PC"]],"rel":[["partOf","US20W"],["purpose","PLATE for fixing KEY PAD"]],"pn":[["190020112200","m3"]]}
+{"cl":"190021012500","desc":["51KEY_SHEET_US20","PC SHEET 0.25T, Double faced tape 0.1T"],"prop":[["material","PC SHEET"]],"rel":[["partOf","US20W"],["purpose","ï¿½ SHEET attached to PLATE"]],"pn":[["190021012500","m3"]]}
+{"cl":"221020201042","desc":["US20_FFC_40mm_30P","F0.5-30P-40-A (선긋기)"],"prop":[["material","FFC"]],"rel":[["partOf","US20W"],["purpose","MAIN PCB, I/O connection cable"]],"pn":[["221020201042","m3"]]}
+{"cl":"221020201041","desc":["US20_FFC_70mm_30P","F0.5-30P-70-A(선긋기)"],"prop":[["material","FFC"]],"rel":[["partOf","US20W"],["purpose","MAIN PCB, KEY PCB connection cable"]],"pn":[["221020201041","m3"]]}
+{"cl":"190021011600","desc":["WP_MIC_US20","core tex 0.1T, silicone tape 0.2T"],"prop":[["material","silicone"]],"rel":[["partOf","US20W"],["purpose","MIC waterproof"]],"pn":[["190021011600","m3"]]}
+{"cl":"3247T1000870","desc":["M3 US20 SENSOR FPCB V1.0","PCB SMD, ALS P SENSOR"],"prop":[["material","ï¿½FPCB"]],"rel":[["partOf","US20W"],["purpose","PCB SMD, ALS P SENSOR"]],"pn":[["3247T1000870","m3"]]}
+{"cl":"190021012200","desc":["EMI_CUSHION_S_US20","EMI 5 x 5 x 4.0T"],"prop":[["material","EMI"]],"rel":[["partOf","US20W"],["purpose","M/B square hole right attachment"]],"pn":[["190021012200","m3"]]}
+{"cl":"190021011900","desc":["EMI_CUSHION_L_US20","EMI 22 x 4.5 x 4.0T"],"prop":[["material","EMI"]],"rel":[["partOf","US20W"],["purpose","Attached below M/B square hole"]],"pn":[["190021011900","m3"]]}
+{"cl":"190021011800","desc":["EMI_CUSHION_AP_US20","EMI 38 x 45 x 0.5T"],"prop":[["material","EMI"]],"rel":[["partOf","US20W"],["purpose","For electromagnetic wave shielding sheets"]],"pn":[["190021011800","m3"]]}
+{"cl":"190021011400","desc":["20P_CON_PAD_US20","LM 0.8T 7x5"],"prop":[["material","LM"]],"rel":[["partOf","US20W"],["purpose","Attachment of muscle tone sensor 20P connector"]],"pn":[["190021011400","m3"]]}
+{"cl":"190021011500","desc":["CAMERA_CON_PAD_US20","LM 0.6T 9x4"],"prop":[["material","LM"]],"rel":[["partOf","US20W"],["purpose","Camera bottom attachment"]],"pn":[["190021011500","m3"]]}
+{"cl":"190021011300","desc":["40P_CON_PAD_US20","LM 0.8T 10x4"],"prop":[["material","LM"]],"rel":[["partOf","US20W"],["purpose","Attached to the top of the connector"]],"pn":[["190021011300","m3"]]}
+{"cl":"216081114001","desc":["US20 NFC ANTENNA","NFC(13.56MHz)","RFIDï¿½"],"prop":[["material","PC"]],"rel":[["partOf","US20W"],["purpose","ï¿½ NFC ANTENNA"]],"pn":[["216081114001","m3"]]}
+{"cl":"190020710101","desc":["POGO_BATTERY_US20","ï¿½3.5 x 5.5"],"prop":[["material","C4926"]],"rel":[["partOf","US20W"],["purpose","Battery cushion role"]],"pn":[["190020710101","m3"]]}
+{"cl":"190020111801","desc":["ADAPTOR_4770_US20","PC_Flame Retardant V0"],"prop":[["material","PC"]],"rel":[["partOf","US20W"],["purpose","4770 dedicated adapter"]],"pn":[["190020111801","m3"]]}
+{"cl":"223030050091","desc":["MOTOR CYLINDER(Z6DC1B0050091)_M3 US20","MOTOR"],"prop":[["material","PA46ï¿½ GF30%\nC3604/C4926"]],"rel":[["partOf","US20W"],["purpose","Vibration motor"]],"pn":[["223030050091","m3"]]}
+{"cl":"3247N1000000","desc":["M3 US20 IO PCB ASSY, V1.0","PBA,SMD","IO"],"prop":[["material","FR4"]],"rel":[["partOf","US20W"],["purpose","I/O PCB"]],"pn":[["3247N1000000","m3"]]}
+{"cl":"190020910200","desc":["CAMERA_WINDOW_US20","ACRYLIC, SEKISUI WP Double-faced Tape 0.3T"],"prop":[["material","ACRYL"]],"rel":[["partOf","US20W"],["purpose","camera window"]],"pn":[["190020910200","m3"]]}
+{"cl":"190020111700","desc":["SCAN_0D_WINDOW_BKT_US20","PC_Flame Retardant V0"],"prop":[["material","PC"]],"rel":[["partOf","US20W"],["purpose","Scanner fixed BKT"]],"pn":[["190020111700","m3"]]}
+{"cl":"190020910800","desc":["SCAN_0D_WINDOW_4770, 5500_US20","ACRYLIC AF, AR Coating_SE4770"],"prop":[["material","ACRYL"]],"rel":[["partOf","US20W"],["purpose","4770 scanner window"]],"pn":[["190020910800","m3"]]}
+{"cl":"190020911100","desc":["SCAN_0D_WINDOW_4710_US21","ACYLE AR Coating 1.5T+TAPE"],"prop":[["material","ACRYL"]],"rel":[["partOf","US20W"],["purpose","4710 scanner window"]],"pn":[["190020911100","m3"]]}
+{"cl":"190020910500","desc":["SCAN_45D_WINDOW_4770_US20"],"prop":[],"rel":[["partOf","US20W"]],"pn":[["190020910500","m3"]]}
+{"cl":"190020910900","desc":["SCAN_0D_WINDOW_4850_US20","ACRYLIC AF, AR Coating_SE4850"],"prop":[["material","ACRYL"]],"rel":[["partOf","US20W"],["purpose","4850 scanner window"]],"pn":[["190020910900","m3"]]}
+{"cl":"190020111600","desc":["SCAN_0_DEGREE_BKT_US20","PC_Flame Retardant V0"],"prop":[["material","PC"]],"rel":[["partOf","US20W"],["purpose","Scanner Window Fixed BKT"]],"pn":[["190020111600","m3"]]}
+{"cl":"190020110900","desc":["SCAN_45D_WINDOW_BKT_US20"],"prop":[],"rel":[["partOf","US20W"]],"pn":[["190020110900","m3"]]}
+{"cl":"190021012300","desc":["SCAN_BKT_PAD_US20","LM 13.3 x 7.5 0.6T"],"prop":[["material","LM"]],"rel":[["partOf","US20W"],["purpose","Attached to the winding part of SCANNER FPCB of SCAN BKT"]],"pn":[["190021012300","m3"]]}
+{"cl":"190020111901","desc":["ADAPTOR_5500_US20","pc난연_6703금형사용부품"],"prop":[["material","PC"]],"rel":[["partOf","US20W"],["purpose","5500 dedicated adapter"]],"pn":[["190020111901","m3"]]}
+{"cl":"190021011100","desc":["SCAN_0D_WINDOW_WP_TAPE_US20","SEKISUI WP Double-faced Tape 0.4T"],"prop":[["material","PE foam"]],"rel":[["partOf","US20W"],["purpose","Scanner window fixing tape"]],"pn":[["190021011100","m3"]]}
+{"cl":"319002201300","desc":["CAP_SIM_CH_ASSY_US20","CAP_SIM_CHINA_ASSY_US20"],"prop":[["material","PC"]],"rel":[["partOf","US20W"],["purpose","CAP_SIM"]],"pn":[["319002201300","m3"]]}
+{"cl":"319002201270","desc":["REAR_COVER_0D_CH_ASSY_US20","REAR_COVER_0D_CHINA_ASSY_US20"],"prop":[["material","PC"]],"rel":[["partOf","US20W"],["purpose","REAR_COVER_0D"]],"pn":[["319002201270","m3"]]}
+{"cl":"324771000130","desc":["M3 US20 CAMERA SUB FPCB V1.0","PCB SMD, FLASH LED, CONNECTOR"],"prop":[["material","FCCL\nSUS"]],"rel":[["partOf","US20W"],["purpose","Camera connection cable with LED attached"]],"pn":[["324771000130","m3"]]}
+{"cl":"221040201003","desc":["HARNESS CABLE 9PIN_60mm","12505HS-09-60-FF (10㎜ 수축튜브)"],"prop":[["material","ï¿½plastic ( in copper )"]],"rel":[["partOf","US20W"],["purpose","TRIG-SPK-EAR SUB PCB mainboard connection cable"]],"pn":[["221040201003","m3"]]}
+{"cl":"931223054001","desc":["SCREW","FH T 2.3 X 5.0, ï¿½4.0 BLACK"],"prop":[["material","steel"]],"rel":[["partOf","US20W"],["purpose","FRONT COVER LCD BKT assembly screw"]],"pn":[["931223054001","m3"]]}
+{"cl":"912120604001","desc":["SCREW","BH, EPOXY, M 2.0 X 6.0, ï¿½4.0 BLACK"],"prop":[["material","steel"]],"rel":[["partOf","US20W"],["purpose","LCD BKT and SCAN BKT assembly screws"]],"pn":[["912120604001","m3"]]}
+{"cl":"952116033501","desc":["SCREW","SH, EPOXY, M 1.6 X 3.0, ï¿½3.5, BLACK, STAR T6x40"],"prop":[["material","steel"]],"rel":[["partOf","US20W"],["purpose","4710, 4770 scanner assembly screw"]],"pn":[["952116033501","m3"]]}
+{"cl":"953117043501","desc":["SCREW","SH, NYLOK, M 1.7 X 4.0, ï¿½3.5, BLACK, STAR T6x40, 방수 화학처리"],"prop":[["material","steel"]],"rel":[["partOf","US20W"],["purpose","REAR COVER and WINDOW BKT assembly screws"]],"pn":[["953117043501","m3"]]}
+{"cl":"953120064301","desc":["SCREW","SH, NYLOK, M 2.0 X 6.0, ï¿½4.3, BLACK, STAR T6x40, 방수 화학처리"],"prop":[["material","steel"]],"rel":[["partOf","US20W"],["purpose","FRONT COVER and POGO IO assembly screws"]],"pn":[["953120064301","m3"]]}
+{"cl":"202441801061","desc":["Super CAP_2.7V_10F(1025)","WEC 2R7 106 QA","ï¿½Backup Battery"],"prop":[["material","PET\nCellulose\naluminum"]],"rel":[["partOf","US20W"],["purpose","ï¿½ Backup Battery"]],"pn":[["202441801061","m3"]]}
+{"cl":"3247T1100130","desc":["M3 US20 TRIG-SPK-EAR SUB PCB ASSY, V1.1","PBA, Trigger, Speaker, Ear-jack"],"prop":[["material","FR4\nplastic"]],"rel":[["partOf","US20W"],["purpose","Trigger, Speaker connection Ear-jack PCB"]],"pn":[["3247T1100130","m3"]]}
+{"cl":"190021013100","desc":["SUB_BAT_PAD_US20","폼타입 테이프 0.4T"],"prop":[["material","PE foam"]],"rel":[["partOf","US20W"],["purpose","NFC antenna supercap seat attachment"]],"pn":[["190021013100","m3"]]}

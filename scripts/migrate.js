@@ -4,7 +4,7 @@ const fs = require('fs');
 const fsPromises = fs.promises;
 const path = require('path');
 const readline = require('readline');
-const { createReadStream, createWriteStream } = fs;
+const { createReadStream, createWriteStream } = require('fs');
 const { Client } = require('pg');
 const { createHash } = require('crypto');
 const { v4: uuidv4 } = require('uuid');
@@ -63,22 +63,10 @@ async function migrateUsers() {
   console.log(`Migrated ${users.length} users`);
 }
 
-// Main migration function
-async function migrate() {
-  try {
-    await migrateCollections();
-    await migrateUsers();
-    console.log('Migration completed successfully');
-  } catch (error) {
-    console.error('Migration failed:', error);
-  } finally {
-    pgp.end();
-  }
-}
-
 // Configuration
 const CONFIG = {
   sourceDir: process.env.SOURCE_DIR || './data/legacy',
+  targetDir: process.env.TARGET_DIR || './data/migrated', // New target directory for migrated JSON files
   tempDir: process.env.TEMP_DIR || './data/temp',
   logDir: process.env.LOG_DIR || './logs',
   batchSize: parseInt(process.env.BATCH_SIZE || '100'),
@@ -184,7 +172,9 @@ async function initialize() {
     // Create directories if they don't exist
     await Promise.all([
       fsPromises.mkdir(CONFIG.tempDir, { recursive: true }),
-      fsPromises.mkdir(CONFIG.logDir, { recursive: true })
+      fsPromises.mkdir(CONFIG.logDir, { recursive: true }),
+      fsPromises.mkdir(path.join(CONFIG.targetDir, 'base'), { recursive: true }), // Create target base directory
+      fsPromises.mkdir(path.join(CONFIG.targetDir, 'history'), { recursive: true }) // Create target history directory
     ]);
     
     // Validate source directory
@@ -250,6 +240,42 @@ async function readLegacyData(collection) {
   } catch (error) {
     logger.error(`Failed to read ${collection} data`, error);
     throw error;
+  }
+}
+
+/**
+ * Write transformed data to a new JSON file
+ * @param {string} collection - Collection name
+ * @param {Array} items - Transformed items to write
+ * @returns {Promise<boolean>} - Success status
+ */
+async function writeJsonFile(collection, items) {
+  logger.info(`Writing ${items.length} items to ${collection}.json`);
+  
+  const filePath = path.join(CONFIG.targetDir, 'base', `${collection}.json`);
+  
+  try {
+    // Create write stream
+    const writeStream = createWriteStream(filePath);
+    
+    // Write each item on a new line
+    for (const item of items) {
+      writeStream.write(JSON.stringify(item) + '\n');
+    }
+    
+    // Close the stream
+    await new Promise((resolve, reject) => {
+      writeStream.end(err => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    
+    logger.info(`Successfully wrote ${items.length} items to ${collection}.json`);
+    return true;
+  } catch (error) {
+    logger.error(`Failed to write ${collection}.json file: ${error.message}`);
+    return false;
   }
 }
 
@@ -729,6 +755,116 @@ function transformDict(dict) {
 }
 
 /**
+ * Transform data for storage service JSON format
+ * @param {Array} transformedData - Transformed data from database format
+ * @param {string} type - Entity type (users, items, etc.)
+ * @returns {Array} - Data formatted for StorageService
+ */
+function transformForStorageService(transformedData, type) {
+  // Different transformation logic based on entity type
+  switch (type) {
+    case 'users':
+      return transformedData.map(user => ({
+        sn: [user.id, Math.floor(new Date(user.created_at).getTime() / 1000)],
+        nm: user.username,
+        pwd: user.password_hash,
+        cem: user.email,
+        comp: user.company,
+        ph: user.phone,
+        str: user.street,
+        hs: user.house_number,
+        zip: user.postal_code,
+        cit: user.city,
+        ctry: user.country,
+        r: user.role,
+        active: true
+      }));
+
+    case 'items':
+      return transformedData.map(item => ({
+        sn: [item.serial_number, Math.floor(new Date(item.created_at).getTime() / 1000)],
+        cl: item.class_id,
+        desc: JSON.parse(item.description || '[]'),
+        cond: JSON.parse(item.condition || '[]'),
+        actn: JSON.parse(item.actions || '[]'),
+        img: JSON.parse(item.images || '[]'),
+        mas: JSON.parse(item.mass || '[]'),
+        siz: JSON.parse(item.size || '[]'),
+        own: JSON.parse(item.owner || '[]'),
+        brc: JSON.parse(item.barcodes || '[]'),
+        loc: JSON.parse(item.location_history || '[]'),
+        attr: JSON.parse(item.attributes || '{}')
+      }));
+
+    case 'boxes':
+      return transformedData.map(box => ({
+        sn: [box.serial_number, Math.floor(new Date(box.created_at).getTime() / 1000)],
+        cl: box.class_id,
+        desc: JSON.parse(box.description || '[]'),
+        brc: JSON.parse(box.barcodes || '[]'),
+        mas: JSON.parse(box.mass || '[]'),
+        siz: JSON.parse(box.size || '[]'),
+        cont: JSON.parse(box.contents || '[]'),
+        in: JSON.parse(box.incoming || '[]'),
+        out: JSON.parse(box.outgoing || '[]'),
+        mult: [[box.multiplier || 1]],
+        loc: JSON.parse(box.location_history || '[]')
+      }));
+
+    case 'places':
+      return transformedData.map(place => ({
+        sn: [place.serial_number, Math.floor(new Date(place.created_at).getTime() / 1000)],
+        cl: place.class_id,
+        desc: JSON.parse(place.description || '[]'),
+        cont: JSON.parse(place.contents || '[]')
+      }));
+
+    case 'orders':
+      return transformedData.map(order => ({
+        sn: [order.serial_number, Math.floor(new Date(order.created_at).getTime() / 1000)],
+        cl: order.class_id,
+        comp: order.company,
+        pers: order.person,
+        str: order.street,
+        hs: order.house_number,
+        zip: order.postal_code,
+        cit: order.city,
+        ctry: order.country,
+        cem: order.contact_email,
+        iem: order.invoice_email,
+        ph: order.phone,
+        cont: JSON.parse(order.contents || '[]'),
+        decl: JSON.parse(order.declarations || '[]'),
+        st: order.status || 'pending'
+      }));
+
+    case 'classes':
+      return transformedData.map(cls => ({
+        cl: cls.class_name,
+        desc: JSON.parse(cls.description || '[]'),
+        prop: Object.entries(JSON.parse(cls.properties || '{}')).map(([key, value]) => [key, ...value]),
+        rel: Object.entries(JSON.parse(cls.relations || '{}')).map(([key, value]) => [key, ...value]),
+        pn: JSON.parse(cls.part_numbers || '[]').map(pn => [pn.number, pn.type])
+      }));
+
+    case 'dicts':
+      return transformedData.map(dict => ({
+        orig: dict.original_text,
+        translations: {
+          original: dict.original_text,
+          ...dict.translations.reduce((acc, trans) => {
+            acc[trans.language_code] = trans.translated_text;
+            return acc;
+          }, {})
+        }
+      }));
+
+    default:
+      return transformedData;
+  }
+}
+
+/**
  * Insert data into PostgreSQL database
  * @param {Object} client - Database client
  * @param {string} tableName - Target table name
@@ -901,6 +1037,17 @@ async function initializeSerialCounters(client) {
       );
     }
     
+    // Also save ini.json to target directory
+    await fsPromises.writeFile(
+      path.join(CONFIG.targetDir, 'base', 'ini.json'),
+      JSON.stringify({
+        serialIi: iniData.serialIi || 999999999999999,
+        serialI: iniData.serialI || 1,
+        serialB: iniData.serialB || 1,
+        serialP: iniData.serialP || 1
+      }, null, 2)
+    );
+    
     // Commit transaction
     await client.query('COMMIT');
     
@@ -1008,6 +1155,10 @@ async function migrate() {
     
     await insertData(client, 'classes', transformedClasses);
     
+    // Write classes to JSON file for StorageService
+    const storageServiceClasses = transformForStorageService(transformedClasses, 'classes');
+    await writeJsonFile('classes', storageServiceClasses);
+    
     // 2. Migrate places (needed for location references)
     logger.info('Step 2: Migrating places');
     const placesData = await readLegacyData('places');
@@ -1028,6 +1179,10 @@ async function migrate() {
     }
     
     await insertData(client, 'places', transformedPlaces);
+    
+    // Write places to JSON file for StorageService
+    const storageServicePlaces = transformForStorageService(transformedPlaces, 'places');
+    await writeJsonFile('places', storageServicePlaces);
     
     // 3. Migrate users
     logger.info('Step 3: Migrating users');
@@ -1050,6 +1205,10 @@ async function migrate() {
     
     await insertData(client, 'users', transformedUsers);
     
+    // Write users to JSON file for StorageService
+    const storageServiceUsers = transformForStorageService(transformedUsers, 'users');
+    await writeJsonFile('users', storageServiceUsers);
+    
     // 4. Migrate items
     logger.info('Step 4: Migrating items');
     const itemsData = await readLegacyData('items');
@@ -1070,6 +1229,10 @@ async function migrate() {
     }
     
     await insertData(client, 'items', transformedItems);
+    
+    // Write items to JSON file for StorageService
+    const storageServiceItems = transformForStorageService(transformedItems, 'items');
+    await writeJsonFile('items', storageServiceItems);
     
     // 5. Migrate boxes
     logger.info('Step 5: Migrating boxes');
@@ -1092,6 +1255,10 @@ async function migrate() {
     
     await insertData(client, 'boxes', transformedBoxes);
     
+    // Write boxes to JSON file for StorageService
+    const storageServiceBoxes = transformForStorageService(transformedBoxes, 'boxes');
+    await writeJsonFile('boxes', storageServiceBoxes);
+    
     // 6. Migrate orders
     logger.info('Step 6: Migrating orders');
     const ordersData = await readLegacyData('orders');
@@ -1109,6 +1276,10 @@ async function migrate() {
     }
     
     await insertData(client, 'orders', transformedOrders);
+    
+    // Write orders to JSON file for StorageService
+    const storageServiceOrders = transformForStorageService(transformedOrders, 'orders');
+    await writeJsonFile('orders', storageServiceOrders);
     
     // 7. Migrate dictionaries
     logger.info('Step 7: Migrating dictionaries');
@@ -1128,9 +1299,27 @@ async function migrate() {
     
     await insertTranslations(client, transformedDicts);
     
+    // Write dictionaries to JSON file for StorageService
+    const storageServiceDicts = transformForStorageService(transformedDicts, 'dicts');
+    await writeJsonFile('dicts', storageServiceDicts);
+    
     // 8. Initialize serial counters
     logger.info('Step 8: Initializing serial counters');
     await initializeSerialCounters(client);
+    
+    // Create empty JSON files for other collections that might be empty
+    const emptyCollections = ['uppers'];
+    for (const collection of emptyCollections) {
+      if (!fs.existsSync(path.join(CONFIG.targetDir, 'base', `${collection}.json`))) {
+        await writeJsonFile(collection, []);
+      }
+    }
+    
+    // Create history directories for each collection
+    const historyDirs = ['items', 'boxes', 'orders'];
+    for (const dir of historyDirs) {
+      await fsPromises.mkdir(path.join(CONFIG.targetDir, 'history', dir), { recursive: true });
+    }
     
     logger.info('Migration completed successfully');
   } catch (error) {
