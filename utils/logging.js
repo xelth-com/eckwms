@@ -9,8 +9,22 @@ if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir);
 }
 
+// Define custom format for better error formatting
+const betterErrorFormat = winston.format(info => {
+  if (info.error && info.error instanceof Error) {
+    // Extract full error details including stack trace
+    info.errorDetails = {
+      message: info.error.message,
+      stack: info.error.stack,
+      ...info.error
+    };
+  }
+  return info;
+});
+
 // Define log format
 const logFormat = winston.format.combine(
+  betterErrorFormat(),
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.errors({ stack: true }),
   winston.format.splat(),
@@ -31,9 +45,11 @@ const logger = winston.createLogger({
       format: winston.format.combine(
         winston.format.colorize(),
         winston.format.printf(
-          ({ level, message, timestamp, ...meta }) => {
-            const stack = meta.stack ? `\n${meta.stack}` : '';
-            const metadata = Object.keys(meta).length > 0 ? 
+          ({ level, message, timestamp, errorDetails, ...meta }) => {
+            // Format error output nicely for console
+            const stack = errorDetails?.stack ? `\n${errorDetails.stack}` : '';
+            const metadata = Object.keys(meta).length > 0 && 
+              !['stack', 'service'].includes(Object.keys(meta)[0]) ? 
               `\n${JSON.stringify(meta, null, 2)}` : '';
             
             return `${timestamp} ${level}: ${message}${stack}${metadata}`;
@@ -103,14 +119,26 @@ logger.audit = (action, userId, details = {}) => {
   });
 };
 
-// Log uncaught exceptions and unhandled rejections
+// Enhanced error handling for uncaught exceptions and unhandled rejections
 process.on('uncaughtException', (error) => {
-  logger.error('Uncaught exception', { error });
-  process.exit(1);
+  logger.error(`Uncaught exception: ${error.message}`, { 
+    error,
+    stack: error.stack
+  });
+  
+  // Give logger time to flush before exiting
+  setTimeout(() => {
+    process.exit(1);
+  }, 1000);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled rejection', { reason, promise });
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  logger.error(`Unhandled rejection: ${error.message}`, { 
+    error,
+    stack: error.stack,
+    promise: String(promise)
+  });
 });
 
 module.exports = logger;

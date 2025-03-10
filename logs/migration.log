@@ -18,3 +18,206 @@
     at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
     at async insertData (C:\Users\xelth\eckwms\scripts\migrate.js:712:26)
     at async migrate (C:\Users\xelth\eckwms\scripts\migrate.js:941:5)
+[2025-03-10T02:26:21.647Z] INFO: Starting data migration
+[2025-03-10T02:26:21.655Z] INFO: Mode: Full Migration
+[2025-03-10T02:26:21.655Z] INFO: Starting migration initialization
+[2025-03-10T02:26:21.657Z] INFO: Migration environment initialized successfully
+[2025-03-10T02:26:21.657Z] INFO: Connecting to database
+[2025-03-10T02:26:21.911Z] INFO: Database connection established
+[2025-03-10T02:26:21.912Z] INFO: Step 1: Migrating classes
+[2025-03-10T02:26:21.913Z] INFO: Reading legacy data for collection: classes
+[2025-03-10T02:26:21.928Z] INFO: Read 638 items from classes
+[2025-03-10T02:26:21.944Z] INFO: Inserting 638 records into classes
+[2025-03-10T02:26:21.964Z] ERROR: Failed to insert data into classes error: keine Berechtigung für Tabelle classes
+    at C:\Users\xelth\eckwms\node_modules\pg\lib\client.js:535:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async insertData (C:\Users\xelth\eckwms\scripts\migrate.js:780:26)
+    at async migrate (C:\Users\xelth\eckwms\scripts\migrate.js:1009:5)
+[2025-03-10T02:26:21.967Z] ERROR: Migration failed error: keine Berechtigung für Tabelle classes
+    at C:\Users\xelth\eckwms\node_modules\pg\lib\client.js:535:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async insertData (C:\Users\xelth\eckwms\scripts\migrate.js:780:26)
+    at async migrate (C:\Users\xelth\eckwms\scripts\migrate.js:1009:5)
+[2025-03-10T02:44:17.683Z] INFO: Starting data migration
+[2025-03-10T02:44:17.691Z] INFO: Starting migration initialization
+[2025-03-10T02:44:17.690Z] INFO: Mode: Full Migration
+[2025-03-10T02:44:17.692Z] INFO: Migration environment initialized successfully
+[2025-03-10T02:44:17.692Z] INFO: Connecting to database
+[2025-03-10T02:44:17.790Z] INFO: Database connection established
+[2025-03-10T02:44:17.791Z] INFO: Step 1: Migrating classes
+[2025-03-10T02:44:17.791Z] INFO: Reading legacy data for collection: classes
+[2025-03-10T02:44:17.809Z] INFO: Read 638 items from classes
+[2025-03-10T02:44:17.824Z] INFO: Inserting 638 records into classes
+[2025-03-10T02:44:17.836Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:44:17.841Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:44:17.848Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:44:17.853Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:44:17.857Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:44:17.863Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:44:17.866Z] INFO: Inserted batch of 38 records into classes
+[2025-03-10T02:44:17.876Z] INFO: Successfully inserted 638 records into classes
+[2025-03-10T02:44:17.876Z] INFO: Step 2: Migrating places
+[2025-03-10T02:44:17.876Z] INFO: Reading legacy data for collection: places
+[2025-03-10T02:44:17.878Z] INFO: Read 43 items from places
+[2025-03-10T02:44:17.881Z] INFO: Inserting 43 records into places
+[2025-03-10T02:44:17.888Z] INFO: Inserted batch of 43 records into places
+[2025-03-10T02:44:17.889Z] INFO: Successfully inserted 43 records into places
+[2025-03-10T02:44:17.890Z] INFO: Step 3: Migrating users
+[2025-03-10T02:44:17.890Z] INFO: Reading legacy data for collection: users
+[2025-03-10T02:44:17.891Z] INFO: Read 4 items from users
+[2025-03-10T02:44:17.892Z] INFO: Inserting 4 records into users
+[2025-03-10T02:44:17.897Z] ERROR: Failed to insert data into users error: Wert zu lang für Typ character varying(100)
+    at C:\Users\xelth\eckwms\node_modules\pg\lib\client.js:535:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async insertData (C:\Users\xelth\eckwms\scripts\migrate.js:780:26)
+    at async migrate (C:\Users\xelth\eckwms\scripts\migrate.js:1051:5)
+[2025-03-10T02:44:17.898Z] ERROR: Migration failed error: Wert zu lang für Typ character varying(100)
+    at C:\Users\xelth\eckwms\node_modules\pg\lib\client.js:535:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async insertData (C:\Users\xelth\eckwms\scripts\migrate.js:780:26)
+    at async migrate (C:\Users\xelth\eckwms\scripts\migrate.js:1051:5)
+[2025-03-10T02:46:26.511Z] INFO: Starting data migration
+[2025-03-10T02:46:26.518Z] INFO: Mode: Full Migration
+[2025-03-10T02:46:26.519Z] INFO: Starting migration initialization
+[2025-03-10T02:46:26.521Z] INFO: Migration environment initialized successfully
+[2025-03-10T02:46:26.521Z] INFO: Connecting to database
+[2025-03-10T02:46:26.609Z] INFO: Database connection established
+[2025-03-10T02:46:26.610Z] INFO: Step 1: Migrating classes
+[2025-03-10T02:46:26.610Z] INFO: Reading legacy data for collection: classes
+[2025-03-10T02:46:26.621Z] INFO: Read 638 items from classes
+[2025-03-10T02:46:26.635Z] INFO: Inserting 638 records into classes
+[2025-03-10T02:46:26.644Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:46:26.648Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:46:26.654Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:46:26.660Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:46:26.664Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:46:26.668Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:46:26.670Z] INFO: Inserted batch of 38 records into classes
+[2025-03-10T02:46:26.671Z] INFO: Successfully inserted 0 records into classes
+[2025-03-10T02:46:26.671Z] INFO: Step 2: Migrating places
+[2025-03-10T02:46:26.671Z] INFO: Reading legacy data for collection: places
+[2025-03-10T02:46:26.674Z] INFO: Read 43 items from places
+[2025-03-10T02:46:26.677Z] INFO: Inserting 43 records into places
+[2025-03-10T02:46:26.681Z] INFO: Inserted batch of 43 records into places
+[2025-03-10T02:46:26.681Z] INFO: Successfully inserted 0 records into places
+[2025-03-10T02:46:26.682Z] INFO: Step 3: Migrating users
+[2025-03-10T02:46:26.682Z] INFO: Reading legacy data for collection: users
+[2025-03-10T02:46:26.683Z] INFO: Read 4 items from users
+[2025-03-10T02:46:26.684Z] INFO: Inserting 4 records into users
+[2025-03-10T02:46:26.688Z] ERROR: Failed to insert data into users error: Wert zu lang für Typ character varying(20)
+    at C:\Users\xelth\eckwms\node_modules\pg\lib\client.js:535:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async insertData (C:\Users\xelth\eckwms\scripts\migrate.js:780:26)
+    at async migrate (C:\Users\xelth\eckwms\scripts\migrate.js:1051:5)
+[2025-03-10T02:46:26.690Z] ERROR: Migration failed error: Wert zu lang für Typ character varying(20)
+    at C:\Users\xelth\eckwms\node_modules\pg\lib\client.js:535:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async insertData (C:\Users\xelth\eckwms\scripts\migrate.js:780:26)
+    at async migrate (C:\Users\xelth\eckwms\scripts\migrate.js:1051:5)
+[2025-03-10T02:48:32.892Z] INFO: Starting data migration
+[2025-03-10T02:48:32.901Z] INFO: Mode: Full Migration
+[2025-03-10T02:48:32.901Z] INFO: Starting migration initialization
+[2025-03-10T02:48:32.904Z] INFO: Migration environment initialized successfully
+[2025-03-10T02:48:32.905Z] INFO: Connecting to database
+[2025-03-10T02:48:32.997Z] INFO: Database connection established
+[2025-03-10T02:48:32.997Z] INFO: Step 1: Migrating classes
+[2025-03-10T02:48:32.998Z] INFO: Reading legacy data for collection: classes
+[2025-03-10T02:48:33.010Z] INFO: Read 638 items from classes
+[2025-03-10T02:48:33.024Z] INFO: Inserting 638 records into classes
+[2025-03-10T02:48:33.032Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:48:33.037Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:48:33.044Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:48:33.048Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:48:33.053Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:48:33.058Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:48:33.060Z] INFO: Inserted batch of 38 records into classes
+[2025-03-10T02:48:33.060Z] INFO: Successfully inserted 0 records into classes
+[2025-03-10T02:48:33.061Z] INFO: Step 2: Migrating places
+[2025-03-10T02:48:33.061Z] INFO: Reading legacy data for collection: places
+[2025-03-10T02:48:33.063Z] INFO: Read 43 items from places
+[2025-03-10T02:48:33.066Z] INFO: Inserting 43 records into places
+[2025-03-10T02:48:33.069Z] INFO: Inserted batch of 43 records into places
+[2025-03-10T02:48:33.070Z] INFO: Successfully inserted 0 records into places
+[2025-03-10T02:48:33.071Z] INFO: Step 3: Migrating users
+[2025-03-10T02:48:33.071Z] INFO: Reading legacy data for collection: users
+[2025-03-10T02:48:33.072Z] INFO: Read 4 items from users
+[2025-03-10T02:48:33.073Z] INFO: Inserting 4 records into users
+[2025-03-10T02:48:33.076Z] INFO: Inserted batch of 4 records into users
+[2025-03-10T02:48:33.077Z] INFO: Successfully inserted 4 records into users
+[2025-03-10T02:48:33.078Z] INFO: Step 4: Migrating items
+[2025-03-10T02:48:33.078Z] INFO: Reading legacy data for collection: items
+[2025-03-10T02:48:33.082Z] INFO: Read 689 items from items
+[2025-03-10T02:48:33.103Z] INFO: Inserting 689 records into items
+[2025-03-10T02:48:33.116Z] ERROR: Failed to insert data into items error: ungültige Eingabesyntax für Typ uuid: »p000000000000000005«
+    at C:\Users\xelth\eckwms\node_modules\pg\lib\client.js:535:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async insertData (C:\Users\xelth\eckwms\scripts\migrate.js:780:26)
+    at async migrate (C:\Users\xelth\eckwms\scripts\migrate.js:1072:5)
+[2025-03-10T02:48:33.118Z] ERROR: Migration failed error: ungültige Eingabesyntax für Typ uuid: »p000000000000000005«
+    at C:\Users\xelth\eckwms\node_modules\pg\lib\client.js:535:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async insertData (C:\Users\xelth\eckwms\scripts\migrate.js:780:26)
+    at async migrate (C:\Users\xelth\eckwms\scripts\migrate.js:1072:5)
+[2025-03-10T02:50:27.997Z] INFO: Starting data migration
+[2025-03-10T02:50:28.007Z] INFO: Mode: Full Migration
+[2025-03-10T02:50:28.008Z] INFO: Starting migration initialization
+[2025-03-10T02:50:28.010Z] INFO: Migration environment initialized successfully
+[2025-03-10T02:50:28.011Z] INFO: Connecting to database
+[2025-03-10T02:50:28.159Z] INFO: Database connection established
+[2025-03-10T02:50:28.160Z] INFO: Step 1: Migrating classes
+[2025-03-10T02:50:28.161Z] INFO: Reading legacy data for collection: classes
+[2025-03-10T02:50:28.183Z] INFO: Read 638 items from classes
+[2025-03-10T02:50:28.202Z] INFO: Inserting 638 records into classes
+[2025-03-10T02:50:28.214Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:50:28.219Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:50:28.225Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:50:28.230Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:50:28.235Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:50:28.240Z] INFO: Inserted batch of 100 records into classes
+[2025-03-10T02:50:28.243Z] INFO: Inserted batch of 38 records into classes
+[2025-03-10T02:50:28.244Z] INFO: Successfully inserted 0 records into classes
+[2025-03-10T02:50:28.245Z] INFO: Step 2: Migrating places
+[2025-03-10T02:50:28.245Z] INFO: Reading legacy data for collection: places
+[2025-03-10T02:50:28.247Z] INFO: Read 43 items from places
+[2025-03-10T02:50:28.251Z] INFO: Inserting 43 records into places
+[2025-03-10T02:50:28.258Z] INFO: Inserted batch of 43 records into places
+[2025-03-10T02:50:28.259Z] INFO: Successfully inserted 0 records into places
+[2025-03-10T02:50:28.260Z] INFO: Step 3: Migrating users
+[2025-03-10T02:50:28.260Z] INFO: Reading legacy data for collection: users
+[2025-03-10T02:50:28.261Z] INFO: Read 4 items from users
+[2025-03-10T02:50:28.262Z] INFO: Inserting 4 records into users
+[2025-03-10T02:50:28.264Z] INFO: Inserted batch of 4 records into users
+[2025-03-10T02:50:28.265Z] INFO: Successfully inserted 0 records into users
+[2025-03-10T02:50:28.265Z] INFO: Step 4: Migrating items
+[2025-03-10T02:50:28.266Z] INFO: Reading legacy data for collection: items
+[2025-03-10T02:50:28.272Z] INFO: Read 689 items from items
+[2025-03-10T02:50:28.283Z] INFO: Inserting 689 records into items
+[2025-03-10T02:50:28.300Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T02:50:28.312Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T02:50:28.321Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T02:50:28.333Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T02:50:28.345Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T02:50:28.358Z] INFO: Inserted batch of 100 records into items
+[2025-03-10T02:50:28.369Z] INFO: Inserted batch of 89 records into items
+[2025-03-10T02:50:28.377Z] INFO: Successfully inserted 689 records into items
+[2025-03-10T02:50:28.378Z] INFO: Step 5: Migrating boxes
+[2025-03-10T02:50:28.378Z] INFO: Reading legacy data for collection: boxes
+[2025-03-10T02:50:28.382Z] INFO: Read 157 items from boxes
+[2025-03-10T02:50:28.386Z] INFO: Inserting 157 records into boxes
+[2025-03-10T02:50:28.404Z] INFO: Inserted batch of 100 records into boxes
+[2025-03-10T02:50:28.414Z] INFO: Inserted batch of 57 records into boxes
+[2025-03-10T02:50:28.416Z] INFO: Successfully inserted 157 records into boxes
+[2025-03-10T02:50:28.416Z] INFO: Step 6: Migrating orders
+[2025-03-10T02:50:28.416Z] INFO: Reading legacy data for collection: orders
+[2025-03-10T02:50:28.419Z] INFO: Read 122 items from orders
+[2025-03-10T02:50:28.422Z] INFO: Inserting 122 records into orders
+[2025-03-10T02:50:28.434Z] INFO: Inserted batch of 100 records into orders
+[2025-03-10T02:50:28.437Z] INFO: Inserted batch of 22 records into orders
+[2025-03-10T02:50:28.438Z] INFO: Successfully inserted 122 records into orders
+[2025-03-10T02:50:28.439Z] INFO: Step 7: Migrating dictionaries
+[2025-03-10T02:50:28.439Z] INFO: Reading legacy data for collection: dicts
+[2025-03-10T02:50:28.440Z] INFO: Read 0 items from dicts
+[2025-03-10T02:50:28.441Z] INFO: Step 8: Initializing serial counters
+[2025-03-10T02:50:28.441Z] INFO: Initializing serial counters
+[2025-03-10T02:50:28.446Z] INFO: Serial counters initialized successfully
+[2025-03-10T02:50:28.446Z] INFO: Migration completed successfully

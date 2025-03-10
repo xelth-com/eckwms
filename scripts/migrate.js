@@ -1,19 +1,16 @@
 // scripts/migrate.js
 require('dotenv').config();
-const fs = require('fs').promises;
+const fs = require('fs');
+const fsPromises = fs.promises;
 const path = require('path');
 const readline = require('readline');
-const { createReadStream, createWriteStream } = require('fs');
+const { createReadStream, createWriteStream } = fs;
 const { Client } = require('pg');
 const { createHash } = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-
-
 const pgp = require('pg-promise')();
-const fs = require('fs');
-const readline = require('readline');
 
-// Конфигурация базы данных
+// Database configuration
 const db = pgp({
   host: 'localhost',
   port: 5432,
@@ -22,7 +19,7 @@ const db = pgp({
   password: 'secure_password'
 });
 
-// Функция для параллельной обработки коллекций
+// Function for parallel processing of collections
 async function migrateCollections() {
   const collections = [
     { name: 'items', file: 'items.json' },
@@ -31,7 +28,7 @@ async function migrateCollections() {
   ];
 
   await Promise.all(collections.map(async (collection) => {
-    const fileStream = fs.createReadStream(`./data/${collection.file}`);
+    const fileStream = createReadStream(`./data/${collection.file}`);
     const rl = readline.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -48,9 +45,9 @@ async function migrateCollections() {
   }));
 }
 
-// Функция для миграции пользовательских данных
+// Function for migrating user data
 async function migrateUsers() {
-  const fileStream = fs.createReadStream('./data/users.json');
+  const fileStream = createReadStream('./data/users.json');
   const rl = readline.createInterface({
     input: fileStream,
     crlfDelay: Infinity
@@ -66,7 +63,7 @@ async function migrateUsers() {
   console.log(`Migrated ${users.length} users`);
 }
 
-// Основная функция миграции
+// Main migration function
 async function migrate() {
   try {
     await migrateCollections();
@@ -78,9 +75,6 @@ async function migrate() {
     pgp.end();
   }
 }
-
-
-
 
 // Configuration
 const CONFIG = {
@@ -103,7 +97,7 @@ const logger = {
   info: (message) => {
     const timestamp = new Date().toISOString();
     console.log(`[${timestamp}] INFO: ${message}`);
-    fs.appendFile(
+    fsPromises.appendFile(
       path.join(CONFIG.logDir, 'migration.log'),
       `[${timestamp}] INFO: ${message}\n`
     ).catch(err => console.error('Error writing to log:', err));
@@ -111,7 +105,7 @@ const logger = {
   error: (message, error) => {
     const timestamp = new Date().toISOString();
     console.error(`[${timestamp}] ERROR: ${message}`, error);
-    fs.appendFile(
+    fsPromises.appendFile(
       path.join(CONFIG.logDir, 'migration.log'),
       `[${timestamp}] ERROR: ${message} ${error ? error.stack || error : ''}\n`
     ).catch(err => console.error('Error writing to log:', err));
@@ -119,7 +113,7 @@ const logger = {
   warn: (message) => {
     const timestamp = new Date().toISOString();
     console.warn(`[${timestamp}] WARN: ${message}`);
-    fs.appendFile(
+    fsPromises.appendFile(
       path.join(CONFIG.logDir, 'migration.log'),
       `[${timestamp}] WARN: ${message}\n`
     ).catch(err => console.error('Error writing to log:', err));
@@ -189,12 +183,12 @@ async function initialize() {
   try {
     // Create directories if they don't exist
     await Promise.all([
-      fs.mkdir(CONFIG.tempDir, { recursive: true }),
-      fs.mkdir(CONFIG.logDir, { recursive: true })
+      fsPromises.mkdir(CONFIG.tempDir, { recursive: true }),
+      fsPromises.mkdir(CONFIG.logDir, { recursive: true })
     ]);
     
     // Validate source directory
-    await fs.access(CONFIG.sourceDir);
+    await fsPromises.access(CONFIG.sourceDir);
     
     logger.info('Migration environment initialized successfully');
     return true;
@@ -234,7 +228,7 @@ async function readLegacyData(collection) {
   const items = [];
   
   try {
-    await fs.access(filePath);
+    await fsPromises.access(filePath);
     
     const rl = readline.createInterface({
       input: createReadStream(filePath),
@@ -887,7 +881,7 @@ async function initializeSerialCounters(client) {
   try {
     // Read the initial values from ini.json
     const iniPath = path.join(CONFIG.sourceDir, 'base/ini.json');
-    const iniData = JSON.parse(await fs.readFile(iniPath, 'utf8'));
+    const iniData = JSON.parse(await fsPromises.readFile(iniPath, 'utf8'));
     
     // Insert or update serial counters
     const counters = [

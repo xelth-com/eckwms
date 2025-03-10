@@ -15,7 +15,7 @@ class HistoryService {
    */
   constructor(baseDirectory) {
     this.baseDirectory = baseDirectory;
-    this.historyDir = path.resolve(`${baseDirectory}history`);
+    this.historyDir = path.resolve(path.join(baseDirectory, 'history'));
     this.entityHistories = new Map();
     this.retentionPeriodDays = 90; // Default retention period
     this.initialized = false;
@@ -117,20 +117,17 @@ class HistoryService {
       // Convert history entries to array
       const entries = Array.from(entityHistory.values());
       
-      // Write to file (append mode)
-      const fileHandle = await fs.open(filePath, 'a');
-      const writeStream = fileHandle.createWriteStream();
+      // Ensure the directory exists
+      const dirPath = path.dirname(filePath);
+      await fs.mkdir(dirPath, { recursive: true });
       
+      // Write to file (append mode)
+      let fileContent = '';
       for (const entry of entries) {
-        writeStream.write(JSON.stringify(entry) + '\n');
+        fileContent += JSON.stringify(entry) + '\n';
       }
       
-      await new Promise(resolve => {
-        writeStream.end();
-        writeStream.on('finish', resolve);
-      });
-      
-      await fileHandle.close();
+      await fs.appendFile(filePath, fileContent);
       
       // Clear in-memory history
       entityHistory.clear();
@@ -239,6 +236,14 @@ class HistoryService {
       const results = [];
       const entityDir = path.join(this.historyDir, entityType);
       
+      // Check if directory exists
+      try {
+        await fs.access(entityDir);
+      } catch (error) {
+        logger.warn(`History directory does not exist: ${entityDir}`);
+        return [];
+      }
+      
       // Get all history files
       const files = await fs.readdir(entityDir);
       
@@ -259,24 +264,33 @@ class HistoryService {
       for (const file of relevantFiles) {
         const filePath = path.join(entityDir, file);
         
-        const rl = readline.createInterface({
-          input: createReadStream(filePath),
-          crlfDelay: Infinity
-        });
-        
-        for await (const line of rl) {
-          try {
-            const entry = JSON.parse(line);
-            
-            // Apply filters
-            if (entry.id !== entityId) continue;
-            if (entry.timestamp < startTime || entry.timestamp > endTime) continue;
-            if (action && entry.action !== action) continue;
-            
-            results.push(entry);
-          } catch (error) {
-            logger.error(`Error parsing history line in ${file}: ${error.message}`);
+        try {
+          const fileStats = await fs.stat(filePath);
+          if (fileStats.size === 0) {
+            continue; // Skip empty files
           }
+          
+          const rl = readline.createInterface({
+            input: createReadStream(filePath),
+            crlfDelay: Infinity
+          });
+          
+          for await (const line of rl) {
+            try {
+              const entry = JSON.parse(line);
+              
+              // Apply filters
+              if (entry.id !== entityId) continue;
+              if (entry.timestamp < startTime || entry.timestamp > endTime) continue;
+              if (action && entry.action !== action) continue;
+              
+              results.push(entry);
+            } catch (error) {
+              logger.error(`Error parsing history line in ${file}: ${error.message}`);
+            }
+          }
+        } catch (error) {
+          logger.error(`Error reading history file ${file}: ${error.message}`);
         }
       }
       
@@ -305,6 +319,14 @@ class HistoryService {
       // Process each entity type
       for (const entityType of this.entityHistories.keys()) {
         const entityDir = path.join(this.historyDir, entityType);
+        
+        // Check if directory exists
+        try {
+          await fs.access(entityDir);
+        } catch (error) {
+          logger.warn(`History directory does not exist: ${entityDir}`);
+          continue;
+        }
         
         // Get all history files
         const files = await fs.readdir(entityDir);
