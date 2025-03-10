@@ -142,22 +142,38 @@ const setupPerformanceMiddleware = (app) => {
     app.use(setupSpeedLimit());
   }
   
-  // Set up request ID and response time tracking
-  app.use((req, res, next) => {
-    req.requestId = req.headers['x-request-id'] || 
-                   `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    res.setHeader('X-Request-Id', req.requestId);
-    
-    req.startTime = Date.now();
-    
-    // Add response time header on response finish
-    res.on('finish', () => {
+// Set up request ID and response time tracking
+app.use((req, res, next) => {
+  req.requestId = req.headers['x-request-id'] || 
+                 `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  res.setHeader('X-Request-Id', req.requestId);
+  
+  req.startTime = Date.now();
+  
+  // Store original end method
+  const originalEnd = res.end;
+  
+  // Override end method
+  res.end = function(chunk, encoding) {
+    try {
+      // Add response time
       const responseTime = Date.now() - req.startTime;
-      res.setHeader('X-Response-Time', `${responseTime}ms`);
-    });
+      
+      // Only set header if headers haven't been sent yet
+      if (!res.headersSent) {
+        res.setHeader('X-Response-Time', `${responseTime}ms`);
+      }
+    } catch (error) {
+      // Ignore errors when setting headers
+      console.error('Error setting response time header:', error.message);
+    }
     
-    next();
-  });
+    // Call original end method
+    return originalEnd.apply(this, arguments);
+  };
+  
+  next();
+});
 };
 
 module.exports = {

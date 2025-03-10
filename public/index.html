@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Система управления складом</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/responsive.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <h1>Система управления складом</h1>
+            <div id="loginStatus">
+                <button id="loginBtn" class="btn">Войти</button>
+                <span id="userInfo" style="display: none;"></span>
+                <button id="logoutBtn" class="btn" style="display: none;">Выйти</button>
+            </div>
+        </div>
+    </header>
+    
+    <main class="container">
+        <div id="loginForm" style="display: none;">
+            <h2>Вход в систему</h2>
+            <form id="authForm">
+                <div class="form-group">
+                    <label for="username">Имя пользователя</label>
+                    <input type="text" id="username" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Пароль</label>
+                    <input type="password" id="password" class="form-control" required>
+                </div>
+                <button type="submit" class="btn">Войти</button>
+            </form>
+        </div>
+        
+        <div id="dashboard" style="display: none;">
+            <h2>Панель управления</h2>
+            
+            <div class="row">
+                <div class="col">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Поиск</h3>
+                        </div>
+                        <div class="card-content">
+                            <form id="searchForm">
+                                <div class="form-group">
+                                    <input type="text" id="searchQuery" class="form-control" placeholder="Введите серийный номер или штрих-код">
+                                </div>
+                                <button type="submit" class="btn">Поиск</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Статистика</h3>
+                        </div>
+                        <div class="card-content">
+                            <p>Количество товаров: <span id="itemCount">0</span></p>
+                            <p>Количество коробок: <span id="boxCount">0</span></p>
+                            <p>Количество заявок: <span id="orderCount">0</span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Действия</h3>
+                        </div>
+                        <div class="card-content">
+                            <button id="createItemBtn" class="btn">Добавить товар</button>
+                            <button id="createBoxBtn" class="btn">Создать коробку</button>
+                            <button id="createRmaBtn" class="btn">Создать RMA</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="result"></div>
+    </main>
+    
+    <footer class="container">
+        <p>&copy; 2025 Система управления складом</p>
+    </footer>
+    
+    <script>
+        // Базовая функциональность входа
+        document.addEventListener('DOMContentLoaded', () => {
+            const token = localStorage.getItem('jwt');
+            
+            if (token) {
+                // Уже авторизован
+                document.getElementById('loginBtn').style.display = 'none';
+                document.getElementById('userInfo').style.display = 'inline';
+                document.getElementById('logoutBtn').style.display = 'inline';
+                document.getElementById('dashboard').style.display = 'block';
+                
+                // Загрузить статистику
+                loadStatistics();
+            }
+            
+            // Обработчик клика на кнопку входа
+            document.getElementById('loginBtn').addEventListener('click', () => {
+                document.getElementById('loginForm').style.display = 'block';
+            });
+            
+            // Обработчик отправки формы входа
+            document.getElementById('authForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const username = document.getElementById('username').value;
+                const password = document.getElementById('password').value;
+                
+                try {
+                    const response = await fetch('/api/auth/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, password })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        localStorage.setItem('jwt', data.token);
+                        document.getElementById('loginForm').style.display = 'none';
+                        document.getElementById('loginBtn').style.display = 'none';
+                        document.getElementById('userInfo').textContent = `Вы вошли как: ${username}`;
+                        document.getElementById('userInfo').style.display = 'inline';
+                        document.getElementById('logoutBtn').style.display = 'inline';
+                        document.getElementById('dashboard').style.display = 'block';
+                        
+                        // Загрузить статистику
+                        loadStatistics();
+                    } else {
+                        alert(`Ошибка: ${data.message || 'Не удалось войти'}`);
+                    }
+                } catch (error) {
+                    console.error('Ошибка входа:', error);
+                    alert('Ошибка при попытке входа');
+                }
+            });
+            
+            // Обработчик выхода
+            document.getElementById('logoutBtn').addEventListener('click', () => {
+                localStorage.removeItem('jwt');
+                document.getElementById('loginBtn').style.display = 'inline';
+                document.getElementById('userInfo').style.display = 'none';
+                document.getElementById('logoutBtn').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'none';
+                document.getElementById('result').innerHTML = '';
+            });
+            
+            // Обработчик поиска
+            document.getElementById('searchForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const query = document.getElementById('searchQuery').value;
+                const token = localStorage.getItem('jwt');
+                
+                if (!query) return;
+                
+                try {
+                    // Пробуем найти товар
+                    const response = await fetch(`/api/items/${query}`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        displayItemResult(data.item);
+                    } else {
+                        // Пробуем найти коробку
+                        const boxResponse = await fetch(`/api/boxes/${query}`, {
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        
+                        if (boxResponse.ok) {
+                            const boxData = await boxResponse.json();
+                            displayBoxResult(boxData.box);
+                        } else {
+                            // Пробуем найти RMA
+                            const rmaResponse = await fetch(`/api/rma/${query}/status`, {
+                                headers: { 'Authorization': `Bearer ${token}` }
+                            });
+                            
+                            if (rmaResponse.ok) {
+                                const rmaData = await rmaResponse.json();
+                                displayRmaResult(rmaData.status);
+                            } else {
+                                document.getElementById('result').innerHTML = `<div class="card"><div class="card-content">Ничего не найдено по запросу "${query}"</div></div>`;
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Ошибка поиска:', error);
+                    document.getElementById('result').innerHTML = `<div class="card"><div class="card-content">Произошла ошибка при поиске</div></div>`;
+                }
+            });
+            
+            // Загрузка статистики
+            async function loadStatistics() {
+                const token = localStorage.getItem('jwt');
+                
+                try {
+                    // Получение количества товаров
+                    const itemsResponse = await fetch('/api/items?limit=1', {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const itemsData = await itemsResponse.json();
+                    document.getElementById('itemCount').textContent = itemsData.pagination?.total || 0;
+                    
+                    // Получение количества коробок
+                    const boxesResponse = await fetch('/api/boxes?limit=1', {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const boxesData = await boxesResponse.json();
+                    document.getElementById('boxCount').textContent = boxesData.pagination?.total || 0;
+                    
+                    // Получение количества заявок
+                    const ordersResponse = await fetch('/api/orders?limit=1', {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const ordersData = await ordersResponse.json();
+                    document.getElementById('orderCount').textContent = ordersData.pagination?.total || 0;
+                } catch (error) {
+                    console.error('Ошибка загрузки статистики:', error);
+                }
+            }
+            
+            // Отображение результатов поиска
+            function displayItemResult(item) {
+                let html = `
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Информация о товаре</h3>
+                        </div>
+                        <div class="card-content">
+                            <p><strong>Серийный номер:</strong> ${item.serial_number}</p>
+                            <p><strong>Описание:</strong> ${item.description?.[0] || 'Нет описания'}</p>
+                            <p><strong>Класс:</strong> ${item.class_id || 'Не указан'}</p>
+                            <p><strong>Текущее местоположение:</strong> ${item.current_location_id || 'Не указано'}</p>
+                        </div>
+                    </div>
+                `;
+                document.getElementById('result').innerHTML = html;
+            }
+            
+            function displayBoxResult(box) {
+                let html = `
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Информация о коробке</h3>
+                        </div>
+                        <div class="card-content">
+                            <p><strong>Серийный номер:</strong> ${box.serial_number}</p>
+                            <p><strong>Описание:</strong> ${box.description?.[0] || 'Нет описания'}</p>
+                            <p><strong>Класс:</strong> ${box.class_id || 'Не указан'}</p>
+                            <p><strong>Текущее местоположение:</strong> ${box.current_location_id || 'Не указано'}</p>
+                        </div>
+                    </div>
+                `;
+                document.getElementById('result').innerHTML = html;
+            }
+            
+            function displayRmaResult(rmaStatus) {
+                let html = `
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Информация о RMA</h3>
+                        </div>
+                        <div class="card-content">
+                            <p><strong>Создан:</strong> ${new Date(rmaStatus.created_at).toLocaleString()}</p>
+                            <p><strong>Статус:</strong> ${rmaStatus.status}</p>
+                            <p><strong>Количество пакетов:</strong> ${rmaStatus.package_count}</p>
+                            <p><strong>Завершен:</strong> ${rmaStatus.completed ? 'Да' : 'Нет'}</p>
+                        </div>
+                    </div>
+                `;
+                document.getElementById('result').innerHTML = html;
+            }
+        });
+    </script>
+</body>
+</html>
