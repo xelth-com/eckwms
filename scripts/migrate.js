@@ -8,6 +8,80 @@ const { Client } = require('pg');
 const { createHash } = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 
+
+const pgp = require('pg-promise')();
+const fs = require('fs');
+const readline = require('readline');
+
+// Конфигурация базы данных
+const db = pgp({
+  host: 'localhost',
+  port: 5432,
+  database: 'wms_db',
+  user: 'wms_user',
+  password: 'secure_password'
+});
+
+// Функция для параллельной обработки коллекций
+async function migrateCollections() {
+  const collections = [
+    { name: 'items', file: 'items.json' },
+    { name: 'boxes', file: 'boxes.json' },
+    { name: 'places', file: 'places.json' }
+  ];
+
+  await Promise.all(collections.map(async (collection) => {
+    const fileStream = fs.createReadStream(`./data/${collection.file}`);
+    const rl = readline.createInterface({
+      input: fileStream,
+      crlfDelay: Infinity
+    });
+
+    const data = [];
+
+    for await (const line of rl) {
+      data.push(JSON.parse(line));
+    }
+
+    await db.none(pgp.helpers.insert(data, collection.name));
+    console.log(`Migrated ${data.length} records into ${collection.name}`);
+  }));
+}
+
+// Функция для миграции пользовательских данных
+async function migrateUsers() {
+  const fileStream = fs.createReadStream('./data/users.json');
+  const rl = readline.createInterface({
+    input: fileStream,
+    crlfDelay: Infinity
+  });
+
+  const users = [];
+
+  for await (const line of rl) {
+    users.push(JSON.parse(line));
+  }
+
+  await db.none(pgp.helpers.insert(users, 'users'));
+  console.log(`Migrated ${users.length} users`);
+}
+
+// Основная функция миграции
+async function migrate() {
+  try {
+    await migrateCollections();
+    await migrateUsers();
+    console.log('Migration completed successfully');
+  } catch (error) {
+    console.error('Migration failed:', error);
+  } finally {
+    pgp.end();
+  }
+}
+
+
+
+
 // Configuration
 const CONFIG = {
   sourceDir: process.env.SOURCE_DIR || './data/legacy',
