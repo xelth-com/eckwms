@@ -4,7 +4,8 @@ module.exports = {
   entry: './client/src/index.js',
   output: {
     filename: 'bundle.js',
-    path: path.resolve(__dirname, 'html/js'), // Выходной файл в html/js
+    path: path.resolve(__dirname, 'html/js'),
+    publicPath: '/js/'  // Важно для правильной загрузки чанков при ленивой загрузке
   },
   mode: 'development',
   module: {

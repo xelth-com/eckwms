@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const RMAForm = () => {
+const RMAForm = ({ onBackClick }) => {
   // Generate RMA code based on timestamp
   const [rmaCode, setRmaCode] = useState('');
   
@@ -462,7 +462,7 @@ const RMAForm = () => {
         <div className="flex justify-between mt-8">
           <button
             type="button"
-            onClick={() => window.location.href = '/'}
+            onClick={onBackClick} // Используем пропс вместо прямого перехода
             className="py-2 px-6 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
           >
             Back
