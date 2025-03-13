@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bestätigung Ihrer Eingaben</title>
+    <style>
+        .container {
+            width: 600px;
+            margin: 0 auto;
+            font-family: Arial, sans-serif;
+        }
+
+        .sender-address {
+            text-align: left;
+            margin-top: 50px;
+        }
+
+        .receiver-address {
+            text-align: right;
+            margin-top: -80px;
+            /* Verschiebt die Empfänger-Adresse nach oben */
+        }
+
+        .details {
+            margin-top: 50px;
+        }
+
+        .details h3 {
+            margin-bottom: 20px;
+        }
+
+        .detail-row {
+            margin-bottom: 10px;
+        }
+
+        .confirmation-button {
+            margin-top: 30px;
+            text-align: center;
+        }
+
+        button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="sender-address" id="senderAddress"></div>
+        <div class="receiver-address">
+            M3 Mobile GmbH<br>
+            Am Holzweg 26<br>
+            65830 Kriftel<br>
+            Deutschland
+        </div>
+
+        <div class="details">
+            <h3>Zusammenfassung Ihrer Eingaben</h3>
+            <div class="detail-row" id="contactDetails"></div>
+            <div class="detail-row" id="serialDetails"></div>
+        </div>
+
+        <div class="confirmation-button">
+            <button id="confirmButton">Bestätigen</button>
+        </div>
+    </div>
+
+    <script>
+        // Simuliertes JSON mit den eingegebenen RMA-Daten
+        let rmaJs = {
+            firmName: "Musterfirma GmbH",
+            person: "Max Mustermann",
+            street: "Musterstraße 12",
+            city: "12345 Musterstadt",
+            country: "Deutschland",
+            email: "max@musterfirma.de",
+            eInvoiceEmail: "invoice@musterfirma.de",
+            phone: "0123456789",
+            serialNumbers: [
+                { serial: "SN12345", description: "Bildschirm defekt" },
+                { serial: "SN67890", description: "Akku entlädt sich schnell" }
+            ]
+        };
+
+        // Absenderadresse generieren
+        function displaySenderAddress() {
+            let senderAddress = `
+                ${rmaJs.firmName}<br>
+                ${rmaJs.person}<br>
+                ${rmaJs.street}<br>
+                ${rmaJs.city}<br>
+                ${rmaJs.country}<br>
+            `;
+            document.getElementById('senderAddress').innerHTML = senderAddress;
+        }
+
+        // Kontaktdetails anzeigen
+        function displayContactDetails() {
+            let contactDetails = `
+                <strong>Kontakt E-Mail:</strong> ${rmaJs.email}<br>
+                <strong>E-Rechnung E-Mail:</strong> ${rmaJs.eInvoiceEmail}<br>
+                <strong>Telefon:</strong> ${rmaJs.phone}<br>
+            `;
+            document.getElementById('contactDetails').innerHTML = contactDetails;
+        }
+
+        // Seriendaten und Fehlerbeschreibung anzeigen
+        function displaySerialDetails() {
+            let serialDetails = "<strong>Seriennummern und Fehlerbeschreibung:</strong><br>";
+            rmaJs.serialNumbers.forEach(item => {
+                serialDetails += `Seriennummer: ${item.serial} - Fehler: ${item.description}<br>`;
+            });
+            document.getElementById('serialDetails').innerHTML = serialDetails;
+        }
+
+        // Funktionen aufrufen, um Daten darzustellen
+        displaySenderAddress();
+        displayContactDetails();
+        displaySerialDetails();
+
+        // Bestätigungsknopf
+        document.getElementById('confirmButton').addEventListener('click', function () {
+            alert('Daten bestätigt und gesendet!');
+            // Hier kannst du die Logik für das Senden der Daten an den Server implementieren.
+        });
+    </script>
+</body>
+
+</html>
