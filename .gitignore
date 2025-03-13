@@ -1,6 +1,7 @@
 # Ignore base and storage directories
 base/
 storage/
+html/storage/
 
 # Logs
 logs/
