@@ -10,12 +10,16 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const { createSecretJwtKey } = require('./utils/encryption');
 const { appendFile } = require('fs/promises');
+const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
+const passport = require('passport');
 
 // Import routes
 const apiRoutes = require('./routes/api');
 const rmaRoutes = require('./routes/rma');
 const statusRoutes = require('./routes/status');
 const adminRoutes = require('./routes/admin');
+const authRoutes = require('./routes/auth');
 
 // Import middleware
 const { errorHandler, requestLogger } = require('./middleware');
@@ -23,6 +27,9 @@ const { errorHandler, requestLogger } = require('./middleware');
 // Import models
 const { Betruger, User, Order, Place, Box, Item, Dict } = require('./models');
 const { writeLargeMapToFile } = require('./utils/fileUtils');
+
+// Import PostgreSQL models
+const db = require('./models/postgresql');
 
 // Global variables for models (keeping existing approach)
 global.dict = new Dict('');
@@ -57,6 +64,28 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false
 }));
 
+// Session middleware with PostgreSQL store
+app.use(session({
+    store: new pgSession({
+        conString: `postgres://${process.env.PG_USERNAME}:${process.env.PG_PASSWORD}@${process.env.PG_HOST}:${process.env.PG_PORT}/${process.env.PG_DATABASE}`,
+        tableName: 'session',
+        createTableIfMissing: true
+    }),
+    secret: process.env.SESSION_SECRET || 'your-session-secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production', // Only use secure cookies in production
+        maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+    }
+}));
+
+// Initialize Passport
+const configPassport = require('./config/passport');
+const passportInstance = configPassport(global.secretJwt);
+app.use(passport.initialize());
+app.use(passport.session());
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -74,13 +103,12 @@ app.use('/api', apiRoutes);
 app.use('/rma', rmaRoutes);
 app.use('/status', statusRoutes);
 app.use('/admin', adminRoutes);
+app.use('/auth', authRoutes);
 
 // Main route for the application
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'html', 'index.html'));
 });
-
-
 
 // Handle JWT verification route
 app.get('/jwt/:token', (req, res) => {
@@ -90,9 +118,9 @@ app.get('/jwt/:token', (req, res) => {
     try {
         const { verifyJWT } = require('./utils/encryption');
         const fieldsToMask = ["comp", "pers", "str", "cem", "iem"];
-        const payload = verifyJWT(token, secretJwt);
+        const payload = verifyJWT(token, global.secretJwt);
         const { prettyPrintObject, maskObjectFields } = require('./utils/formatUtils');
-        const maskedObj = payload.a !== 'p' ? maskObjectFields(orders.get('o000' + payload.r), fieldsToMask) : orders.get('o000' + payload.r);
+        const maskedObj = payload.a !== 'p' ? maskObjectFields(global.orders.get('o000' + payload.r), fieldsToMask) : global.orders.get('o000' + payload.r);
         res.send('<div style="width: min-content;">' + prettyPrintObject(maskedObj) + '</div><br><br><a href="https://m3.repair/" style="color:#1e2071;">M3 Mobile GmbH Homepage</a>');
     } catch (error) {
         res.send(' nice try');
@@ -104,7 +132,7 @@ app.post('/', async (req, res) => {
     try {
         const parsedData = req.body;
 
-       if (parsedData.dest === 'csv') {
+        if (parsedData.dest === 'csv') {
             const csvData = await generateCsvData();
             res.writeHead(200, {
                 'Content-Type': 'text/csv',
@@ -136,10 +164,6 @@ async function writeLog(str) {
     return appendFile(resolve(`./logs/${filename}`), `${str}\t\t\t\t\t${dateTemp.getUTCDate()}_${dateTemp.getUTCHours()}:${dateTemp.getUTCMinutes()}:${dateTemp.getUTCSeconds()}\n`);
 }
 
-
-
-
-
 // Helper function to generate CSV data
 async function generateCsvData() {
     let csv = 'SN /PN;Model;IN DATE;Out Date;Customer;SKU;email;Address;Zip Code;City;Complaint;Verification;Cause;Result;Shipping;Invoice number;Special note; warranty;condition;Used New Parts;Used Refurbished Parts\n';
@@ -169,8 +193,19 @@ async function initialize() {
     const { initialisation, classesUpdate, upperUpdate } = require('./utils/dataInit');
     
     try {
+        // Initialize PostgreSQL database connection
+        await db.sequelize.authenticate();
+        console.log('PostgreSQL connection established successfully.');
+        
+        // Sync models with database (in development only)
+        if (process.env.NODE_ENV !== 'production') {
+            await db.sequelize.sync({ alter: process.env.DB_ALTER === 'true' });
+            console.log('PostgreSQL models synchronized');
+        }
+        
+        // Initialize legacy data
         await initialisation(baseDirectory);
-        console.log('Data initialized');
+        console.log('Legacy data initialized');
         
         await writeLog('login ' + Object.values(process.memoryUsage()));
         

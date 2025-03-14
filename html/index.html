@@ -758,41 +758,7 @@
         // Вставляем HTML в указанный элемент
         document.getElementById(destination).innerHTML = blob;
         
-        // Проверяем, содержит ли полученный HTML контейнер для RMA формы
-        if (sendText === 'rmaGenerate' && blob.includes('rma-form-container')) {
-          const container = document.getElementById('rma-form-container');
-          if (container) {
-            console.log('Обнаружен контейнер RMA формы');
-            
-            // Получаем код RMA из атрибута данных, если он есть
-            const rmaCode = container.getAttribute('data-rma-code');
-            
-            // Загружаем React скрипт, если он еще не загружен
-            if (!window.rmaScriptLoaded) {
-              window.rmaScriptLoaded = true;
-              
-              const script = document.createElement('script');
-              script.src = '/js/bundle.js';
-              script.onload = function() {
-                console.log('RMA скрипт успешно загружен');
-                if (typeof window.initRMAForm === 'function') {
-                  window.initRMAForm('rma-form-container', rmaCode);
-                }
-              };
-              script.onerror = function() {
-                console.error('Не удалось загрузить скрипт RMA');
-                if (container) {
-                  container.innerHTML = '<div style="color: red; padding: 20px;">Ошибка загрузки формы. Пожалуйста, попробуйте еще раз.</div>';
-                }
-              };
-              
-              document.body.appendChild(script);
-            } else if (typeof window.initRMAForm === 'function') {
-              // Если скрипт уже загружен, просто инициализируем форму
-              window.initRMAForm('rma-form-container', rmaCode);
-            }
-          }
-        }
+        
         
         if (senderName == 'startInput') {
           var logMenu = document.getElementById("mainMenu1");
@@ -2467,7 +2433,7 @@
       </g>
     </defs>
   </svg>
-  <script src="/js/bundle.js"></script>
+
 </body>
 
 </html>

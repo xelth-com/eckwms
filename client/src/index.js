@@ -1,49 +1,87 @@
+// client/src/index.js
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import RMAForm from './components/RMAForm';
+import App from './App';
+import { AuthProvider } from './components/AuthContext';
 
-console.log('RMA bundle loaded');
+console.log('Bundle loaded');
 
-// Глобальная функция для инициализации RMA формы в указанном контейнере
-window.initRMAForm = function(containerId, initialRmaCode) {
+// Initialize the app with Auth Provider
+window.initApp = function(containerId) {
   const container = document.getElementById(containerId);
   if (!container) {
-    console.error(`Контейнер #${containerId} не найден`);
+    console.error(`Container #${containerId} not found`);
     return;
   }
   
-  console.log(`Инициализация RMA формы в #${containerId} с кодом ${initialRmaCode}`);
+  console.log(`Initializing app in #${containerId}`);
   
   try {
-    // Очищаем контейнер перед инициализацией
-    container.innerHTML = '';
-    
     const root = createRoot(container);
     root.render(
-      <RMAForm 
-        initialRmaCode={initialRmaCode || ''}
-        onBackClick={() => {
-          // Возврат на предыдущую страницу через myFetch
-          return myFetch('', 'startInput', 'output2');
-        }} 
-      />
+      <AuthProvider>
+        <App />
+      </AuthProvider>
     );
-    console.log('RMA форма успешно отрендерена');
+    console.log('App rendered successfully');
   } catch (err) {
-    console.error('Ошибка рендеринга RMA формы:', err);
+    console.error('Error rendering app:', err);
     container.innerHTML = `
-      <div class="cellPaper" style="color: red; padding: 20px;">
-        Ошибка загрузки формы. Пожалуйста, попробуйте еще раз.
+      <div style="color: red; padding: 20px;">
+        Error loading application. Please try again.
       </div>
     `;
   }
 };
 
-// Автоматическая инициализация, если контейнер существует при загрузке скрипта
-console.log('Проверка наличия контейнера RMA формы');
-const container = document.getElementById('rma-form-container');
-if (container) {
-  console.log('Найден контейнер RMA, инициализация');
-  const rmaCode = container.getAttribute('data-rma-code');
-  window.initRMAForm('rma-form-container', rmaCode);
-}
+// RMA form initialization function
+window.initRMAForm = function(containerId, initialRmaCode) {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    console.error(`Container #${containerId} not found`);
+    return;
+  }
+  
+  const RMAForm = require('./components/RMAForm').default;
+  
+  try {
+    container.innerHTML = '';
+    
+    const root = createRoot(container);
+    root.render(
+      <AuthProvider>
+        <RMAForm 
+          initialRmaCode={initialRmaCode || ''}
+          userData={window.RMA_DATA || {}}
+          onBackClick={() => {
+            return window.myFetch ? window.myFetch('', 'startInput', 'output2') : window.history.back();
+          }} 
+        />
+      </AuthProvider>
+    );
+    console.log('RMA form rendered successfully');
+  } catch (err) {
+    console.error('Error rendering RMA form:', err);
+    container.innerHTML = `
+      <div style="color: red; padding: 20px;">
+        Error loading RMA form. Please try again.
+      </div>
+    `;
+  }
+};
+
+// Auto-initialize if containers exist
+document.addEventListener('DOMContentLoaded', () => {
+  // Check for app container
+  const appContainer = document.getElementById('app-container');
+  if (appContainer) {
+    window.initApp('app-container');
+  }
+  
+  // Check for RMA form container
+  const rmaContainer = document.getElementById('rma-form-container');
+  if (rmaContainer) {
+    const rmaCode = rmaContainer.getAttribute('data-rma-code');
+    window.initRMAForm('rma-form-container', rmaCode);
+  }
+});
