@@ -104,9 +104,7 @@ app.post('/', async (req, res) => {
     try {
         const parsedData = req.body;
 
-        if (parsedData.dest === 'pdfRma') {
-            await generateAndSendRmaPdf(parsedData, res);
-        } else if (parsedData.dest === 'csv') {
+       if (parsedData.dest === 'csv') {
             const csvData = await generateCsvData();
             res.writeHead(200, {
                 'Content-Type': 'text/csv',
@@ -138,82 +136,9 @@ async function writeLog(str) {
     return appendFile(resolve(`./logs/${filename}`), `${str}\t\t\t\t\t${dateTemp.getUTCDate()}_${dateTemp.getUTCHours()}:${dateTemp.getUTCMinutes()}:${dateTemp.getUTCSeconds()}\n`);
 }
 
-// Helper function for generating RMA PDF
-async function generateAndSendRmaPdf(parsedData, res) {
-    const rmaJson = JSON.parse(parsedData.text);
-    const { generateJWT } = require('./utils/encryption');
-    const { betrugerUrlEncrypt, betrugerCrc } = require('./utils/encryption');
-    const { generatePdfRma } = require('./utils/pdfGenerator');
 
-    const payload1 = {
-        r: rmaJson.rma.trim(),
-        a: 'l',
-        e: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 // Expire in a month
-    };
-    
-    const payload2 = {
-        r: rmaJson.rma.trim(),
-        a: 'p',
-        e: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 90 // Expire in 3 months
-    };
 
-    const token1 = generateJWT(payload1, secretJwt);
-    const token2 = generateJWT(payload2, secretJwt);
-    const linkToken = `https://m3.repair/jwt/${token1}`;
 
-    let formattedInput = rmaJson.rma.trim();
-    if (formattedInput.length > 18) {
-        throw new Error("Input value is too long");
-    }
-    
-    formattedInput = 'o' + formattedInput.padStart(18, '0');
-    const pdfBuffer = await generatePdfRma(rmaJson, linkToken, token2, betrugerUrlEncrypt(formattedInput, process.env.ENC_KEY));
-    
-    res.writeHead(200, {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': 'attachment; filename="rma.pdf"',
-        'Content-Length': pdfBuffer.length
-    });
-    
-    res.end(pdfBuffer);
-    
-    // Create order after sending the PDF
-    await createOrderFromRma(formattedInput, rmaJson);
-}
-
-// Helper function to create order from RMA data
-async function createOrderFromRma(formattedInput, rmaJson) {
-    const { splitStreetAndHouseNumber, splitPostalCodeAndCity, convertToSerialDescriptionArray } = require('./utils/formatUtils');
-    
-    const tempObj = Object.create(order);
-    tempObj.sn = [formattedInput, Math.floor(Date.now() / 1000)];
-    tempObj.cust = { 'reseller': rmaJson.resellerName };
-    tempObj.comp = rmaJson.company;
-    tempObj.pers = rmaJson.person;
-    
-    const addressInfo1 = splitStreetAndHouseNumber(rmaJson.street);
-    tempObj.str = addressInfo1.street;
-    tempObj.hs = addressInfo1.houseNumber;
-    
-    const addressInfo2 = splitPostalCodeAndCity(rmaJson.postal);
-    tempObj.zip = addressInfo2.postalCode;
-    tempObj.cit = addressInfo2.city;
-
-    tempObj.ctry = rmaJson.country;
-    tempObj.cem = rmaJson.email;
-    tempObj.iem = rmaJson.invoice_email;
-    tempObj.ph = rmaJson.phone;
-    tempObj.cont = [];
-    tempObj.decl = convertToSerialDescriptionArray(rmaJson);
-    
-    orders.set(formattedInput, tempObj);
-    
-    try {
-        await writeLargeMapToFile(orders, resolve(`${baseDirectory}base/orders.json`));
-    } catch (err) {
-        console.error(err);
-    }
-}
 
 // Helper function to generate CSV data
 async function generateCsvData() {
