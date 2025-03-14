@@ -146,12 +146,16 @@ router.all('/generate', (req, res) => {
     <br><br><br>
 </div>
   `);
+
+
+  
 });
 
 // Submit RMA form
-router.post('/confirm', async (req, res) => {
+router.post('/makePdf', async (req, res) => {
   try {
     const rmaJson = req.body;
+    console.log(rmaJson);
 
     // Generate tokens for tracking and full access
     const payload1 = {
