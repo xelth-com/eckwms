@@ -12,18 +12,23 @@ const fs = require('fs');
 // Serve RMA form page with React
 // routes/rma.js
 router.get('/', (req, res) => {
-  res.send(`
-    <div id="rma-form-container" class="pt-20"></div>
-    <script src="/js/bundle.js"></script>
-  `);
+
 });
 
 // Generate RMA form page
-router.get('/generate', (req, res) => {
+router.all('/generate', (req, res) => {
   const timestamp = Math.floor(Date.now() / 1000);
   const rmaCode = `RMA${timestamp}${betrugerCrc(timestamp)}`;
   
-  // ...существующий код для генерации HTML формы...
+  res.send(`
+    <span class="text3">
+      <div id="rma-form-container" data-rma-code="${rmaCode}">
+        <div class="cellPaper" style="text-align: center; padding: 40px;">
+          <span class="textM3">Загрузка формы RMA...</span>
+        </div>
+      </div>
+    </span>
+  `);
 });
 
 // Submit RMA form

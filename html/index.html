@@ -698,113 +698,140 @@
       }
     }
 
-    function myFetch(sendText = '', senderName = '', destination = 'output1', sendJWT = localStorage.getItem("jwt")) {
-      let formData = {};
-      if (sendText === 'formSubmit') {
-        // Das JSON-Objekt, das die gesammelten Daten speichern wird
-
-        // Alle input-Felder und textarea-Felder des Formulars sammeln
-        const elements = Array.from(document.getElementById(senderName).querySelectorAll('input, textarea'));
-        elements.forEach(element => {
-          if (element.value) {
-            formData[element.id] = element.value;
-          }
-        });
-
-        // Das JSON-Objekt als String ausgeben (oder später per POST senden)
-        sendText = JSON.stringify(formData);
-
+    function myFetch(sendText = '', senderName = '', destination = 'output1', sendJWT = localStorage.getItem("jwt"), url = '/') {
+  let formData = {};
+  if (sendText === 'formSubmit') {
+    // Сбор данных формы в JSON
+    const elements = Array.from(document.getElementById(senderName).querySelectorAll('input, textarea'));
+    elements.forEach(element => {
+      if (element.value) {
+        formData[element.id] = element.value;
       }
-      fetch(`/`, {
-        method: 'POST', // Methode POST
-        headers: {
-          'Content-Type': 'application/json' // Header, um JSON-Daten zu senden
-        },
-        body: JSON.stringify({ text: sendText, name: senderName, dest: destination, jwt: sendJWT }) // Die zu sendenden Daten als JSON-String
-      })
-        .then(async response => {
-          if (!response.ok) {
-            throw new Error('Netzwerkantwort war nicht ok ' + response.statusText);
+    });
+    sendText = JSON.stringify(formData);
+  }
+  
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json' // Заголовок для отправки JSON-данных
+    },
+    body: JSON.stringify({ text: sendText, name: senderName, dest: destination, jwt: sendJWT }) // Отправляемые данные в JSON
+  })
+    .then(async response => {
+      if (!response.ok) {
+        throw new Error('Ошибка сети: ' + response.statusText);
+      }
+
+      let blob;
+      if (destination === 'pdfRma') {
+        blob = await response.blob(); // Получение данных как Blob
+        if (blob.type !== 'application/pdf') {
+          throw new Error('Полученные данные не являются PDF');
+        }
+        const url = window.URL.createObjectURL(blob);
+        // Создание временного элемента ссылки
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${formData.rma}.pdf`; // Имя файла
+        document.body.appendChild(a);
+        a.click(); // Имитация клика
+        a.remove(); // Удаление ссылки после клика
+      } else if (destination === 'csv') {
+        blob = await response.text(); // Получение CSV-данных как текст
+        const url = window.URL.createObjectURL(new Blob([blob], { type: 'text/csv' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${Math.floor(Date.now() / 1000)}.csv`; // Имя файла
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url); // Освобождение URL
+      } else {
+        blob = await response.text(); // Другой ответ как текст
+        if (senderName == 'snInput' && sendText.split('.').length == 3) {
+          const [encodedHeader, encodedPayload, signature] = sendText.split('.');
+          localStorage.setItem("jwt", blob);
+          myFetch('', 'startInput');
+        }
+
+        // Вставляем HTML в указанный элемент
+        document.getElementById(destination).innerHTML = blob;
+        
+        // Проверяем, содержит ли полученный HTML контейнер для RMA формы
+        if (sendText === 'rmaGenerate' && blob.includes('rma-form-container')) {
+          const container = document.getElementById('rma-form-container');
+          if (container) {
+            console.log('Обнаружен контейнер RMA формы');
+            
+            // Получаем код RMA из атрибута данных, если он есть
+            const rmaCode = container.getAttribute('data-rma-code');
+            
+            // Загружаем React скрипт, если он еще не загружен
+            if (!window.rmaScriptLoaded) {
+              window.rmaScriptLoaded = true;
+              
+              const script = document.createElement('script');
+              script.src = '/js/bundle.js';
+              script.onload = function() {
+                console.log('RMA скрипт успешно загружен');
+                if (typeof window.initRMAForm === 'function') {
+                  window.initRMAForm('rma-form-container', rmaCode);
+                }
+              };
+              script.onerror = function() {
+                console.error('Не удалось загрузить скрипт RMA');
+                if (container) {
+                  container.innerHTML = '<div style="color: red; padding: 20px;">Ошибка загрузки формы. Пожалуйста, попробуйте еще раз.</div>';
+                }
+              };
+              
+              document.body.appendChild(script);
+            } else if (typeof window.initRMAForm === 'function') {
+              // Если скрипт уже загружен, просто инициализируем форму
+              window.initRMAForm('rma-form-container', rmaCode);
+            }
           }
-
-          let blob;
-          if (destination === 'pdfRma') {
-            blob = await response.blob(); // Holt die Daten als Blob
-            if (blob.type !== 'application/pdf') {
-              throw new Error('Fetched data is not a PDF');
-            }
-            const url = window.URL.createObjectURL(blob);
-            // Erstelle ein temporäres Link-Element
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${formData.rma}.pdf`; // Dateiname
-            document.body.appendChild(a);
-            a.click(); // Simuliere den Klick
-            a.remove(); // Entferne den Link nach dem Klick
-          } else if (destination === 'csv') {
-            blob = await response.text(); // CSV-Daten als Text abrufen
-            const url = window.URL.createObjectURL(new Blob([blob], { type: 'text/csv' }));
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${Math.floor(Date.now() / 1000)}.csv`; // Dateiname
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            window.URL.revokeObjectURL(url); // URL freigeben
-          } else {
-            blob = await response.text(); // Andere Antwort als JSON oder Text verarbeiten
-            if (senderName == 'snInput' && sendText.split('.').length == 3) {
-              const [encodedHeader, encodedPayload, signature] = sendText.split('.');
-
-              localStorage.setItem("jwt", blob);
-              myFetch('', 'startInput');
-            }
-
-
-            document.getElementById(destination).innerHTML = blob; // Beispiel
-            if (senderName.slice(0, 8) === 'mainMenu') {
-              mainMenuCardClose(senderName);
-            }
-            if (senderName == 'startInput') {
-              var logMenu = document.getElementById("mainMenu1");
-              if (logMenu && sendJWT) {
-                console.log(sendJWT)
-                payload = verifyJWT(sendJWT);
-                logMenu.innerHTML = `
-                ${payload.u}
-                <div hidden>
-                  <form onsubmit="event.preventDefault();myFetch(this.elements[0].value, 'logInput', 'outputShow');">
-                    <input id="logInput" class="textM3" placeholder="SN, RMA, box, place..." autocomplete="off" type="text" inputmode="text" />
-                  </form>
-                  <form onsubmit="event.preventDefault();myFetch('', 'logExp', 'csv');">
-                    <input id="logExp" class="button" value="export CSV" autocomplete="off" type="submit" />
-                  </form>
-                  <form onsubmit="event.preventDefault();localStorage.removeItem('jwt');location.reload();">
-                    <input id="logOut" class="button" value="logout" autocomplete="off" type="submit" />
-                  </form>
-               </div>`;
-
-
-              }
-            }
-            if (destination == 'outputShow') {
-
-              document.getElementById(destination).scrollIntoView({ behavior: "smooth" });
-            } else {
-              window.scrollTo({
-                top: 0,     // Scrollt 500 Pixel nach unten
-                left: 0,    // Scrollt 100 Pixel nach rechts
-                behavior: 'smooth' // Sanftes Scrollen
-              });
-            }
+        }
+        
+        if (senderName == 'startInput') {
+          var logMenu = document.getElementById("mainMenu1");
+          if (logMenu && sendJWT) {
+            console.log(sendJWT)
+            payload = verifyJWT(sendJWT);
+            logMenu.innerHTML = `
+              ${payload.u}
+              <div hidden>
+                <form onsubmit="event.preventDefault();myFetch(this.elements[0].value, 'logInput', 'outputShow');">
+                  <input id="logInput" class="textM3" placeholder="SN, RMA, box, place..." autocomplete="off" type="text" inputmode="text" />
+                </form>
+                <form onsubmit="event.preventDefault();myFetch('', 'logExp', 'csv');">
+                  <input id="logExp" class="button" value="export CSV" autocomplete="off" type="submit" />
+                </form>
+                <form onsubmit="event.preventDefault();localStorage.removeItem('jwt');location.reload();">
+                  <input id="logOut" class="button" value="logout" autocomplete="off" type="submit" />
+                </form>
+             </div>`;
           }
-        })
-        .catch(error => {
-          console.error('Es gab ein Problem mit der Fetch-Operation:', error);
-        });
+        }
+        
+        if (destination == 'outputShow') {
+          document.getElementById(destination).scrollIntoView({ behavior: "smooth" });
+        } else {
+          window.scrollTo({
+            top: 0,     // Скролл в начало страницы
+            left: 0,
+            behavior: 'smooth' // Плавный скролл
+          });
+        }
+      }
+    })
+    .catch(error => {
+      console.error('Проблема с операцией Fetch:', error);
+    });
 
-      return false;
-    }
+  return false;
+}
 
 
 
@@ -1589,7 +1616,7 @@
           <br>
          
   
-          <div id="rmaButton" class="buttonFlat" onclick="myFetch('rmaGenerate', 'rmaButton', 'output2')"
+          <div id="rmaButton" class="buttonFlat" onclick="myFetch('rmaGenerate', 'rmaButton', 'output2','','/rma/generate')"
             style="margin: 5px; margin-right: max(calc((100% - 450px)/10),0px);float:right;">
             
               RMA Repair Request
