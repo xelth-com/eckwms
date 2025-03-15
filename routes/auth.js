@@ -168,7 +168,7 @@ router.get('/auth-success', (req, res) => {
 });
 
 // Get current user info
-router.get('/me', passport.authenticate('jwt', { session: false }), (req, res) => {
+router.post('/me', passport.authenticate('jwt', { session: false }), (req, res) => {
   res.json({
     id: req.user.id,
     username: req.user.username,
@@ -189,7 +189,7 @@ router.get('/me', passport.authenticate('jwt', { session: false }), (req, res) =
 router.post('/refresh-token', refreshToken);
 
 // Get user's RMA requests
-router.get('/rma-requests', passport.authenticate('jwt', { session: false }), async (req, res) => {
+router.post('/rma-requests', passport.authenticate('jwt', { session: false }), async (req, res) => {
   try {
     const rmaRequests = await RmaRequest.findAll({
       where: { userId: req.user.id },
@@ -203,7 +203,25 @@ router.get('/rma-requests', passport.authenticate('jwt', { session: false }), as
 });
 
 // Диагностический маршрут для проверки токена
-router.post('/debug-token', (req, res) => {
+router.post('/debug-token', passport.authenticate('jwt', { session: false }), (req, res) => {
+  // This only runs if a valid token was found in the Authorization header
+  // and authentication was successful
+  
+  // Token was from the header (Passport only checks the header)
+  res.json({test: 'test',
+    source: 'header',
+    valid: true,
+    user: {
+      id: req.user.id,
+      email: req.user.email,
+      role: req.user.role
+    }
+  });
+});
+
+
+// Диагностический маршрут для проверки токена
+router.post('/debug-token2', passport.authenticate('jwt', { session: false }),(req, res) => {
   // Проверяем токен из тела запроса
   const tokenFromBody = req.body.token;
   
@@ -239,8 +257,10 @@ router.post('/debug-token', (req, res) => {
   }
 });
 
+
+
 // User profile page
-router.all('/profile', passport.authenticate('jwt', { session: false }), (req, res) => {
+router.post('/profile', passport.authenticate('jwt', { session: false }), (req, res) => {
   res.send(`
     <html>
       <head>
@@ -458,6 +478,7 @@ router.all('/profile', passport.authenticate('jwt', { session: false }), (req, r
               }
               
               const response = await fetch('/auth/rma-requests', {
+                method: 'POST',
                 headers: {
                   'Authorization': 'Bearer ' + token
                 }

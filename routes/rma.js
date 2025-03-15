@@ -382,8 +382,8 @@ router.get('/status/:rmaId', async (req, res) => {
   }
 });
 
-// Get user's RMA requests (authenticated only)
-router.get('/my-requests', requireAuth, async (req, res) => {
+// Get user's RMA requests
+router.post('/my-requests', requireAuth, async (req, res) => {
   try {
     const rmaRequests = await RmaRequest.findAll({
       where: { userId: req.user.id },

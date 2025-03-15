@@ -30,8 +30,9 @@ export const AuthProvider = ({ children }) => {
 
         // Fetch user data from server
         const response = await fetch('/auth/me', {
+          method: 'POST',
           headers: {
-            'Authorization': `Bearer ${token}`
+            'Authorization': 'Bearer ' + token
           }
         });
 

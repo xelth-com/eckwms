@@ -275,9 +275,12 @@
                 // Format and display response
                 const statusText = `Status: ${response.status} ${response.statusText}`;
                 
+                // Clone the response before reading it
+                const responseClone = response.clone();
+                
                 try {
+                    // Try to parse as JSON first
                     const data = await response.json();
-                    resultElement.textContent = `${statusText}\n\n${JSON.stringify(data, null, 2)}`;
                     
                     // Add highlighting based on success/failure
                     if (response.ok) {
@@ -286,9 +289,14 @@
                         resultElement.innerHTML = `<span class="error">${statusText}</span>\n\n${JSON.stringify(data, null, 2)}`;
                     }
                 } catch (err) {
-                    // Handle case where response is not JSON
-                    const text = await response.text();
-                    resultElement.textContent = `${statusText}\n\n${text}`;
+                    // If JSON parsing fails, use the cloned response to read as text
+                    const text = await responseClone.text();
+                    
+                    if (response.ok) {
+                        resultElement.innerHTML = `<span class="success">${statusText}</span>\n\n${text}`;
+                    } else {
+                        resultElement.innerHTML = `<span class="error">${statusText}</span>\n\n${text}`;
+                    }
                 }
             } catch (err) {
                 resultElement.innerHTML = `<span class="error">Error: ${err.message}</span>`;
