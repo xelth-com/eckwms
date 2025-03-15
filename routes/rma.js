@@ -2,7 +2,6 @@
 const express = require('express');
 const router = express.Router();
 const path = require('path');
-const passport = require('passport');
 const { generateJWT, betrugerUrlEncrypt, betrugerCrc } = require('../utils/encryption');
 const { splitStreetAndHouseNumber, splitPostalCodeAndCity, convertToSerialDescriptionArray } = require('../utils/formatUtils');
 const { generatePdfRma } = require('../utils/pdfGenerator');
@@ -11,12 +10,54 @@ const { resolve } = require('path');
 const fs = require('fs');
 const { optionalAuth, requireAuth } = require('../middleware/auth');
 const { UserAuth, RmaRequest } = require('../models/postgresql');
+const { createRmaRequest } = require('../services/rmaService');
 
 // Apply optional authentication to all RMA routes
 router.use(optionalAuth);
 
+// Маршрут для создания RMA
+router.post('/create', optionalAuth, async (req, res) => {
+  try {
+    const { 
+      company, person, street, houseNumber, postalCode, city, country, 
+      email, invoiceEmail, phone, resellerName, devices 
+    } = req.body;
+    
+    // Создание RMA через сервисную функцию
+    const newRma = await createRmaRequest({
+      userId: req.user?.id,
+      company,
+      person,
+      street,
+      houseNumber,
+      postalCode,
+      city,
+      country,
+      email,
+      invoiceEmail,
+      phone,
+      resellerName,
+      devices
+    });
+    
+    res.status(201).json({
+      success: true,
+      rmaCode: newRma.rmaCode,
+      message: 'RMA request created successfully'
+    });
+    
+  } catch (error) {
+    console.error('Error creating RMA:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+
+
+
 // Generate RMA form page (HTML version)
-router.all('/generate', (req, res) => {
+router.post('/generate', (req, res) => {
   const timestamp = Math.floor(Date.now() / 1000);
   const rmaCode = `RMA${timestamp}${betrugerCrc(timestamp)}`;
 
@@ -187,7 +228,7 @@ router.all('/generate', (req, res) => {
 router.post('/confirm', async (req, res) => {
   try {
     const rmaJson = req.body;
-    
+    console.log(rmaJson);
     // Generate tokens for tracking and full access
     const payload1 = {
       r: rmaJson.rma.trim(),
@@ -403,7 +444,7 @@ router.get('/status/:rmaId', async (req, res) => {
 });
 
 // Get user's RMA requests
-router.post('/my-requests', requireAuth, async (req, res) => {
+router.get('/my-requests', requireAuth, async (req, res) => {
   try {
     const rmaRequests = await RmaRequest.findAll({
       where: { userId: req.user.id },

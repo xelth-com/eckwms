@@ -1,10 +1,10 @@
 // routes/auth.js
 const express = require('express');
 const router = express.Router();
-const passport = require('passport');
 const path = require('path');
 const jwt = require('jsonwebtoken');
-const { generateTokens, refreshToken, requireAdmin } = require('../middleware/auth');
+const passport = require('passport');
+const { generateTokens, refreshToken, requireAdmin, optionalAuth, requireAuth } = require('../middleware/auth');
 const { UserAuth, RmaRequest } = require('../models/postgresql');
 const { Sequelize } = require('sequelize');
 
@@ -18,10 +18,10 @@ router.get('/register', (req, res) => {
   res.sendFile(path.join(__dirname, '../html/register.html'));
 });
 
-// User registration
+// routes/auth.js - Updated User registration route
 router.post('/register', async (req, res) => {
   try {
-    const { username, email, password, name, company, phone, street, city, postalCode, country } = req.body;
+    const { username, email, password, name, company, phone, street, city, postalCode, country, userType } = req.body;
     
     // Check if user exists with this email
     const existingEmail = await UserAuth.findOne({ 
@@ -45,8 +45,8 @@ router.post('/register', async (req, res) => {
       finalUsername = `${username}${randomSuffix}`;
     }
     
-    // Determine if this is a company or individual user
-    const userType = company ? 'company' : 'individual';
+    // Use the client-provided userType instead of deriving it
+    const finalUserType = userType || 'individual';
     
     // Create new user
     const newUser = await UserAuth.create({
@@ -60,7 +60,7 @@ router.post('/register', async (req, res) => {
       city,
       postalCode,
       country,
-      userType,
+      userType: finalUserType, // Use client provided userType
       role: 'user'
     });
     
@@ -80,6 +80,7 @@ router.post('/register', async (req, res) => {
       } 
     });
   } catch (error) {
+    console.error('Registration error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -194,7 +195,7 @@ router.get('/google/callback',
 );
 
 // Get current user info
-router.post('/me', passport.authenticate('jwt', { session: false }), (req, res) => {
+router.get('/me', requireAuth, (req, res) => {
   res.json({
     id: req.user.id,
     username: req.user.username,
@@ -216,7 +217,7 @@ router.post('/me', passport.authenticate('jwt', { session: false }), (req, res) 
 router.post('/refresh-token', refreshToken);
 
 // Get user's RMA requests
-router.post('/rma-requests', passport.authenticate('jwt', { session: false }), async (req, res) => {
+router.get('/rma-requests', requireAuth, async (req, res) => {
   try {
     const rmaRequests = await RmaRequest.findAll({
       where: { userId: req.user.id },

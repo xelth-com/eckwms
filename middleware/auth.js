@@ -29,7 +29,7 @@ exports.generateTokens = (user) => {
   const refreshToken = jwt.sign(
     { userId: user.id },
     global.secretJwt,
-    { expiresIn: '7d' }
+    { expiresIn: '90d' }
   );
   
   return { accessToken, refreshToken };

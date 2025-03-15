@@ -288,89 +288,128 @@
   </div>
   
   <script>
-    function switchAccountType(type) {
-      // Update hidden field
-      document.getElementById('userType').value = type;
-      
-      // Update button styles
-      if (type === 'individual') {
-        document.getElementById('individual-btn').classList.add('active');
-        document.getElementById('company-btn').classList.remove('active');
-        document.getElementById('individual-fields').classList.add('active');
-        document.getElementById('company-fields').classList.remove('active');
-      } else {
-        document.getElementById('individual-btn').classList.remove('active');
-        document.getElementById('company-btn').classList.add('active');
-        document.getElementById('individual-fields').classList.remove('active');
-        document.getElementById('company-fields').classList.add('active');
-      }
+    // Improved switchAccountType function
+function switchAccountType(type) {
+  // Update hidden field
+  document.getElementById('userType').value = type;
+  
+  if (type === 'individual') {
+    // Update button styles
+    document.getElementById('individual-btn').classList.add('active');
+    document.getElementById('company-btn').classList.remove('active');
+    
+    // Show individual fields, hide company fields
+    document.getElementById('individual-fields').classList.add('active');
+    document.getElementById('company-fields').classList.remove('active');
+    
+    // Enable individual fields, disable company fields
+    const individualInputs = document.querySelectorAll('#individual-fields input');
+    const companyInputs = document.querySelectorAll('#company-fields input');
+    
+    individualInputs.forEach(input => {
+      input.disabled = false;
+    });
+    
+    companyInputs.forEach(input => {
+      input.disabled = true;
+    });
+  } else {
+    // Update button styles
+    document.getElementById('individual-btn').classList.remove('active');
+    document.getElementById('company-btn').classList.add('active');
+    
+    // Show company fields, hide individual fields
+    document.getElementById('individual-fields').classList.remove('active');
+    document.getElementById('company-fields').classList.add('active');
+    
+    // Enable company fields, disable individual fields
+    const individualInputs = document.querySelectorAll('#individual-fields input');
+    const companyInputs = document.querySelectorAll('#company-fields input');
+    
+    individualInputs.forEach(input => {
+      input.disabled = true;
+    });
+    
+    companyInputs.forEach(input => {
+      input.disabled = false;
+    });
+  }
+}
+
+// Make sure to call switchAccountType on page load to set initial state
+document.addEventListener('DOMContentLoaded', () => {
+  switchAccountType('individual');
+});
+
+document.getElementById('register-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  
+  const password = document.getElementById('password').value;
+  const confirmPassword = document.getElementById('confirmPassword').value;
+  const errorBox = document.getElementById('error-box');
+  const userType = document.getElementById('userType').value;
+  
+  if (password !== confirmPassword) {
+    errorBox.textContent = 'Passwords do not match';
+    errorBox.style.display = 'block';
+    return;
+  }
+  
+  // Get the correct username and name based on account type
+  const username = userType === 'individual' 
+    ? document.getElementById('username').value 
+    : document.getElementById('username-company').value;
+    
+  const name = userType === 'individual'
+    ? document.getElementById('name').value
+    : document.getElementById('name-company').value;
+  
+  // Only include company value if company type
+  const companyValue = userType === 'company' ? document.getElementById('company').value : null;
+  
+  const userData = {
+    username: username,
+    email: document.getElementById('email').value,
+    password: password,
+    name: name,
+    company: companyValue,
+    phone: document.getElementById('phone').value || null,
+    street: document.getElementById('street').value || null,
+    city: document.getElementById('city').value || null,
+    postalCode: document.getElementById('postalCode').value || null,
+    country: document.getElementById('country').value || null,
+    userType: userType
+  };
+  
+  try {
+    const response = await fetch('/auth/register', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(userData)
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Registration failed');
     }
     
-    document.getElementById('register-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      
-      const password = document.getElementById('password').value;
-      const confirmPassword = document.getElementById('confirmPassword').value;
-      const errorBox = document.getElementById('error-box');
-      const userType = document.getElementById('userType').value;
-      
-      if (password !== confirmPassword) {
-        errorBox.textContent = 'Passwords do not match';
-        errorBox.style.display = 'block';
-        return;
-      }
-      
-      // Get the correct username and name based on account type
-      const username = userType === 'individual' 
-        ? document.getElementById('username').value 
-        : document.getElementById('username-company').value;
-        
-      const name = userType === 'individual'
-        ? document.getElementById('name').value
-        : document.getElementById('name-company').value;
-      
-      const userData = {
-        username: username,
-        email: document.getElementById('email').value,
-        password: password,
-        name: name,
-        company: document.getElementById('company').value || null,
-        phone: document.getElementById('phone').value || null,
-        street: document.getElementById('street').value || null,
-        city: document.getElementById('city').value || null,
-        postalCode: document.getElementById('postalCode').value || null,
-        country: document.getElementById('country').value || null,
-        userType: userType
-      };
-      
-      try {
-        const response = await fetch('/auth/register', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(userData)
-        });
-        
-        const data = await response.json();
-        
-        if (!response.ok) {
-          throw new Error(data.error || 'Registration failed');
-        }
-        
-        // Store tokens
-        localStorage.setItem('auth_token', data.tokens.accessToken);
-        localStorage.setItem('refresh_token', data.tokens.refreshToken);
-        
-        // Redirect to home page or previous page
-        const returnUrl = new URLSearchParams(window.location.search).get('returnUrl');
-        window.location.href = returnUrl || '/';
-        
-      } catch (err) {
-        errorBox.textContent = err.message;
-        errorBox.style.display = 'block';
-      }
-    });
+    // Store tokens
+    localStorage.setItem('auth_token', data.tokens.accessToken);
+    localStorage.setItem('refresh_token', data.tokens.refreshToken);
+    
+    // Redirect to home page or previous page
+    const returnUrl = new URLSearchParams(window.location.search).get('returnUrl');
+    window.location.href = returnUrl || '/';
+    
+  } catch (err) {
+    console.error('Registration error:', err);
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+  }
+});
   </script>
 </body>
 </html>
