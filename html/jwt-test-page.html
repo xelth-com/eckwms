@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JWT Token Test Tool</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            color: #1e2071;
+            margin-bottom: 10px;
+        }
+        
+        .container {
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        
+        input[type="text"], 
+        input[type="url"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        
+        textarea {
+            min-height: 120px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        
+        .btn {
+            background-color: #1e2071;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .btn:hover {
+            background-color: #161a5e;
+        }
+        
+        .result-container {
+            margin-top: 30px;
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+        }
+        
+        .result {
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            overflow: auto;
+            max-height: 400px;
+        }
+        
+        .result pre {
+            margin: 0;
+            white-space: pre-wrap;
+        }
+        
+        .token-debug {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f0f8ff;
+            border: 1px solid #cce5ff;
+            border-radius: 4px;
+        }
+        
+        .token-part {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: white;
+            border: 1px solid #cce5ff;
+            border-radius: 4px;
+        }
+        
+        .token-part h4 {
+            margin-top: 0;
+            margin-bottom: 8px;
+            color: #0066cc;
+        }
+        
+        .error {
+            color: #d9534f;
+            font-weight: bold;
+        }
+        
+        .success {
+            color: #5cb85c;
+            font-weight: bold;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>JWT Token Test Tool</h1>
+        <p>Test your JWT tokens against any endpoint</p>
+    </div>
+    
+    <div class="container">
+        <form id="tokenForm">
+            <div class="form-group">
+                <label for="token">JWT Token:</label>
+                <textarea id="token" name="token" placeholder="Enter your JWT token here"></textarea>
+            </div>
+            
+            <div class="grid">
+                <div class="form-group">
+                    <label for="endpoint">API Endpoint:</label>
+                    <input type="url" id="endpoint" name="endpoint" value="/auth/debug-token" placeholder="Enter API endpoint URL">
+                </div>
+                
+                <div class="form-group">
+                    <label for="method">Method:</label>
+                    <select id="method" name="method">
+                        <option value="POST">POST</option>
+                        <option value="GET">GET</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="sendMethod">Send Token As:</label>
+                <select id="sendMethod" name="sendMethod">
+                    <option value="authorization">Authorization Header (Bearer)</option>
+                    <option value="query">Query Parameter</option>
+                    <option value="body">Form Body</option>
+                    <option value="json">JSON Body</option>
+                </select>
+            </div>
+            
+            <button type="submit" class="btn">Test Token</button>
+        </form>
+        
+        <div class="token-debug" id="tokenInfo" style="display: none;">
+            <h3>Token Information (Local Decode):</h3>
+            
+            <div class="token-part">
+                <h4>Header:</h4>
+                <pre id="tokenHeader"></pre>
+            </div>
+            
+            <div class="token-part">
+                <h4>Payload:</h4>
+                <pre id="tokenPayload"></pre>
+            </div>
+            
+            <div class="token-part">
+                <h4>Expiration:</h4>
+                <div id="tokenExpiration"></div>
+            </div>
+        </div>
+        
+        <div class="result-container" id="resultContainer" style="display: none;">
+            <h3>API Response:</h3>
+            <div class="result">
+                <pre id="result"></pre>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        document.getElementById('tokenForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const token = document.getElementById('token').value.trim();
+            let endpoint = document.getElementById('endpoint').value.trim();
+            const method = document.getElementById('method').value;
+            const sendMethod = document.getElementById('sendMethod').value;
+            
+            // Add base URL if endpoint starts with /
+            if (endpoint.startsWith('/')) {
+                endpoint = `${window.location.origin}${endpoint}`;
+            }
+            
+            // Validate token
+            if (!token) {
+                alert('Please enter a JWT token');
+                return;
+            }
+            
+            // Validate endpoint
+            if (!endpoint) {
+                alert('Please enter an API endpoint');
+                return;
+            }
+            
+            // Display token debug info
+            try {
+                displayTokenInfo(token);
+            } catch (err) {
+                console.error('Error decoding token:', err);
+            }
+            
+            // Prepare request options
+            let url = endpoint;
+            const options = {
+                method: method,
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            };
+            
+            // Add token based on selected method
+            if (sendMethod === 'authorization') {
+                options.headers['Authorization'] = `Bearer ${token}`;
+            } else if (sendMethod === 'query') {
+                const separator = url.includes('?') ? '&' : '?';
+                url = `${url}${separator}token=${encodeURIComponent(token)}`;
+            } else if (sendMethod === 'body') {
+                options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+                options.body = `token=${encodeURIComponent(token)}`;
+            } else if (sendMethod === 'json') {
+                options.body = JSON.stringify({ token });
+            }
+            
+            // Show the results container
+            document.getElementById('resultContainer').style.display = 'block';
+            const resultElement = document.getElementById('result');
+            resultElement.textContent = 'Sending request...';
+            
+            try {
+                // Send request
+                const response = await fetch(url, options);
+                
+                // Format and display response
+                const statusText = `Status: ${response.status} ${response.statusText}`;
+                
+                try {
+                    const data = await response.json();
+                    resultElement.textContent = `${statusText}\n\n${JSON.stringify(data, null, 2)}`;
+                    
+                    // Add highlighting based on success/failure
+                    if (response.ok) {
+                        resultElement.innerHTML = `<span class="success">${statusText}</span>\n\n${JSON.stringify(data, null, 2)}`;
+                    } else {
+                        resultElement.innerHTML = `<span class="error">${statusText}</span>\n\n${JSON.stringify(data, null, 2)}`;
+                    }
+                } catch (err) {
+                    // Handle case where response is not JSON
+                    const text = await response.text();
+                    resultElement.textContent = `${statusText}\n\n${text}`;
+                }
+            } catch (err) {
+                resultElement.innerHTML = `<span class="error">Error: ${err.message}</span>`;
+                console.error('Request error:', err);
+            }
+        });
+        
+        // Function to decode and display token parts
+        function displayTokenInfo(token) {
+            const tokenInfo = document.getElementById('tokenInfo');
+            tokenInfo.style.display = 'block';
+            
+            // Split the token
+            const parts = token.split('.');
+            if (parts.length !== 3) {
+                document.getElementById('tokenHeader').textContent = 'Invalid token format';
+                document.getElementById('tokenPayload').textContent = 'Expected 3 parts (header.payload.signature)';
+                document.getElementById('tokenExpiration').textContent = 'N/A';
+                return;
+            }
+            
+            try {
+                // Decode header
+                const header = JSON.parse(atob(parts[0]));
+                document.getElementById('tokenHeader').textContent = JSON.stringify(header, null, 2);
+                
+                // Decode payload
+                const payload = JSON.parse(atob(parts[1]));
+                document.getElementById('tokenPayload').textContent = JSON.stringify(payload, null, 2);
+                
+                // Check expiration
+                const expEl = document.getElementById('tokenExpiration');
+                if (payload.exp) {
+                    const expDate = new Date(payload.exp * 1000);
+                    const now = new Date();
+                    const isExpired = now > expDate;
+                    
+                    if (isExpired) {
+                        expEl.innerHTML = `<span class="error">EXPIRED at ${expDate.toLocaleString()}</span>`;
+                    } else {
+                        const timeLeft = Math.floor((expDate - now) / 1000);
+                        const minutes = Math.floor(timeLeft / 60);
+                        const seconds = timeLeft % 60;
+                        expEl.innerHTML = `<span class="success">Valid until ${expDate.toLocaleString()} (${minutes}m ${seconds}s left)</span>`;
+                    }
+                } else {
+                    expEl.textContent = 'No expiration specified';
+                }
+            } catch (err) {
+                document.getElementById('tokenHeader').textContent = 'Error decoding token';
+                document.getElementById('tokenPayload').textContent = err.message;
+                document.getElementById('tokenExpiration').textContent = 'N/A';
+            }
+        }
+        
+        // Helper function for base64 URL decoding
+        function atob(str) {
+            // Convert Base64URL to Base64
+            let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+            // Add padding if needed
+            while (base64.length % 4) {
+                base64 += '=';
+            }
+            // Decode
+            return window.atob(base64);
+        }
+    </script>
+</body>
+</html>

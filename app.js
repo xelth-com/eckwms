@@ -64,27 +64,12 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false
 }));
 
-// Session middleware with PostgreSQL store
-app.use(session({
-    store: new pgSession({
-        conString: `postgres://${process.env.PG_USERNAME}:${process.env.PG_PASSWORD}@${process.env.PG_HOST}:${process.env.PG_PORT}/${process.env.PG_DATABASE}`,
-        tableName: 'session',
-        createTableIfMissing: true
-    }),
-    secret: process.env.SESSION_SECRET || 'your-session-secret',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: process.env.NODE_ENV === 'production', // Only use secure cookies in production
-        maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
-    }
-}));
+
 
 // Initialize Passport
 const configPassport = require('./config/passport');
 const passportInstance = configPassport(global.secretJwt);
 app.use(passport.initialize());
-app.use(passport.session());
 
 // Middleware
 app.use(express.json());

@@ -101,7 +101,7 @@ module.exports = function(secretJwt) {
   // JWT Strategy for API authentication
   passport.use(new JwtStrategy({
     jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-    secretOrKey: secretJwt
+    secretOrKey: global.secretJwt
   }, async (payload, done) => {
     try {
       // Find user by ID from payload

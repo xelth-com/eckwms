@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const passport = require('passport');
 const path = require('path');
+const jwt = require('jsonwebtoken');
 const { generateTokens, refreshToken } = require('../middleware/auth');
 const { UserAuth, RmaRequest } = require('../models/postgresql');
 const { Sequelize } = require('sequelize');
@@ -201,8 +202,45 @@ router.get('/rma-requests', passport.authenticate('jwt', { session: false }), as
   }
 });
 
+// Диагностический маршрут для проверки токена
+router.post('/debug-token', (req, res) => {
+  // Проверяем токен из тела запроса
+  const tokenFromBody = req.body.token;
+  
+  // Проверяем токен из заголовка
+  const authHeader = req.headers.authorization;
+  const tokenFromHeader = authHeader ? authHeader.split(' ')[1] : null;
+  
+  // Пробуем проверить токен
+  try {
+    // Пробуем токен из тела
+    if (tokenFromBody) {
+      const decoded = jwt.verify(tokenFromBody, global.secretJwt);
+      return res.json({ 
+        source: 'body', 
+        valid: true, 
+        decoded 
+      });
+    }
+    
+    // Пробуем токен из заголовка
+    if (tokenFromHeader) {
+      const decoded = jwt.verify(tokenFromHeader, global.secretJwt);
+      return res.json({ 
+        source: 'header', 
+        valid: true, 
+        decoded 
+      });
+    }
+    
+    return res.status(400).json({ error: 'No token provided' });
+  } catch (err) {
+    return res.status(401).json({ error: err.message });
+  }
+});
+
 // User profile page
-router.get('/profile', passport.authenticate('jwt', { session: false }), (req, res) => {
+router.all('/profile', passport.authenticate('jwt', { session: false }), (req, res) => {
   res.send(`
     <html>
       <head>

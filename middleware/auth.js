@@ -17,13 +17,14 @@ exports.optionalAuth = (req, res, next) => {
 exports.generateTokens = (user) => {
   const accessToken = jwt.sign(
     { userId: user.id, email: user.email, role: user.role },
-    process.env.JWT_SECRET,
+    global.secretJwt,
     { expiresIn: '1h' }
   );
+
   
   const refreshToken = jwt.sign(
     { userId: user.id },
-    process.env.JWT_SECRET,
+    global.secretJwt,
     { expiresIn: '7d' }
   );
   
@@ -39,7 +40,7 @@ exports.refreshToken = async (req, res) => {
       return res.status(400).json({ error: 'Refresh token required' });
     }
     
-    const payload = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    const payload = jwt.verify(refreshToken, global.secretJwt);
     const { UserAuth } = require('../models/postgresql');
     const user = await UserAuth.findByPk(payload.userId);
     
