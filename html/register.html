@@ -25,7 +25,7 @@
     }
     
     .container {
-      max-width: 500px;
+      max-width: 600px;
       margin: 80px auto;
       padding: 20px;
       background-color: #fff;
@@ -137,6 +137,36 @@
     .links a:hover {
       text-decoration: underline;
     }
+    
+    .account-type-selector {
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    
+    .account-type-btn {
+      padding: 10px 20px;
+      margin: 0 10px;
+      background: #f5f5f5;
+      border: 2px solid #ddd;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    .account-type-btn.active {
+      background: #e6f7ff;
+      border-color: #1e2071;
+      color: #1e2071;
+      font-weight: bold;
+    }
+    
+    .tabs {
+      display: none;
+    }
+    
+    .tabs.active {
+      display: block;
+    }
   </style>
 </head>
 <body>
@@ -147,16 +177,48 @@
     
     <div id="error-box" class="error-message" style="display: none;"></div>
     
+    <div class="account-type-selector">
+      <button id="individual-btn" class="account-type-btn active" onclick="switchAccountType('individual')">
+        Individual Account
+      </button>
+      <button id="company-btn" class="account-type-btn" onclick="switchAccountType('company')">
+        Company Account
+      </button>
+    </div>
+    
     <form id="register-form">
-      <div class="form-row">
-        <div class="form-group">
-          <label for="username">Username</label>
-          <input type="text" id="username" name="username" required>
+      <input type="hidden" id="userType" name="userType" value="individual">
+      
+      <div id="individual-fields" class="tabs active">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" required>
+          </div>
+          
+          <div class="form-group">
+            <label for="name">Full Name</label>
+            <input type="text" id="name" name="name">
+          </div>
+        </div>
+      </div>
+      
+      <div id="company-fields" class="tabs">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="username">Username</label>
+            <input type="text" id="username-company" name="username" required>
+          </div>
+          
+          <div class="form-group">
+            <label for="company">Company Name</label>
+            <input type="text" id="company" name="company" required>
+          </div>
         </div>
         
         <div class="form-group">
-          <label for="name">Full Name</label>
-          <input type="text" id="name" name="name">
+          <label for="name-company">Contact Person</label>
+          <input type="text" id="name-company" name="name">
         </div>
       </div>
       
@@ -178,16 +240,35 @@
       </div>
       
       <div class="form-group">
-        <label for="company">Company Name</label>
-        <input type="text" id="company" name="company">
-      </div>
-      
-      <div class="form-group">
         <label for="phone">Phone Number</label>
         <input type="tel" id="phone" name="phone">
       </div>
       
-      <div style="text-align: center;">
+      <h3 style="margin-top: 30px; margin-bottom: 15px; color: #1e2071; border-bottom: 1px solid #eee;">Address Information</h3>
+      
+      <div class="form-group">
+        <label for="street">Street and House Number</label>
+        <input type="text" id="street" name="street">
+      </div>
+      
+      <div class="form-row">
+        <div class="form-group">
+          <label for="postalCode">Postal Code</label>
+          <input type="text" id="postalCode" name="postalCode">
+        </div>
+        
+        <div class="form-group">
+          <label for="city">City</label>
+          <input type="text" id="city" name="city">
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <label for="country">Country</label>
+        <input type="text" id="country" name="country" value="Germany">
+      </div>
+      
+      <div style="text-align: center; margin-top: 30px;">
         <button type="submit" class="btn">Register</button>
       </div>
     </form>
@@ -200,19 +281,38 @@
     </div>
     
     <div class="links">
-      <a href="/login.html">Already have an account? Log in</a>
+      <a href="/auth/login">Already have an account? Log in</a>
       <span style="color: #ddd;">|</span>
       <a href="/">Back to home</a>
     </div>
   </div>
   
   <script>
+    function switchAccountType(type) {
+      // Update hidden field
+      document.getElementById('userType').value = type;
+      
+      // Update button styles
+      if (type === 'individual') {
+        document.getElementById('individual-btn').classList.add('active');
+        document.getElementById('company-btn').classList.remove('active');
+        document.getElementById('individual-fields').classList.add('active');
+        document.getElementById('company-fields').classList.remove('active');
+      } else {
+        document.getElementById('individual-btn').classList.remove('active');
+        document.getElementById('company-btn').classList.add('active');
+        document.getElementById('individual-fields').classList.remove('active');
+        document.getElementById('company-fields').classList.add('active');
+      }
+    }
+    
     document.getElementById('register-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       
       const password = document.getElementById('password').value;
       const confirmPassword = document.getElementById('confirmPassword').value;
       const errorBox = document.getElementById('error-box');
+      const userType = document.getElementById('userType').value;
       
       if (password !== confirmPassword) {
         errorBox.textContent = 'Passwords do not match';
@@ -220,13 +320,27 @@
         return;
       }
       
+      // Get the correct username and name based on account type
+      const username = userType === 'individual' 
+        ? document.getElementById('username').value 
+        : document.getElementById('username-company').value;
+        
+      const name = userType === 'individual'
+        ? document.getElementById('name').value
+        : document.getElementById('name-company').value;
+      
       const userData = {
-        username: document.getElementById('username').value,
+        username: username,
         email: document.getElementById('email').value,
         password: password,
-        name: document.getElementById('name').value,
-        company: document.getElementById('company').value,
-        phone: document.getElementById('phone').value
+        name: name,
+        company: document.getElementById('company').value || null,
+        phone: document.getElementById('phone').value || null,
+        street: document.getElementById('street').value || null,
+        city: document.getElementById('city').value || null,
+        postalCode: document.getElementById('postalCode').value || null,
+        country: document.getElementById('country').value || null,
+        userType: userType
       };
       
       try {

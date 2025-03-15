@@ -23,7 +23,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     password: {
       type: DataTypes.STRING,
-      allowNull: true // Null for OAuth users
+      allowNull: true // Null for OAuth users and initial RMA users
     },
     googleId: {
       type: DataTypes.STRING,
@@ -68,7 +68,22 @@ module.exports = (sequelize, DataTypes) => {
     },
     role: {
       type: DataTypes.STRING,
-      defaultValue: 'user'
+      defaultValue: 'user',
+      validate: {
+        isIn: [['admin', 'user', 'rma']]
+      }
+    },
+    userType: {
+      type: DataTypes.STRING,
+      defaultValue: 'individual',
+      validate: {
+        isIn: [['individual', 'company']]
+      }
+    },
+    rmaReference: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      unique: true
     },
     isActive: {
       type: DataTypes.BOOLEAN,
@@ -95,6 +110,21 @@ module.exports = (sequelize, DataTypes) => {
   // Method to compare passwords
   UserAuth.prototype.comparePassword = async function(candidatePassword) {
     return bcrypt.compare(candidatePassword, this.password);
+  };
+
+  // Is this a company user?
+  UserAuth.prototype.isCompany = function() {
+    return this.userType === 'company' && !!this.company;
+  };
+
+  // Is this an RMA user?
+  UserAuth.prototype.isRmaUser = function() {
+    return this.role === 'rma';
+  };
+
+  // Is this an admin?
+  UserAuth.prototype.isAdmin = function() {
+    return this.role === 'admin';
   };
 
   return UserAuth;

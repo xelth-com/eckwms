@@ -4,7 +4,7 @@ const router = express.Router();
 const passport = require('passport');
 const path = require('path');
 const jwt = require('jsonwebtoken');
-const { generateTokens, refreshToken } = require('../middleware/auth');
+const { generateTokens, refreshToken, requireAdmin } = require('../middleware/auth');
 const { UserAuth, RmaRequest } = require('../models/postgresql');
 const { Sequelize } = require('sequelize');
 
@@ -21,30 +21,47 @@ router.get('/register', (req, res) => {
 // User registration
 router.post('/register', async (req, res) => {
   try {
-    const { username, email, password, name, company, phone } = req.body;
+    const { username, email, password, name, company, phone, street, city, postalCode, country } = req.body;
     
-    // Check if user exists
-    const existingUser = await UserAuth.findOne({ 
-      where: { 
-        [Sequelize.Op.or]: [
-          { email },
-          { username }
-        ]
-      }
+    // Check if user exists with this email
+    const existingEmail = await UserAuth.findOne({ 
+      where: { email }
     });
     
-    if (existingUser) {
-      return res.status(400).json({ error: 'User with this email or username already exists' });
+    if (existingEmail) {
+      return res.status(400).json({ error: 'Email already in use' });
     }
+    
+    // Check if username exists
+    const existingUsername = await UserAuth.findOne({
+      where: { username }
+    });
+    
+    // If username exists, generate a unique username
+    let finalUsername = username;
+    if (existingUsername) {
+      // Generate a unique username by adding a number
+      const randomSuffix = Math.floor(Math.random() * 10000);
+      finalUsername = `${username}${randomSuffix}`;
+    }
+    
+    // Determine if this is a company or individual user
+    const userType = company ? 'company' : 'individual';
     
     // Create new user
     const newUser = await UserAuth.create({
-      username,
+      username: finalUsername,
       email,
       password, // Will be hashed by model hooks
       name,
       company,
-      phone
+      phone,
+      street,
+      city,
+      postalCode,
+      country,
+      userType,
+      role: 'user'
     });
     
     // Generate tokens
@@ -56,7 +73,10 @@ router.post('/register', async (req, res) => {
         id: newUser.id, 
         username: newUser.username, 
         email: newUser.email,
-        name: newUser.name
+        name: newUser.name,
+        company: newUser.company,
+        userType: newUser.userType,
+        role: newUser.role
       } 
     });
   } catch (error) {
@@ -64,31 +84,86 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// Login
-router.post('/login', (req, res, next) => {
-  passport.authenticate('local', { session: false }, (err, user, info) => {
-    if (err) {
-      return next(err);
+// Login - supports both email and username login
+router.post('/login', async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    
+    // Determine if input is email or username
+    const isEmail = email && email.includes('@');
+    const whereCondition = isEmail ? { email } : { username: email };
+    
+    // Find users matching the login
+    const users = await UserAuth.findAll({ where: whereCondition });
+    
+    if (users.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    if (!user) {
-      return res.status(401).json({ error: info.message || 'Invalid credentials' });
+    // If only one user found, simple case
+    if (users.length === 1) {
+      const user = users[0];
+      const isMatch = await user.comparePassword(password);
+      
+      if (!isMatch) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+      
+      // Update last login
+      user.lastLogin = new Date();
+      await user.save();
+      
+      // Generate tokens
+      const tokens = generateTokens(user);
+      
+      return res.json({
+        tokens,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          userType: user.userType,
+          company: user.company
+        }
+      });
     }
     
-    // Generate tokens
-    const tokens = generateTokens(user);
+    // Multiple users with same username (but different emails)
+    // Try to find one that matches the password
+    for (const user of users) {
+      const isMatch = await user.comparePassword(password);
+      
+      if (isMatch) {
+        // Update last login
+        user.lastLogin = new Date();
+        await user.save();
+        
+        // Generate tokens
+        const tokens = generateTokens(user);
+        
+        return res.json({
+          tokens,
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            userType: user.userType,
+            company: user.company
+          }
+        });
+      }
+    }
     
-    res.json({ 
-      tokens, 
-      user: { 
-        id: user.id, 
-        username: user.username, 
-        email: user.email,
-        name: user.name,
-        role: user.role
-      } 
-    });
-  })(req, res, next);
+    // No matching password found
+    return res.status(401).json({ error: 'Invalid credentials' });
+    
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 // Google OAuth login
@@ -118,55 +193,6 @@ router.get('/google/callback',
   }
 );
 
-// Auth success page (to handle OAuth redirects)
-router.get('/auth-success', (req, res) => {
-  const token = req.query.token;
-  const refresh = req.query.refresh;
-  
-  res.send(`
-    <html>
-      <head>
-        <title>Authentication Successful</title>
-        <script>
-          // Store tokens in localStorage
-          localStorage.setItem('auth_token', '` + token + `');
-          localStorage.setItem('refresh_token', '` + refresh + `');
-          
-          // Redirect after 2 seconds
-          setTimeout(() => {
-            window.location.href = '/';
-          }, 2000);
-        </script>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            padding-top: 50px;
-          }
-          .success-box {
-            max-width: 500px;
-            margin: 0 auto;
-            padding: 30px;
-            background-color: #f1f9f1;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-          }
-          h2 {
-            color: #2c8a2c;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="success-box">
-          <h2>Authentication Successful!</h2>
-          <p>You've been successfully logged in.</p>
-          <p>Redirecting to the homepage...</p>
-        </div>
-      </body>
-    </html>
-  `);
-});
-
 // Get current user info
 router.post('/me', passport.authenticate('jwt', { session: false }), (req, res) => {
   res.json({
@@ -175,6 +201,7 @@ router.post('/me', passport.authenticate('jwt', { session: false }), (req, res) 
     email: req.user.email,
     name: req.user.name,
     role: req.user.role,
+    userType: req.user.userType,
     company: req.user.company,
     phone: req.user.phone,
     street: req.user.street,
@@ -202,387 +229,103 @@ router.post('/rma-requests', passport.authenticate('jwt', { session: false }), a
   }
 });
 
-// Диагностический маршрут для проверки токена
-router.post('/debug-token', passport.authenticate('jwt', { session: false }), (req, res) => {
-  // This only runs if a valid token was found in the Authorization header
-  // and authentication was successful
-  
-  // Token was from the header (Passport only checks the header)
-  res.json({test: 'test',
-    source: 'header',
-    valid: true,
-    user: {
-      id: req.user.id,
-      email: req.user.email,
-      role: req.user.role
-    }
-  });
-});
-
-
-// Диагностический маршрут для проверки токена
-router.post('/debug-token2', passport.authenticate('jwt', { session: false }),(req, res) => {
-  // Проверяем токен из тела запроса
-  const tokenFromBody = req.body.token;
-  
-  // Проверяем токен из заголовка
-  const authHeader = req.headers.authorization;
-  const tokenFromHeader = authHeader ? authHeader.split(' ')[1] : null;
-  
-  // Пробуем проверить токен
+// Create admin user (admin only)
+router.post('/create-admin', requireAdmin, async (req, res) => {
   try {
-    // Пробуем токен из тела
-    if (tokenFromBody) {
-      const decoded = jwt.verify(tokenFromBody, global.secretJwt);
-      return res.json({ 
-        source: 'body', 
-        valid: true, 
-        decoded 
-      });
+    const { username, email, password, name } = req.body;
+    
+    // Check if user exists
+    const existingUser = await UserAuth.findOne({ 
+      where: { 
+        [Sequelize.Op.or]: [
+          { email },
+          { username }
+        ]
+      }
+    });
+    
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email or username already exists' });
     }
     
-    // Пробуем токен из заголовка
-    if (tokenFromHeader) {
-      const decoded = jwt.verify(tokenFromHeader, global.secretJwt);
-      return res.json({ 
-        source: 'header', 
-        valid: true, 
-        decoded 
-      });
-    }
+    // Create new admin user
+    const newAdmin = await UserAuth.create({
+      username,
+      email,
+      password, // Will be hashed by model hooks
+      name,
+      role: 'admin',
+      userType: 'individual'
+    });
     
-    return res.status(400).json({ error: 'No token provided' });
-  } catch (err) {
-    return res.status(401).json({ error: err.message });
+    res.status(201).json({
+      message: 'Admin user created successfully',
+      user: {
+        id: newAdmin.id,
+        username: newAdmin.username,
+        email: newAdmin.email,
+        name: newAdmin.name,
+        role: newAdmin.role
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
-
-
-// User profile page
-router.post('/profile', passport.authenticate('jwt', { session: false }), (req, res) => {
-  res.send(`
-    <html>
-      <head>
-        <title>User Profile - M3mobile</title>
-        <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
-        <link rel="manifest" href="/site.webmanifest">
-        <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5bbad5">
-        
-        <meta name="msapplication-TileColor" content="#da532c">
-        <meta name="theme-color" content="#ffffff">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-        
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            background: linear-gradient(#1e1e71ff 0px, #1e1e71ff 70px, #1e1e7100 300px, #8880),
-              linear-gradient(-30deg, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881),
-              linear-gradient(30deg, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881, #fff1, #8881);
-            background-color: #b0b3c0;
-            margin: 0;
-            padding: 0;
-          }
-          
-          .header-logo {
-            padding: 10px;
-            color: white;
-            text-align: center;
-            font-size: 24px;
-            font-weight: bold;
-          }
-          
-          .container {
-            max-width: 800px;
-            margin: 40px auto;
-            padding: 20px;
-            background-color: #fff;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-          }
-          
-          .profile-section {
-            margin-bottom: 30px;
-          }
-          
-          .section-title {
-            font-size: 20px;
-            margin-bottom: 15px;
-            color: #1e2071;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 5px;
-          }
-          
-          .profile-details {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-          }
-          
-          .detail-item {
-            margin-bottom: 15px;
-          }
-          
-          .detail-label {
-            font-weight: bold;
-            margin-bottom: 5px;
-            color: #555;
-          }
-          
-          .detail-value {
-            padding: 8px;
-            background-color: #f9f9f9;
-            border-radius: 4px;
-          }
-          
-          .rma-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
-          }
-          
-          .rma-table th {
-            background-color: #f1f1f1;
-            text-align: left;
-            padding: 10px;
-          }
-          
-          .rma-table td {
-            border-top: 1px solid #eee;
-            padding: 10px;
-          }
-          
-          .rma-table tr:hover {
-            background-color: #f9f9f9;
-          }
-          
-          .btn {
-            background-color: #1e2071;
-            color: white;
-            border: none;
-            padding: 10px 15px;
-            font-size: 14px;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-            text-decoration: none;
-            display: inline-block;
-          }
-          
-          .btn:hover {
-            background-color: #161a5e;
-          }
-          
-          .btn-danger {
-            background-color: #d9534f;
-          }
-          
-          .btn-danger:hover {
-            background-color: #c9302c;
-          }
-          
-          .footer {
-            text-align: center;
-            margin-top: 30px;
-          }
-          
-          .footer a {
-            color: #1e2071;
-            text-decoration: none;
-            margin: 0 10px;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="header-logo">M3mobile</div>
-        
-        <div class="container">
-          <h2 style="text-align: center; color: #1e2071;">User Profile</h2>
-          
-          <div class="profile-section">
-            <h3 class="section-title">Personal Information</h3>
-            <div class="profile-details">
-              <div class="detail-item">
-                <div class="detail-label">Username</div>
-                <div class="detail-value" id="username">` + req.user.username + `</div>
-              </div>
-              <div class="detail-item">
-                <div class="detail-label">Name</div>
-                <div class="detail-value" id="name">` + (req.user.name || '-') + `</div>
-              </div>
-              <div class="detail-item">
-                <div class="detail-label">Email</div>
-                <div class="detail-value" id="email">` + req.user.email + `</div>
-              </div>
-              <div class="detail-item">
-                <div class="detail-label">Phone</div>
-                <div class="detail-value" id="phone">` + (req.user.phone || '-') + `</div>
-              </div>
-            </div>
-          </div>
-          
-          <div class="profile-section">
-            <h3 class="section-title">Company Details</h3>
-            <div class="profile-details">
-              <div class="detail-item">
-                <div class="detail-label">Company</div>
-                <div class="detail-value" id="company">` + (req.user.company || '-') + `</div>
-              </div>
-              <div class="detail-item">
-                <div class="detail-label">Street</div>
-                <div class="detail-value" id="street">` + (req.user.street || '-') + `</div>
-              </div>
-              <div class="detail-item">
-                <div class="detail-label">House Number</div>
-                <div class="detail-value" id="houseNumber">` + (req.user.houseNumber || '-') + `</div>
-              </div>
-              <div class="detail-item">
-                <div class="detail-label">Postal Code</div>
-                <div class="detail-value" id="postalCode">` + (req.user.postalCode || '-') + `</div>
-              </div>
-              <div class="detail-item">
-                <div class="detail-label">City</div>
-                <div class="detail-value" id="city">` + (req.user.city || '-') + `</div>
-              </div>
-              <div class="detail-item">
-                <div class="detail-label">Country</div>
-                <div class="detail-value" id="country">` + (req.user.country || '-') + `</div>
-              </div>
-            </div>
-          </div>
-          
-          <div class="profile-section">
-            <h3 class="section-title">RMA Requests</h3>
-            <div id="rma-list-container">
-              <p>Loading your RMA requests...</p>
-            </div>
-          </div>
-          
-          <div class="footer">
-            <a href="/" class="btn">Back to Home</a>
-            <button id="logout-btn" class="btn btn-danger">Log Out</button>
-          </div>
-        </div>
-        
-        <script>
-          // Fetch user's RMA requests
-          async function fetchRMARequests() {
-            try {
-              const token = localStorage.getItem('auth_token');
-              if (!token) {
-                window.location.href = '/auth/login';
-                return;
-              }
-              
-              const response = await fetch('/auth/rma-requests', {
-                method: 'POST',
-                headers: {
-                  'Authorization': 'Bearer ' + token
-                }
-              });
-              
-              if (!response.ok) {
-                throw new Error('Failed to fetch RMA requests');
-              }
-              
-              const rmaRequests = await response.json();
-              displayRMARequests(rmaRequests);
-            } catch (err) {
-              document.getElementById('rma-list-container').innerHTML = 
-                '<p style="color: red;">Error loading RMA requests: ' + err.message + '</p>';
-            }
-          }
-          
-          // Display RMA requests in a table
-          function displayRMARequests(requests) {
-            const container = document.getElementById('rma-list-container');
-            
-            if (requests.length === 0) {
-              container.innerHTML = '<p>You haven\\'t submitted any RMA requests yet.</p>';
-              return;
-            }
-            
-            let html = \`
-              <table class="rma-table">
-                <thead>
-                  <tr>
-                    <th>RMA Code</th>
-                    <th>Date</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-            \`;
-            
-            requests.forEach(rma => {
-              const date = new Date(rma.createdAt).toLocaleDateString();
-              const status = getStatusLabel(rma);
-              
-              html += \`
-                <tr>
-                  <td>\${rma.rmaCode}</td>
-                  <td>\${date}</td>
-                  <td>\${status}</td>
-                  <td>
-                    <a href="/status/serial/\${rma.rmaCode}" class="btn" target="_blank">
-                      View Details
-                    </a>
-                  </td>
-                </tr>
-              \`;
-            });
-            
-            html += \`
-                </tbody>
-              </table>
-            \`;
-            
-            container.innerHTML = html;
-          }
-          
-          // Get human-readable status label
-          function getStatusLabel(rma) {
-            if (rma.shippedAt) return 'Shipped';
-            if (rma.processedAt) return 'Processed';
-            if (rma.receivedAt) return 'Received';
-            return 'Created';
-          }
-          
-          // Handle logout
-          document.getElementById('logout-btn').addEventListener('click', async () => {
-            try {
-              const token = localStorage.getItem('auth_token');
-              
-              // Call logout endpoint
-              await fetch('/auth/logout', {
-                method: 'POST',
-                headers: {
-                  'Authorization': 'Bearer ' + token
-                }
-              });
-              
-              // Clear tokens
-              localStorage.removeItem('auth_token');
-              localStorage.removeItem('refresh_token');
-              
-              // Redirect to home
-              window.location.href = '/';
-            } catch (err) {
-              console.error('Logout failed:', err);
-              alert('Logout failed: ' + err.message);
-            }
-          });
-          
-          // Load RMA requests when page loads
-          fetchRMARequests();
-        </script>
-      </body>
-    </html>
-  `);
+// Upgrade RMA user to regular user
+router.post('/upgrade-rma-user', async (req, res) => {
+  try {
+    const { email, password, username } = req.body;
+    
+    // Find the RMA user
+    const rmaUser = await UserAuth.findOne({
+      where: {
+        email,
+        role: 'rma'
+      }
+    });
+    
+    if (!rmaUser) {
+      return res.status(404).json({ error: 'RMA user not found' });
+    }
+    
+    // Check if the username already exists
+    let finalUsername = username;
+    const existingUsername = await UserAuth.findOne({
+      where: { username }
+    });
+    
+    if (existingUsername) {
+      const randomSuffix = Math.floor(Math.random() * 10000);
+      finalUsername = `${username}${randomSuffix}`;
+    }
+    
+    // Update the RMA user to a regular user
+    rmaUser.username = finalUsername;
+    rmaUser.password = password; // Will be hashed by model hooks
+    rmaUser.role = 'user';
+    
+    await rmaUser.save();
+    
+    // Generate tokens
+    const tokens = generateTokens(rmaUser);
+    
+    res.json({
+      tokens,
+      user: {
+        id: rmaUser.id,
+        username: rmaUser.username,
+        email: rmaUser.email,
+        name: rmaUser.name,
+        role: rmaUser.role,
+        userType: rmaUser.userType,
+        company: rmaUser.company
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Logout

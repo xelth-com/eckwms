@@ -300,10 +300,23 @@ async function createOrderFromRma(formattedInput, rmaJson, userId = null) {
       user = await UserAuth.findOne({ where: { email: rmaJson.email } });
       
       if (!user) {
-        // Create temporary user with email and random username
-        const tempUsername = rmaJson.email.split('@')[0] + 
-          Math.floor(Math.random() * 10000);
+        // Create temporary username based on email
+        const emailParts = rmaJson.email.split('@');
+        let tempUsername = emailParts[0];
         
+        // Check if username exists
+        const existingUsername = await UserAuth.findOne({ where: { username: tempUsername } });
+        
+        // If username exists, add random suffix
+        if (existingUsername) {
+          const randomSuffix = Math.floor(Math.random() * 10000);
+          tempUsername = `${tempUsername}${randomSuffix}`;
+        }
+        
+        // Determine if this is a company or individual
+        const userType = rmaJson.company ? 'company' : 'individual';
+        
+        // Create RMA user account
         user = await UserAuth.create({
           username: tempUsername,
           email: rmaJson.email,
@@ -314,10 +327,17 @@ async function createOrderFromRma(formattedInput, rmaJson, userId = null) {
           houseNumber: addressInfo1.houseNumber || '',
           postalCode: addressInfo2.postalCode || '',
           city: addressInfo2.city || '',
-          country: rmaJson.country || ''
+          country: rmaJson.country || '',
+          role: 'rma',  // Mark as RMA user
+          userType: userType,
+          rmaReference: rmaJson.rma  // Store RMA reference
         });
         
-        console.log(`Created new user account for ${rmaJson.email}`);
+        console.log(`Created new RMA user account for ${rmaJson.email} with RMA ${rmaJson.rma}`);
+      } else if (user.role === 'rma') {
+        // If already an RMA user, update the reference
+        user.rmaReference = rmaJson.rma;
+        await user.save();
       }
       
       // Set the userId for the RMA request

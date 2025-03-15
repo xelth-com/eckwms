@@ -79,3 +79,6 @@ BEGIN
     END IF;
 END
 $$;
+
+ALTER TABLE user_auth ADD COLUMN "userType" VARCHAR(255) DEFAULT 'individual';
+ALTER TABLE user_auth ADD COLUMN "rmaReference" VARCHAR(255) NULL;
