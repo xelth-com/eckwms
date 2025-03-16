@@ -13,6 +13,7 @@ const { appendFile } = require('fs/promises');
 const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
 const passport = require('passport');
+const initI18n = require('./middleware/i18n');
 
 // Import routes
 const apiRoutes = require('./routes/api');
@@ -20,6 +21,7 @@ const rmaRoutes = require('./routes/rma');
 const statusRoutes = require('./routes/status');
 const adminRoutes = require('./routes/admin');
 const authRoutes = require('./routes/auth');
+const translationApiRoutes = require('./routes/translation-api');
 
 // Import middleware
 const { errorHandler, requestLogger } = require('./middleware');
@@ -78,10 +80,12 @@ app.use(bodyParser.text({ type: 'text/html' }));
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'html')));
-
+app.use('/locales', express.static(path.join(__dirname, 'locales')));
 // Logging middleware
 app.use(morgan('[:date[clf]] :method :url :status :response-time ms - :res[content-length]'));
 app.use(requestLogger);
+
+app.use(initI18n());
 
 // Routes
 app.use('/api', apiRoutes);
@@ -89,7 +93,7 @@ app.use('/rma', rmaRoutes);
 app.use('/status', statusRoutes);
 app.use('/admin', adminRoutes);
 app.use('/auth', authRoutes);
-
+app.use('/api', translationApiRoutes);
 // Main route for the application
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'html', 'index.html'));
@@ -134,6 +138,8 @@ app.post('/', async (req, res) => {
         res.status(500).send('Server error: ' + error.message);
     }
 });
+
+
 
 // Logging function
 async function writeLog(str) {

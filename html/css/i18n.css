@@ -1,0 +1,149 @@
+/* i18n.css - Стили для элементов мультиязычности */
+
+/* Контейнер переключателя языков */
+.language-selector {
+  position: relative;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 30px;
+  padding: 0.25rem;
+  margin: 0.5rem;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+/* Опция языка */
+.language-option {
+  padding: 0.5rem 1rem;
+  margin: 0.25rem;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+
+/* Активная опция языка */
+.language-option.active {
+  background-color: #1e2071;
+  color: white;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+/* Hover эффект для опции языка */
+.language-option:hover:not(.active) {
+  background-color: rgba(30, 32, 113, 0.1);
+}
+
+/* Кнопка "Еще языки" */
+.language-more-btn {
+  padding: 0.5rem 1rem;
+  margin: 0.25rem;
+  border-radius: 20px;
+  cursor: pointer;
+  background-color: rgba(0, 0, 0, 0.05);
+  transition: all 0.3s ease;
+}
+
+.language-more-btn:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Для RTL языков (арабский, иврит) */
+html[dir="rtl"] {
+  text-align: right;
+}
+
+html[dir="rtl"] input,
+html[dir="rtl"] textarea {
+  text-align: right;
+}
+
+html[dir="rtl"] .language-selector {
+  flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .form-group label {
+  text-align: right;
+}
+
+/* Анимация для загрузки переводов */
+.i18n-loading {
+  position: relative;
+}
+
+.i18n-loading::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, 
+    rgba(255,255,255,0) 0%, 
+    rgba(255,255,255,0.5) 50%, 
+    rgba(255,255,255,0) 100%);
+  background-size: 200% 100%;
+  animation: i18n-loading 1.5s infinite;
+  pointer-events: none;
+}
+
+@keyframes i18n-loading {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Компактный режим для мобильных устройств */
+@media (max-width: 768px) {
+  .language-selector {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    max-width: 100%;
+    padding: 0.15rem;
+    justify-content: flex-start;
+  }
+  
+  .language-option {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    margin: 0.15rem;
+  }
+  
+  .language-option span {
+    display: none;
+  }
+  
+  .language-more-btn {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    margin: 0.15rem;
+  }
+}
+
+/* Стили для языков с иероглифами (китайский, японский, корейский) */
+html[lang="zh"] body,
+html[lang="ja"] body,
+html[lang="ko"] body {
+  font-family: "Noto Sans SC", "Noto Sans JP", "Noto Sans KR", sans-serif;
+}
+
+/* Стили для арабского и иврита */
+html[lang="ar"] body,
+html[lang="he"] body {
+  font-family: "Noto Sans Arabic", "Noto Sans Hebrew", sans-serif;
+}
+
+/* Поддержка сложных языков с неевропейской письменностью */
+html[lang="ar"] .complex-script,
+html[lang="he"] .complex-script,
+html[lang="zh"] .complex-script,
+html[lang="ja"] .complex-script,
+html[lang="ko"] .complex-script {
+  line-height: 1.5;
+  font-size: 1.1em;
+}

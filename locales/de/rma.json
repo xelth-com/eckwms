@@ -1,0 +1,77 @@
+{
+  "form": {
+    "title": "RMA Reparaturanfrage",
+    "instruction": "Bitte füllen Sie das Formular aus, um eine Reparaturanfrage zu erstellen.",
+    "rma_code": "RMA-Code",
+    "billing_info": "Rechnungsinformationen",
+    "company_name": "Firmenname",
+    "vat_number": "Umsatzsteuer-ID",
+    "contact_person": "Ansprechpartner",
+    "street": "Straße",
+    "house_number": "Hausnummer",
+    "additional_address": "Adresszusatz",
+    "postal_code": "Postleitzahl",
+    "city": "Stadt",
+    "country": "Land",
+    "contact_info": "Kontaktinformationen",
+    "contact_email": "Kontakt-E-Mail",
+    "invoice_email": "E-Mail für Rechnungen",
+    "phone": "Telefon",
+    "reseller_name": "Name des Händlers (bei Garantieanspruch)",
+    "device_info": "Geräteinformationen",
+    "add_device": "Weiteres Gerät hinzufügen",
+    "submit": "Formular absenden",
+    "back": "Zurück"
+  },
+  "device": {
+    "title": "Gerät #{{count}}",
+    "serial_number": "Seriennummer",
+    "serial_placeholder": "Geben Sie die Seriennummer ein",
+    "issue_description": "Fehlerbeschreibung",
+    "description_placeholder": "Beschreiben Sie das Problem mit dem Gerät",
+    "address_button": "Andere Rücksendeadresse angeben",
+    "hide_address": "Rücksendeadresse ausblenden",
+    "alternate_address": "Alternative Rücksendeadresse",
+    "address_info": "Geben Sie eine andere Adresse für die Rücksendung dieses Geräts an.",
+    "using_address": "Verwendet Adresse von Gerät #{{count}}",
+    "using_billing": "Verwendet Rechnungsadresse"
+  },
+  "address_logic": {
+    "title": "Geräterücksendeinformationen",
+    "info": [
+      "Standardmäßig werden alle Geräte an die im Abschnitt \"Rechnungsinformationen\" angegebene Adresse gesendet.",
+      "Sie können für jedes Gerät eine alternative Rücksendeadresse angeben.",
+      "Wenn Sie keine Adresse für ein Gerät angegeben haben, wird die nächstgelegene Adresse aus der Liste verwendet."
+    ]
+  },
+  "confirmation": {
+    "success": "RMA-Anfrage erfolgreich erstellt",
+    "pdf_download": "PDF wird heruntergeladen",
+    "tracking_info": "Verfolgen Sie Ihre RMA mit dem folgenden Link:",
+    "token_info": "RMA-Zugriffstoken für vollständigen Zugriff:",
+    "email_sent": "Eine Bestätigungs-E-Mail wurde an {{email}} gesendet"
+  },
+  "status": {
+    "title": "RMA-Status",
+    "created": "Erstellt",
+    "received": "Empfangen",
+    "in_progress": "In Bearbeitung",
+    "repaired": "Repariert",
+    "shipped": "Versendet",
+    "completed": "Abgeschlossen",
+    "cancelled": "Storniert",
+    "created_at": "Erstellt am",
+    "received_at": "Empfangen am",
+    "processed_at": "Bearbeitet am",
+    "shipped_at": "Versendet am",
+    "tracking": "Sendungsverfolgung",
+    "no_tracking": "Keine Sendungsverfolgungsinformationen verfügbar"
+  },
+  "errors": {
+    "form_incomplete": "Bitte füllen Sie alle erforderlichen Felder aus",
+    "invalid_serial": "Ungültige Seriennummer",
+    "no_description": "Bitte geben Sie eine Fehlerbeschreibung ein",
+    "submission_failed": "Fehler beim Absenden des Formulars",
+    "not_found": "RMA nicht gefunden"
+  }
+}

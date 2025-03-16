@@ -1,0 +1,128 @@
+{
+  "welcome": {
+    "title": "Willkommen, {{name}}",
+    "subtitle": "Systemübersicht",
+    "last_login": "Letzter Login: {{time}}"
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "rma_requests": "RMA-Anfragen",
+    "inventory": "Inventar",
+    "users": "Benutzer",
+    "settings": "Einstellungen",
+    "reports": "Berichte",
+    "help": "Hilfe"
+  },
+  "summary": {
+    "total_rmas": "Gesamt-RMAs",
+    "active_rmas": "Aktive RMAs",
+    "completed_rmas": "Abgeschlossene RMAs",
+    "pending_rmas": "Ausstehende RMAs",
+    "total_devices": "Gesamtgeräte",
+    "devices_in_repair": "Geräte in Reparatur",
+    "devices_waiting": "Wartende Geräte",
+    "devices_completed": "Fertige Geräte"
+  },
+  "rma_list": {
+    "title": "Ihre RMA-Anfragen",
+    "no_rmas": "Keine RMA-Anfragen gefunden",
+    "rma_code": "RMA-Code",
+    "date": "Datum",
+    "status": "Status",
+    "actions": "Aktionen",
+    "view_details": "Details anzeigen",
+    "filter": {
+      "all": "Alle",
+      "active": "Aktiv",
+      "completed": "Abgeschlossen",
+      "pending": "Ausstehend"
+    },
+    "sort": {
+      "newest": "Neueste zuerst",
+      "oldest": "Älteste zuerst",
+      "status": "Nach Status"
+    }
+  },
+  "admin": {
+    "user_management": "Benutzerverwaltung",
+    "create_admin": "Admin erstellen",
+    "create_user": "Benutzer erstellen",
+    "edit_user": "Benutzer bearbeiten",
+    "role": "Rolle",
+    "status": "Status",
+    "last_login": "Letzter Login",
+    "never": "Nie",
+    "actions": "Aktionen",
+    "active": "Aktiv",
+    "inactive": "Inaktiv",
+    "set_active": "Aktivieren",
+    "set_inactive": "Deaktivieren",
+    "confirm_delete": "Sind Sie sicher, dass Sie diesen Benutzer löschen möchten?",
+    "generate_codes": "Codes generieren",
+    "export_data": "Daten exportieren",
+    "system_settings": "Systemeinstellungen"
+  },
+  "user_profile": {
+    "profile": "Profil",
+    "account_info": "Kontoinformationen",
+    "personal_info": "Persönliche Informationen",
+    "name": "Name",
+    "email": "E-Mail",
+    "phone": "Telefon",
+    "company": "Unternehmen",
+    "address": "Adresse",
+    "change_password": "Passwort ändern",
+    "current_password": "Aktuelles Passwort",
+    "new_password": "Neues Passwort",
+    "confirm_password": "Passwort bestätigen",
+    "update_profile": "Profil aktualisieren",
+    "profile_updated": "Profil aktualisiert",
+    "password_changed": "Passwort geändert"
+  },
+  "devices": {
+    "title": "Geräte",
+    "search": "Gerät suchen",
+    "filter": "Filtern nach",
+    "model": "Modell",
+    "serial": "Seriennummer",
+    "status": "Status",
+    "location": "Standort",
+    "action_required": "Maßnahme erforderlich",
+    "no_action": "Keine Maßnahme erforderlich",
+    "issues": "Probleme",
+    "no_issues": "Keine Probleme",
+    "add_device": "Gerät hinzufügen",
+    "view_details": "Details anzeigen",
+    "edit_device": "Gerät bearbeiten"
+  },
+  "boxes": {
+    "title": "Boxen",
+    "box_number": "Box-Nummer",
+    "content": "Inhalt",
+    "location": "Standort",
+    "status": "Status",
+    "in_date": "Eingangsdatum",
+    "out_date": "Ausgangsdatum",
+    "add_box": "Box hinzufügen",
+    "view_box": "Box anzeigen",
+    "edit_box": "Box bearbeiten",
+    "add_to_box": "Zu Box hinzufügen",
+    "remove_from_box": "Aus Box entfernen",
+    "move_box": "Box bewegen"
+  },
+  "reports": {
+    "title": "Berichte",
+    "generate": "Bericht generieren",
+    "export": "Exportieren",
+    "date_range": "Datumsbereich",
+    "start_date": "Startdatum",
+    "end_date": "Enddatum",
+    "type": "Berichtstyp",
+    "rma_report": "RMA-Bericht",
+    "device_report": "Gerätebericht",
+    "repair_report": "Reparaturbericht",
+    "user_report": "Benutzerstatistik",
+    "csv_export": "CSV exportieren",
+    "pdf_export": "PDF exportieren"
+  }
+}
