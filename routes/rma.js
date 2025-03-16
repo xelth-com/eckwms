@@ -72,16 +72,16 @@ router.post('/generate', (req, res) => {
 
   // Get user data if logged in
   let userData = { 
-    company: '', 
+                  company: '',
     vat: '',
-    person: '', 
-    street: '', 
+                  person: '',
+                  street: '',
     houseNumber: '',
     addressLine2: '',
     city: '', 
-    postalCode: '', 
-    country: 'Germany',
-    email: '', 
+                  postalCode: '',
+                  country: 'Germany',
+                  email: '',
     phone: '' 
   };
 
@@ -147,8 +147,8 @@ router.post('/generate', (req, res) => {
       <label for="country" style="display: block; margin-top: 10px;"><b>Country:</b></label>
       <input type="text" id="country" value="${userData.country}" required 
              style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
-    </div>
-
+                      </div>
+                      
     <!-- Contact Information Section -->
     <div style="margin-top: 20px; border: 1px solid #ddd; padding: 15px; border-radius: 4px;">
       <h3 style="margin-top: 0; color: #1e2071;">Contact Information</h3>
@@ -168,8 +168,8 @@ router.post('/generate', (req, res) => {
       <label for="resellerName" style="display: block; margin-top: 10px;">In case of warranty, please provide the reseller's name:</label>
       <input type="text" id="resellerName" 
              style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
-    </div>
-
+                  </div>
+                  
     <!-- Hidden user ID if logged in -->
     ${req.user ? `<input type="hidden" id="userId" value="${req.user.id}">` : ''}
 
@@ -180,29 +180,29 @@ router.post('/generate', (req, res) => {
       
       <div id="devices-container">
         <!-- Initial device entry will be added by JavaScript -->
-      </div>
-      
+                        </div>
+                        
       <div style="margin-top: 20px; text-align: center;">
         <button type="button" id="add-device-btn" style="background-color: #1e2071; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer;">
-          Add Another Device
-        </button>
-      </div>
-    </div>
-
+                      Add Another Device
+                    </button>
+                  </div>
+                </div>
+                
     <!-- Submit Button -->
     <div style="margin-top: 30px; display: flex; justify-content: space-between;">
       <button class="buttonFlat" type="button" onclick="location.reload()" 
         style="font-size: 20px; padding: 10px 20px; background-color: #1e2071; border: none; border-radius: 4px; cursor: pointer;"> 
-        Back
-      </button>
-      
+                    Back
+                  </button>
+                  
       <button class="buttonFlat" type="submit" 
         style="font-size: 20px; padding: 10px 20px; background-color: #1e2071; color: white; border: none; border-radius: 4px; cursor: pointer;"> 
         Submit Form
-      </button>
-    </div>
-  </form>
-</div>
+                  </button>
+                </div>
+              </form>
+            </div>
 
 <script>
   // Tracks the current device count
@@ -518,7 +518,7 @@ router.post('/confirm', async (req, res) => {
       a: 'l',
       e: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 // Expire in a month
     };
-
+    
     const payload2 = {
       r: rmaJson.rma.trim(),
       a: 'p',
@@ -534,22 +534,22 @@ router.post('/confirm', async (req, res) => {
     if (formattedInput.length > 18) {
       throw new Error("Input value is too long");
     }
-
+    
     formattedInput = 'o' + formattedInput.padStart(18, '0');
-
+    
     // Generate PDF
     const pdfBuffer = await generatePdfRma(rmaJson, linkToken, token2, betrugerUrlEncrypt(formattedInput, process.env.ENC_KEY));
 
     // Create order in both systems
     await createOrderFromRma(formattedInput, rmaJson, req.user?.id || rmaJson.userId);
-
+    
     // Send PDF
     res.writeHead(200, {
       'Content-Type': 'application/pdf',
       'Content-Disposition': 'attachment; filename="rma.pdf"',
       'Content-Length': pdfBuffer.length
     });
-
+    
     res.end(pdfBuffer);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -564,11 +564,11 @@ async function createOrderFromRma(formattedInput, rmaJson, userId = null) {
   tempObj.cust = { 'reseller': rmaJson.resellerName };
   tempObj.comp = rmaJson.company;
   tempObj.pers = rmaJson.person;
-
+  
   const addressInfo1 = splitStreetAndHouseNumber(rmaJson.street);
   tempObj.str = addressInfo1.street;
   tempObj.hs = addressInfo1.houseNumber;
-
+  
   const addressInfo2 = splitPostalCodeAndCity(rmaJson.postal);
   tempObj.zip = addressInfo2.postalCode;
   tempObj.cit = addressInfo2.city;
@@ -579,10 +579,10 @@ async function createOrderFromRma(formattedInput, rmaJson, userId = null) {
   tempObj.ph = rmaJson.phone;
   tempObj.cont = [];
   tempObj.decl = convertToSerialDescriptionArray(rmaJson);
-
+  
   // Add to legacy system
   global.orders.set(formattedInput, tempObj);
-
+  
   try {
     // Save to legacy file system
     await writeLargeMapToFile(global.orders, resolve(`${global.baseDirectory}base/orders.json`));
@@ -681,7 +681,7 @@ async function createOrderFromRma(formattedInput, rmaJson, userId = null) {
 // Check RMA status (allow unregistered users to check by RMA ID)
 router.get('/status/:rmaId', async (req, res) => {
   try {
-    const rmaId = req.params.rmaId;
+  const rmaId = req.params.rmaId;
     
     // Check in PostgreSQL first
     const rmaRequest = await RmaRequest.findOne({
@@ -707,7 +707,7 @@ router.get('/status/:rmaId', async (req, res) => {
     }
     
     // Legacy fallback - check in the old system
-    const betCode = 'o000' + rmaId;
+  const betCode = 'o000' + rmaId;
     if (global.orders.has(betCode)) {
       const order = global.orders.get(betCode);
       

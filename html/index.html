@@ -762,6 +762,11 @@
         const targetElement = document.getElementById(destination);
         targetElement.innerHTML = blob;
         
+        // Add this translation update
+        if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
+          window.i18n.updatePageTranslations();
+        }
+        
         // Проверяем, является ли это запросом для RMA-формы
         if (senderName === 'rmaButton' && url.includes('/rma/generate')) {
           // Добавляем ленивую загрузку скрипта RMA формы
@@ -990,16 +995,26 @@ function lazyLoadScript(src) {
     }
     var menuUsed = false;
     var language = "en";
+    // Update function to work with the i18n system
     function setLanguage(langPos) {
       document.getElementById(`${language}Mask`).setAttribute("mask", "url(#maskClose)");
       if (langPos.slice(0, 4) === "lang") {
         menuUsed = true;
         language = document.getElementById(langPos).getAttribute("href").slice(1);
+        
+        // Add integration with i18n
+        if (window.i18n) {
+          window.i18n.changeLanguage(language);
+        }
       } else {
         language = langPos;
+        
+        // Add integration with i18n
+        if (window.i18n) {
+          window.i18n.changeLanguage(language);
+        }
       }
       document.getElementById(`${language}Mask`).setAttribute("mask", "url(#maskOpen)");
-
     }
 
     function fsPic(name) {
@@ -1502,39 +1517,13 @@ function lazyLoadScript(src) {
       </svg>
     </a>
 
+    <!-- Language selector -->
     <div id="langMenu" style="width: max-content;display: inline-block; border: 0px solid #fff; border-radius: 30px; background-color: #fff3;
       box-shadow: 0px 0px 30px -15px rgba(255, 255, 255)">
-      <div id="langMain6" onclick="setLanguage('lang6')" class="button">
-        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-          <use id="lang6" href="#ko" />
-        </svg>
-      </div>
-      <div id="langMain5" onclick="setLanguage('lang5')" class="button">
-        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-          <use id="lang5" href="#fr" />
-        </svg>
-      </div>
-      <div id="langMain4" onclick="setLanguage('lang4')" class="button">
-        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-          <use id="lang4" href="#cz" />
-        </svg>
-      </div>
-      <div onclick="setLanguage('lang3')" class="button">
-        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-          <use id="lang3" href="#pl" />
-        </svg>
-      </div>
-      <div onclick="setLanguage('lang2')" class="button">
-        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-          <use id="lang2" href="#de" />
-        </svg>
-      </div>
-      <div onclick="setLanguage('lang1')" class="button">
-        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-          <use id="lang1" href="#en" />
-        </svg>
-      </div>
+      <!-- This will be populated by the i18n.js script -->
+      <div class="language-selector"></div>
     </div>
+
     <div id="mainMenuOver1000">
       <div id="mainMenuButtons" style="width: max-content;display: none;">
 
@@ -1657,78 +1646,92 @@ function lazyLoadScript(src) {
             style="width:160px;float: left;">
           <br><br>
           <span class="text3">
-            <b>Welcome to Our Website!</b>
+            <b data-i18n="welcome.title">Welcome to Our Website!</b>
             <br><br>
-            We at M3 Mobile GmbH have been entrusted by our parent company with the mission of preserving the value of
-            M3 Mobile devices. Our goal is to ensure that every device remains reliably usable, regardless of
-            circumstances or damage. We provide comprehensive service both during and after the warranty period to
-            ensure the longevity
-            of your devices.<br>
-            <br><br>
-            The process is simple: send your M3 Mobile device to the following address:
+            <span data-i18n="welcome.message">
+              We at M3 Mobile GmbH have been entrusted by our parent company with the mission of preserving the value of
+              M3 Mobile devices. Our goal is to ensure that every device remains reliably usable, regardless of
+              circumstances or damage. We provide comprehensive service both during and after the warranty period to
+              ensure the longevity of your devices.
+            </span>
+            <br><br><br>
+            <span data-i18n="welcome.process">
+              The process is simple: send your M3 Mobile device to the following address:
+            </span>
           </span>
-          <div
-            style="margin: 15px; margin-right: max(calc((100% - 450px)/10),0px);float:right; padding: 20px; user-select:text;">
-            <small> <span class="text3">Recipient</span></small><br>
 
+          <!-- Address section with data-i18n attributes -->
+          <div style="margin: 15px; margin-right: max(calc((100% - 450px)/10),0px);float:right; padding: 20px; user-select:text;">
+            <small><span class="text3" data-i18n="address.recipient">Recipient</span></small><br>
 
             <span class="text5" style="color: #1e2071ee;">
               <b>M3 Mobile GmbH</b><br>
               Am Holzweg 26<br>
               65830 Kriftel<br>
               Germany<br>
-              <i>[Name of the Reseller]</i>
+              <i data-i18n="address.reseller_note">[Name of the Reseller]</i>
             </span>
           </div>
+
           <span class="text3">
-            <br>
-            <br>
+            <br><br><br>
             <br class="disappear555"><br class="disappear555"><br class="disappear555"><br class="disappear555"><br
               class="disappear555"><br class="disappear555"><br class="disappear555">
-            By sending the package, a repair contract is established between you (the sender) and us (the recipient).
-            You
-            cover the shipping costs to us, and we cover the return shipping costs. Inspection and cost estimation are
-            free of charge.<br>
-            Please provide a detailed error description, as this significantly increases the chances of a successful
-            repair.<br><br>
-            <b>Important Note:</b><br>
-            If you have a warranty claim or a service pack agreement, please include the name of the reseller.<br>
-            <br></span>
+            <span data-i18n="welcome.contract_info">
+              By sending the package, a repair contract is established between you (the sender) and us (the recipient).
+              You cover the shipping costs to us, and we cover the return shipping costs. Inspection and cost estimation are
+              free of charge.
+            </span><br>
+            <span data-i18n="welcome.error_description">
+              Please provide a detailed error description, as this significantly increases the chances of a successful
+              repair.
+            </span><br><br>
+            <b data-i18n="welcome.important_note">Important Note:</b><br>
+            <span data-i18n="welcome.warranty_info">
+              If you have a warranty claim or a service pack agreement, please include the name of the reseller.
+            </span><br><br>
+          </span>
+
           <div style="margin: 15px; margin-left: max(calc((100% - 450px)/10),0px);float:left; padding: 18px;">
-            <small><span class="text3">Sender</span></small><br>
+            <small><span class="text3" data-i18n="address.sender">Sender</span></small><br>
             <span class="text5" style="color: rgb(0, 0, 0, 0.7);">
-              Example Company<br>
-              <i>[Attn. Max Mustermann]</i><br>
-              Example Street 42<br>
-              08150 Example City<br>
-              <i>[+49 00 000000]</i><br>
-              example@eck3.com
+              <span data-i18n="address.example_company">Example Company</span><br>
+              <i data-i18n="address.example_person">[Attn. Max Mustermann]</i><br>
+              <span data-i18n="address.example_street">Example Street 42</span><br>
+              <span data-i18n="address.example_city">08150 Example City</span><br>
+              <i data-i18n="address.example_phone">[+49 00 000000]</i><br>
+              <span data-i18n="address.example_email">example@eck3.com</span>
             </span>
           </div>
-          <br>
-          <br>
-          <br>
-          <br class="disappear555"><br class="disappear555"><br class="disappear555"><br class="disappear555"><br
-            class="disappear555"><br class="disappear555"><br class="disappear555">
-          Once we receive your package, the contract is concluded. We assign your package an RMA number and create a
-          dedicated page for it. You can access this page by entering the tracking number provided by your shipping
-          service on our homepage in the corresponding field (yellow label).<br><br>
-          On this page, you can check your shipment's contents, track the repair status, and update payment
-          details or address other issues if necessary. Login details will also be sent to the email address you
-          provided on the package.<br><br><br>
-          To make sure nothing is forgotten, we have created an RMA form. If you fill out this form and include it
-          with
-          your package, we receive all the necessary information in advance and can reduce processing time during
-          package intake. Thank you for your cooperation!<br>
+
+          <br><br><br>
+          <br class="disappear555"><br class="disappear555"><br class="disappear555">
+          <br class="disappear555"><br class="disappear555"><br class="disappear555">
+          <br class="disappear555">
+
+          <span class="text3">
+            <span data-i18n="rma.process_info">
+              Once we receive your package, the contract is concluded. We assign your package an RMA number and create a
+              dedicated page for it. You can access this page by entering the tracking number provided by your shipping
+              service on our homepage in the corresponding field (yellow label).
+            </span><br><br>
+            <span data-i18n="rma.tracking_info">
+              On this page, you can check your shipment's contents, track the repair status, and update payment
+              details or address other issues if necessary. Login details will also be sent to the email address you
+              provided on the package.
+            </span><br><br><br>
+            <span data-i18n="rma.form_info">
+              To make sure nothing is forgotten, we have created an RMA form. If you fill out this form and include it
+              with your package, we receive all the necessary information in advance and can reduce processing time during
+              package intake. Thank you for your cooperation!
+            </span>
           </span>
           <br>
-         
-  
-          <div id="rmaButton" class="buttonFlat" onclick="myFetch('rmaGenerate', 'rmaButton', 'output2','','/rma/generate')"
-            style="margin: 5px; margin-right: max(calc((100% - 450px)/10),0px);float:right;">
-            
-              RMA Repair Request
-            </div>
+
+          <div id="rmaButton" class="buttonFlat" onclick="myFetch('rmaGenerate', 'rmaButton', 'output2','','/rma/generate')" 
+            style="margin: 5px; margin-right: max(calc((100% - 450px)/10),0px);float:right;" data-i18n="rma.request_button">
+            RMA Repair Request
+          </div>
           <br><br><br><br><br><br><br>
         </div>
       </div>
@@ -1736,47 +1739,49 @@ function lazyLoadScript(src) {
         <br>
         <div class="sticker" id="inputConsole"
           style="box-shadow: 0px -5px 20px -10px rgba(255, 255, 255), 0px 5px 20px -13px rgba(255, 255, 255)">
-          <br><span id="snInputTextUp" class="textM3">
+          <br>
+          <span id="snInputTextUp" class="textM3" data-i18n="rma.status_check">
             To check the repair status, please enter our RMA number or the device serial number.
-          </span><br><br>
+          </span>
+          <br><br>
           <form>
             <input id="snInput" class="textM3" placeholder="RMA or S/N _ _ _ _ _ _ _" autocomplete="off" type="text"
               inputmode="text" />
           </form>
-          <span id="snInputTextDown" class="textM3">
-
-          </span>
+          <span id="snInputTextDown" class="textM3"></span>
           <br><br>
         </div>
         <br>
+
         <div class="sticker">
-          <span id="" class="textM3">
-            Our Service Centers:<br><br>
-            Germany<br>
+          <span class="textM3">
+            <span data-i18n="service.title">Our Service Centers:</span><br><br>
+            <span>Germany</span><br>
             <ul><a href="https://m3.repair/">M3 Mobile GmbH</a></ul><br>
             <br>
-            France<br>
+            <span>France</span><br>
             <ul><a href="https://www.prestinfo.eu/">Prestinfo Maintenance SAS</a></ul>
             <br>
           </span>
           <br><br>
         </div>
         <br>
+
         <div class="sticker">
-          <span id="" class="textM3">
-            Useful Links:<br>
+          <span class="textM3">
+            <span data-i18n="links.title">Useful Links:</span><br>
             <br>
-            <ul><a href="https://m3mobile-manual.refined.site/space/M3APPMANUAL" target="_blank">M3 Application Manual
-                Guide</a></ul><br>
-            <ul><a href="https://m3mobile-manual.refined.site/space/OSRN" target="_blank">OS Release Notes</a></ul><br>
-            <ul><a href="https://itc.m3mobile.net/">Technical Support</a></ul><br>
-            <ul><a href="http://partner.m3mobile.net/member/#!/login">Partner Portal</a></ul><br>
-            <ul><a href="https://www.m3mobile.co.kr/en/main">M3 Mobile Homepage</a></ul><br>
+            <ul><a href="https://m3mobile-manual.refined.site/space/M3APPMANUAL" target="_blank" data-i18n="links.app_manual">M3 Application Manual Guide</a></ul><br>
+            <ul><a href="https://m3mobile-manual.refined.site/space/OSRN" target="_blank" data-i18n="links.release_notes">OS Release Notes</a></ul><br>
+            <ul><a href="https://itc.m3mobile.net/" data-i18n="links.technical_support">Technical Support</a></ul><br>
+            <ul><a href="http://partner.m3mobile.net/member/#!/login" data-i18n="links.partner_portal">Partner Portal</a></ul><br>
+            <ul><a href="https://www.m3mobile.co.kr/en/main" data-i18n="links.homepage">M3 Mobile Homepage</a></ul><br>
           </span>
         </div>
       </div>
     </div>
-    <span style="margin: 30px; color: #fff;">
+
+    <span style="margin: 30px; color: #fff;" data-i18n="footer.copyright">
       Copyright © 2024 M3 Mobile GmbH. All rights reserved.
       Terms & Conditions · Privacy Policy · Legal Notice
     </span>
@@ -2505,9 +2510,9 @@ function lazyLoadScript(src) {
           <g transform="translate(29 24.8) scale(0.35)">
             <g stroke="#000" stroke-width="4">
               <path transform="rotate(33.69006752598)"
-                d="M-50-12v24m6 0v-24m6 0v24m76 0V1m0-2v-11m6 0v11m0 2v11m6 0V1m0-2v-11" />
+                d="M-50-12v24m6 0v-24m6 0v24m76 0V1m0-2v-11m6 0v11m0 2v11m6 0V1m0-2v-11m6 0v24m6 0V1m0-2v-11" />
               <path transform="rotate(-33.69006752598)"
-                d="M-50-12v24m6 0V1m0-2v-11m6 0v24m76 0V1m0-2v-11m6 0v24m6 0V1m0-2v-11" />
+                d="M-50-12v24m6 0V1m0-2v-11m6 0v24m76 0V1m0-2v-11m6 0v24m6 0V1m0-2v-11m6 0v24m6 0V1m0-2v-11" />
             </g>
             <g transform="rotate(33.69006752598)">
               <path fill="#cd2e3a" d="M12 0a18 18 0 11-36 0 24 24 0 1148 0" />
@@ -2576,6 +2581,8 @@ function lazyLoadScript(src) {
     </defs>
   </svg>
 
+  <!-- Add i18n script right before the closing body tag -->
+  <script src="/js/i18n.js" defer></script>
 </body>
 
 </html>

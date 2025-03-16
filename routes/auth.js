@@ -140,17 +140,17 @@ router.post('/login', async (req, res, next) => {
         // Update last login
         user.lastLogin = new Date();
         await user.save();
-        
-        // Generate tokens
-        const tokens = generateTokens(user);
-        
+    
+    // Generate tokens
+    const tokens = generateTokens(user);
+    
         return res.json({
-          tokens,
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            name: user.name,
+      tokens, 
+      user: { 
+        id: user.id, 
+        username: user.username, 
+        email: user.email,
+        name: user.name,
             role: user.role,
             userType: user.userType,
             company: user.company
