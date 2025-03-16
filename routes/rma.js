@@ -97,131 +97,375 @@ router.post('/generate', (req, res) => {
   res.send(`
    <span class="text3">
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 20px auto;">
-  <h2>RMA Form</h2>
-  ${req.user ? 
-    `<div style="background-color: #e6f7ff; border: 1px solid #91d5ff; border-radius: 4px; padding: 10px; margin-bottom: 15px;">
-      You are logged in as <strong>${req.user.email}</strong>. The form has been pre-filled with your information.
-     </div>` 
-    : 
-    `<div style="background-color: #fff7e6; border: 1px solid #ffd591; border-radius: 4px; padding: 10px; margin-bottom: 15px;">
-      Not logged in. <a href="/auth/login" style="color: #1890ff; text-decoration: underline;">Log in</a> or 
-      <a href="/auth/register" style="color: #1890ff; text-decoration: underline;">register</a> to save your RMA details to your account.
-     </div>`
-  }
   <form id="rmaForm" onsubmit="return myFetch('formSubmit', 'rmaForm', 'pdfRma','${token}','/rma/confirm');">
     <input type="text" id="rma" value="${rmaCode}" readonly required 
            style="font-size: 20px; width: 95%; padding: 5px; background-color: #eee; margin-top: 5px;">
-    <!-- Company Information -->
-    <label for="company" style="display: block; margin-top: 10px;"><b>Company Name:</b></label>
-    <input type="text" id="company" value="${userData.company}" required 
-           style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+    
+    <!-- Billing Information Section -->
+    <div style="margin-top: 20px; border: 1px solid #ddd; padding: 15px; border-radius: 4px;">
+      <h3 style="margin-top: 0; color: #1e2071;">Billing Information</h3>
+      
+      <label for="company" style="display: block; margin-top: 10px;"><b>Company Name:</b></label>
+      <input type="text" id="company" value="${userData.company}" required 
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
 
-    <label for="person" style="display: block; margin-top: 10px;">Contact Person:</label>
-    <input type="text" id="person" value="${userData.person}"
-           style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+      <label for="person" style="display: block; margin-top: 10px;">Contact Person:</label>
+      <input type="text" id="person" value="${userData.person}"
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
 
-    <label for="street" style="display: block; margin-top: 10px;"><b>Street and House Number:</b></label>
-    <input type="text" id="street" value="${userData.street}" required 
-           style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+      <label for="street" style="display: block; margin-top: 10px;"><b>Street and House Number:</b></label>
+      <input type="text" id="street" value="${userData.street}" required 
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
 
-    <label for="postal" style="display: block; margin-top: 10px;"><b>Postal Code / City:</b></label>
-    <input type="text" id="postal" value="${userData.postalCode ? userData.postalCode + ' ' + userData.city : ''}" required 
-           style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+      <label for="postal" style="display: block; margin-top: 10px;"><b>Postal Code / City:</b></label>
+      <input type="text" id="postal" value="${userData.postalCode ? userData.postalCode + ' ' + userData.city : ''}" required 
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
 
-    <label for="country" style="display: block; margin-top: 10px;"><b>Country:</b></label>
-    <input type="text" id="country" value="${userData.country}" required 
-           style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+      <label for="country" style="display: block; margin-top: 10px;"><b>Country:</b></label>
+      <input type="text" id="country" value="${userData.country}" required 
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+    </div>
 
-    <!-- Contact Information -->
-    <label for="email" style="display: block; margin-top: 10px;"><b>Contact Email:</b></label>
-    <input type="email" id="email" value="${userData.email}" required 
-           style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+    <!-- Contact Information Section -->
+    <div style="margin-top: 20px; border: 1px solid #ddd; padding: 15px; border-radius: 4px;">
+      <h3 style="margin-top: 0; color: #1e2071;">Contact Information</h3>
+      
+      <label for="email" style="display: block; margin-top: 10px;"><b>Contact Email:</b></label>
+      <input type="email" id="email" value="${userData.email}" required 
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
 
-    <label for="invoice_email" style="display: block; margin-top: 10px;">E-Invoice Email:</label>
-    <input type="email" id="invoice_email" 
-           style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+      <label for="invoice_email" style="display: block; margin-top: 10px;">E-Invoice Email:</label>
+      <input type="email" id="invoice_email" 
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
 
-    <label for="phone" style="display: block; margin-top: 10px;">Phone:</label>
-    <input type="tel" id="phone" value="${userData.phone}"
-           style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+      <label for="phone" style="display: block; margin-top: 10px;">Phone:</label>
+      <input type="tel" id="phone" value="${userData.phone}"
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
 
-    <label for="resellerName" style="display: block; margin-top: 10px;">In case of warranty, please provide the reseller's name:</label>
-    <input type="text" id="resellerName" 
-           style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+      <label for="resellerName" style="display: block; margin-top: 10px;">In case of warranty, please provide the reseller's name:</label>
+      <input type="text" id="resellerName" 
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+    </div>
 
     <!-- Hidden user ID if logged in -->
     ${req.user ? `<input type="hidden" id="userId" value="${req.user.id}">` : ''}
 
-    <!-- Seriennummern und Fehlerbeschreibungen -->
-    <br><br><br><br>
+    <!-- Devices Section -->
+    <div style="margin-top: 20px;">
+      <h3 style="color: #1e2071;">Device Information</h3>
+      <p style="margin-bottom: 20px; font-style: italic;">Add devices that need to be repaired. Each device can be shipped to a different address if needed.</p>
+      
+      <div id="devices-container">
+        <!-- Initial device entry will be added by JavaScript -->
+      </div>
+      
+      <div style="margin-top: 20px; text-align: center;">
+        <button type="button" id="add-device-btn" style="background-color: #1e2071; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer;">
+          Add Another Device
+        </button>
+      </div>
+    </div>
 
-    <div style="display: flex; flex-wrap: wrap; margin-top: 10px;">
-        <div style="flex: 0 0 170px; margin-right: 10px;">
-            <label for="serial1" style=" margin-top: 10px;">Serial Number 1:</label><br>
-            <input type="text" id="serial1" style="width: 170px; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
-        </div>
-        <div style="flex: 1 1 300px;">
-            <label for="description1" style=" margin-top: 10px;">Issue Description:</label><br>
-            <textarea id="description1" rows="3" style="width: 95%; min-width: 300px; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;"></textarea>
-        </div>
-    </div>
-    <br>
-    <div style="display: flex; flex-wrap: wrap; margin-top: 10px;">
-        <div style="flex: 0 0 170px; margin-right: 10px;">
-            <label for="serial2" style=" margin-top: 10px;">Serial Number 2:</label><br>
-            <input type="text" id="serial2" style="width: 170px; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
-        </div>
-        <div style="flex: 1 1 300px;">
-            <label for="description2" style=" margin-top: 10px;">Issue Description:</label><br>
-            <textarea id="description2" rows="3" style="width: 95%; min-width: 300px; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;"></textarea>
-        </div>
-    </div>
-    <br>
-    <div style="display: flex; flex-wrap: wrap; margin-top: 10px;">
-        <div style="flex: 0 0 170px; margin-right: 10px;">
-            <label for="serial3" style=" margin-top: 10px;">Serial Number 3:</label><br>
-            <input type="text" id="serial3" style="width: 170px; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
-        </div>
-        <div style="flex: 1 1 300px;">
-            <label for="description3" style=" margin-top: 10px;">Issue Description:</label><br>
-            <textarea id="description3" rows="3" style="width: 95%; min-width: 300px; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;"></textarea>
-        </div>
-    </div>
-    <br>
-    <div style="display: flex; flex-wrap: wrap; margin-top: 10px;">
-        <div style="flex: 0 0 170px; margin-right: 10px;">
-            <label for="serial4" style=" margin-top: 10px;">Serial Number 4:</label><br>
-            <input type="text" id="serial4" style="width: 170px; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
-        </div>
-        <div style="flex: 1 1 300px;">
-            <label for="description4" style=" margin-top: 10px;">Issue Description:</label><br>
-            <textarea id="description4" rows="3" style="width: 95%; min-width: 300px; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;"></textarea>
-        </div>
-    </div>
-    <br>
-    <div style="display: flex; flex-wrap: wrap; margin-top: 10px;">
-        <div style="flex: 0 0 170px; margin-right: 10px;">
-            <label for="serial5" style=" margin-top: 10px;">Serial Number 5:</label><br>
-            <input type="text" id="serial5" style="width: 170px; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
-        </div>
-        <div style="flex: 1 1 300px;">
-            <label for="description5" style=" margin-top: 10px;">Issue Description:</label><br>
-            <textarea id="description5" rows="3" style="width: 95%; min-width: 300px; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;"></textarea>
-        </div>
-    </div>
-    <br>
     <!-- Submit Button -->
-    <button class="buttonFlat" type="submit" style="font-size: 20px;margin: 5px; margin-left: max(calc((100% - 450px)/10),0px);float:left;"> 
-      Submit Form
-    </button> 
+    <div style="margin-top: 30px; display: flex; justify-content: space-between;">
+      <button class="buttonFlat" type="button" onclick="location.reload()" 
+        style="font-size: 20px; padding: 10px 20px; background-color: #1e2071; border: none; border-radius: 4px; cursor: pointer;"> 
+        Back
+      </button>
+      
+      <button class="buttonFlat" type="submit" 
+        style="font-size: 20px; padding: 10px 20px; background-color: #1e2071; color: white; border: none; border-radius: 4px; cursor: pointer;"> 
+        Submit Form
+      </button>
+    </div>
   </form>
-
-  <button class="buttonFlat" type="" onclick="location.reload()" style="font-size: 20px; margin: 5px; margin-right: max(calc((100% - 450px)/10),0px);float:right;"> 
-    Back
-  </button> 
-  <br><br><br>
 </div>
-  `);
+
+<script>
+  // Tracks the current device count
+  let deviceCount = 0;
+  
+  // Tracks which return address to use for new devices
+  let currentReturnAddressIndex = null;
+  
+  // Add initial device entry when page loads
+  document.addEventListener('DOMContentLoaded', function() {
+    addDeviceEntry();
+    
+    // Set up Add Device button
+    document.getElementById('add-device-btn').addEventListener('click', function() {
+      addDeviceEntry();
+    });
+  });
+  
+  // Function to add a new device entry
+  function addDeviceEntry() {
+    deviceCount++;
+    const deviceIndex = deviceCount;
+    
+    const deviceEntry = document.createElement('div');
+    deviceEntry.className = 'device-entry';
+    deviceEntry.dataset.index = deviceIndex;
+    deviceEntry.style.border = '1px solid #ddd';
+    deviceEntry.style.borderRadius = '4px';
+    deviceEntry.style.padding = '15px';
+    deviceEntry.style.marginBottom = '20px';
+    deviceEntry.style.backgroundColor = '#f9f9f9';
+    
+    // Create the device header with device number
+    const deviceHeader = document.createElement('div');
+    deviceHeader.style.display = 'flex';
+    deviceHeader.style.justifyContent = 'space-between';
+    deviceHeader.style.alignItems = 'center';
+    deviceHeader.style.marginBottom = '15px';
+    
+    const deviceTitle = document.createElement('h4');
+    deviceTitle.textContent = \`Device #\${deviceIndex}\`;
+    deviceTitle.style.margin = '0';
+    deviceTitle.style.color = '#1e2071';
+    
+    // Toggle button for alternate shipping address
+    const toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.textContent = 'Specify Different Return Address';
+    toggleButton.style.backgroundColor = '#eee';
+    toggleButton.style.border = '1px solid #ccc';
+    toggleButton.style.borderRadius = '4px';
+    toggleButton.style.padding = '5px 10px';
+    toggleButton.style.cursor = 'pointer';
+    toggleButton.dataset.deviceIndex = deviceIndex;
+    
+    deviceHeader.appendChild(deviceTitle);
+    deviceHeader.appendChild(toggleButton);
+    deviceEntry.appendChild(deviceHeader);
+    
+    // Create alternate shipping address section (initially hidden)
+    const alternateAddressSection = document.createElement('div');
+    alternateAddressSection.id = \`alternate-address-\${deviceIndex}\`;
+    alternateAddressSection.style.display = 'none';
+    alternateAddressSection.style.padding = '10px';
+    alternateAddressSection.style.border = '1px solid #ddd';
+    alternateAddressSection.style.borderRadius = '4px';
+    alternateAddressSection.style.marginBottom = '15px';
+    alternateAddressSection.style.backgroundColor = '#fff';
+    
+    // Add alternate address fields
+    alternateAddressSection.innerHTML = \`
+      <h4 style="margin-top: 0; color: #1e2071;">Alternate Return Address</h4>
+      <p style="font-style: italic; margin-bottom: 10px;">Specify a different address for returning this device.</p>
+      
+      <label for="alt_company_\${deviceIndex}" style="display: block; margin-top: 10px;"><b>Company Name:</b></label>
+      <input type="text" id="alt_company_\${deviceIndex}" name="alt_company_\${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+
+      <label for="alt_person_\${deviceIndex}" style="display: block; margin-top: 10px;">Contact Person:</label>
+      <input type="text" id="alt_person_\${deviceIndex}" name="alt_person_\${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+
+      <label for="alt_street_\${deviceIndex}" style="display: block; margin-top: 10px;"><b>Street and House Number:</b></label>
+      <input type="text" id="alt_street_\${deviceIndex}" name="alt_street_\${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+
+      <label for="alt_postal_\${deviceIndex}" style="display: block; margin-top: 10px;"><b>Postal Code / City:</b></label>
+      <input type="text" id="alt_postal_\${deviceIndex}" name="alt_postal_\${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+
+      <label for="alt_country_\${deviceIndex}" style="display: block; margin-top: 10px;"><b>Country:</b></label>
+      <input type="text" id="alt_country_\${deviceIndex}" name="alt_country_\${deviceIndex}" value="Germany" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+      
+      <div style="margin-top: 10px;">
+        <label>
+          <input type="checkbox" id="use_for_all_\${deviceIndex}" name="use_for_all_\${deviceIndex}">
+          Use this address for all subsequent devices
+        </label>
+      </div>
+    \`;
+    
+    deviceEntry.appendChild(alternateAddressSection);
+    
+    // Create serial number and description section
+    const deviceDetailsSection = document.createElement('div');
+    
+    // Serial number input
+    const serialLabel = document.createElement('label');
+    serialLabel.htmlFor = \`serial\${deviceIndex}\`;
+    serialLabel.textContent = 'Serial Number:';
+    serialLabel.style.display = 'block';
+    serialLabel.style.marginTop = '10px';
+    serialLabel.style.fontWeight = 'bold';
+    
+    const serialInput = document.createElement('input');
+    serialInput.type = 'text';
+    serialInput.id = \`serial\${deviceIndex}\`;
+    serialInput.name = \`serial\${deviceIndex}\`;
+    serialInput.style.width = '95%';
+    serialInput.style.padding = '5px';
+    serialInput.style.fontSize = '18px';
+    serialInput.style.backgroundColor = '#eee';
+    serialInput.style.marginTop = '5px';
+    
+    // Description textarea
+    const descLabel = document.createElement('label');
+    descLabel.htmlFor = \`description\${deviceIndex}\`;
+    descLabel.textContent = 'Issue Description:';
+    descLabel.style.display = 'block';
+    descLabel.style.marginTop = '10px';
+    descLabel.style.fontWeight = 'bold';
+    
+    const descTextarea = document.createElement('textarea');
+    descTextarea.id = \`description\${deviceIndex}\`;
+    descTextarea.name = \`description\${deviceIndex}\`;
+    descTextarea.rows = 3;
+    descTextarea.style.width = '95%';
+    descTextarea.style.padding = '5px';
+    descTextarea.style.fontSize = '18px';
+    descTextarea.style.backgroundColor = '#eee';
+    descTextarea.style.marginTop = '5px';
+    
+    deviceDetailsSection.appendChild(serialLabel);
+    deviceDetailsSection.appendChild(serialInput);
+    deviceDetailsSection.appendChild(descLabel);
+    deviceDetailsSection.appendChild(descTextarea);
+    
+    deviceEntry.appendChild(deviceDetailsSection);
+    
+    // Add the complete device entry to the container
+    document.getElementById('devices-container').appendChild(deviceEntry);
+    
+    // Set up event listeners for this device entry
+    setupDeviceEventListeners(deviceIndex);
+    
+    // If a current return address is active, apply it to this device
+    if (currentReturnAddressIndex !== null) {
+      const toggleBtn = deviceEntry.querySelector('button');
+      toggleBtn.textContent = \`Using Return Address from Device #\${currentReturnAddressIndex}\`;
+      toggleBtn.style.backgroundColor = '#e6f7ff';
+      toggleBtn.disabled = true;
+    }
+    
+    return deviceEntry;
+  }
+  
+  // Set up event listeners for a device entry
+  function setupDeviceEventListeners(deviceIndex) {
+    // Toggle button for alternate address
+    const toggleButton = document.querySelector(\`.device-entry[data-index="\${deviceIndex}"] button\`);
+    toggleButton.addEventListener('click', function() {
+      const addressSection = document.getElementById(\`alternate-address-\${deviceIndex}\`);
+      if (addressSection.style.display === 'none') {
+        addressSection.style.display = 'block';
+        toggleButton.textContent = 'Hide Return Address';
+        toggleButton.style.backgroundColor = '#e6f7ff';
+      } else {
+        addressSection.style.display = 'none';
+        toggleButton.textContent = 'Specify Different Return Address';
+        toggleButton.style.backgroundColor = '#eee';
+      }
+    });
+    
+    // Checkbox for using address for subsequent devices
+    const useForAllCheckbox = document.getElementById(\`use_for_all_\${deviceIndex}\`);
+    if (useForAllCheckbox) {
+      useForAllCheckbox.addEventListener('change', function() {
+        if (this.checked) {
+          // Set this device as the current return address for new devices
+          currentReturnAddressIndex = deviceIndex;
+          
+          // Disable address toggle buttons for all subsequent devices
+          document.querySelectorAll('.device-entry').forEach(entry => {
+            const entryIndex = parseInt(entry.dataset.index, 10);
+            if (entryIndex > deviceIndex) {
+              const btn = entry.querySelector('button');
+              if (btn) {
+                btn.textContent = \`Using Return Address from Device #\${deviceIndex}\`;
+                btn.style.backgroundColor = '#e6f7ff';
+                btn.disabled = true;
+              }
+            }
+          });
+        } else {
+          // If unchecked, remove this as the current return address
+          if (currentReturnAddressIndex === deviceIndex) {
+            currentReturnAddressIndex = null;
+            
+            // Re-enable address toggle buttons for all subsequent devices
+            document.querySelectorAll('.device-entry').forEach(entry => {
+              const entryIndex = parseInt(entry.dataset.index, 10);
+              if (entryIndex > deviceIndex) {
+                const btn = entry.querySelector('button');
+                if (btn) {
+                  btn.textContent = 'Specify Different Return Address';
+                  btn.style.backgroundColor = '#eee';
+                  btn.disabled = false;
+                }
+              }
+            });
+          }
+        }
+      });
+    }
+    
+    // When description field is focused, add new device entry if this is the last one
+    const descTextarea = document.getElementById(\`description\${deviceIndex}\`);
+    const serialInput = document.getElementById(\`serial\${deviceIndex}\`);
+    
+    descTextarea.addEventListener('focus', function() {
+      if (deviceIndex === deviceCount && serialInput.value.trim() !== '') {
+        addDeviceEntry();
+      }
+    });
+    
+    // Also check after typing in the serial field
+    serialInput.addEventListener('input', function() {
+      if (deviceIndex === deviceCount && this.value.trim() !== '') {
+        // Check if the description already has focus
+        if (document.activeElement !== descTextarea) {
+          // If not, we won't add a new entry yet - wait for description focus
+        }
+      }
+    });
+  }
+  
+  // Before form submission, prepare the data to include alternate addresses
+  document.getElementById('rmaForm').addEventListener('submit', function(e) {
+    // This is handled by myFetch function, no need to preventDefault()
+    
+    // Add metadata about return addresses as hidden fields
+    document.querySelectorAll('.device-entry').forEach(entry => {
+      const index = entry.dataset.index;
+      const alternateAddressSection = document.getElementById(\`alternate-address-\${index}\`);
+      
+      // If this device has an alternate address specified and it's visible
+      if (alternateAddressSection && alternateAddressSection.style.display !== 'none') {
+        // Create a hidden field to indicate this device has an alternate address
+        const hasAltAddressField = document.createElement('input');
+        hasAltAddressField.type = 'hidden';
+        hasAltAddressField.id = \`has_alt_address_\${index}\`;
+        hasAltAddressField.name = \`has_alt_address_\${index}\`;
+        hasAltAddressField.value = 'true';
+        entry.appendChild(hasAltAddressField);
+        
+        // Create a hidden field for which address to use for this device
+        const addressSourceField = document.createElement('input');
+        addressSourceField.type = 'hidden';
+        addressSourceField.id = \`address_source_\${index}\`;
+        addressSourceField.name = \`address_source_\${index}\`;
+        addressSourceField.value = index; // Use its own address
+        entry.appendChild(addressSourceField);
+      } else if (currentReturnAddressIndex !== null && parseInt(index, 10) > currentReturnAddressIndex) {
+        // This device should use another device's address
+        const addressSourceField = document.createElement('input');
+        addressSourceField.type = 'hidden';
+        addressSourceField.id = \`address_source_\${index}\`;
+        addressSourceField.name = \`address_source_\${index}\`;
+        addressSourceField.value = currentReturnAddressIndex;
+        entry.appendChild(addressSourceField);
+      }
+    });
+  });
+</script>
+`);
 });
 
 // Submit RMA form

@@ -698,11 +698,15 @@
       }
     }
 
+
+    
+
+
     function myFetch(sendText = '', senderName = '', destination = 'output1', sendJWT = localStorage.getItem("jwt"), url = '/') {
   let formData = {};
   if (sendText === 'formSubmit') {
     // Сбор данных формы в JSON
-    const elements = Array.from(document.getElementById(senderName).querySelectorAll('input, textarea'));
+    const elements = Array.from(document.getElementById(senderName).querySelectorAll('input, textarea, select'));
     elements.forEach(element => {
       if (element.value) {
         formData[element.id] = element.value;
@@ -714,9 +718,9 @@
   fetch(url, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json' // Заголовок для отправки JSON-данных
+      'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ text: sendText, name: senderName, dest: destination, jwt: sendJWT }) // Отправляемые данные в JSON
+    body: JSON.stringify({ text: sendText, name: senderName, dest: destination, jwt: sendJWT })
   })
     .then(async response => {
       if (!response.ok) {
@@ -725,30 +729,29 @@
 
       let blob;
       if (destination === 'pdfRma') {
-        blob = await response.blob(); // Получение данных как Blob
+        blob = await response.blob();
         if (blob.type !== 'application/pdf') {
           throw new Error('Полученные данные не являются PDF');
         }
         const url = window.URL.createObjectURL(blob);
-        // Создание временного элемента ссылки
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${formData.rma}.pdf`; // Имя файла
-        document.body.appendChild(a);
-        a.click(); // Имитация клика
-        a.remove(); // Удаление ссылки после клика
-      } else if (destination === 'csv') {
-        blob = await response.text(); // Получение CSV-данных как текст
-        const url = window.URL.createObjectURL(new Blob([blob], { type: 'text/csv' }));
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${Math.floor(Date.now() / 1000)}.csv`; // Имя файла
+        a.download = `${formData.rma}.pdf`;
         document.body.appendChild(a);
         a.click();
         a.remove();
-        window.URL.revokeObjectURL(url); // Освобождение URL
+      } else if (destination === 'csv') {
+        blob = await response.text();
+        const url = window.URL.createObjectURL(new Blob([blob], { type: 'text/csv' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${Math.floor(Date.now() / 1000)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
       } else {
-        blob = await response.text(); // Другой ответ как текст
+        blob = await response.text();
         if (senderName == 'snInput' && sendText.split('.').length == 3) {
           const [encodedHeader, encodedPayload, signature] = sendText.split('.');
           localStorage.setItem("jwt", blob);
@@ -756,9 +759,14 @@
         }
 
         // Вставляем HTML в указанный элемент
-        document.getElementById(destination).innerHTML = blob;
+        const targetElement = document.getElementById(destination);
+        targetElement.innerHTML = blob;
         
-        
+        // Проверяем, является ли это запросом для RMA-формы
+        if (senderName === 'rmaButton' && url.includes('/rma/generate')) {
+          // Добавляем ленивую загрузку скрипта RMA формы
+          lazyLoadScript('/js/rma-form.js');
+        }
         
         if (senderName == 'startInput') {
           var logMenu = document.getElementById("mainMenu1");
@@ -785,9 +793,9 @@
           document.getElementById(destination).scrollIntoView({ behavior: "smooth" });
         } else {
           window.scrollTo({
-            top: 0,     // Скролл в начало страницы
+            top: 0,
             left: 0,
-            behavior: 'smooth' // Плавный скролл
+            behavior: 'smooth'
           });
         }
       }
@@ -797,6 +805,29 @@
     });
 
   return false;
+}
+
+/**
+ * Ленивая загрузка скрипта
+ * @param {string} src - Путь к скрипту
+ */
+function lazyLoadScript(src) {
+  // Проверяем, не загружен ли уже скрипт
+  if (document.querySelector(`script[src="${src}"]`)) {
+    return; // Скрипт уже загружен
+  }
+  
+  // Создаем элемент script
+  const script = document.createElement('script');
+  script.src = src;
+  script.defer = true; // Откладываем выполнение до загрузки документа
+  
+  // Добавляем обработчики событий
+  script.onload = () => console.log(`Скрипт ${src} успешно загружен`);
+  script.onerror = () => console.error(`Ошибка загрузки скрипта ${src}`);
+  
+  // Добавляем скрипт в документ
+  document.body.appendChild(script);
 }
 
 
@@ -1157,7 +1188,10 @@
         // element.style.backgroundImage = backButtonImg;
       });
 
-      //document.body.style.backgroundImage = `url(data:image/svg+xml;charset=utf-8;base64,${btoa(backSvg)})`;
+      
+
+    document.body.style.backgroundImage = `linear-gradient(#1e1e71ff 0px, #1e1e71ff 70px, #1e1e7100 300px, #8880), url(data:image/svg+xml;charset=utf-8;base64,${btoa(generateSVGString())})`;
+
 
 
       cards = Array.from(document.getElementsByClassName("mainMenuCard"), (element, index) => {
@@ -1342,6 +1376,114 @@
         <path fill="#bb5131"  d="m235.41,6.47c-9.07,-1.16 -92.92,-6.85 -153.78,11.31c-40.59,11.87 -70.56,24.48 -75.38,38.85c-4.83,14.38 66.38,34.14 108.84,34.59c42.45,0.46 78.13,-2.6 107.53,-8.26c74.22,-18.17 69.9,-38.99 67.24,-44.96c-4.27,-8.36 -36.27,-20.3 -77.12,-22.83c-40.85,-2.52 -46.19,-1.69 -52.58,-2.01c-6.41,-0.31 -8.54,0.49 -14.95,0.8c-6.41,0.31 -12.64,2.39 -20.93,1.32c7.75,-3.12 8.64,-1.81 20.37,-4.24c11.74,-2.39 8.79,-0.56 28.55,-1.41c19.74,-0.89 6.52,0.93 35.17,1.41c28.64,0.48 85.7,10.63 88.1,26.15c2.4,15.53 5.17,32.58 -78.92,52.66c-38.88,4.09 -14.83,6.01 -81.57,6.62c-66.75,0.62 -82.79,-8.42 -99.33,-12.88c-74.22,-22.92 -14.36,-48.72 1.38,-56.88c14.77,-5.78 43.06,-17.55 79.09,-22.16c36.04,-4.61 45.7,-3.84 75.06,-4.42c29.37,-0.62 41.65,0.89 45.12,2.52c3.46,1.63 7.22,4.9 -1.87,3.74l-0.02,0l0.01,0l0,-0.02l0,0.08l0,0.02z"  stroke-width="0"/>
       </g>
       </svg>`
+
+
+      // Function to generate a random variation within a range
+      function randomVariation(value, variation) {
+            return value + (Math.random() * variation * 2 - variation);
+        }
+        
+        // Function to add random variation to a point set
+        function varyPoints(basePoints, variation) {
+            const points = basePoints.split(' ');
+            let newPoints = [];
+            
+            for (let point of points) {
+                const [x, y] = point.split(',').map(Number);
+                const newX = Math.floor(randomVariation(x, variation));
+                const newY = Math.floor(randomVariation(y, variation));
+                newPoints.push(`${newX},${newY}`);
+            }
+            
+            return newPoints.join(' ');
+        }
+        
+        // Generate the SVG string
+        function generateSVGString() {
+            const scrWidth = window.innerWidth;
+            const scrHeight = window.innerHeight;
+            
+            // Start building the SVG string
+            let svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="${scrWidth}" height="${scrHeight}">`;
+            
+            // Add the gradients
+            svgString += `
+                <defs>
+                    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#d8d8d8" stop-opacity="0.95"/>
+                        <stop offset="100%" stop-color="#b5b5b5" stop-opacity="0.5"/>
+                    </linearGradient>
+                    
+                    <linearGradient id="grad2" x1="100%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="#e0e0e0" stop-opacity="0.98"/>
+                        <stop offset="100%" stop-color="#c0c0c0" stop-opacity="0.6"/>
+                    </linearGradient>
+                    
+                    <linearGradient id="grad3" x1="50%" y1="0%" x2="50%" y2="100%">
+                        <stop offset="0%" stop-color="#d0d0d0" stop-opacity="0.85"/>
+                        <stop offset="100%" stop-color="#b8b8b8" stop-opacity="0.4"/>
+                    </linearGradient>
+                </defs>`;
+            
+            // Background rectangle
+            svgString += `<rect width="100%" height="100%" fill="#e0e0e0"/>`;
+            
+            // Scale variation based on screen size
+            const variation = Math.max(scrWidth, scrHeight) * 0.03;
+            
+            // Function to scale and vary a set of points
+            function scaleAndVaryPoints(pointsStr, variation) {
+                const points = pointsStr.split(' ');
+                let newPoints = [];
+                
+                for (let point of points) {
+                    const [x, y] = point.split(',').map(Number);
+                    
+                    // Scale to screen dimensions
+                    const scaledX = (x / 1200) * scrWidth;
+                    const scaledY = (y / 800) * scrHeight;
+                    
+                    // Add variation
+                    const variedX = scaledX + (Math.random() * variation * 2 - variation);
+                    const variedY = scaledY + (Math.random() * variation * 2 - variation);
+                    
+                    newPoints.push(`${variedX},${variedY}`);
+                }
+                
+                return newPoints.join(' ');
+            }
+            
+            // Large diagonal shape from top-left - extends beyond left and top of screen
+            const leftDiagonalPoints = 
+                "-200,-200 " +                       // Top-left point (off-screen)
+                (scrWidth + 200) + ",-200 " +        // Top-right point (off-screen horizontally and vertically)
+                (scrWidth/2) + "," + scrHeight;      // Bottom-middle point
+                
+            svgString += `<polygon points="${scaleAndVaryPoints(leftDiagonalPoints, variation)}" fill="url(#grad1)" />`;
+            
+            // Large diagonal shape from top-right - extends beyond right and bottom of screen
+            const rightDiagonalPoints = 
+                (scrWidth + 200) + ",-200 " +        // Top-right point (off-screen)
+                (scrWidth + 200) + "," + (scrHeight + 200) + " " + // Bottom-right point (off-screen)
+                (scrWidth/3) + "," + (scrHeight + 200);  // Bottom-left point (off-screen vertically)
+                
+            svgString += `<polygon points="${scaleAndVaryPoints(rightDiagonalPoints, variation)}" fill="url(#grad2)" />`;
+            
+            // Overlapping shapes for depth - middle triangle
+            const centerTrianglePoints = 
+                (scrWidth*0.25) + ",-100 " +         // Top-left point (off-screen vertically)
+                (scrWidth*0.75) + ",-100 " +         // Top-right point (off-screen vertically)
+                (scrWidth/2) + "," + (scrHeight*0.625); // Middle-bottom point
+                
+            svgString += `<polygon points="${scaleAndVaryPoints(centerTrianglePoints, variation)}" fill="url(#grad3)" />`;
+            
+            // Close the SVG
+            svgString += `</svg>`;
+            
+            return svgString;
+        }
+        
+
 
   </script>
 </head>
