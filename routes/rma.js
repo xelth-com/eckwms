@@ -56,6 +56,7 @@ router.post('/create', optionalAuth, async (req, res) => {
 
 
 
+
 // Generate RMA form page (HTML version)
 router.post('/generate', (req, res) => {
   const timestamp = Math.floor(Date.now() / 1000);
@@ -72,8 +73,11 @@ router.post('/generate', (req, res) => {
   // Get user data if logged in
   let userData = { 
     company: '', 
+    vat: '',
     person: '', 
     street: '', 
+    houseNumber: '',
+    addressLine2: '',
     city: '', 
     postalCode: '', 
     country: 'Germany',
@@ -84,8 +88,11 @@ router.post('/generate', (req, res) => {
   if (req.user) {
     userData = {
       company: req.user.company || '',
+      vat: req.user.vat || '',
       person: req.user.name || '',
       street: req.user.street || '',
+      houseNumber: req.user.houseNumber || '',
+      addressLine2: req.user.addressLine2 || '',
       city: req.user.city || '',
       postalCode: req.user.postalCode || '',
       country: req.user.country || 'Germany',
@@ -109,16 +116,32 @@ router.post('/generate', (req, res) => {
       <input type="text" id="company" value="${userData.company}" required 
              style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
 
+      <label for="vat" style="display: block; margin-top: 10px;">VAT Number:</label>
+      <input type="text" id="vat" value="${userData.vat}"
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+
       <label for="person" style="display: block; margin-top: 10px;">Contact Person:</label>
       <input type="text" id="person" value="${userData.person}"
              style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
 
-      <label for="street" style="display: block; margin-top: 10px;"><b>Street and House Number:</b></label>
+      <label for="street" style="display: block; margin-top: 10px;"><b>Street:</b></label>
       <input type="text" id="street" value="${userData.street}" required 
              style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
 
-      <label for="postal" style="display: block; margin-top: 10px;"><b>Postal Code / City:</b></label>
-      <input type="text" id="postal" value="${userData.postalCode ? userData.postalCode + ' ' + userData.city : ''}" required 
+      <label for="houseNumber" style="display: block; margin-top: 10px;"><b>House Number:</b></label>
+      <input type="text" id="houseNumber" value="${userData.houseNumber}" required 
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+
+      <label for="addressLine2" style="display: block; margin-top: 10px;">Additional Address Line:</label>
+      <input type="text" id="addressLine2" value="${userData.addressLine2}" 
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+
+      <label for="postalCode" style="display: block; margin-top: 10px;"><b>Postal Code:</b></label>
+      <input type="text" id="postalCode" value="${userData.postalCode}" required 
+             style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
+
+      <label for="city" style="display: block; margin-top: 10px;"><b>City:</b></label>
+      <input type="text" id="city" value="${userData.city}" required 
              style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
 
       <label for="country" style="display: block; margin-top: 10px;"><b>Country:</b></label>
@@ -249,7 +272,7 @@ router.post('/generate', (req, res) => {
     alternateAddressSection.style.marginBottom = '15px';
     alternateAddressSection.style.backgroundColor = '#fff';
     
-    // Add alternate address fields
+    // Add alternate address fields with the updated structure
     alternateAddressSection.innerHTML = \`
       <h4 style="margin-top: 0; color: #1e2071;">Alternate Return Address</h4>
       <p style="font-style: italic; margin-bottom: 10px;">Specify a different address for returning this device.</p>
@@ -258,16 +281,32 @@ router.post('/generate', (req, res) => {
       <input type="text" id="alt_company_\${deviceIndex}" name="alt_company_\${deviceIndex}" 
              style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
+      <label for="alt_vat_\${deviceIndex}" style="display: block; margin-top: 10px;">VAT Number:</label>
+      <input type="text" id="alt_vat_\${deviceIndex}" name="alt_vat_\${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+
       <label for="alt_person_\${deviceIndex}" style="display: block; margin-top: 10px;">Contact Person:</label>
       <input type="text" id="alt_person_\${deviceIndex}" name="alt_person_\${deviceIndex}" 
              style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-      <label for="alt_street_\${deviceIndex}" style="display: block; margin-top: 10px;"><b>Street and House Number:</b></label>
+      <label for="alt_street_\${deviceIndex}" style="display: block; margin-top: 10px;"><b>Street:</b></label>
       <input type="text" id="alt_street_\${deviceIndex}" name="alt_street_\${deviceIndex}" 
              style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-      <label for="alt_postal_\${deviceIndex}" style="display: block; margin-top: 10px;"><b>Postal Code / City:</b></label>
-      <input type="text" id="alt_postal_\${deviceIndex}" name="alt_postal_\${deviceIndex}" 
+      <label for="alt_houseNumber_\${deviceIndex}" style="display: block; margin-top: 10px;"><b>House Number:</b></label>
+      <input type="text" id="alt_houseNumber_\${deviceIndex}" name="alt_houseNumber_\${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+
+      <label for="alt_addressLine2_\${deviceIndex}" style="display: block; margin-top: 10px;">Additional Address Line:</label>
+      <input type="text" id="alt_addressLine2_\${deviceIndex}" name="alt_addressLine2_\${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+
+      <label for="alt_postalCode_\${deviceIndex}" style="display: block; margin-top: 10px;"><b>Postal Code:</b></label>
+      <input type="text" id="alt_postalCode_\${deviceIndex}" name="alt_postalCode_\${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+
+      <label for="alt_city_\${deviceIndex}" style="display: block; margin-top: 10px;"><b>City:</b></label>
+      <input type="text" id="alt_city_\${deviceIndex}" name="alt_city_\${deviceIndex}" 
              style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
       <label for="alt_country_\${deviceIndex}" style="display: block; margin-top: 10px;"><b>Country:</b></label>

@@ -1429,7 +1429,7 @@ function lazyLoadScript(src) {
             svgString += `<rect width="100%" height="100%" fill="#e0e0e0"/>`;
             
             // Scale variation based on screen size
-            const variation = Math.max(scrWidth, scrHeight) * 0.03;
+            const variation = Math.max(scrWidth, scrHeight) * 0.01;
             
             // Function to scale and vary a set of points
             function scaleAndVaryPoints(pointsStr, variation) {

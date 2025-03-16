@@ -142,10 +142,18 @@
         <input type="text" id="alt_street_${deviceIndex}" name="alt_street_${deviceIndex}" 
                style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
   
-        <label for="alt_postal_${deviceIndex}" style="display: block; margin-top: 10px;"><b>Postal Code / City:</b></label>
-        <input type="text" id="alt_postal_${deviceIndex}" name="alt_postal_${deviceIndex}" 
-               style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
-  
+        <label for="alt_addressLine2_${deviceIndex}" style="display: block; margin-top: 10px;">Additional Address Line:</label>
+  <input type="text" id="alt_addressLine2_${deviceIndex}" name="alt_addressLine2_${deviceIndex}" 
+         style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+
+  <label for="alt_postalCode_${deviceIndex}" style="display: block; margin-top: 10px;"><b>Postal Code:</b></label>
+  <input type="text" id="alt_postalCode_${deviceIndex}" name="alt_postalCode_${deviceIndex}" 
+         style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+
+  <label for="alt_city_${deviceIndex}" style="display: block; margin-top: 10px;"><b>City:</b></label>
+  <input type="text" id="alt_city_${deviceIndex}" name="alt_city_${deviceIndex}" 
+         style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+
         <label for="alt_country_${deviceIndex}" style="display: block; margin-top: 10px;"><b>Country:</b></label>
         <input type="text" id="alt_country_${deviceIndex}" name="alt_country_${deviceIndex}" value="Germany" 
                style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
