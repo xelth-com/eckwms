@@ -15,6 +15,7 @@ const pgSession = require('connect-pg-simple')(session);
 const passport = require('passport');
 const initI18n = require('./middleware/i18n');
 
+
 // Import routes
 const apiRoutes = require('./routes/api');
 const rmaRoutes = require('./routes/rma');
@@ -22,6 +23,7 @@ const statusRoutes = require('./routes/status');
 const adminRoutes = require('./routes/admin');
 const authRoutes = require('./routes/auth');
 const translationApiRoutes = require('./routes/translation-api');
+const translationAdminRoutes = require('./routes/translation-admin');
 
 // Import middleware
 const { errorHandler, requestLogger } = require('./middleware');
@@ -94,6 +96,7 @@ app.use('/status', statusRoutes);
 app.use('/admin', adminRoutes);
 app.use('/auth', authRoutes);
 app.use('/api', translationApiRoutes);
+app.use('/translation-admin', translationAdminRoutes);
 // Main route for the application
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'html', 'index.html'));
@@ -114,6 +117,10 @@ app.get('/jwt/:token', (req, res) => {
     } catch (error) {
         res.send(' nice try');
     }
+});
+
+app.get('/admin/translations', requireAdmin, (req, res) => {
+    res.sendFile(path.join(__dirname, 'html/admin/translations.html'));
 });
 
 // Main POST handler - handles various requests

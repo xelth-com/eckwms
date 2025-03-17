@@ -28,6 +28,7 @@ db.sequelize = sequelize;
 // Import models
 db.UserAuth = require('./UserAuth')(sequelize, Sequelize);
 db.RmaRequest = require('./RmaRequest')(sequelize, Sequelize);
+db.TranslationCache = require('./TranslationCache')(sequelize, Sequelize); // Добавили импорт TranslationCache
 
 // Define relationships
 db.UserAuth.hasMany(db.RmaRequest, { foreignKey: 'userId' });

@@ -1,1 +1,128 @@
-﻿{}
+{
+  "welcome": {
+    "title": "환영합니다, {{name}}님",
+    "subtitle": "시스템 개요",
+    "last_login": "마지막 로그인: {{time}}"
+  },
+  "navigation": {
+    "dashboard": "대시보드",
+    "rma_requests": "RMA 요청",
+    "inventory": "재고",
+    "users": "사용자",
+    "settings": "설정",
+    "reports": "보고서",
+    "help": "도움말"
+  },
+  "summary": {
+    "total_rmas": "전체 RMA",
+    "active_rmas": "활성 RMA",
+    "completed_rmas": "완료된 RMA",
+    "pending_rmas": "대기 중인 RMA",
+    "total_devices": "전체 기기",
+    "devices_in_repair": "수리 중인 기기",
+    "devices_waiting": "대기 중인 기기",
+    "devices_completed": "완료된 기기"
+  },
+  "rma_list": {
+    "title": "RMA 요청 목록",
+    "no_rmas": "RMA 요청을 찾을 수 없습니다",
+    "rma_code": "RMA 코드",
+    "date": "날짜",
+    "status": "상태",
+    "actions": "작업",
+    "view_details": "상세 보기",
+    "filter": {
+      "all": "전체",
+      "active": "활성",
+      "completed": "완료",
+      "pending": "대기 중"
+    },
+    "sort": {
+      "newest": "최신순",
+      "oldest": "오래된순",
+      "status": "상태별"
+    }
+  },
+  "admin": {
+    "user_management": "사용자 관리",
+    "create_admin": "관리자 생성",
+    "create_user": "사용자 생성",
+    "edit_user": "사용자 편집",
+    "role": "역할",
+    "status": "상태",
+    "last_login": "마지막 로그인",
+    "never": "없음",
+    "actions": "작업",
+    "active": "활성",
+    "inactive": "비활성",
+    "set_active": "활성화",
+    "set_inactive": "비활성화",
+    "confirm_delete": "이 사용자를 삭제하시겠습니까?",
+    "generate_codes": "코드 생성",
+    "export_data": "데이터 내보내기",
+    "system_settings": "시스템 설정"
+  },
+  "user_profile": {
+    "profile": "프로필",
+    "account_info": "계정 정보",
+    "personal_info": "개인 정보",
+    "name": "이름",
+    "email": "이메일",
+    "phone": "전화번호",
+    "company": "회사",
+    "address": "주소",
+    "change_password": "비밀번호 변경",
+    "current_password": "현재 비밀번호",
+    "new_password": "새 비밀번호",
+    "confirm_password": "비밀번호 확인",
+    "update_profile": "프로필 업데이트",
+    "profile_updated": "프로필이 업데이트되었습니다",
+    "password_changed": "비밀번호가 변경되었습니다"
+  },
+  "devices": {
+    "title": "기기",
+    "search": "기기 검색",
+    "filter": "필터",
+    "model": "모델",
+    "serial": "일련번호",
+    "status": "상태",
+    "location": "위치",
+    "action_required": "조치 필요",
+    "no_action": "조치 불필요",
+    "issues": "문제",
+    "no_issues": "문제 없음",
+    "add_device": "기기 추가",
+    "view_details": "상세 보기",
+    "edit_device": "기기 편집"
+  },
+  "boxes": {
+    "title": "박스",
+    "box_number": "박스 번호",
+    "content": "내용물",
+    "location": "위치",
+    "status": "상태",
+    "in_date": "입고일",
+    "out_date": "출고일",
+    "add_box": "박스 추가",
+    "view_box": "박스 보기",
+    "edit_box": "박스 편집",
+    "add_to_box": "박스에 추가",
+    "remove_from_box": "박스에서 제거",
+    "move_box": "박스 이동"
+  },
+  "reports": {
+    "title": "보고서",
+    "generate": "보고서 생성",
+    "export": "내보내기",
+    "date_range": "날짜 범위",
+    "start_date": "시작일",
+    "end_date": "종료일",
+    "type": "보고서 유형",
+    "rma_report": "RMA 보고서",
+    "device_report": "기기 보고서",
+    "repair_report": "수리 보고서",
+    "user_report": "사용자 통계",
+    "csv_export": "CSV 내보내기",
+    "pdf_export": "PDF 내보내기"
+  }
+}

@@ -1,6 +1,7 @@
 // middleware/auth.js
 const passport = require('passport');
 const jwt = require('jsonwebtoken');
+const { UserAuth } = require('../models/postgresql');
 
 // JWT Authentication middleware for protected routes
 exports.requireAuth = passport.authenticate('jwt', { session: false });
@@ -45,7 +46,7 @@ exports.refreshToken = async (req, res) => {
     }
     
     const payload = jwt.verify(refreshToken, global.secretJwt);
-    const { UserAuth } = require('../models/postgresql');
+
     const user = await UserAuth.findByPk(payload.userId);
     
     if (!user) {

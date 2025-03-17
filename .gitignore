@@ -2,6 +2,7 @@
 base/
 storage/
 html/storage/
+cache/
 
 # Logs
 logs/
