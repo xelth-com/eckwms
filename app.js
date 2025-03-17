@@ -16,6 +16,8 @@ const passport = require('passport');
 const initI18n = require('./middleware/i18n');
 // Import middleware/auth
 const { requireAdmin } = require('./middleware/auth');
+const htmlInterceptor = require('./middleware/htmlInterceptor');
+const i18next = require('i18next');
 
 
 // Import routes
@@ -108,6 +110,16 @@ app.use(requestLogger);
 
 
 app.use(initI18n());
+
+// После инициализации i18next, добавьте:
+// Обратите внимание: этот код должен быть ПОСЛЕ инициализации i18next
+// но ДО других middleware, включая static files
+
+// Создаем перехватчик HTML с доступом к i18next
+const htmlTranslator = htmlInterceptor(i18next);
+
+// Добавляем его в app middleware chain
+app.use(htmlTranslator);
 
 
 app.use((req, res, next) => {

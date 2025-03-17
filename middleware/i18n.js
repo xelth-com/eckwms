@@ -171,115 +171,219 @@ function initI18n(options = {}) {
   // Start queue processor
   processTranslationQueue();
   
-  // Middleware for HTML response processing and i18n tag replacement
-  const tagProcessor = (req, res, next) => {
-    // Save original send function
-    const originalSend = res.send;
+// Middleware for HTML response processing and i18n tag replacement
+const tagProcessor = (req, res, next) => {
+  console.log('tagProcessor middleware called');
+  
+  // Store original methods
+  const originalSend = res.send;
+  const originalRender = res.render;
+  const originalJson = res.json;
+  const originalEnd = res.end;
+  
+  // Helper function to process HTML content
+  const processHtmlContent = (body) => {
+    // Get language from request (set by i18next-http-middleware)
+    const language = req.language || defaultLanguage;
     
-    res.send = function(body) {
-      // Only process HTML responses
-      if (typeof body === 'string' && 
-          ((res.get('Content-Type') || '').includes('text/html') || 
-          body.includes('<!DOCTYPE html>') ||
-          body.includes('<html>'))) {
-        
-        // Get language from request (set by i18next-http-middleware)
-        const language = req.language || defaultLanguage;
-        
-        if (language !== defaultLanguage) {
-          // Process tags with multiple pattern support for different element types
-          
-          // 1. Simple elements with text content
-          body = body.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
-            // Try to get translation - namespace may be included in the key (e.g. 'common:welcome')
-            let namespace = 'common';
-            let translationKey = key;
-            
-            if (key.includes(':')) {
-              const parts = key.split(':');
-              namespace = parts[0];
-              translationKey = parts.slice(1).join(':');
-            }
-            
-            const translation = req.i18n.t(key);
-            
-            // If translation equals key (not found), leave as is for frontend to handle
-            if (translation === key) {
-              return match; // Keep original tag for frontend retry
-            }
-            
-            // Return element with translation but keep the data-i18n attribute for future use
-            return `<${tag1} data-i18n="${key}"${attrs}>${translation}</${tag2}>`;
-          });
-          
-          // 2. Process data-i18n-attr attributes (for placeholder, title, etc.)
-          body = body.replace(/<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g, (match, tag, attrsJson, restAttrs) => {
-            try {
-              const attrsMap = JSON.parse(attrsJson);
-              let newTag = `<${tag}${restAttrs}`;
-              let allTranslated = true;
-              
-              for (const [attr, key] of Object.entries(attrsMap)) {
-                const translation = req.i18n.t(key);
-                
-                // Get current attribute value if present
-                const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
-                const attrValueMatch = match.match(attrRegex);
-                const currentValue = attrValueMatch ? attrValueMatch[1] : '';
-                
-                // If translation differs from key, replace attribute value
-                if (translation !== key) {
-                  if (attrValueMatch) {
-                    newTag = newTag.replace(
-                      `${attr}="${currentValue}"`, 
-                      `${attr}="${translation}"`
-                    );
-                  } else {
-                    // Attribute not present, add it
-                    newTag = newTag + ` ${attr}="${translation}"`;
-                  }
-                } else {
-                  allTranslated = false; // Mark that not all attributes are translated
-                }
-              }
-              
-              // Keep data-i18n-attr for frontend retries if not all translated
-              if (!allTranslated) {
-                return newTag + '>';
-              }
-              
-              // Otherwise remove data-i18n-attr but keep the tag
-              return newTag.replace(/\s+data-i18n-attr=['"][^'"]+['"]/, '') + '>';
-            } catch (e) {
-              console.error('Error parsing data-i18n-attr:', e);
-              return match;
-            }
-          });
-          
-          // 3. Process elements with HTML content
-          body = body.replace(/<([^>]+)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
-            const translation = req.i18n.t(key, { interpolation: { escapeValue: false } });
-            
-            // If translation equals key (not found), leave as is for frontend to handle
-            if (translation === key) {
-              return match;
-            }
-            
-            // Return element with HTML translation
-            return `<${tag1} data-i18n-html="${key}"${attrs}>${translation}</${tag2}>`;
-          });
-        }
+    if (language === defaultLanguage || typeof body !== 'string') {
+      return body;
+    }
+    
+    console.log(`Processing HTML content for language: ${language}`);
+    
+    // Process tags with multiple pattern support for different element types
+    // 1. Simple elements with text content
+    body = body.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
+      // Try to get translation - namespace may be included in the key
+      let namespace = 'common';
+      let translationKey = key;
+      
+      if (key.includes(':')) {
+        const parts = key.split(':');
+        namespace = parts[0];
+        translationKey = parts.slice(1).join(':');
       }
       
-      // Call original send function
-      return originalSend.call(this, body);
-    };
+      console.log(`Translating: ${translationKey} in namespace ${namespace}`);
+      const translation = req.i18n.t(translationKey, { ns: namespace });
+      
+      // If translation equals key (not found), leave as is for frontend to handle
+      if (translation === translationKey) {
+        return match; // Keep original tag for frontend retry
+      }
+      
+      console.log(`Translated: ${translationKey} → ${translation}`);
+      // Return element with translation but REMOVE the data-i18n attribute
+      return `<${tag1}${attrs}>${translation}</${tag2}>`;
+    });
     
-    next();
+    // 2. Process data-i18n-attr attributes
+    body = body.replace(/<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g, (match, tag, attrsJson, restAttrs) => {
+      try {
+        const attrsMap = JSON.parse(attrsJson);
+        let newTag = `<${tag}${restAttrs}`;
+        let allTranslated = true;
+        
+        for (const [attr, key] of Object.entries(attrsMap)) {
+          console.log(`Translating attribute: ${attr} with key ${key}`);
+          // Extract namespace if present
+          let namespace = 'common';
+          let translationKey = key;
+          
+          if (key.includes(':')) {
+            const parts = key.split(':');
+            namespace = parts[0];
+            translationKey = parts.slice(1).join(':');
+          }
+          
+          const translation = req.i18n.t(translationKey, { ns: namespace });
+          
+          // Get current attribute value if present
+          const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
+          const attrValueMatch = match.match(attrRegex);
+          const currentValue = attrValueMatch ? attrValueMatch[1] : '';
+          
+          // If translation differs from key, replace attribute value
+          if (translation !== translationKey) {
+            console.log(`Translated attr: ${translationKey} → ${translation}`);
+            if (attrValueMatch) {
+              newTag = newTag.replace(
+                `${attr}="${currentValue}"`, 
+                `${attr}="${translation}"`
+              );
+            } else {
+              // Attribute not present, add it
+              newTag = newTag + ` ${attr}="${translation}"`;
+            }
+          } else {
+            allTranslated = false; // Mark that not all attributes are translated
+          }
+        }
+        
+        // Keep data-i18n-attr for frontend retries if not all translated
+        if (!allTranslated) {
+          return newTag + '>';
+        }
+        
+        // Otherwise remove data-i18n-attr but keep the tag
+        return newTag.replace(/\s+data-i18n-attr=['"][^'"]+['"]/, '') + '>';
+      } catch (e) {
+        console.error('Error parsing data-i18n-attr:', e);
+        return match;
+      }
+    });
+    
+    // 3. Process elements with HTML content
+    body = body.replace(/<([^>]+)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
+      // Apply the same namespace extraction logic for HTML content
+      let namespace = 'common';
+      let translationKey = key;
+      
+      if (key.includes(':')) {
+        const parts = key.split(':');
+        namespace = parts[0];
+        translationKey = parts.slice(1).join(':');
+      }
+      
+      console.log(`Translating HTML: ${translationKey} in namespace ${namespace}`);
+      const translation = req.i18n.t(translationKey, { 
+        ns: namespace,
+        interpolation: { escapeValue: false } 
+      });
+      
+      // If translation equals key (not found), leave as is for frontend to handle
+      if (translation === translationKey) {
+        return match;
+      }
+      
+      console.log(`Translated HTML: ${translationKey}`);
+      // Return element with HTML translation and REMOVE the data-i18n-html attribute
+      return `<${tag1}${attrs}>${translation}</${tag2}>`;
+    });
+    
+    return body;
   };
   
-  // Combine i18next middleware with our tag processor
-  return [i18nextMiddleware.handle(i18next), tagProcessor];
+  // Override res.send
+  res.send = function(body) {
+    console.log('res.send called');
+    console.log('body', body);
+    // Check if response is likely HTML
+    if (typeof body === 'string' && 
+        (res.get('Content-Type')?.includes('text/html') || 
+         body.includes('<!DOCTYPE html>') || 
+         body.includes('<html>'))) {
+      
+      // Process HTML content
+      body = processHtmlContent(body);
+    }
+    
+    // Call original method
+    return originalSend.call(this, body);
+  };
+  
+  // Override res.render to handle template rendering
+  res.render = function(view, options, callback) {
+    console.log('res.render called');
+    
+    // If callback is provided, intercept the rendered HTML
+    if (typeof callback === 'function') {
+      const originalCallback = callback;
+      callback = function(err, html) {
+        if (!err && html) {
+          html = processHtmlContent(html);
+        }
+        originalCallback(err, html);
+      };
+    } else if (typeof options === 'function') {
+      // Handle case where options is the callback
+      const originalCallback = options;
+      options = {};
+      callback = function(err, html) {
+        if (!err && html) {
+          html = processHtmlContent(html);
+        }
+        originalCallback(err, html);
+      };
+    } else {
+      // No callback, use events to intercept response
+      const self = this;
+      const originalEnd = res.end;
+      
+      res.end = function(chunk, encoding) {
+        if (chunk && typeof chunk === 'string') {
+          chunk = processHtmlContent(chunk);
+        }
+        return originalEnd.call(self, chunk, encoding);
+      };
+    }
+    
+    // Call original render
+    return originalRender.call(this, view, options, callback);
+  };
+  
+  // We should also consider intercepting res.end for direct responses
+  res.end = function(chunk, encoding) {
+    console.log('res.end called');
+    
+    if (chunk && typeof chunk === 'string' && 
+        (res.get('Content-Type')?.includes('text/html') || 
+         chunk.includes('<!DOCTYPE html>') || 
+         chunk.includes('<html>'))) {
+      
+      chunk = processHtmlContent(chunk);
+    }
+    
+    return originalEnd.call(this, chunk, encoding);
+  };
+  
+  next();
+};
+
+// Combine i18next middleware with our tag processor
+return [i18nextMiddleware.handle(i18next), tagProcessor];
 }
 
 module.exports = initI18n;
+module.exports.i18next = i18next;
