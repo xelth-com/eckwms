@@ -6,10 +6,11 @@ const path = require('path');
 const { translateText, saveToCache } = require('../services/translationService');
 const { Queue } = require('../utils/queue');
 
-// Создаем очередь для отложенного перевода тегов
+// Create translation queue for deferred translations
 const translationQueue = new Queue();
+const translationInProgress = new Set(); // Track keys being translated
 
-// Запуск обработчика очереди переводов
+// Process translation queue
 function processTranslationQueue() {
   if (translationQueue.isEmpty()) {
     setTimeout(processTranslationQueue, 5000);
@@ -17,11 +18,15 @@ function processTranslationQueue() {
   }
 
   const { text, targetLang, namespace, key } = translationQueue.dequeue();
+  const queueKey = `${targetLang}:${namespace}:${key}`;
   
-  // Выполняем перевод текста
+  // Mark this key as in-progress
+  translationInProgress.add(queueKey);
+  
+  // Translate the text
   translateText(text, targetLang, namespace)
     .then(translatedText => {
-      // Сохраняем перевод в файл локализации
+      // Save translation to localization file
       try {
         const filePath = path.join(process.cwd(), 'locales', targetLang, `${namespace}.json`);
         let translations = {};
@@ -33,46 +38,50 @@ function processTranslationQueue() {
         translations[key] = translatedText;
         require('fs').writeFileSync(filePath, JSON.stringify(translations, null, 2), 'utf8');
         
-        // Обновляем кэш i18next
+        // Update i18next cache
         i18next.addResourceBundle(targetLang, namespace, { [key]: translatedText }, true, true);
         
         console.log(`[i18n] Translated and saved: [${targetLang}] ${namespace}:${key}`);
       } catch (error) {
         console.error(`[i18n] Error saving translation: ${error.message}`);
+      } finally {
+        // Remove from in-progress set
+        translationInProgress.delete(queueKey);
       }
     })
     .catch(error => {
       console.error(`[i18n] Translation error: ${error.message}`);
+      translationInProgress.delete(queueKey);
     })
     .finally(() => {
-      // Продолжаем обработку очереди с небольшой задержкой
+      // Continue processing queue with slight delay
       setTimeout(processTranslationQueue, 1000);
     });
 }
 
 /**
- * Инициализация i18next для Express
- * @param {Object} options - Дополнительные настройки
- * @returns {Function} Middleware для Express
+ * Initialize i18next for Express
+ * @param {Object} options - Additional settings
+ * @returns {Function} Middleware for Express
  */
 function initI18n(options = {}) {
   const localesPath = path.join(process.cwd(), 'locales');
   const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'de';
   
-  // Список всех поддерживаемых языков
+  // List of all supported languages
   const supportedLngs = [
-    // Официальные языки ЕС
+    // EU official languages
     'de', 'en', 'fr', 'it', 'es', 'pt', 'nl', 'da', 'sv', 'fi', 
     'el', 'cs', 'pl', 'hu', 'sk', 'sl', 'et', 'lv', 'lt', 'ro', 
     'bg', 'hr', 'ga', 'mt',
-    // Дополнительные языки
+    // Additional languages
     'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja'
   ];
   
-  // Список пространств имен
+  // Namespaces list
   const namespaces = ['common', 'rma', 'dashboard', 'auth'];
   
-  // Инициализация i18next
+  // Initialize i18next
   i18next
     .use(Backend)
     .use(i18nextMiddleware.LanguageDetector)
@@ -80,10 +89,10 @@ function initI18n(options = {}) {
       backend: {
         loadPath: path.join(localesPath, '{{lng}}', '{{ns}}.json')
       },
-      fallbackLng: defaultLanguage,     // Язык по умолчанию
-      preload: supportedLngs,           // Предзагрузка всех языков
-      ns: namespaces,                   // Пространства имен
-      defaultNS: 'common',              // Пространство имен по умолчанию
+      fallbackLng: defaultLanguage,
+      preload: supportedLngs,
+      ns: namespaces,
+      defaultNS: 'common',
       detection: {
         order: ['cookie', 'header', 'querystring', 'session'],
         lookupCookie: 'i18next',
@@ -91,36 +100,39 @@ function initI18n(options = {}) {
         lookupHeader: 'accept-language',
         lookupSession: 'lang',
         caches: ['cookie'],
-        cookieExpirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 год
+        cookieExpirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
         cookieDomain: options.cookieDomain || undefined
       },
-      load: 'languageOnly',             // Загружать только основной язык (de вместо de-DE)
-      saveMissing: true,                // Сохранять отсутствующие переводы
+      load: 'languageOnly',
+      saveMissing: true,
+      // Return key as is for client-side handling
       parseMissingKeyHandler: (key, defaultValue) => {
-        // Просто возвращаем ключ, чтобы сохранить теги для последующей обработки
         return key;
       },
       missingKeyHandler: (lng, ns, key, fallbackValue) => {
-        // Если это не язык по умолчанию и ключ не был добавлен в очередь
+        // Only queue untranslated keys from non-default languages
         if (lng !== defaultLanguage) {
-          // Добавляем в очередь для перевода
-          translationQueue.enqueue({
-            text: key,
-            targetLang: lng,
-            namespace: ns,
-            key: key
-          });
+          const queueKey = `${lng}:${ns}:${key}`;
           
-          if (process.env.NODE_ENV === 'development') {
-            console.log(`[i18n] Added to translation queue: [${lng}] ${ns}:${key}`);
+          // Only add to queue if not already in progress
+          if (!translationInProgress.has(queueKey)) {
+            translationQueue.enqueue({
+              text: key,
+              targetLang: lng,
+              namespace: ns,
+              key: key
+            });
+            
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[i18n] Added to translation queue: [${lng}] ${ns}:${key}`);
+            }
           }
         }
       },
       interpolation: {
-        escapeValue: false,             // Не экранировать HTML
+        escapeValue: false,
         formatSeparator: ',',
         format: function(value, format, lng) {
-          // Специальная функция форматирования
           if (format === 'uppercase') return value.toUpperCase();
           return value;
         }
@@ -128,7 +140,7 @@ function initI18n(options = {}) {
       ...options
     });
   
-  // Функция для получения перевода в промисной форме
+  // Promise-based translation function
   i18next.getTranslationAsync = async (key, options, lng) => {
     return new Promise((resolve) => {
       i18next.t(key, { ...options, lng }, (err, translation) => {
@@ -137,62 +149,71 @@ function initI18n(options = {}) {
     });
   };
   
-  // Запускаем обработчик очереди переводов
+  // Start queue processor
   processTranslationQueue();
   
-  // Middleware для обработки HTML-ответов и замены тегов i18n
+  // Middleware for HTML response processing and i18n tag replacement
   const tagProcessor = (req, res, next) => {
-    // Сохраняем оригинальную функцию send
+    // Save original send function
     const originalSend = res.send;
     
     res.send = function(body) {
-      // Обрабатываем только HTML-ответы
+      // Only process HTML responses
       if (typeof body === 'string' && 
           (res.get('Content-Type') || '').includes('text/html') || 
           body.includes('<!DOCTYPE html>') ||
           body.includes('<html>')) {
         
-        // Получаем язык из запроса (установленный i18next-http-middleware)
+        // Get language from request (set by i18next-http-middleware)
         const language = req.language || defaultLanguage;
         
         if (language !== defaultLanguage) {
-          // Заменяем теги data-i18n на переведенный текст
+          // Replace data-i18n tags with translated text if available
           body = body.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
-            // Пытаемся получить перевод
+            // Try to get translation
             const translation = req.i18n.t(key);
             
-            // Если перевод совпадает с ключом (не найден), оставляем как есть
+            // If translation equals key (not found), leave as is for frontend to handle
             if (translation === key) {
-              return match;
+              return match; // Keep original tag for frontend retry
             }
             
-            // Заменяем содержимое тега на перевод
+            // Replace tag content with translation
             return `<${tag1}${attrs}>${translation}</${tag2}>`;
           });
           
-          // Обрабатываем атрибуты data-i18n-attr
-          body = body.replace(/<([^>]+)\s+data-i18n-attr='([^']+)'([^>]*)>/g, (match, tag, attrsJson, restAttrs) => {
+          // Process data-i18n-attr attributes
+          body = body.replace(/<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g, (match, tag, attrsJson, restAttrs) => {
             try {
               const attrsMap = JSON.parse(attrsJson);
               let newTag = `<${tag}${restAttrs}`;
+              let allTranslated = true;
               
               for (const [attr, key] of Object.entries(attrsMap)) {
                 const translation = req.i18n.t(key);
                 
-                // Получаем текущее значение атрибута, если есть
+                // Get current attribute value if present
                 const attrValueMatch = match.match(new RegExp(`${attr}="([^"]+)"`));
                 const currentValue = attrValueMatch ? attrValueMatch[1] : '';
                 
-                // Если перевод отличается от ключа, заменяем значение атрибута
+                // If translation differs from key, replace attribute value
                 if (translation !== key) {
                   newTag = newTag.replace(
                     `${attr}="${currentValue}"`, 
                     `${attr}="${translation}"`
                   );
+                } else {
+                  allTranslated = false; // Mark that not all attributes are translated
                 }
               }
               
-              return newTag + '>';
+              // If all attributes translated, remove data-i18n-attr
+              if (allTranslated) {
+                return newTag.replace(/\s+data-i18n-attr=['"][^'"]+['"]/, '') + '>';
+              }
+              
+              // Otherwise keep the tag for frontend retry
+              return match;
             } catch (e) {
               console.error('Error parsing data-i18n-attr:', e);
               return match;
@@ -201,14 +222,14 @@ function initI18n(options = {}) {
         }
       }
       
-      // Вызываем оригинальную функцию send
+      // Call original send function
       return originalSend.call(this, body);
     };
     
     next();
   };
   
-  // Комбинируем middleware i18next и наш обработчик тегов
+  // Combine i18next middleware with our tag processor
   return [i18nextMiddleware.handle(i18next), tagProcessor];
 }
 

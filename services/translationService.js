@@ -4,13 +4,13 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
-// Инициализация OpenAI API
+// Initialize OpenAI API
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// Модель PostgreSQL для кэширования переводов
-// Импортируем только если есть подключение к БД
+// PostgreSQL model for translation caching
+// Import only if DB connection exists
 let TranslationCache;
 try {
   const { sequelize } = require('../models/postgresql');
@@ -21,19 +21,23 @@ try {
   console.warn('PostgreSQL not configured for translation cache. Using file-based cache only.');
 }
 
-// Директория для файлового кэша переводов
+// Directory for file-based translation cache
 const CACHE_DIR = path.join(process.cwd(), 'cache', 'translations');
 
-// Создаем директорию кэша, если её нет
+// Create cache directory if it doesn't exist
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
 
+// In-memory cache for faster lookup of recent translations
+const memoryCache = new Map();
+const MEMORY_CACHE_MAX_SIZE = 1000; // Limit memory cache size
+
 /**
- * Генерация уникального ключа для текста
- * @param {string} text - Исходный текст
- * @param {string} context - Контекст перевода
- * @returns {string} - MD5-хеш
+ * Generate unique key for text
+ * @param {string} text - Source text
+ * @param {string} context - Translation context
+ * @returns {string} - MD5 hash
  */
 function generateKey(text, context = '') {
   return crypto
@@ -43,17 +47,22 @@ function generateKey(text, context = '') {
 }
 
 /**
- * Проверка кэша переводов
- * @param {string} text - Исходный текст
- * @param {string} targetLang - Целевой язык
- * @param {string} context - Контекст перевода
- * @returns {Promise<string|null>} - Перевод или null, если не найден
+ * Check translation cache
+ * @param {string} text - Source text
+ * @param {string} targetLang - Target language
+ * @param {string} context - Translation context
+ * @returns {Promise<string|null>} - Translation or null if not found
  */
 async function checkCache(text, targetLang, context = '') {
   const key = generateKey(text, context);
-  const cacheFile = path.join(CACHE_DIR, `${targetLang}_${key}.json`);
+  const cacheKey = `${targetLang}:${key}`;
   
-  // Сначала проверяем базу данных, если она доступна
+  // First check memory cache for fastest response
+  if (memoryCache.has(cacheKey)) {
+    return memoryCache.get(cacheKey);
+  }
+  
+  // Then check database cache if available
   if (TranslationCache) {
     try {
       const cachedTranslation = await TranslationCache.findOne({
@@ -64,11 +73,14 @@ async function checkCache(text, targetLang, context = '') {
       });
       
       if (cachedTranslation) {
-        // Обновляем счетчик использования и дату
+        // Update usage count and date
         await cachedTranslation.update({
           lastUsed: new Date(),
           useCount: cachedTranslation.useCount + 1
         });
+        
+        // Add to memory cache
+        addToMemoryCache(cacheKey, cachedTranslation.translatedText);
         
         return cachedTranslation.translatedText;
       }
@@ -77,10 +89,15 @@ async function checkCache(text, targetLang, context = '') {
     }
   }
   
-  // Затем проверяем файловый кэш
+  // Finally check file cache
+  const cacheFile = path.join(CACHE_DIR, `${targetLang}_${key}.json`);
   if (fs.existsSync(cacheFile)) {
     try {
       const cacheData = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      
+      // Add to memory cache
+      addToMemoryCache(cacheKey, cacheData.translatedText);
+      
       return cacheData.translatedText;
     } catch (error) {
       console.error('Error reading file cache:', error);
@@ -91,16 +108,37 @@ async function checkCache(text, targetLang, context = '') {
 }
 
 /**
- * Сохранение перевода в кэш
- * @param {string} text - Исходный текст
- * @param {string} targetLang - Целевой язык
- * @param {string} translatedText - Переведенный текст
- * @param {string} context - Контекст перевода
+ * Add translation to memory cache with size limit
+ * @param {string} key - Cache key
+ * @param {string} value - Translation
+ */
+function addToMemoryCache(key, value) {
+  // If cache is full, remove oldest entries
+  if (memoryCache.size >= MEMORY_CACHE_MAX_SIZE) {
+    // Remove 10% of oldest entries
+    const entriesToRemove = Math.floor(MEMORY_CACHE_MAX_SIZE * 0.1);
+    const keys = [...memoryCache.keys()].slice(0, entriesToRemove);
+    keys.forEach(k => memoryCache.delete(k));
+  }
+  
+  memoryCache.set(key, value);
+}
+
+/**
+ * Save translation to cache
+ * @param {string} text - Source text
+ * @param {string} targetLang - Target language
+ * @param {string} translatedText - Translated text
+ * @param {string} context - Translation context
  */
 async function saveToCache(text, targetLang, translatedText, context = '') {
   const key = generateKey(text, context);
+  const cacheKey = `${targetLang}:${key}`;
   
-  // Сохраняем в базу данных, если она доступна
+  // Add to memory cache
+  addToMemoryCache(cacheKey, translatedText);
+  
+  // Save to database if available
   if (TranslationCache) {
     try {
       await TranslationCache.findOrCreate({
@@ -115,7 +153,7 @@ async function saveToCache(text, targetLang, translatedText, context = '') {
         }
       }).then(([record, created]) => {
         if (!created) {
-          // Обновляем существующую запись
+          // Update existing record
           return record.update({
             translatedText: translatedText,
             lastUsed: new Date(),
@@ -128,7 +166,7 @@ async function saveToCache(text, targetLang, translatedText, context = '') {
     }
   }
   
-  // Всегда сохраняем в файловый кэш как резервный вариант
+  // Always save to file cache as backup
   const cacheFile = path.join(CACHE_DIR, `${targetLang}_${key}.json`);
   const cacheData = {
     key,
@@ -147,34 +185,34 @@ async function saveToCache(text, targetLang, translatedText, context = '') {
 }
 
 /**
- * Проверка, содержит ли текст HTML-теги
- * @param {string} text - Текст для проверки
- * @returns {boolean} - true, если содержит теги
+ * Check if text contains HTML tags
+ * @param {string} text - Text to check
+ * @returns {boolean} - true if contains tags
  */
 function containsHtmlTags(text) {
   return /<[^>]*>/g.test(text);
 }
 
 /**
- * Перевод текста с помощью OpenAI
- * @param {string} text - Исходный текст
- * @param {string} targetLang - Целевой язык
- * @param {string} context - Контекст перевода
- * @param {string} sourceLang - Исходный язык (по умолчанию: de)
- * @returns {Promise<string>} - Переведенный текст
+ * Translate text using OpenAI
+ * @param {string} text - Source text
+ * @param {string} targetLang - Target language
+ * @param {string} context - Translation context
+ * @param {string} sourceLang - Source language (default: de)
+ * @returns {Promise<string>} - Translated text
  */
 async function translateText(text, targetLang, context = '', sourceLang = 'de') {
   try {
-    // Если текст пустой, возвращаем его как есть
+    // If text is empty, return as is
     if (!text || text.trim() === '') {
       return text;
     }
     
-    // Проверяем кэш перед API-вызовом
+    // Check cache before API call
     const cachedTranslation = await checkCache(text, targetLang, context);
     if (cachedTranslation) return cachedTranslation;
     
-    // Получаем полное название языка для более точного перевода
+    // Get full language name for more accurate translation
     const languageNames = {
       'de': 'German', 'en': 'English', 'fr': 'French', 'it': 'Italian',
       'es': 'Spanish', 'pt': 'Portuguese', 'nl': 'Dutch', 'da': 'Danish',
@@ -190,13 +228,13 @@ async function translateText(text, targetLang, context = '', sourceLang = 'de') 
     const targetLanguageName = languageNames[targetLang] || targetLang;
     const sourceLanguageName = languageNames[sourceLang] || sourceLang;
     
-    // Создаем системный промпт с контекстом
+    // Create system prompt with context
     let systemPrompt = `You are a professional translator for a warehouse management system. 
 Translate the text from ${sourceLanguageName} to ${targetLanguageName}. 
 Maintain the same tone, formatting and technical terminology.
 Ensure the translation sounds natural in the target language.`;
     
-    // Добавляем инструкции для сохранения HTML-тегов, если они есть
+    // Add instructions for preserving HTML tags if present
     if (containsHtmlTags(text)) {
       systemPrompt += `\nIMPORTANT: Preserve all HTML tags exactly as they appear in the original text.`;
     }
@@ -205,7 +243,7 @@ Ensure the translation sounds natural in the target language.`;
       systemPrompt += `\nContext: This text appears in the "${context}" section of the application.`;
     }
     
-    // Особые инструкции для специфических языков
+    // Special instructions for specific languages
     if (targetLang === 'ar' || targetLang === 'he') {
       systemPrompt += '\nNote: This language is read from right to left.';
     } else if (targetLang === 'zh') {
@@ -214,55 +252,56 @@ Ensure the translation sounds natural in the target language.`;
       systemPrompt += '\nPreserve technical terms in their standard form for this language.';
     }
     
-    // Вызываем API OpenAI
+    // Call OpenAI API
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // или другая доступная модель
+      model: "gpt-4o-mini", // or another available model
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: text }
       ],
-      temperature: 0.3, // Низкая температура для более точных переводов
-      max_tokens: Math.max(text.length * 2, 500) // Динамический лимит токенов
+      temperature: 0.3, // Low temperature for more accurate translations
+      max_tokens: Math.max(text.length * 2, 500) // Dynamic token limit
     });
     
     const translatedText = response.choices[0].message.content.trim();
     
-    // Сохраняем в кэше
+    // Save to cache
     await saveToCache(text, targetLang, translatedText, context);
     
     return translatedText;
   } catch (error) {
     console.error("Translation error:", error);
-    // В случае ошибки возвращаем оригинальный текст
+    // In case of error, return original text
     return text;
   }
 }
 
 /**
- * Функция для пакетного перевода
- * @param {Array<string>} texts - Массив текстов для перевода
- * @param {string} targetLang - Целевой язык
- * @param {string} context - Контекст перевода
- * @param {string} sourceLang - Исходный язык (по умолчанию: de)
- * @returns {Promise<Array<string>>} - Массив переведенных текстов
+ * Batch translation function
+ * @param {Array<string>} texts - Array of texts to translate
+ * @param {string} targetLang - Target language
+ * @param {string} context - Translation context
+ * @param {string} sourceLang - Source language (default: de)
+ * @returns {Promise<Array<string>>} - Array of translated texts
  */
 async function batchTranslate(texts, targetLang, context = '', sourceLang = 'de') {
-  // Проверяем, есть ли в кэше все тексты
+  // Check if all texts are in cache
   const results = [];
   const missingTexts = [];
   const missingIndexes = [];
   
+  // First check if texts are in cache
   for (let i = 0; i < texts.length; i++) {
     if (!texts[i] || texts[i].trim() === '') {
       results[i] = texts[i];
       continue;
     }
     
-    // Проверяем, является ли текст идентификатором с тегом
+    // Check if the text is a tagged key
     const isTaggedKey = /^data-i18n=["'][^"']+["']$/.test(texts[i]);
     
     if (isTaggedKey) {
-      // Оставляем тег как есть для последующей обработки на фронтенде
+      // Keep tag as is for later frontend processing
       results[i] = texts[i];
       continue;
     }
@@ -276,9 +315,9 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = 'de'
     }
   }
   
-  // Если есть отсутствующие переводы, переводим их пакетом
+  // If there are missing translations, translate them as a batch
   if (missingTexts.length > 0) {
-    // Для оптимизации API-вызовов, разбиваем на пакеты по 20 текстов
+    // Split into batches of 20 texts for API optimization
     const BATCH_SIZE = 20;
     
     for (let batchStart = 0; batchStart < missingTexts.length; batchStart += BATCH_SIZE) {
@@ -288,7 +327,7 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = 'de'
       
       const combinedText = currentBatch.join("\n---SEPARATOR---\n");
       
-      // Получаем полные названия языков
+      // Get full language names
       const languageNames = {
         'de': 'German', 'en': 'English', 'fr': 'French', 'it': 'Italian',
         'es': 'Spanish', 'pt': 'Portuguese', 'nl': 'Dutch', 'da': 'Danish',
@@ -316,7 +355,7 @@ IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in
       
       try {
         const response = await openai.chat.completions.create({
-          model: "gpt-4o-mini", // или другая доступная модель
+          model: "gpt-4o-mini", // or another available model
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: combinedText }
@@ -327,21 +366,21 @@ IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in
         const translatedContent = response.choices[0].message.content.trim();
         const translatedTexts = translatedContent.split("---SEPARATOR---").map(t => t.trim());
         
-        // Проверяем, что количество переведенных текстов совпадает с исходным
+        // Check if number of translated texts matches source
         if (translatedTexts.length === currentBatch.length) {
-          // Сохраняем переводы в кэш и заполняем результаты
+          // Save translations to cache and fill results
           for (let i = 0; i < currentBatch.length; i++) {
             const originalText = currentBatch[i];
             const translatedText = translatedTexts[i];
             
-            // Сохранение в кэш
+            // Save to cache
             await saveToCache(originalText, targetLang, translatedText, context);
             
-            // Заполнение результатов
+            // Fill results
             results[currentIndexes[i]] = translatedText;
           }
         } else {
-          // Если количество не совпадает, переводим по одному
+          // If mismatch, translate individually
           for (let i = 0; i < currentBatch.length; i++) {
             const translatedText = await translateText(currentBatch[i], targetLang, context, sourceLang);
             results[currentIndexes[i]] = translatedText;
@@ -350,7 +389,7 @@ IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in
       } catch (error) {
         console.error("Batch translation error:", error);
         
-        // В случае ошибки, переводим по одному
+        // In case of error, translate individually
         for (let i = 0; i < currentBatch.length; i++) {
           const translatedText = await translateText(currentBatch[i], targetLang, context, sourceLang);
           results[currentIndexes[i]] = translatedText;

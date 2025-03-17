@@ -1,89 +1,84 @@
 // html/js/i18n.js
 
 /**
- * Модуль для управления мультиязычностью на клиентской стороне
+ * Client-side multilanguage support module
  */
 (function() {
-  // Язык по умолчанию (будет обновлен при загрузке конфигурации)
+  // Default language (will be updated during configuration loading)
   let defaultLanguage = 'en';
   
-  // Текущий язык (изначально null, будет установлен после загрузки конфигурации)
+  // Current language (initially null, will be set after configuration loading)
   let currentLanguage = null;
   
-  // Проверка поддерживаемых языков
+  // Check supported languages
   const supportedLanguages = [
-    // Официальные языки ЕС
+    // EU official languages
     'de', 'en', 'fr', 'it', 'es', 'pt', 'nl', 'da', 'sv', 'fi', 
     'el', 'cs', 'pl', 'hu', 'sk', 'sl', 'et', 'lv', 'lt', 'ro', 
     'bg', 'hr', 'ga', 'mt',
-    // Дополнительные языки
+    // Additional languages
     'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja'
   ];
   
-  // Кэш для переводов
+  // Translation cache
   const translationCache = {};
+
+  // Translation retry tracking
+  const translationRetryCount = {};
+  const MAX_RETRIES = 3;
+  const RETRY_DELAYS = [3000, 10000, 30000]; // 3sec, 10sec, 30sec
   
   /**
-   * Асинхронная инициализация модуля
+   * Asynchronous module initialization
    */
   async function init() {
-    try {
-      // Получаем настройки с сервера
-      const response = await fetch('/api/config');
-      if (response.ok) {
-        const config = await response.json();
-        defaultLanguage = config.defaultLanguage || 'en';
-        console.log('Configuration loaded, default language:', defaultLanguage);
-      }
-    } catch (error) {
-      console.warn('Could not fetch app configuration, using defaults:', error);
-    }
     
-    // Определяем текущий язык
+    
+    // Determine current language
     currentLanguage = 
       getCookie('i18next') || 
       localStorage.getItem('i18nextLng') || 
       navigator.language.split('-')[0] || 
       defaultLanguage;
     
-    // Если текущий язык не поддерживается, используем язык по умолчанию
+    // If current language not supported, use default
     if (!supportedLanguages.includes(currentLanguage)) {
       currentLanguage = defaultLanguage;
     }
     
-    // Устанавливаем атрибут lang для HTML
+    // Set lang attribute for HTML
     document.documentElement.lang = currentLanguage;
     
-    // Если это один из языков RTL, добавляем соответствующий атрибут
+    // Add dir attribute for RTL languages
     if (['ar', 'he'].includes(currentLanguage)) {
       document.documentElement.dir = 'rtl';
     } else {
       document.documentElement.dir = 'ltr';
     }
     
-    // Сохраняем язык в cookie и localStorage
-    setCookie('i18next', currentLanguage, 365); // на 365 дней
+    // Save language in cookie and localStorage
+    setCookie('i18next', currentLanguage, 365); // for 365 days
     localStorage.setItem('i18nextLng', currentLanguage);
     
-    // Инициализируем переводы на странице
+    // Initialize translations on page
     updatePageTranslations();
     
-    // Инициализируем переключатель языков
+    // Initialize language switcher
     setupLanguageSwitcher();
   }
   
   /**
-   * Настройка переключателя языков
+   * Setup language switcher
    */
   function setupLanguageSwitcher() {
-    // Ищем селектор языка
+    // Find language selector
     const languageSelector = document.querySelector('.language-selector');
     if (!languageSelector) return;
     
-    // Очищаем содержимое
+    // Clear content
     languageSelector.innerHTML = '';
     
-    // Флаги и названия для основных языков
+    // Flags and names for main languages
     const languages = [
       { code: 'de', name: 'Deutsch', flag: '🇩🇪' },
       { code: 'en', name: 'English', flag: '🇬🇧' },
@@ -94,10 +89,9 @@
       { code: 'zh', name: '中文', flag: '🇨🇳' },
       { code: 'ar', name: 'العربية', flag: '🇸🇦' },
       { code: 'ja', name: '日本語', flag: '🇯🇵' }
-      // Можно добавить больше языков при необходимости
     ];
     
-    // Создаем опции селектора
+    // Create selector options
     languages.forEach(lang => {
       const option = document.createElement('div');
       option.className = 'language-option';
@@ -115,7 +109,7 @@
       languageSelector.appendChild(option);
     });
     
-    // Кнопка "Ещё языки"
+    // "More languages" button
     const moreBtn = document.createElement('div');
     moreBtn.className = 'language-more-btn';
     moreBtn.textContent = '...';
@@ -127,12 +121,12 @@
   }
   
   /**
-   * Показать модальное окно со всеми доступными языками
+   * Show modal with all available languages
    */
   function showAllLanguages(container) {
-    // Полный список языков
+    // Full language list
     const allLanguages = [
-      // ЕС
+      // EU
       { code: 'de', name: 'Deutsch', flag: '🇩🇪' },
       { code: 'en', name: 'English', flag: '🇬🇧' },
       { code: 'fr', name: 'Français', flag: '🇫🇷' },
@@ -157,7 +151,7 @@
       { code: 'hr', name: 'Hrvatski', flag: '🇭🇷' },
       { code: 'ga', name: 'Gaeilge', flag: '🇮🇪' },
       { code: 'mt', name: 'Malti', flag: '🇲🇹' },
-      // Дополнительные языки
+      // Additional languages
       { code: 'ru', name: 'Русский', flag: '🇷🇺' },
       { code: 'tr', name: 'Türkçe', flag: '🇹🇷' },
       { code: 'ar', name: 'العربية', flag: '🇸🇦' },
@@ -169,7 +163,7 @@
       { code: 'ja', name: '日本語', flag: '🇯🇵' }
     ];
     
-    // Создаем модальное окно
+    // Create modal
     const modal = document.createElement('div');
     modal.className = 'language-modal';
     modal.innerHTML = `
@@ -184,7 +178,7 @@
       </div>
     `;
     
-    // Добавляем стили
+    // Add styles
     const style = document.createElement('style');
     style.textContent = `
       .language-modal {
@@ -243,7 +237,7 @@
     document.head.appendChild(style);
     document.body.appendChild(modal);
     
-    // Заполняем сеткой языков
+    // Fill language grid
     const grid = modal.querySelector('.language-grid');
     
     allLanguages.forEach(lang => {
@@ -261,12 +255,12 @@
       grid.appendChild(item);
     });
     
-    // Обработчик закрытия
+    // Close handler
     modal.querySelector('.language-modal-close').addEventListener('click', function() {
       document.body.removeChild(modal);
     });
     
-    // Закрытие по клику вне модального окна
+    // Close on click outside modal
     modal.addEventListener('click', function(e) {
       if (e.target === modal) {
         document.body.removeChild(modal);
@@ -275,31 +269,31 @@
   }
   
   /**
-   * Изменить текущий язык
-   * @param {string} lang - Код языка
+   * Change current language
+   * @param {string} lang - Language code
    */
   function changeLanguage(lang) {
     if (lang === currentLanguage) return;
     
-    // Сохраняем новый язык
+    // Save new language
     currentLanguage = lang;
     document.documentElement.lang = lang;
     
-    // Для языков с письмом справа налево
+    // For RTL languages
     if (['ar', 'he'].includes(lang)) {
       document.documentElement.dir = 'rtl';
     } else {
       document.documentElement.dir = 'ltr';
     }
     
-    // Обновляем cookie и localStorage
+    // Update cookie and localStorage
     setCookie('i18next', lang, 365);
     localStorage.setItem('i18nextLng', lang);
     
-    // Обновляем переводы на странице
+    // Update translations on page
     updatePageTranslations();
     
-    // Обновляем класс active у опций выбора языка
+    // Update active class on language options
     const options = document.querySelectorAll('.language-option, .language-item');
     options.forEach(option => {
       if (option.dataset.lang === lang) {
@@ -309,72 +303,129 @@
       }
     });
     
-    // Генерируем событие изменения языка
+    // Generate language change event
     document.dispatchEvent(new CustomEvent('languageChanged', { detail: { language: lang } }));
   }
   
   /**
-   * Обновление переводов на странице
+   * Update translations on page
    */
   function updatePageTranslations() {
-    // Если язык равен языку по умолчанию, не нужно ничего переводить
+    // If language equals default language, no translation needed
     if (currentLanguage === defaultLanguage) return;
     
-    // Собираем все элементы с атрибутом data-i18n
-    const elements = document.querySelectorAll('[data-i18n]');
-    const textsToTranslate = [];
+    // Reset retry counters on full page update
+    translationRetryCount = {};
     
-    // Собираем тексты для перевода
-    elements.forEach(el => {
+    // First collect all untranslated elements (with data-i18n attributes)
+    const elements = document.querySelectorAll('[data-i18n]');
+    
+    // Process the elements in batches for better performance
+    processElementsInBatches(elements, 0);
+    
+    // Also handle attribute translations
+    const attributeElements = document.querySelectorAll('[data-i18n-attr]');
+    if (attributeElements.length > 0) {
+      processAttributeTranslations(attributeElements);
+    }
+  }
+  
+  /**
+   * Process elements in batches to avoid UI blocking
+   */
+  function processElementsInBatches(elements, startIndex, batchSize = 50) {
+    const endIndex = Math.min(startIndex + batchSize, elements.length);
+    const batch = Array.from(elements).slice(startIndex, endIndex);
+    
+    // Collect texts to translate
+    const textsToTranslate = [];
+    const keysMap = [];
+    
+    batch.forEach(el => {
       const key = el.getAttribute('data-i18n');
       textsToTranslate.push(el.textContent.trim());
+      keysMap.push(key);
     });
     
-    // Если нечего переводить, выходим
-    if (textsToTranslate.length === 0) return;
+    // Request translations for this batch
+    if (textsToTranslate.length > 0) {
+      translateBatch(textsToTranslate, batch, keysMap);
+    }
     
-    // Отправляем запрос на пакетный перевод
+    // If there are more elements, schedule the next batch
+    if (endIndex < elements.length) {
+      setTimeout(() => {
+        processElementsInBatches(elements, endIndex, batchSize);
+      }, 0);
+    }
+  }
+  
+  /**
+   * Translate a batch of elements
+   */
+  function translateBatch(texts, elements, keys) {
     fetch('/api/translate-batch', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        texts: textsToTranslate,
+        texts: texts,
         targetLang: currentLanguage
       })
     })
     .then(response => response.json())
     .then(data => {
-      if (data.translations && data.translations.length === textsToTranslate.length) {
-        // Применяем переводы
+      if (data.translations && data.translations.length === texts.length) {
+        // Apply translations
         elements.forEach((el, index) => {
+          const key = keys[index];
           el.textContent = data.translations[index];
+          
+          // If translation was successful, we can remove the data-i18n attribute
+          if (data.translations[index] !== texts[index] && 
+              data.translations[index] !== key) {
+            // Cache the translation for future use
+            translationCache[`${currentLanguage}:${key}`] = data.translations[index];
+            
+            // Optionally remove the data-i18n attribute
+            // el.removeAttribute('data-i18n');
+          } else {
+            // Translation failed or returned same text, schedule retry if needed
+            scheduleRetryForElement(el, key);
+          }
         });
       }
     })
     .catch(error => {
       console.error('Translation error:', error);
     });
-    
-    // Переводим атрибуты
-    const attributeElements = document.querySelectorAll('[data-i18n-attr]');
+  }
+  
+  /**
+   * Process attribute translations
+   */
+  function processAttributeTranslations(elements) {
     const attributeTexts = [];
     const attributeMappings = [];
     
-    attributeElements.forEach(el => {
+    elements.forEach(el => {
       try {
         const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
-        for (const [attr, text] of Object.entries(attrsMap)) {
+        for (const [attr, key] of Object.entries(attrsMap)) {
           attributeTexts.push(el.getAttribute(attr));
-          attributeMappings.push({ element: el, attribute: attr });
+          attributeMappings.push({ 
+            element: el, 
+            attribute: attr,
+            key: key
+          });
         }
       } catch (e) {
         console.error('Error parsing data-i18n-attr:', e);
       }
     });
     
-    // Если есть атрибуты для перевода
+    // If there are attributes to translate
     if (attributeTexts.length > 0) {
       fetch('/api/translate-batch', {
         method: 'POST',
@@ -389,9 +440,18 @@
       .then(response => response.json())
       .then(data => {
         if (data.translations && data.translations.length === attributeTexts.length) {
-          // Применяем переводы атрибутов
+          // Apply translations
           attributeMappings.forEach((mapping, index) => {
             mapping.element.setAttribute(mapping.attribute, data.translations[index]);
+            
+            // Cache the translation
+            translationCache[`${currentLanguage}:${mapping.key}`] = data.translations[index];
+            
+            // Schedule retry if needed
+            if (data.translations[index] === attributeTexts[index] || 
+                data.translations[index] === mapping.key) {
+              scheduleRetryForAttribute(mapping.element, mapping.attribute, mapping.key);
+            }
           });
         }
       })
@@ -402,16 +462,129 @@
   }
   
   /**
-   * Функция для перевода динамически созданного элемента
-   * @param {HTMLElement} element - HTML-элемент для перевода
-   * @param {string} context - Контекст перевода
-   * @returns {Promise} - Promise с результатом перевода
+   * Schedule retry for element translation
+   */
+  function scheduleRetryForElement(element, key) {
+    const retryKey = `${currentLanguage}:${key}`;
+    
+    // Initialize retry count if not exists
+    if (!translationRetryCount[retryKey]) {
+      translationRetryCount[retryKey] = 0;
+    }
+    
+    // Check if we haven't exceeded max retries
+    if (translationRetryCount[retryKey] < MAX_RETRIES) {
+      const retryIndex = translationRetryCount[retryKey];
+      const delay = RETRY_DELAYS[retryIndex];
+      
+      setTimeout(() => {
+        // Add loading indicator class
+        element.classList.add('i18n-loading');
+        
+        // Retry translation
+        fetch('/api/translate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            text: element.textContent.trim(),
+            targetLang: currentLanguage
+          })
+        })
+        .then(response => response.json())
+        .then(data => {
+          // Remove loading indicator
+          element.classList.remove('i18n-loading');
+          
+          if (data.translated && data.translated !== element.textContent) {
+            element.textContent = data.translated;
+            translationCache[retryKey] = data.translated;
+            // Optionally remove data-i18n attribute
+            // element.removeAttribute('data-i18n');
+          }
+        })
+        .catch(error => {
+          element.classList.remove('i18n-loading');
+          console.error('Retry translation error:', error);
+        });
+        
+        // Increment retry count
+        translationRetryCount[retryKey]++;
+      }, delay);
+    }
+  }
+  
+  /**
+   * Schedule retry for attribute translation
+   */
+  function scheduleRetryForAttribute(element, attribute, key) {
+    const retryKey = `${currentLanguage}:${key}:attr:${attribute}`;
+    
+    if (!translationRetryCount[retryKey]) {
+      translationRetryCount[retryKey] = 0;
+    }
+    
+    if (translationRetryCount[retryKey] < MAX_RETRIES) {
+      const retryIndex = translationRetryCount[retryKey];
+      const delay = RETRY_DELAYS[retryIndex];
+      
+      setTimeout(() => {
+        // Add loading indicator to parent element
+        element.classList.add('i18n-loading');
+        
+        fetch('/api/translate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            text: element.getAttribute(attribute),
+            targetLang: currentLanguage
+          })
+        })
+        .then(response => response.json())
+        .then(data => {
+          element.classList.remove('i18n-loading');
+          
+          if (data.translated && data.translated !== element.getAttribute(attribute)) {
+            element.setAttribute(attribute, data.translated);
+            translationCache[retryKey] = data.translated;
+          }
+        })
+        .catch(error => {
+          element.classList.remove('i18n-loading');
+          console.error('Retry attribute translation error:', error);
+        });
+        
+        translationRetryCount[retryKey]++;
+      }, delay);
+    }
+  }
+  
+  /**
+   * Function to translate dynamically created element
+   * @param {HTMLElement} element - HTML element to translate
+   * @param {string} context - Translation context
+   * @returns {Promise} - Promise with translation result
    */
   function translateDynamicElement(element, context = '') {
-    // Если язык равен языку по умолчанию, не нужно ничего переводить
+    // If language equals default, no translation needed
     if (currentLanguage === defaultLanguage) return Promise.resolve();
     
-    // Получаем все текстовые узлы этого элемента
+    // First, look for any data-i18n attributes
+    const i18nElements = element.querySelectorAll('[data-i18n]');
+    const i18nAttrElements = element.querySelectorAll('[data-i18n-attr]');
+    
+    if (i18nElements.length > 0) {
+      processElementsInBatches(i18nElements, 0);
+    }
+    
+    if (i18nAttrElements.length > 0) {
+      processAttributeTranslations(i18nAttrElements);
+    }
+    
+    // Now handle text nodes that don't have data-i18n already
     const textNodes = [];
     const walker = document.createTreeWalker(
       element,
@@ -422,28 +595,38 @@
     
     let node;
     while (node = walker.nextNode()) {
+      const parent = node.parentNode;
+      
+      // Skip if parent already has data-i18n attribute or is a script
+      if (parent.nodeType === Node.ELEMENT_NODE && 
+          (parent.hasAttribute('data-i18n') || 
+           parent.tagName === 'SCRIPT' || 
+           parent.tagName === 'STYLE')) {
+        continue;
+      }
+      
       if (node.nodeValue.trim() !== '') {
         textNodes.push(node);
       }
     }
     
-    // Атрибуты с текстом для перевода
-    const attributesToTranslate = ['placeholder', 'title', 'value'];
+    // Attributes with text to translate
+    const attributesToTranslate = ['placeholder', 'title', 'value', 'alt'];
     
-    // Находим элементы для перевода
+    // Find elements with these attributes
     const elementsWithAttributes = element.querySelectorAll(
       attributesToTranslate.map(attr => `[${attr}]`).join(',')
     );
     
-    // Все текстовые значения для отправки на сервер
+    // All text values to send to server
     const textsToTranslate = [];
     
-    // Добавляем текстовые узлы
+    // Add text nodes
     textNodes.forEach(node => {
       textsToTranslate.push(node.nodeValue.trim());
     });
     
-    // Добавляем значения атрибутов
+    // Add attribute values
     elementsWithAttributes.forEach(el => {
       attributesToTranslate.forEach(attr => {
         if (el.hasAttribute(attr) && el.getAttribute(attr).trim() !== '') {
@@ -452,10 +635,10 @@
       });
     });
     
-    // Если нечего переводить, выходим
+    // If nothing to translate, exit
     if (textsToTranslate.length === 0) return Promise.resolve();
     
-    // Отправляем запрос на перевод
+    // Send translation request
     return fetch('/api/translate-batch', {
       method: 'POST',
       headers: {
@@ -473,13 +656,13 @@
         throw new Error('Invalid translation response');
       }
       
-      // Применяем переводы к текстовым узлам
+      // Apply translations to text nodes
       let index = 0;
       textNodes.forEach(node => {
         node.nodeValue = data.translations[index++];
       });
       
-      // Применяем переводы к атрибутам
+      // Apply translations to attributes
       elementsWithAttributes.forEach(el => {
         attributesToTranslate.forEach(attr => {
           if (el.hasAttribute(attr) && el.getAttribute(attr).trim() !== '') {
@@ -497,10 +680,10 @@
   }
   
   /**
-   * Вспомогательная функция для установки cookie
-   * @param {string} name - Имя cookie
-   * @param {string} value - Значение cookie
-   * @param {number} days - Количество дней до истечения срока действия
+   * Helper function to set cookie
+   * @param {string} name - Cookie name
+   * @param {string} value - Cookie value
+   * @param {number} days - Days until expiration
    */
   function setCookie(name, value, days) {
     let expires = '';
@@ -513,9 +696,9 @@
   }
   
   /**
-   * Вспомогательная функция для получения cookie
-   * @param {string} name - Имя cookie
-   * @returns {string|null} - Значение cookie или null, если cookie не найден
+   * Helper function to get cookie
+   * @param {string} name - Cookie name
+   * @returns {string|null} - Cookie value or null if not found
    */
   function getCookie(name) {
     const nameEQ = name + '=';
@@ -530,17 +713,18 @@
     return null;
   }
   
-  // Экспортируем функции в глобальное пространство имен
+  // Export functions to global namespace
   window.i18n = {
     init,
     changeLanguage,
     getCurrentLanguage: () => currentLanguage || defaultLanguage,
     updatePageTranslations,
     translateDynamicElement,
-    isInitialized: () => currentLanguage !== null
+    isInitialized: () => currentLanguage !== null,
+    updateTranslations: updatePageTranslations
   };
   
-  // Вызываем асинхронную инициализацию при загрузке скрипта
+  // Call async initialization when script loads
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => init());
   } else {

@@ -131,12 +131,7 @@ router.post('/translate', async (req, res) => {
     }
 });
 
-// API эндпоинт для получения конфигурации приложения
-router.get('/config', (req, res) => {
-    res.json({
-      defaultLanguage: process.env.DEFAULT_LANGUAGE || 'en'
-    });
-  });
+
 
 // Helper function to translate text
 async function translateText(text, targetLang) {
