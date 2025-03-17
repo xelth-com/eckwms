@@ -4,12 +4,11 @@
  * Модуль для управления мультиязычностью на клиентской стороне
  */
 (function() {
-  // Текущий язык (берем из cookie или localStorage, иначе язык браузера или 'de' по умолчанию)
-  let currentLanguage = 
-    getCookie('i18next') || 
-    localStorage.getItem('i18nextLng') || 
-    navigator.language.split('-')[0] || 
-    'de';
+  // Язык по умолчанию (будет обновлен при загрузке конфигурации)
+  let defaultLanguage = 'en';
+  
+  // Текущий язык (изначально null, будет установлен после загрузки конфигурации)
+  let currentLanguage = null;
   
   // Проверка поддерживаемых языков
   const supportedLanguages = [
@@ -21,18 +20,37 @@
     'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja'
   ];
   
-  // Если текущий язык не поддерживается, используем 'de' по умолчанию
-  if (!supportedLanguages.includes(currentLanguage)) {
-    currentLanguage = 'de';
-  }
-  
   // Кэш для переводов
   const translationCache = {};
   
   /**
-   * Инициализация модуля
+   * Асинхронная инициализация модуля
    */
-  function init() {
+  async function init() {
+    try {
+      // Получаем настройки с сервера
+      const response = await fetch('/api/config');
+      if (response.ok) {
+        const config = await response.json();
+        defaultLanguage = config.defaultLanguage || 'en';
+        console.log('Configuration loaded, default language:', defaultLanguage);
+      }
+    } catch (error) {
+      console.warn('Could not fetch app configuration, using defaults:', error);
+    }
+    
+    // Определяем текущий язык
+    currentLanguage = 
+      getCookie('i18next') || 
+      localStorage.getItem('i18nextLng') || 
+      navigator.language.split('-')[0] || 
+      defaultLanguage;
+    
+    // Если текущий язык не поддерживается, используем язык по умолчанию
+    if (!supportedLanguages.includes(currentLanguage)) {
+      currentLanguage = defaultLanguage;
+    }
+    
     // Устанавливаем атрибут lang для HTML
     document.documentElement.lang = currentLanguage;
     
@@ -50,10 +68,8 @@
     // Инициализируем переводы на странице
     updatePageTranslations();
     
-    // Обработчик события для динамического содержимого
-    document.addEventListener('DOMContentLoaded', function() {
-      setupLanguageSwitcher();
-    });
+    // Инициализируем переключатель языков
+    setupLanguageSwitcher();
   }
   
   /**
@@ -301,8 +317,8 @@
    * Обновление переводов на странице
    */
   function updatePageTranslations() {
-    // Если язык немецкий (базовый), не нужно ничего переводить
-    if (currentLanguage === 'de') return;
+    // Если язык равен языку по умолчанию, не нужно ничего переводить
+    if (currentLanguage === defaultLanguage) return;
     
     // Собираем все элементы с атрибутом data-i18n
     const elements = document.querySelectorAll('[data-i18n]');
@@ -392,8 +408,8 @@
    * @returns {Promise} - Promise с результатом перевода
    */
   function translateDynamicElement(element, context = '') {
-    // Если язык немецкий (базовый), не нужно ничего переводить
-    if (currentLanguage === 'de') return Promise.resolve();
+    // Если язык равен языку по умолчанию, не нужно ничего переводить
+    if (currentLanguage === defaultLanguage) return Promise.resolve();
     
     // Получаем все текстовые узлы этого элемента
     const textNodes = [];
@@ -518,14 +534,15 @@
   window.i18n = {
     init,
     changeLanguage,
-    getCurrentLanguage: () => currentLanguage,
+    getCurrentLanguage: () => currentLanguage || defaultLanguage,
     updatePageTranslations,
-    translateDynamicElement
+    translateDynamicElement,
+    isInitialized: () => currentLanguage !== null
   };
   
-  // Автоматическая инициализация при загрузке скрипта
+  // Вызываем асинхронную инициализацию при загрузке скрипта
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', () => init());
   } else {
     init();
   }

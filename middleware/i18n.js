@@ -11,7 +11,7 @@ const path = require('path');
  */
 function initI18n(options = {}) {
   const localesPath = path.join(process.cwd(), 'locales');
-  
+  const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
   // Список всех поддерживаемых языков
   const supportedLngs = [
     // Официальные языки ЕС
@@ -33,7 +33,7 @@ function initI18n(options = {}) {
       backend: {
         loadPath: path.join(localesPath, '{{lng}}', '{{ns}}.json')
       },
-      fallbackLng: 'de',         // Немецкий как основной язык
+      fallbackLng: defaultLanguage,         // Немецкий как основной язык
       preload: supportedLngs,    // Предзагрузка всех языков
       ns: namespaces,            // Пространства имен
       defaultNS: 'common',       // Пространство имен по умолчанию

@@ -50,6 +50,25 @@
   background-color: rgba(0, 0, 0, 0.1);
 }
 
+/* Default text alignment for LTR languages */
+html[dir="ltr"] {
+  text-align: left;
+}
+
+html[dir="ltr"] input,
+html[dir="ltr"] textarea {
+  text-align: left;
+}
+
+html[dir="ltr"] .language-selector {
+  flex-direction: row;
+}
+
+html[dir="ltr"] .form-group label {
+  text-align: left;
+}
+
+
 /* Для RTL языков (арабский, иврит) */
 html[dir="rtl"] {
   text-align: right;

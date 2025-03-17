@@ -141,7 +141,7 @@ async function saveToCache(text, targetLang, translatedText, context = '') {
  * @param {string} sourceLang - Исходный язык (по умолчанию: de)
  * @returns {Promise<string>} - Переведенный текст
  */
-async function translateWithAI(text, targetLang, context = '', sourceLang = 'de') {
+async function translateWithAI(text, targetLang, context = '', sourceLang = 'en') {
   try {
     // Проверяем кэш перед API-вызовом
     const cachedTranslation = await checkCache(text, targetLang, context);
@@ -214,7 +214,7 @@ Ensure the translation sounds natural in the target language.`;
  * @param {string} sourceLang - Исходный язык (по умолчанию: de)
  * @returns {Promise<Array<string>>} - Массив переведенных текстов
  */
-async function batchTranslate(texts, targetLang, context = '', sourceLang = 'de') {
+async function batchTranslate(texts, targetLang, context = '', sourceLang = 'en') {
   // Проверяем, есть ли в кэше все тексты
   const results = [];
   const missingTexts = [];

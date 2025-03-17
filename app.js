@@ -14,6 +14,8 @@ const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
 const passport = require('passport');
 const initI18n = require('./middleware/i18n');
+// Import middleware/auth
+const { requireAdmin } = require('./middleware/auth');
 
 
 // Import routes

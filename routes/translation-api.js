@@ -24,7 +24,7 @@ router.post('/translate', async (req, res) => {
       text, 
       targetLang, 
       context || '', 
-      sourceLang || 'de'
+      sourceLang || 'en'
     );
     
     res.json({ 
@@ -55,7 +55,7 @@ router.post('/translate-batch', async (req, res) => {
       texts, 
       targetLang, 
       context || '', 
-      sourceLang || 'de'
+      sourceLang || 'en'
     );
     
     res.json({ 
