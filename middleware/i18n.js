@@ -5,6 +5,7 @@ const Backend = require('i18next-fs-backend');
 const path = require('path');
 const { translateText, saveToCache } = require('../services/translationService');
 const { Queue } = require('../utils/queue');
+const fs = require('fs');
 
 // Create translation queue for deferred translations
 const translationQueue = new Queue();
@@ -20,6 +21,12 @@ function processTranslationQueue() {
   const { text, targetLang, namespace, key } = translationQueue.dequeue();
   const queueKey = `${targetLang}:${namespace}:${key}`;
   
+  // Skip if already in progress
+  if (translationInProgress.has(queueKey)) {
+    setTimeout(processTranslationQueue, 100);
+    return;
+  }
+  
   // Mark this key as in-progress
   translationInProgress.add(queueKey);
   
@@ -31,12 +38,24 @@ function processTranslationQueue() {
         const filePath = path.join(process.cwd(), 'locales', targetLang, `${namespace}.json`);
         let translations = {};
         
-        if (require('fs').existsSync(filePath)) {
-          translations = require(filePath);
+        // Create directory if it doesn't exist
+        const dirPath = path.dirname(filePath);
+        if (!fs.existsSync(dirPath)) {
+          fs.mkdirSync(dirPath, { recursive: true });
+        }
+        
+        if (fs.existsSync(filePath)) {
+          const fileContent = fs.readFileSync(filePath, 'utf8');
+          try {
+            translations = JSON.parse(fileContent);
+          } catch (parseError) {
+            console.error(`[i18n] Error parsing translation file ${filePath}: ${parseError.message}`);
+            translations = {};
+          }
         }
         
         translations[key] = translatedText;
-        require('fs').writeFileSync(filePath, JSON.stringify(translations, null, 2), 'utf8');
+        fs.writeFileSync(filePath, JSON.stringify(translations, null, 2), 'utf8');
         
         // Update i18next cache
         i18next.addResourceBundle(targetLang, namespace, { [key]: translatedText }, true, true);
@@ -87,14 +106,15 @@ function initI18n(options = {}) {
     .use(i18nextMiddleware.LanguageDetector)
     .init({
       backend: {
-        loadPath: path.join(localesPath, '{{lng}}', '{{ns}}.json')
+        loadPath: path.join(localesPath, '{{lng}}', '{{ns}}.json'),
+        addPath: path.join(localesPath, '{{lng}}', '{{ns}}.missing.json')
       },
       fallbackLng: defaultLanguage,
       preload: supportedLngs,
       ns: namespaces,
       defaultNS: 'common',
       detection: {
-        order: ['cookie', 'header', 'querystring', 'session'],
+        order: ['cookie', 'querystring', 'header',  'session'],
         lookupCookie: 'i18next',
         lookupQuerystring: 'lang',
         lookupHeader: 'accept-language',
@@ -160,17 +180,28 @@ function initI18n(options = {}) {
     res.send = function(body) {
       // Only process HTML responses
       if (typeof body === 'string' && 
-          (res.get('Content-Type') || '').includes('text/html') || 
+          ((res.get('Content-Type') || '').includes('text/html') || 
           body.includes('<!DOCTYPE html>') ||
-          body.includes('<html>')) {
+          body.includes('<html>'))) {
         
         // Get language from request (set by i18next-http-middleware)
         const language = req.language || defaultLanguage;
         
         if (language !== defaultLanguage) {
-          // Replace data-i18n tags with translated text if available
+          // Process tags with multiple pattern support for different element types
+          
+          // 1. Simple elements with text content
           body = body.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
-            // Try to get translation
+            // Try to get translation - namespace may be included in the key (e.g. 'common:welcome')
+            let namespace = 'common';
+            let translationKey = key;
+            
+            if (key.includes(':')) {
+              const parts = key.split(':');
+              namespace = parts[0];
+              translationKey = parts.slice(1).join(':');
+            }
+            
             const translation = req.i18n.t(key);
             
             // If translation equals key (not found), leave as is for frontend to handle
@@ -178,11 +209,11 @@ function initI18n(options = {}) {
               return match; // Keep original tag for frontend retry
             }
             
-            // Replace tag content with translation
-            return `<${tag1}${attrs}>${translation}</${tag2}>`;
+            // Return element with translation but keep the data-i18n attribute for future use
+            return `<${tag1} data-i18n="${key}"${attrs}>${translation}</${tag2}>`;
           });
           
-          // Process data-i18n-attr attributes
+          // 2. Process data-i18n-attr attributes (for placeholder, title, etc.)
           body = body.replace(/<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g, (match, tag, attrsJson, restAttrs) => {
             try {
               const attrsMap = JSON.parse(attrsJson);
@@ -193,31 +224,50 @@ function initI18n(options = {}) {
                 const translation = req.i18n.t(key);
                 
                 // Get current attribute value if present
-                const attrValueMatch = match.match(new RegExp(`${attr}="([^"]+)"`));
+                const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
+                const attrValueMatch = match.match(attrRegex);
                 const currentValue = attrValueMatch ? attrValueMatch[1] : '';
                 
                 // If translation differs from key, replace attribute value
                 if (translation !== key) {
-                  newTag = newTag.replace(
-                    `${attr}="${currentValue}"`, 
-                    `${attr}="${translation}"`
-                  );
+                  if (attrValueMatch) {
+                    newTag = newTag.replace(
+                      `${attr}="${currentValue}"`, 
+                      `${attr}="${translation}"`
+                    );
+                  } else {
+                    // Attribute not present, add it
+                    newTag = newTag + ` ${attr}="${translation}"`;
+                  }
                 } else {
                   allTranslated = false; // Mark that not all attributes are translated
                 }
               }
               
-              // If all attributes translated, remove data-i18n-attr
-              if (allTranslated) {
-                return newTag.replace(/\s+data-i18n-attr=['"][^'"]+['"]/, '') + '>';
+              // Keep data-i18n-attr for frontend retries if not all translated
+              if (!allTranslated) {
+                return newTag + '>';
               }
               
-              // Otherwise keep the tag for frontend retry
-              return match;
+              // Otherwise remove data-i18n-attr but keep the tag
+              return newTag.replace(/\s+data-i18n-attr=['"][^'"]+['"]/, '') + '>';
             } catch (e) {
               console.error('Error parsing data-i18n-attr:', e);
               return match;
             }
+          });
+          
+          // 3. Process elements with HTML content
+          body = body.replace(/<([^>]+)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
+            const translation = req.i18n.t(key, { interpolation: { escapeValue: false } });
+            
+            // If translation equals key (not found), leave as is for frontend to handle
+            if (translation === key) {
+              return match;
+            }
+            
+            // Return element with HTML translation
+            return `<${tag1} data-i18n-html="${key}"${attrs}>${translation}</${tag2}>`;
           });
         }
       }

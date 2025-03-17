@@ -64,6 +64,9 @@ global.serialP = 1;
 // Create JWT secret
 global.secretJwt = createSecretJwtKey(process.env.JWT_SECRET);
 
+
+
+
 // Security middleware
 app.use(helmet({
     contentSecurityPolicy: false, // Disable CSP to avoid issues with inline scripts
@@ -80,6 +83,20 @@ app.use(passport.initialize());
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Затем ваш логирующий middleware
+app.use((req, res, next) => {
+    console.log('========= REQUEST HEADERS =========');
+    console.log('URL:', req.url);  // Добавьте эту строку
+    console.log('Original URL:', req.originalUrl);  // И эту
+    console.log('Cookies:', req.cookies);
+    console.log('Accept-Language:', req.headers['accept-language']);
+    console.log('Query:', req.query);
+    console.log('==================================');
+    next();
+  });
+
+
 app.use(bodyParser.text({ type: 'text/html' }));
 
 // Serve static files

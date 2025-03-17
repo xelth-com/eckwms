@@ -202,6 +202,7 @@ function containsHtmlTags(text) {
  * @returns {Promise<string>} - Translated text
  */
 async function translateText(text, targetLang, context = '', sourceLang = 'de') {
+  console.log('translateText', text, targetLang, context, sourceLang);
   try {
     // If text is empty, return as is
     if (!text || text.trim() === '') {
@@ -251,7 +252,7 @@ Ensure the translation sounds natural in the target language.`;
     } else if (targetLang === 'ja' || targetLang === 'ko') {
       systemPrompt += '\nPreserve technical terms in their standard form for this language.';
     }
-    
+    console.log('OpenAI API call', text);
     // Call OpenAI API
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini", // or another available model
@@ -285,6 +286,7 @@ Ensure the translation sounds natural in the target language.`;
  * @returns {Promise<Array<string>>} - Array of translated texts
  */
 async function batchTranslate(texts, targetLang, context = '', sourceLang = 'de') {
+  console.log('batchTranslate', texts, targetLang, context, sourceLang);
   // Check if all texts are in cache
   const results = [];
   const missingTexts = [];
@@ -352,7 +354,7 @@ Return ONLY the translated texts, with each separated by "---SEPARATOR---".
 Keep the same order of texts.
 
 IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in the original text.`;
-      
+      console.log('OpenAI API batch call', combinedText);
       try {
         const response = await openai.chat.completions.create({
           model: "gpt-4o-mini", // or another available model

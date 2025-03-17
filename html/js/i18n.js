@@ -4,11 +4,14 @@
  * Client-side multilanguage support module
  */
 (function() {
-  // Default language (will be updated during configuration loading)
-  let defaultLanguage = 'en';
+  // Default language (fallback)
+  let defaultLanguage = 'de';
   
-  // Current language (initially null, will be set after configuration loading)
+  // Current language (initially null, will be set after initialization)
   let currentLanguage = null;
+  
+  // Initialization flag
+  let initialized = false;
   
   // Check supported languages
   const supportedLanguages = [
@@ -28,12 +31,13 @@
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [3000, 10000, 30000]; // 3sec, 10sec, 30sec
   
+  // Set of keys currently being translated to avoid duplicate requests
+  const pendingTranslations = new Set();
+  
   /**
    * Asynchronous module initialization
    */
   async function init() {
-    
-    
     // Determine current language
     currentLanguage = 
       getCookie('i18next') || 
@@ -60,23 +64,31 @@
     setCookie('i18next', currentLanguage, 365); // for 365 days
     localStorage.setItem('i18nextLng', currentLanguage);
     
-    // Initialize translations on page
-    updatePageTranslations();
+    // Only update translations if language is not default
+    if (currentLanguage !== defaultLanguage) {
+      // Initialize translations on page
+      updatePageTranslations();
+    }
     
     // Initialize language switcher
     setupLanguageSwitcher();
+    
+    // Set initialization flag
+    initialized = true;
+    
+    // Dispatch event that i18n is initialized
+    document.dispatchEvent(new CustomEvent('i18n:initialized', { 
+      detail: { language: currentLanguage } 
+    }));
   }
   
   /**
    * Setup language switcher
    */
   function setupLanguageSwitcher() {
-    // Find language selector
-    const languageSelector = document.querySelector('.language-selector');
-    if (!languageSelector) return;
-    
-    // Clear content
-    languageSelector.innerHTML = '';
+    // Find all language selectors
+    const languageSelectors = document.querySelectorAll('.language-selector');
+    if (languageSelectors.length === 0) return;
     
     // Flags and names for main languages
     const languages = [
@@ -91,33 +103,39 @@
       { code: 'ja', name: '日本語', flag: '🇯🇵' }
     ];
     
-    // Create selector options
-    languages.forEach(lang => {
-      const option = document.createElement('div');
-      option.className = 'language-option';
-      option.dataset.lang = lang.code;
-      option.innerHTML = `${lang.flag} ${lang.name}`;
+    // Update each language selector
+    languageSelectors.forEach(languageSelector => {
+      // Clear content
+      languageSelector.innerHTML = '';
       
-      if (lang.code === currentLanguage) {
-        option.classList.add('active');
-      }
-      
-      option.addEventListener('click', function() {
-        changeLanguage(lang.code);
+      // Create selector options
+      languages.forEach(lang => {
+        const option = document.createElement('div');
+        option.className = 'language-option';
+        option.dataset.lang = lang.code;
+        option.innerHTML = `${lang.flag} <span>${lang.name}</span>`;
+        
+        if (lang.code === currentLanguage) {
+          option.classList.add('active');
+        }
+        
+        option.addEventListener('click', function() {
+          changeLanguage(lang.code);
+        });
+        
+        languageSelector.appendChild(option);
       });
       
-      languageSelector.appendChild(option);
+      // "More languages" button
+      const moreBtn = document.createElement('div');
+      moreBtn.className = 'language-more-btn';
+      moreBtn.textContent = '...';
+      moreBtn.addEventListener('click', function() {
+        showAllLanguages(languageSelector);
+      });
+      
+      languageSelector.appendChild(moreBtn);
     });
-    
-    // "More languages" button
-    const moreBtn = document.createElement('div');
-    moreBtn.className = 'language-more-btn';
-    moreBtn.textContent = '...';
-    moreBtn.addEventListener('click', function() {
-      showAllLanguages(languageSelector);
-    });
-    
-    languageSelector.appendChild(moreBtn);
   }
   
   /**
@@ -290,8 +308,19 @@
     setCookie('i18next', lang, 365);
     localStorage.setItem('i18nextLng', lang);
     
-    // Update translations on page
-    updatePageTranslations();
+    // Clear retry counters on language change
+    translationRetryCount = {};
+    pendingTranslations.clear();
+    
+    // Only update translations if not default language
+    if (lang !== defaultLanguage) {
+      // Update translations on page
+      updatePageTranslations();
+    } else {
+      // If switching to default language, reload page to get original content
+      window.location.reload();
+      return;
+    }
     
     // Update active class on language options
     const options = document.querySelectorAll('.language-option, .language-item');
@@ -304,7 +333,9 @@
     });
     
     // Generate language change event
-    document.dispatchEvent(new CustomEvent('languageChanged', { detail: { language: lang } }));
+    document.dispatchEvent(new CustomEvent('languageChanged', { 
+      detail: { language: lang } 
+    }));
   }
   
   /**
@@ -316,17 +347,26 @@
     
     // Reset retry counters on full page update
     translationRetryCount = {};
+    pendingTranslations.clear();
     
     // First collect all untranslated elements (with data-i18n attributes)
     const elements = document.querySelectorAll('[data-i18n]');
     
     // Process the elements in batches for better performance
-    processElementsInBatches(elements, 0);
+    if (elements.length > 0) {
+      processElementsInBatches(elements, 0);
+    }
     
     // Also handle attribute translations
     const attributeElements = document.querySelectorAll('[data-i18n-attr]');
     if (attributeElements.length > 0) {
       processAttributeTranslations(attributeElements);
+    }
+    
+    // Handle HTML content translations
+    const htmlElements = document.querySelectorAll('[data-i18n-html]');
+    if (htmlElements.length > 0) {
+      processHtmlTranslations(htmlElements);
     }
   }
   
@@ -340,16 +380,34 @@
     // Collect texts to translate
     const textsToTranslate = [];
     const keysMap = [];
+    const elementsMap = [];
     
     batch.forEach(el => {
       const key = el.getAttribute('data-i18n');
-      textsToTranslate.push(el.textContent.trim());
+      
+      // Check if we already have this in cache
+      const cacheKey = `${currentLanguage}:${key}`;
+      if (translationCache[cacheKey]) {
+        el.textContent = translationCache[cacheKey];
+        return;
+      }
+      
+      // Skip if key is already being translated
+      if (pendingTranslations.has(cacheKey)) {
+        return;
+      }
+      
+      textsToTranslate.push(key); // Send the key, not the content
       keysMap.push(key);
+      elementsMap.push(el);
+      
+      // Mark as pending
+      pendingTranslations.add(cacheKey);
     });
     
     // Request translations for this batch
     if (textsToTranslate.length > 0) {
-      translateBatch(textsToTranslate, batch, keysMap);
+      translateBatch(textsToTranslate, elementsMap, keysMap);
     }
     
     // If there are more elements, schedule the next batch
@@ -357,6 +415,84 @@
       setTimeout(() => {
         processElementsInBatches(elements, endIndex, batchSize);
       }, 0);
+    }
+  }
+  
+  /**
+   * Process HTML content translations
+   */
+  function processHtmlTranslations(elements) {
+    const textsToTranslate = [];
+    const keysMap = [];
+    const elementsMap = [];
+    
+    elements.forEach(el => {
+      const key = el.getAttribute('data-i18n-html');
+      
+      // Check if we already have this in cache
+      const cacheKey = `${currentLanguage}:html:${key}`;
+      if (translationCache[cacheKey]) {
+        el.innerHTML = translationCache[cacheKey];
+        return;
+      }
+      
+      // Skip if key is already being translated
+      if (pendingTranslations.has(cacheKey)) {
+        return;
+      }
+      
+      textsToTranslate.push(key);
+      keysMap.push(key);
+      elementsMap.push(el);
+      
+      // Mark as pending
+      pendingTranslations.add(cacheKey);
+    });
+    
+    if (textsToTranslate.length > 0) {
+      fetch('/api/translate-batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          texts: textsToTranslate,
+          targetLang: currentLanguage,
+          htmlContent: true
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.translations && data.translations.length === textsToTranslate.length) {
+          // Apply translations
+          elementsMap.forEach((el, index) => {
+            const key = keysMap[index];
+            const cacheKey = `${currentLanguage}:html:${key}`;
+            
+            // Remove from pending
+            pendingTranslations.delete(cacheKey);
+            
+            if (data.translations[index] && data.translations[index] !== key) {
+              el.innerHTML = data.translations[index];
+              translationCache[cacheKey] = data.translations[index];
+            } else {
+              // Translation failed, schedule retry
+              scheduleRetryForHtmlElement(el, key);
+            }
+          });
+        }
+      })
+      .catch(error => {
+        console.error('HTML translation error:', error);
+        
+        // Handle errors - mark elements for retry
+        elementsMap.forEach((el, index) => {
+          const key = keysMap[index];
+          const cacheKey = `${currentLanguage}:html:${key}`;
+          pendingTranslations.delete(cacheKey);
+          scheduleRetryForHtmlElement(el, key);
+        });
+      });
     }
   }
   
@@ -380,18 +516,16 @@
         // Apply translations
         elements.forEach((el, index) => {
           const key = keys[index];
-          el.textContent = data.translations[index];
+          const cacheKey = `${currentLanguage}:${key}`;
           
-          // If translation was successful, we can remove the data-i18n attribute
-          if (data.translations[index] !== texts[index] && 
-              data.translations[index] !== key) {
-            // Cache the translation for future use
-            translationCache[`${currentLanguage}:${key}`] = data.translations[index];
-            
-            // Optionally remove the data-i18n attribute
-            // el.removeAttribute('data-i18n');
+          // Remove from pending
+          pendingTranslations.delete(cacheKey);
+          
+          if (data.translations[index] && data.translations[index] !== key) {
+            el.textContent = data.translations[index];
+            translationCache[cacheKey] = data.translations[index];
           } else {
-            // Translation failed or returned same text, schedule retry if needed
+            // Translation failed or returned same text, schedule retry
             scheduleRetryForElement(el, key);
           }
         });
@@ -399,6 +533,14 @@
     })
     .catch(error => {
       console.error('Translation error:', error);
+      
+      // Handle errors - mark elements for retry
+      elements.forEach((el, index) => {
+        const key = keys[index];
+        const cacheKey = `${currentLanguage}:${key}`;
+        pendingTranslations.delete(cacheKey);
+        scheduleRetryForElement(el, key);
+      });
     });
   }
   
@@ -413,12 +555,27 @@
       try {
         const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
         for (const [attr, key] of Object.entries(attrsMap)) {
-          attributeTexts.push(el.getAttribute(attr));
+          // Check if we already have this in cache
+          const cacheKey = `${currentLanguage}:attr:${key}`;
+          if (translationCache[cacheKey]) {
+            el.setAttribute(attr, translationCache[cacheKey]);
+            continue;
+          }
+          
+          // Skip if key is already being translated
+          if (pendingTranslations.has(cacheKey)) {
+            continue;
+          }
+          
+          attributeTexts.push(key); // Send the key, not the current attribute value
           attributeMappings.push({ 
             element: el, 
             attribute: attr,
             key: key
           });
+          
+          // Mark as pending
+          pendingTranslations.add(cacheKey);
         }
       } catch (e) {
         console.error('Error parsing data-i18n-attr:', e);
@@ -442,14 +599,16 @@
         if (data.translations && data.translations.length === attributeTexts.length) {
           // Apply translations
           attributeMappings.forEach((mapping, index) => {
-            mapping.element.setAttribute(mapping.attribute, data.translations[index]);
+            const cacheKey = `${currentLanguage}:attr:${mapping.key}`;
             
-            // Cache the translation
-            translationCache[`${currentLanguage}:${mapping.key}`] = data.translations[index];
+            // Remove from pending
+            pendingTranslations.delete(cacheKey);
             
-            // Schedule retry if needed
-            if (data.translations[index] === attributeTexts[index] || 
-                data.translations[index] === mapping.key) {
+            if (data.translations[index] && data.translations[index] !== mapping.key) {
+              mapping.element.setAttribute(mapping.attribute, data.translations[index]);
+              translationCache[cacheKey] = data.translations[index];
+            } else {
+              // Schedule retry if needed
               scheduleRetryForAttribute(mapping.element, mapping.attribute, mapping.key);
             }
           });
@@ -457,6 +616,13 @@
       })
       .catch(error => {
         console.error('Attribute translation error:', error);
+        
+        // Handle errors - mark attributes for retry
+        attributeMappings.forEach(mapping => {
+          const cacheKey = `${currentLanguage}:attr:${mapping.key}`;
+          pendingTranslations.delete(cacheKey);
+          scheduleRetryForAttribute(mapping.element, mapping.attribute, mapping.key);
+        });
       });
     }
   }
@@ -478,17 +644,26 @@
       const delay = RETRY_DELAYS[retryIndex];
       
       setTimeout(() => {
+        // Skip if element no longer in DOM
+        if (!document.contains(element)) return;
+        
+        // Skip if already in pending
+        if (pendingTranslations.has(retryKey)) return;
+        
         // Add loading indicator class
         element.classList.add('i18n-loading');
         
-        // Retry translation
+        // Mark as pending
+        pendingTranslations.add(retryKey);
+        
+        // Retry translation using the key, not the current content
         fetch('/api/translate', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            text: element.textContent.trim(),
+            text: key,
             targetLang: currentLanguage
           })
         })
@@ -497,15 +672,17 @@
           // Remove loading indicator
           element.classList.remove('i18n-loading');
           
-          if (data.translated && data.translated !== element.textContent) {
+          // Remove from pending
+          pendingTranslations.delete(retryKey);
+          
+          if (data.translated && data.translated !== key) {
             element.textContent = data.translated;
             translationCache[retryKey] = data.translated;
-            // Optionally remove data-i18n attribute
-            // element.removeAttribute('data-i18n');
           }
         })
         .catch(error => {
           element.classList.remove('i18n-loading');
+          pendingTranslations.delete(retryKey);
           console.error('Retry translation error:', error);
         });
         
@@ -516,10 +693,10 @@
   }
   
   /**
-   * Schedule retry for attribute translation
+   * Schedule retry for HTML element translation
    */
-  function scheduleRetryForAttribute(element, attribute, key) {
-    const retryKey = `${currentLanguage}:${key}:attr:${attribute}`;
+  function scheduleRetryForHtmlElement(element, key) {
+    const retryKey = `${currentLanguage}:html:${key}`;
     
     if (!translationRetryCount[retryKey]) {
       translationRetryCount[retryKey] = 0;
@@ -530,8 +707,17 @@
       const delay = RETRY_DELAYS[retryIndex];
       
       setTimeout(() => {
-        // Add loading indicator to parent element
+        // Skip if element no longer in DOM
+        if (!document.contains(element)) return;
+        
+        // Skip if already in pending
+        if (pendingTranslations.has(retryKey)) return;
+        
+        // Add loading indicator
         element.classList.add('i18n-loading');
+        
+        // Mark as pending
+        pendingTranslations.add(retryKey);
         
         fetch('/api/translate', {
           method: 'POST',
@@ -539,21 +725,82 @@
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            text: element.getAttribute(attribute),
+            text: key,
+            targetLang: currentLanguage,
+            htmlContent: true
+          })
+        })
+        .then(response => response.json())
+        .then(data => {
+          element.classList.remove('i18n-loading');
+          pendingTranslations.delete(retryKey);
+          
+          if (data.translated && data.translated !== key) {
+            element.innerHTML = data.translated;
+            translationCache[retryKey] = data.translated;
+          }
+        })
+        .catch(error => {
+          element.classList.remove('i18n-loading');
+          pendingTranslations.delete(retryKey);
+          console.error('Retry HTML translation error:', error);
+        });
+        
+        translationRetryCount[retryKey]++;
+      }, delay);
+    }
+  }
+  
+  /**
+   * Schedule retry for attribute translation
+   */
+  function scheduleRetryForAttribute(element, attribute, key) {
+    const retryKey = `${currentLanguage}:attr:${key}`;
+    
+    if (!translationRetryCount[retryKey]) {
+      translationRetryCount[retryKey] = 0;
+    }
+    
+    if (translationRetryCount[retryKey] < MAX_RETRIES) {
+      const retryIndex = translationRetryCount[retryKey];
+      const delay = RETRY_DELAYS[retryIndex];
+      
+      setTimeout(() => {
+        // Skip if element no longer in DOM
+        if (!document.contains(element)) return;
+        
+        // Skip if already in pending
+        if (pendingTranslations.has(retryKey)) return;
+        
+        // Add loading indicator to parent element
+        element.classList.add('i18n-loading');
+        
+        // Mark as pending
+        pendingTranslations.add(retryKey);
+        
+        fetch('/api/translate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            text: key,
             targetLang: currentLanguage
           })
         })
         .then(response => response.json())
         .then(data => {
           element.classList.remove('i18n-loading');
+          pendingTranslations.delete(retryKey);
           
-          if (data.translated && data.translated !== element.getAttribute(attribute)) {
+          if (data.translated && data.translated !== key) {
             element.setAttribute(attribute, data.translated);
             translationCache[retryKey] = data.translated;
           }
         })
         .catch(error => {
           element.classList.remove('i18n-loading');
+          pendingTranslations.delete(retryKey);
           console.error('Retry attribute translation error:', error);
         });
         
@@ -575,6 +822,7 @@
     // First, look for any data-i18n attributes
     const i18nElements = element.querySelectorAll('[data-i18n]');
     const i18nAttrElements = element.querySelectorAll('[data-i18n-attr]');
+    const i18nHtmlElements = element.querySelectorAll('[data-i18n-html]');
     
     if (i18nElements.length > 0) {
       processElementsInBatches(i18nElements, 0);
@@ -584,34 +832,44 @@
       processAttributeTranslations(i18nAttrElements);
     }
     
+    if (i18nHtmlElements.length > 0) {
+      processHtmlTranslations(i18nHtmlElements);
+    }
+    
     // Now handle text nodes that don't have data-i18n already
     const textNodes = [];
     const walker = document.createTreeWalker(
       element,
       NodeFilter.SHOW_TEXT,
-      null,
+      {
+        acceptNode: function(node) {
+          // Skip empty text nodes and nodes in script/style
+          if (node.nodeValue.trim() === '') return NodeFilter.FILTER_REJECT;
+          
+          const parent = node.parentNode;
+          if (parent.nodeType === Node.ELEMENT_NODE && 
+              (parent.tagName === 'SCRIPT' || 
+               parent.tagName === 'STYLE' ||
+               parent.hasAttribute('data-i18n') ||
+               parent.hasAttribute('data-i18n-html'))) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      },
       false
     );
     
     let node;
     while (node = walker.nextNode()) {
-      const parent = node.parentNode;
-      
-      // Skip if parent already has data-i18n attribute or is a script
-      if (parent.nodeType === Node.ELEMENT_NODE && 
-          (parent.hasAttribute('data-i18n') || 
-           parent.tagName === 'SCRIPT' || 
-           parent.tagName === 'STYLE')) {
-        continue;
-      }
-      
       if (node.nodeValue.trim() !== '') {
         textNodes.push(node);
       }
     }
     
     // Attributes with text to translate
-    const attributesToTranslate = ['placeholder', 'title', 'value', 'alt'];
+    const attributesToTranslate = ['placeholder', 'title', 'alt', 'value'];
     
     // Find elements with these attributes
     const elementsWithAttributes = element.querySelectorAll(
@@ -720,7 +978,7 @@
     getCurrentLanguage: () => currentLanguage || defaultLanguage,
     updatePageTranslations,
     translateDynamicElement,
-    isInitialized: () => currentLanguage !== null,
+    isInitialized: () => initialized,
     updateTranslations: updatePageTranslations
   };
   
