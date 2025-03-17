@@ -103,12 +103,25 @@ async function saveToCache(text, targetLang, translatedText, context = '') {
   // Сохраняем в базу данных, если она доступна
   if (TranslationCache) {
     try {
-      await TranslationCache.create({
-        key,
-        language: targetLang,
-        originalText: text,
-        translatedText: translatedText,
-        context: context || null
+      await TranslationCache.findOrCreate({
+        where: {
+          key,
+          language: targetLang
+        },
+        defaults: {
+          originalText: text,
+          translatedText: translatedText,
+          context: context || null
+        }
+      }).then(([record, created]) => {
+        if (!created) {
+          // Обновляем существующую запись
+          return record.update({
+            translatedText: translatedText,
+            lastUsed: new Date(),
+            useCount: record.useCount + 1
+          });
+        }
       });
     } catch (error) {
       console.error('Error saving to database cache:', error);
@@ -134,6 +147,15 @@ async function saveToCache(text, targetLang, translatedText, context = '') {
 }
 
 /**
+ * Проверка, содержит ли текст HTML-теги
+ * @param {string} text - Текст для проверки
+ * @returns {boolean} - true, если содержит теги
+ */
+function containsHtmlTags(text) {
+  return /<[^>]*>/g.test(text);
+}
+
+/**
  * Перевод текста с помощью OpenAI
  * @param {string} text - Исходный текст
  * @param {string} targetLang - Целевой язык
@@ -141,8 +163,13 @@ async function saveToCache(text, targetLang, translatedText, context = '') {
  * @param {string} sourceLang - Исходный язык (по умолчанию: de)
  * @returns {Promise<string>} - Переведенный текст
  */
-async function translateWithAI(text, targetLang, context = '', sourceLang = 'en') {
+async function translateText(text, targetLang, context = '', sourceLang = 'de') {
   try {
+    // Если текст пустой, возвращаем его как есть
+    if (!text || text.trim() === '') {
+      return text;
+    }
+    
     // Проверяем кэш перед API-вызовом
     const cachedTranslation = await checkCache(text, targetLang, context);
     if (cachedTranslation) return cachedTranslation;
@@ -168,6 +195,11 @@ async function translateWithAI(text, targetLang, context = '', sourceLang = 'en'
 Translate the text from ${sourceLanguageName} to ${targetLanguageName}. 
 Maintain the same tone, formatting and technical terminology.
 Ensure the translation sounds natural in the target language.`;
+    
+    // Добавляем инструкции для сохранения HTML-тегов, если они есть
+    if (containsHtmlTags(text)) {
+      systemPrompt += `\nIMPORTANT: Preserve all HTML tags exactly as they appear in the original text.`;
+    }
     
     if (context) {
       systemPrompt += `\nContext: This text appears in the "${context}" section of the application.`;
@@ -214,7 +246,7 @@ Ensure the translation sounds natural in the target language.`;
  * @param {string} sourceLang - Исходный язык (по умолчанию: de)
  * @returns {Promise<Array<string>>} - Массив переведенных текстов
  */
-async function batchTranslate(texts, targetLang, context = '', sourceLang = 'en') {
+async function batchTranslate(texts, targetLang, context = '', sourceLang = 'de') {
   // Проверяем, есть ли в кэше все тексты
   const results = [];
   const missingTexts = [];
@@ -222,6 +254,15 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = 'en'
   
   for (let i = 0; i < texts.length; i++) {
     if (!texts[i] || texts[i].trim() === '') {
+      results[i] = texts[i];
+      continue;
+    }
+    
+    // Проверяем, является ли текст идентификатором с тегом
+    const isTaggedKey = /^data-i18n=["'][^"']+["']$/.test(texts[i]);
+    
+    if (isTaggedKey) {
+      // Оставляем тег как есть для последующей обработки на фронтенде
       results[i] = texts[i];
       continue;
     }
@@ -269,7 +310,9 @@ Each text is separated by "---SEPARATOR---".
 Maintain the same tone, formatting and technical terminology.
 Ensure the translations sound natural in ${targetLanguageName}.
 Return ONLY the translated texts, with each separated by "---SEPARATOR---".
-Keep the same order of texts.`;
+Keep the same order of texts.
+
+IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in the original text.`;
       
       try {
         const response = await openai.chat.completions.create({
@@ -300,7 +343,7 @@ Keep the same order of texts.`;
         } else {
           // Если количество не совпадает, переводим по одному
           for (let i = 0; i < currentBatch.length; i++) {
-            const translatedText = await translateWithAI(currentBatch[i], targetLang, context, sourceLang);
+            const translatedText = await translateText(currentBatch[i], targetLang, context, sourceLang);
             results[currentIndexes[i]] = translatedText;
           }
         }
@@ -309,7 +352,7 @@ Keep the same order of texts.`;
         
         // В случае ошибки, переводим по одному
         for (let i = 0; i < currentBatch.length; i++) {
-          const translatedText = await translateWithAI(currentBatch[i], targetLang, context, sourceLang);
+          const translatedText = await translateText(currentBatch[i], targetLang, context, sourceLang);
           results[currentIndexes[i]] = translatedText;
         }
       }
@@ -320,7 +363,7 @@ Keep the same order of texts.`;
 }
 
 module.exports = {
-  translateText: translateWithAI,
+  translateText,
   batchTranslate,
   checkCache,
   saveToCache
