@@ -85,7 +85,7 @@ function processTranslationQueue() {
  */
 function initI18n(options = {}) {
   const localesPath = path.join(process.cwd(), 'locales');
-  const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'de';
+  const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
   
   // List of all supported languages
   const supportedLngs = [
@@ -159,7 +159,6 @@ function initI18n(options = {}) {
       },
       ...options
     });
-  
   // Promise-based translation function
   i18next.getTranslationAsync = async (key, options, lng) => {
     return new Promise((resolve) => {

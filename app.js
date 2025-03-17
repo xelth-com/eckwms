@@ -84,30 +84,47 @@ app.use(passport.initialize());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+
+
+
+app.use(bodyParser.text({ type: 'text/html' }));
+
+
+
+// Serve static files
+//app.use(express.static(path.join(__dirname, 'html')));
+
 // Затем ваш логирующий middleware
+
+
+//app.use('/locales', express.static(path.join(__dirname, 'locales')));
+
+
+// Logging middleware
+app.use(morgan('[:date[clf]] :method :url :status :response-time ms - :res[content-length]'));
+app.use(requestLogger);
+
+
+
+
+app.use(initI18n());
+
+
 app.use((req, res, next) => {
     console.log('========= REQUEST HEADERS =========');
-    console.log('URL:', req.url);  // Добавьте эту строку
-    console.log('Original URL:', req.originalUrl);  // И эту
+    
+    console.log('URL:', req.url);
+    console.log('Original URL:', req.originalUrl);
     console.log('Cookies:', req.cookies);
     console.log('Accept-Language:', req.headers['accept-language']);
+    console.log('Detected Language:', req.language); // Add this line
     console.log('Query:', req.query);
     console.log('==================================');
     next();
   });
 
-
-app.use(bodyParser.text({ type: 'text/html' }));
-
-// Serve static files
+// Serve static files 
 app.use(express.static(path.join(__dirname, 'html')));
-app.use('/locales', express.static(path.join(__dirname, 'locales')));
-// Logging middleware
-app.use(morgan('[:date[clf]] :method :url :status :response-time ms - :res[content-length]'));
-app.use(requestLogger);
-
-app.use(initI18n());
-
 // Routes
 app.use('/api', apiRoutes);
 app.use('/rma', rmaRoutes);
@@ -171,12 +188,12 @@ app.post('/', async (req, res) => {
 async function writeLog(str) {
     const dateTemp = new Date(Date.now());
     const logDir = resolve('./logs');
-    
+
     // Create logs directory if it doesn't exist
     if (!fs.existsSync(logDir)) {
         fs.mkdirSync(logDir, { recursive: true });
     }
-    
+
     const filename = `${dateTemp.getUTCFullYear().toString().slice(-2)}${('00' + (dateTemp.getUTCMonth() + 1)).slice(-2)}.txt`;
     return appendFile(resolve(`./logs/${filename}`), `${str}\t\t\t\t\t${dateTemp.getUTCDate()}_${dateTemp.getUTCHours()}:${dateTemp.getUTCMinutes()}:${dateTemp.getUTCSeconds()}\n`);
 }
@@ -184,10 +201,10 @@ async function writeLog(str) {
 // Helper function to generate CSV data
 async function generateCsvData() {
     let csv = 'SN /PN;Model;IN DATE;Out Date;Customer;SKU;email;Address;Zip Code;City;Complaint;Verification;Cause;Result;Shipping;Invoice number;Special note; warranty;condition;Used New Parts;Used Refurbished Parts\n';
-    
+
     // Generate CSV data logic from the original application
     // This is a simplified version - implement full logic based on original code
-    
+
     boxes.forEach((element) => {
         let packIn = false;
         let packOut = false;
@@ -201,41 +218,41 @@ async function generateCsvData() {
             // Implement full logic from the original code
         }
     });
-    
+
     return csv;
 }
 
 // Initialize data and start server
 async function initialize() {
     const { initialisation, classesUpdate, upperUpdate } = require('./utils/dataInit');
-    
+
     try {
         // Initialize PostgreSQL database connection
         await db.sequelize.authenticate();
         console.log('PostgreSQL connection established successfully.');
-        
+
         // Sync models with database (in development only)
         if (process.env.NODE_ENV !== 'production') {
             await db.sequelize.sync({ alter: process.env.DB_ALTER === 'true' });
             console.log('PostgreSQL models synchronized');
         }
-        
+
         // Initialize legacy data
         await initialisation(baseDirectory);
         console.log('Legacy data initialized');
-        
+
         await writeLog('login ' + Object.values(process.memoryUsage()));
-        
+
         classesUpdate();
         upperUpdate();
-        
+
         // Setup graceful shutdown
-        process.on('SIGINT', async function() {
+        process.on('SIGINT', async function () {
             console.log('Shutting down...');
             await logOut(baseDirectory);
             process.exit(0);
         });
-        
+
         // Start the server
         const PORT = process.env.PORT || 3000;
         app.listen(PORT, () => {
