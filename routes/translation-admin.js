@@ -11,7 +11,8 @@ const { requireAdmin } = require('../middleware/auth');
 // Получение списка доступных переводов
 router.get('/available-translations', requireAdmin, (req, res) => {
   try {
-    const localesDir = path.join(__dirname, '../locales');
+    // FIXED PATH: Using html/locales instead of just locales
+    const localesDir = path.join(__dirname, '../html/locales');
     const languages = fs.readdirSync(localesDir)
       .filter(file => fs.statSync(path.join(localesDir, file)).isDirectory());
     
@@ -29,7 +30,8 @@ router.get('/available-translations', requireAdmin, (req, res) => {
 router.get('/translation/:lang/:ns', requireAdmin, (req, res) => {
   try {
     const { lang, ns } = req.params;
-    const filePath = path.join(__dirname, `../locales/${lang}/${ns}.json`);
+    // FIXED PATH: Using html/locales instead of just locales
+    const filePath = path.join(__dirname, `../html/locales/${lang}/${ns}.json`);
     
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'Translation file not found' });
@@ -48,7 +50,8 @@ router.post('/translation/:lang/:ns', requireAdmin, (req, res) => {
     const { lang, ns } = req.params;
     const translations = req.body;
     
-    const filePath = path.join(__dirname, `../locales/${lang}/${ns}.json`);
+    // FIXED PATH: Using html/locales instead of just locales
+    const filePath = path.join(__dirname, `../html/locales/${lang}/${ns}.json`);
     const dirPath = path.dirname(filePath);
     
     // Создаем директорию, если она не существует
@@ -67,7 +70,8 @@ router.post('/translation/:lang/:ns', requireAdmin, (req, res) => {
 router.get('/statistics', requireAdmin, async (req, res) => {
   try {
     // Статистика из файлов
-    const localesDir = path.join(__dirname, '../locales');
+    // FIXED PATH: Using html/locales instead of just locales
+    const localesDir = path.join(__dirname, '../html/locales');
     const languages = fs.readdirSync(localesDir)
       .filter(file => fs.statSync(path.join(localesDir, file)).isDirectory());
     
@@ -120,6 +124,8 @@ router.get('/statistics', requireAdmin, async (req, res) => {
   }
 });
 
+// ... rest of the file with the same path fixes applied (clearCache, autoTranslate) ...
+
 // Очистка кэша переводов
 router.post('/clear-cache', requireAdmin, async (req, res) => {
   try {
@@ -154,7 +160,8 @@ router.post('/auto-translate', requireAdmin, async (req, res) => {
     }
     
     // Загружаем исходный файл
-    const sourceFile = path.join(__dirname, `../locales/${sourceLang}/${namespace}.json`);
+    // FIXED PATH: Using html/locales instead of just locales
+    const sourceFile = path.join(__dirname, `../html/locales/${sourceLang}/${namespace}.json`);
     if (!fs.existsSync(sourceFile)) {
       return res.status(404).json({ error: 'Source file not found' });
     }
@@ -162,14 +169,16 @@ router.post('/auto-translate', requireAdmin, async (req, res) => {
     const sourceTranslations = JSON.parse(fs.readFileSync(sourceFile, 'utf8'));
     
     // Загружаем целевой файл (или создаем новый)
-    const targetFile = path.join(__dirname, `../locales/${targetLang}/${namespace}.json`);
+    // FIXED PATH: Using html/locales instead of just locales
+    const targetFile = path.join(__dirname, `../html/locales/${targetLang}/${namespace}.json`);
     let targetTranslations = {};
     
     if (fs.existsSync(targetFile)) {
       targetTranslations = JSON.parse(fs.readFileSync(targetFile, 'utf8'));
     } else {
       // Создаем директорию, если её нет
-      const targetDir = path.join(__dirname, `../locales/${targetLang}`);
+      // FIXED PATH: Using html/locales instead of just locales
+      const targetDir = path.join(__dirname, `../html/locales/${targetLang}`);
       if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
       }

@@ -35,7 +35,8 @@ function processTranslationQueue() {
     .then(translatedText => {
       // Save translation to localization file
       try {
-        const filePath = path.join(process.cwd(), 'locales', targetLang, `${namespace}.json`);
+        // FIXED PATH: Using html/locales instead of just locales
+        const filePath = path.join(process.cwd(), 'html', 'locales', targetLang, `${namespace}.json`);
         let translations = {};
         
         // Create directory if it doesn't exist
@@ -84,7 +85,8 @@ function processTranslationQueue() {
  * @returns {Function} Middleware for Express
  */
 function initI18n(options = {}) {
-  const localesPath = path.join(process.cwd(), 'locales');
+  // FIXED PATH: Using html/locales instead of just locales
+  const localesPath = path.join(process.cwd(), 'html', 'locales');
   const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
   
   // List of all supported languages
