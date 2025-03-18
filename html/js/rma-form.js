@@ -3,15 +3,12 @@
 (function () {
   // Current device counter
   let deviceCount = 0;
+  let i18nInitialized = false;
 
   // Initialization function
   function init() {
-    if (typeof window.i18n === 'undefined') {
-      loadI18nScript();
-    }
-
-    // Add first device entry
-    addDeviceEntry();
+    // Check i18n status and set up initialization
+    setupI18n();
 
     // Set up add device button
     const addButton = document.getElementById('add-device-btn');
@@ -26,17 +23,89 @@
 
     // Add address logic explanation
     addAddressLogicExplanation();
+    
+    // Add first device entry only if i18n is ready,
+    // otherwise wait for the i18n initialization event
+    if (i18nInitialized || 
+        (window.i18n && window.i18n.isInitialized()) || 
+        (window.i18n && window.i18n.getCurrentLanguage() === 'de')) {
+      addDeviceEntry();
+    }
   }
 
   /**
-   * Загружает скрипт i18n, если он еще не загружен
+   * Set up i18n and handle initialization
+   */
+  function setupI18n() {
+    // If i18n is not defined, load it
+    if (typeof window.i18n === 'undefined') {
+      loadI18nScript();
+      
+      // Listen for i18n initialization event
+      document.addEventListener('i18n:initialized', function() {
+        i18nInitialized = true;
+        // Now that i18n is ready, add the first device entry if none exist yet
+        if (deviceCount === 0) {
+          addDeviceEntry();
+        }
+        
+        // Translate any existing elements
+        translateAllElements();
+      });
+    } else {
+      // i18n is already loaded
+      if (window.i18n.isInitialized()) {
+        i18nInitialized = true;
+      } else {
+        // i18n is loaded but not initialized, wait for it
+        document.addEventListener('i18n:initialized', function() {
+          i18nInitialized = true;
+          // Add the first device entry if none exist yet
+          if (deviceCount === 0) {
+            addDeviceEntry();
+          }
+          
+          // Translate any existing elements
+          translateAllElements();
+        });
+      }
+    }
+  }
+
+  /**
+   * Translate all elements with i18n tags
+   */
+  function translateAllElements() {
+    if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
+      // Translate the entire form
+      const form = document.getElementById('rmaForm');
+      if (form) {
+        window.i18n.translateDynamicElement(form);
+      }
+      
+      // Specifically translate all device entries
+      const deviceEntries = document.querySelectorAll('.device-entry');
+      deviceEntries.forEach(entry => {
+        window.i18n.translateDynamicElement(entry);
+      });
+      
+      // Translate address logic explanation
+      const addressInfo = document.querySelector('.address-logic-info');
+      if (addressInfo) {
+        window.i18n.translateDynamicElement(addressInfo);
+      }
+    }
+  }
+
+  /**
+   * Loads the i18n script if it's not already loaded
    */
   function loadI18nScript() {
     if (document.querySelector('script[src="/js/i18n.js"]')) {
-      return; // Скрипт уже загружен
+      return; // Script already loaded
     }
 
-    // Загрузка CSS
+    // Load CSS
     if (!document.querySelector('link[href="/css/i18n.css"]')) {
       const linkElem = document.createElement('link');
       linkElem.rel = 'stylesheet';
@@ -44,7 +113,7 @@
       document.head.appendChild(linkElem);
     }
 
-    // Загрузка JS
+    // Load JS
     const script = document.createElement('script');
     script.src = '/js/i18n.js';
     script.defer = true;
@@ -59,33 +128,33 @@
   }
 
   /**
-   * Добавляет селектор языка на форму
+   * Adds a language selector to the form
    */
   function addLanguageSelector() {
     const rmaForm = document.getElementById('rmaForm');
     if (!rmaForm) return;
 
-    // Создаем контейнер для селектора языка
+    // Create container for language selector
     const langContainer = document.createElement('div');
     langContainer.className = 'form-language-selector';
     langContainer.style.textAlign = 'right';
     langContainer.style.margin = '0 0 20px 0';
 
-    // Создаем заголовок
+    // Create title
     const langTitle = document.createElement('span');
     langTitle.textContent = 'Sprache / Language: ';
     langTitle.setAttribute('data-i18n', 'common:language.select');
     langTitle.style.marginRight = '10px';
 
-    // Создаем селектор
+    // Create selector
     const langSelector = document.createElement('div');
     langSelector.className = 'language-selector';
 
-    // Добавляем в DOM
+    // Add to DOM
     langContainer.appendChild(langTitle);
     langContainer.appendChild(langSelector);
 
-    // Вставляем перед основным контентом формы
+    // Insert before main content
     const firstChild = rmaForm.firstChild;
     rmaForm.insertBefore(langContainer, firstChild);
   }
@@ -95,6 +164,7 @@
     const devicesContainer = document.getElementById('devices-container');
     if (devicesContainer) {
       const addressInfo = document.createElement('div');
+      addressInfo.className = 'address-logic-info';
       addressInfo.style.padding = '10px';
       addressInfo.style.marginBottom = '20px';
       addressInfo.style.backgroundColor = '#e6f7ff';
@@ -113,8 +183,8 @@
 
       devicesContainer.parentNode.insertBefore(addressInfo, devicesContainer);
       
-      // Apply translations if i18n is available
-      if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
+      // Apply translations if i18n is available and initialized
+      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de') {
         window.i18n.translateDynamicElement(addressInfo);
       }
     }
@@ -263,13 +333,13 @@
     // Add the complete device entry to the container
     deviceEntry.appendChild(deviceDetailsSection);
 
-    // Добавляем элемент в DOM
+    // Add element to DOM
     const devicesContainer = document.getElementById('devices-container');
     if (devicesContainer) {
       devicesContainer.appendChild(deviceEntry);
 
-      // Переводим если язык не немецкий и если доступен i18n
-      if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
+      // Translate if i18n is initialized and language is not default
+      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de') {
         window.i18n.translateDynamicElement(deviceEntry);
       }
     }
@@ -309,13 +379,13 @@
         toggleBtn.style.backgroundColor = '#e6f7ff';
       } else if (addressSource === 0) {
         // Using billing address
-        toggleBtn.textContent = window.i18n && window.i18n.getCurrentLanguage() !== 'de' ? 
+        toggleBtn.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de' ? 
           window.i18n.t('rma:device.using_billing') : 'Using Billing Address';
         toggleBtn.style.backgroundColor = '#f0f0f0';
       } else {
         // Using another device's address
         const translateOptions = {count: addressSource};
-        toggleBtn.textContent = window.i18n && window.i18n.getCurrentLanguage() !== 'de' ? 
+        toggleBtn.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de' ? 
           window.i18n.t('rma:device.using_address', translateOptions) : `Using Address from Device #${addressSource}`;
         toggleBtn.style.backgroundColor = '#f0f0f0';
       }
@@ -352,17 +422,17 @@
         if (addressSection) {
           if (addressSection.style.display === 'none') {
             addressSection.style.display = 'block';
-            toggleButton.textContent = window.i18n && window.i18n.getCurrentLanguage() !== 'de' ? 
+            toggleButton.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de' ? 
               window.i18n.t('rma:device.hide_address') : 'Hide Return Address';
             toggleButton.style.backgroundColor = '#e6f7ff';
 
-            // Переводим адресный раздел, если он только что открыт
-            if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
+            // Translate the address section if it was just opened
+            if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de') {
               window.i18n.translateDynamicElement(addressSection);
             }
           } else {
             addressSection.style.display = 'none';
-            toggleButton.textContent = window.i18n && window.i18n.getCurrentLanguage() !== 'de' ? 
+            toggleButton.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de' ? 
               window.i18n.t('rma:device.address_button') : 'Specify Different Return Address';
             toggleButton.style.backgroundColor = '#eee';
           }
