@@ -1,5 +1,263 @@
 // html/js/i18n.js
 
+// Добавьте этот код в начало функции changeLanguage в html/js/i18n.js
+function changeLanguage(lang) {
+  if (lang === currentLanguage) return;
+
+  console.log(`i18n.changeLanguage: переключение на ${lang}`);
+
+  // Сохраняем предыдущий язык
+  const previousLanguage = currentLanguage;
+  
+  // Обновляем текущий язык
+  currentLanguage = lang;
+  document.documentElement.lang = lang;
+
+  // Для RTL языков
+  if (['ar', 'he'].includes(lang)) {
+    document.documentElement.dir = 'rtl';
+  } else {
+    document.documentElement.dir = 'ltr';
+  }
+
+  // Обновляем куки и localStorage
+  setCookie('i18next', lang, 365);
+  localStorage.setItem('i18nextLng', lang);
+
+  // Очищаем счетчики повторных попыток при смене языка
+  translationRetryCount = {};
+  pendingTranslations.clear();
+  loadedNamespaces = {};
+  translationCache = {};
+
+  // Синхронизируем SVG языковые кнопки в HTML
+  try {
+    // Сначала закрываем текущую активную кнопку
+    if (previousLanguage) {
+      const prevMask = document.getElementById(`${previousLanguage}Mask`);
+      if (prevMask) {
+        prevMask.setAttribute("mask", "url(#maskClose)");
+      }
+    }
+    
+    // Затем открываем новую кнопку языка
+    const newMask = document.getElementById(`${lang}Mask`);
+    if (newMask) {
+      newMask.setAttribute("mask", "url(#maskOpen)");
+    }
+    
+    // Также синхронизируем внутреннюю переменную состояния
+    if (typeof window.language !== 'undefined') {
+      window.language = lang;
+    }
+  } catch (e) {
+    console.warn('Не удалось синхронизировать SVG кнопки языков:', e);
+  }
+
+  // Проверяем наличие файлов переводов для нового языка
+  checkTranslationFiles();
+
+  // Обновляем переводы, если это не язык по умолчанию
+  if (lang !== defaultLanguage) {
+    // Предзагружаем общие пространства имен для нового языка
+    preloadCommonNamespaces().then(() => {
+      // Обновляем переводы на странице
+      updatePageTranslations();
+    });
+  } else {
+    // Если переключаемся на язык по умолчанию
+    if (this._reloadOnDefault !== false) {
+      // По умолчанию перезагружаем страницу
+      window.location.reload();
+      return;
+    } else {
+      // Принудительно обновляем контент без перезагрузки, если указан флаг
+      updatePageTranslations();
+      console.log("Переход на язык по умолчанию без перезагрузки страницы");
+    }
+  }
+
+  // Обновляем класс active для опций языка
+  const options = document.querySelectorAll('.language-option, .language-item');
+  options.forEach(option => {
+    if (option.dataset.lang === lang) {
+      option.classList.add('active');
+    } else {
+      option.classList.remove('active');
+    }
+  });
+
+  // Генерируем событие смены языка
+  document.dispatchEvent(new CustomEvent('languageChanged', {
+    detail: { language: lang }
+  }));
+}
+
+// Добавьте в i18n.js или в отдельный файл debug-tools.js
+
+// Функция для проверки состояния переключения языков
+function debugLanguageSwitching() {
+  console.group('Отладка системы переключения языков');
+  
+  // Проверяем языковые настройки
+  console.log('Язык документа:', document.documentElement.lang);
+  console.log('Направление текста:', document.documentElement.dir);
+  console.log('window.language (SVG):', window.language || 'не установлен');
+  console.log('i18n.currentLanguage:', window.i18n ? window.i18n.getCurrentLanguage() : 'i18n не инициализирован');
+  console.log('Cookie i18next:', getCookie('i18next'));
+  console.log('localStorage i18nextLng:', localStorage.getItem('i18nextLng'));
+  console.log('Язык браузера:', navigator.language);
+  
+  // Проверяем состояние SVG-кнопок
+  const langButtons = {};
+  ['en', 'de', 'fr', 'ru', 'es', 'pl', 'cz', 'ko'].forEach(lang => {
+    const mask = document.getElementById(`${lang}Mask`);
+    if (mask) {
+      const maskValue = mask.getAttribute('mask') || 'не установлено';
+      langButtons[lang] = maskValue === 'url(#maskOpen)' ? 'активен' : 'неактивен';
+    } else {
+      langButtons[lang] = 'элемент не найден';
+    }
+  });
+  console.log('Состояние SVG-кнопок:', langButtons);
+  
+  // Проверяем инициализацию i18n
+  if (window.i18n) {
+    console.log('i18n инициализирован:', window.i18n.isInitialized());
+    console.log('Загруженные пространства имён:', window.i18n._loadedNamespaces || 'информация недоступна');
+    console.log('Размер кэша переводов:', Object.keys(window.i18n._translationCache || {}).length || 'информация недоступна');
+  } else {
+    console.log('Библиотека i18n не загружена или не инициализирована');
+  }
+  
+  // Попробуем перевести тестовую строку
+  if (window.i18n && window.i18n.t) {
+    console.log('Тестовый перевод (common:welcome.title):', window.i18n.t('common:welcome.title'));
+  }
+  
+  // Проверяем обнаруженные проблемы
+  const issues = [];
+  
+  if (window.language !== document.documentElement.lang) {
+    issues.push('Несоответствие между window.language и document.documentElement.lang');
+  }
+  
+  if (window.i18n && window.i18n.getCurrentLanguage() !== document.documentElement.lang) {
+    issues.push('Несоответствие между i18n.getCurrentLanguage() и document.documentElement.lang');
+  }
+  
+  if (getCookie('i18next') !== document.documentElement.lang) {
+    issues.push('Несоответствие между cookie и document.documentElement.lang');
+  }
+  
+  if (localStorage.getItem('i18nextLng') !== document.documentElement.lang) {
+    issues.push('Несоответствие между localStorage и document.documentElement.lang');
+  }
+  
+  // Проверяем синхронизацию SVG-кнопок
+  const currentLang = document.documentElement.lang;
+  const currentButton = langButtons[currentLang];
+  if (currentButton && currentButton !== 'активен') {
+    issues.push(`SVG-кнопка для текущего языка ${currentLang} не активна`);
+  }
+  
+  if (issues.length > 0) {
+    console.warn('Обнаружены проблемы:', issues);
+  } else {
+    console.log('Проблем не обнаружено. Система переключения языков работает корректно.');
+  }
+  
+  console.groupEnd();
+  
+  return {
+    status: issues.length === 0 ? 'OK' : 'ISSUES',
+    issues: issues
+  };
+}
+
+// Добавляем отладочные инструменты в window.i18n
+if (window.i18n) {
+  window.i18n.debug = {
+    checkStatus: debugLanguageSwitching,
+    fixSynchronization: function() {
+      // Синхронизируем все настройки языка с document.documentElement.lang
+      const currentLang = document.documentElement.lang;
+      
+      // Обновляем куки и localStorage
+      setCookie('i18next', currentLang, 365);
+      localStorage.setItem('i18nextLng', currentLang);
+      
+      // Синхронизируем window.language
+      window.language = currentLang;
+      
+      // Синхронизируем SVG кнопки
+      try {
+        // Сначала закрываем все кнопки
+        ['en', 'de', 'fr', 'ru', 'es', 'pl', 'cz', 'ko'].forEach(lang => {
+          const mask = document.getElementById(`${lang}Mask`);
+          if (mask) {
+            mask.setAttribute('mask', 'url(#maskClose)');
+          }
+        });
+        
+        // Затем открываем кнопку текущего языка
+        const currentMask = document.getElementById(`${currentLang}Mask`);
+        if (currentMask) {
+          currentMask.setAttribute('mask', 'url(#maskOpen)');
+        }
+      } catch (e) {
+        console.warn('Не удалось синхронизировать SVG кнопки:', e);
+      }
+      
+      console.log(`Синхронизация выполнена. Все настройки языка установлены на ${currentLang}`);
+      
+      // Проверяем, всё ли исправлено
+      return debugLanguageSwitching();
+    },
+    forceLanguage: function(lang) {
+      if (!lang) {
+        console.error('Не указан язык для принудительной установки');
+        return;
+      }
+      
+      // Устанавливаем язык через обе системы
+      if (typeof setLanguage === 'function') {
+        console.log(`Вызываем setLanguage('${lang}')`);
+        setLanguage(lang);
+      }
+      
+      if (window.i18n && window.i18n.changeLanguage) {
+        console.log(`Вызываем i18n.changeLanguage('${lang}')`);
+        window.i18n.changeLanguage(lang);
+      }
+      
+      // Проверяем результат
+      return debugLanguageSwitching();
+    }
+  };
+}
+
+// Горячие клавиши для отладки
+document.addEventListener('keydown', function(e) {
+  // Ctrl+Shift+I открывает отладчик i18n
+  if (e.ctrlKey && e.shiftKey && e.key === 'I') {
+    const debugPanel = document.getElementById('i18n-debug');
+    if (debugPanel) {
+      debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
+      if (debugPanel.style.display === 'block') {
+        debugLanguageSwitching();
+      }
+    }
+  }
+  
+  // Ctrl+Shift+L показывает текущее состояние языковой системы в консоли
+  if (e.ctrlKey && e.shiftKey && e.key === 'L') {
+    debugLanguageSwitching();
+  }
+});
+
+
+
 /**
  * Client-side multilanguage support module
  */
@@ -40,57 +298,112 @@
   /**
    * Asynchronous module initialization
    */
-  async function init() {
-    // Determine current language
+// Улучшенная функция инициализации для html/js/i18n.js
+async function init() {
+  console.log("Инициализация i18n...");
+  
+  // Проверка состояния DOM
+  if (document.readyState !== 'complete' && document.readyState !== 'interactive') {
+    console.log("DOM не готов, ожидаем загрузку...");
+    await new Promise(resolve => {
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        resolve();
+      } else {
+        document.addEventListener('DOMContentLoaded', resolve);
+      }
+    });
+  }
+  
+  // Определяем текущий язык с приоритетами:
+  // 1. Язык из globals (если был установлен из HTML)
+  // 2. Куки
+  // 3. localStorage
+  // 4. Язык браузера
+  // 5. Язык по умолчанию
+  
+  // Проверяем, не был ли язык уже установлен через SVG-кнопки
+  if (window.language && supportedLanguages.includes(window.language)) {
+    console.log(`Обнаружен язык установленный через SVG: ${window.language}`);
+    currentLanguage = window.language;
+  } else {
+    // Стандартное определение языка
     currentLanguage =
       getCookie('i18next') ||
       localStorage.getItem('i18nextLng') ||
       navigator.language.split('-')[0] ||
       defaultLanguage;
-
-    // If current language not supported, use default
-    if (!supportedLanguages.includes(currentLanguage)) {
-      currentLanguage = defaultLanguage;
-    }
-
-    // Set lang attribute for HTML
-    document.documentElement.lang = currentLanguage;
-
-    // Add dir attribute for RTL languages
-    if (['ar', 'he'].includes(currentLanguage)) {
-      document.documentElement.dir = 'rtl';
-    } else {
-      document.documentElement.dir = 'ltr';
-    }
-
-    // Save language in cookie and localStorage
-    setCookie('i18next', currentLanguage, 365); // for 365 days
-    localStorage.setItem('i18nextLng', currentLanguage);
-
-    // Initialize language switcher first
-    setupLanguageSwitcher();
-
-    // Only update translations if language is not default
-    if (currentLanguage !== defaultLanguage) {
-      try {
-        // Preload common namespaces
-        await preloadCommonNamespaces();
-
-        // Initialize translations on page
-        updatePageTranslations();
-      } catch (error) {
-        console.error('Error during translation initialization:', error);
-      }
-    }
-
-    // Set initialization flag
-    initialized = true;
-
-    // Dispatch event that i18n is initialized
-    document.dispatchEvent(new CustomEvent('i18n:initialized', {
-      detail: { language: currentLanguage }
-    }));
   }
+
+  // Если текущий язык не поддерживается, используем язык по умолчанию
+  if (!supportedLanguages.includes(currentLanguage)) {
+    console.log(`Язык ${currentLanguage} не поддерживается, используем ${defaultLanguage}`);
+    currentLanguage = defaultLanguage;
+  }
+
+  console.log(`Установлен язык: ${currentLanguage}`);
+
+  // Устанавливаем атрибут lang для HTML
+  document.documentElement.lang = currentLanguage;
+
+  // Добавляем атрибут dir для RTL языков
+  if (['ar', 'he'].includes(currentLanguage)) {
+    document.documentElement.dir = 'rtl';
+  } else {
+    document.documentElement.dir = 'ltr';
+  }
+
+  // Сохраняем язык в куки и localStorage
+  setCookie('i18next', currentLanguage, 365);
+  localStorage.setItem('i18nextLng', currentLanguage);
+
+  // Синхронизируем с переменной window.language для SVG-кнопок
+  window.language = currentLanguage;
+  
+  // Синхронизируем SVG-кнопки языков
+  try {
+    // Находим все маски языков и закрываем их
+    supportedLanguages.forEach(lang => {
+      const maskElement = document.getElementById(`${lang}Mask`);
+      if (maskElement) {
+        maskElement.setAttribute("mask", "url(#maskClose)");
+      }
+    });
+    
+    // Открываем маску текущего языка
+    const currentMask = document.getElementById(`${currentLanguage}Mask`);
+    if (currentMask) {
+      currentMask.setAttribute("mask", "url(#maskOpen)");
+    }
+  } catch (e) {
+    console.warn("Не удалось синхронизировать SVG маски языков:", e);
+  }
+
+  // Инициализируем переключатель языков
+  setupLanguageSwitcher();
+
+  // Обновляем переводы только если язык не является языком по умолчанию
+  if (currentLanguage !== defaultLanguage) {
+    try {
+      // Предзагружаем общие пространства имен
+      await preloadCommonNamespaces();
+
+      // Инициализируем переводы на странице
+      updatePageTranslations();
+    } catch (error) {
+      console.error('Ошибка во время инициализации переводов:', error);
+    }
+  }
+
+  // Устанавливаем флаг инициализации
+  initialized = true;
+
+  // Генерируем событие, что i18n инициализирован
+  document.dispatchEvent(new CustomEvent('i18n:initialized', {
+    detail: { language: currentLanguage }
+  }));
+  
+  console.log("i18n успешно инициализирован");
+}
 
   /**
    * This script adds the missing translateDynamicElement function to the i18n.js implementation
@@ -1113,3 +1426,60 @@
     }
   }
 })();
+
+// Добавляем функцию для синхронизации SVG кнопок
+function syncLanguageButtons() {
+  const currentLang = currentLanguage;
+  const buttons = document.querySelectorAll('[id^="langMain"], [id^="langSide"]');
+  
+  buttons.forEach(button => {
+    const langId = button.querySelector('use')?.id;
+    if (langId) {
+      const lang = langId.replace('lang', '');
+      if (lang === currentLang) {
+        button.classList.add('active');
+      } else {
+        button.classList.remove('active');
+      }
+    }
+  });
+}
+
+// Обновляем функцию init для добавления синхронизации
+async function init() {
+  if (initialized) return;
+  
+  // ... existing init code ...
+  
+  // Синхронизируем кнопки языков
+  syncLanguageButtons();
+  
+  // ... rest of init code ...
+}
+
+// Функция для установки языка
+function setLanguage(langId) {
+  // Map der Sprachcodes
+  const langMap = {
+    'lang1': 'en',
+    'lang2': 'de',
+    'lang3': 'pl',
+    'lang4': 'cs',
+    'lang5': 'fr',
+    'lang6': 'ko'
+  };
+
+  // Получаем код языка из ID
+  const lang = langMap[langId];
+  if (!lang) {
+    console.error(`Неизвестный ID языка: ${langId}`);
+    return;
+  }
+
+  // Используем changeLanguage для установки языка
+  if (window.i18n && window.i18n.changeLanguage) {
+    window.i18n.changeLanguage(lang);
+  } else {
+    console.error('i18n не инициализирован');
+  }
+}

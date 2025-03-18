@@ -1067,26 +1067,78 @@ function lazyLoadScript(src) {
     var menuUsed = false;
     var language = "en";
     // Update function to work with the i18n system
-    function setLanguage(langPos) {
-      document.getElementById(`${language}Mask`).setAttribute("mask", "url(#maskClose)");
-      if (langPos.slice(0, 4) === "lang") {
-        menuUsed = true;
-        language = document.getElementById(langPos).getAttribute("href").slice(1);
-
-        // Add integration with i18n
-        if (window.i18n) {
-          window.i18n.changeLanguage(language);
-        }
-      } else {
-        language = langPos;
-
-        // Add integration with i18n
-        if (window.i18n) {
-          window.i18n.changeLanguage(language);
-        }
-      }
-      document.getElementById(`${language}Mask`).setAttribute("mask", "url(#maskOpen)");
+// Улучшенная функция переключения языков для index.html
+function setLanguage(langPos) {
+  // Сохраняем текущий язык для изменения стиля кнопки
+  const previousLanguage = language;
+  
+  // Получаем новый язык
+  let newLanguage;
+  if (langPos.slice(0, 4) === "lang") {
+    menuUsed = true;
+    // Получаем язык из атрибута href элемента
+    newLanguage = document.getElementById(langPos).getAttribute("href").slice(1);
+  } else {
+    // Прямое указание языка
+    newLanguage = langPos;
+  }
+  
+  // Проверяем, изменился ли язык
+  if (newLanguage === language) return;
+  
+  console.log(`Переключение языка с ${language} на ${newLanguage}`);
+  
+  // Меняем визуальный стиль у предыдущей кнопки языка
+  try {
+    document.getElementById(`${previousLanguage}Mask`).setAttribute("mask", "url(#maskClose)");
+  } catch (e) {
+    console.warn(`Элемент ${previousLanguage}Mask не найден`, e);
+  }
+  
+  // Обновляем текущий язык
+  language = newLanguage;
+  
+  // Меняем визуальный стиль у новой кнопки языка
+  try {
+    document.getElementById(`${language}Mask`).setAttribute("mask", "url(#maskOpen)");
+  } catch (e) {
+    console.warn(`Элемент ${language}Mask не найден`, e);
+  }
+  
+  // Интеграция с i18n
+  if (window.i18n) {
+    // Обходим проблему с перезагрузкой страницы при переходе на язык по умолчанию
+    const originalReload = window.i18n._reloadOnDefault || false;
+    window.i18n._reloadOnDefault = false;
+    
+    // Вызываем функцию смены языка в i18n
+    window.i18n.changeLanguage(language);
+    
+    // Восстанавливаем оригинальное поведение
+    window.i18n._reloadOnDefault = originalReload;
+    
+    console.log(`Язык успешно изменен на ${language}`);
+  } else {
+    console.warn("Библиотека i18n не загружена, используем базовое переключение языка");
+    
+    // Устанавливаем язык в cookie и localStorage как резервный вариант
+    document.cookie = `i18next=${language}; path=/; max-age=${60*60*24*365}`;
+    
+    try {
+      localStorage.setItem('i18nextLng', language);
+    } catch (e) {
+      console.warn("Не удалось сохранить язык в localStorage", e);
     }
+    
+    // Перезагрузим страницу, если i18n не доступен
+    window.location.reload();
+  }
+  
+  // Генерируем событие смены языка для остальных компонентов
+  document.dispatchEvent(new CustomEvent('languageChanged', {
+    detail: { language: language }
+  }));
+}
 
     function fsPic(name) {
       const el = document.getElementById("fsPic");
