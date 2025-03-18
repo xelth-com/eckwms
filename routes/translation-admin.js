@@ -16,7 +16,7 @@ router.get('/available-translations', requireAdmin, (req, res) => {
     const languages = fs.readdirSync(localesDir)
       .filter(file => fs.statSync(path.join(localesDir, file)).isDirectory());
     
-    const namespaces = fs.readdirSync(path.join(localesDir, 'de'))
+    const namespaces = fs.readdirSync(path.join(localesDir, 'en'))
       .filter(file => file.endsWith('.json'))
       .map(file => file.replace('.json', ''));
     

@@ -28,7 +28,7 @@
     // otherwise wait for the i18n initialization event
     if (i18nInitialized || 
         (window.i18n && window.i18n.isInitialized()) || 
-        (window.i18n && window.i18n.getCurrentLanguage() === 'de')) {
+        (window.i18n && window.i18n.getCurrentLanguage() === 'en')) {
       addDeviceEntry();
     }
   }
@@ -76,7 +76,7 @@
    * Translate all elements with i18n tags
    */
   function translateAllElements() {
-    if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
+    if (window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
       // Translate the entire form
       const form = document.getElementById('rmaForm');
       if (form) {
@@ -184,7 +184,7 @@
       devicesContainer.parentNode.insertBefore(addressInfo, devicesContainer);
       
       // Apply translations if i18n is available and initialized
-      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de') {
+      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
         window.i18n.translateDynamicElement(addressInfo);
       }
     }
@@ -339,7 +339,7 @@
       devicesContainer.appendChild(deviceEntry);
 
       // Translate if i18n is initialized and language is not default
-      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de') {
+      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
         window.i18n.translateDynamicElement(deviceEntry);
       }
     }
@@ -379,13 +379,13 @@
         toggleBtn.style.backgroundColor = '#e6f7ff';
       } else if (addressSource === 0) {
         // Using billing address
-        toggleBtn.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de' ? 
+        toggleBtn.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en' ? 
           window.i18n.t('rma:device.using_billing') : 'Using Billing Address';
         toggleBtn.style.backgroundColor = '#f0f0f0';
       } else {
         // Using another device's address
         const translateOptions = {count: addressSource};
-        toggleBtn.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de' ? 
+        toggleBtn.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en' ? 
           window.i18n.t('rma:device.using_address', translateOptions) : `Using Address from Device #${addressSource}`;
         toggleBtn.style.backgroundColor = '#f0f0f0';
       }
@@ -422,17 +422,17 @@
         if (addressSection) {
           if (addressSection.style.display === 'none') {
             addressSection.style.display = 'block';
-            toggleButton.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de' ? 
+            toggleButton.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en' ? 
               window.i18n.t('rma:device.hide_address') : 'Hide Return Address';
             toggleButton.style.backgroundColor = '#e6f7ff';
 
             // Translate the address section if it was just opened
-            if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de') {
+            if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
               window.i18n.translateDynamicElement(addressSection);
             }
           } else {
             addressSection.style.display = 'none';
-            toggleButton.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'de' ? 
+            toggleButton.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en' ? 
               window.i18n.t('rma:device.address_button') : 'Specify Different Return Address';
             toggleButton.style.backgroundColor = '#eee';
           }

@@ -201,7 +201,7 @@ function containsHtmlTags(text) {
  * @param {string} sourceLang - Source language (default: de)
  * @returns {Promise<string>} - Translated text
  */
-async function translateText(text, targetLang, context = '', sourceLang = 'de') {
+async function translateText(text, targetLang, context = '', sourceLang = 'en') {
   console.log('translateText', text, targetLang, context, sourceLang);
   try {
     // If text is empty, return as is
@@ -285,7 +285,7 @@ Ensure the translation sounds natural in the target language.`;
  * @param {string} sourceLang - Source language (default: de)
  * @returns {Promise<Array<string>>} - Array of translated texts
  */
-async function batchTranslate(texts, targetLang, context = '', sourceLang = 'de') {
+async function batchTranslate(texts, targetLang, context = '', sourceLang = 'en') {
   console.log('batchTranslate', texts, targetLang, context, sourceLang);
   // Check if all texts are in cache
   const results = [];

@@ -210,7 +210,7 @@ router.post('/generate', (req, res) => {
   
   // Ensure translations are applied after the page loads
   document.addEventListener('DOMContentLoaded', function() {
-    if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
+    if (window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
       window.i18n.updatePageTranslations();
     }
   });
