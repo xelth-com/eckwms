@@ -91,6 +91,88 @@
     }));
   }
 
+/**
+ * This script adds the missing translateDynamicElement function to the i18n.js implementation
+ * Load this script after i18n.js to fix the error
+ */
+(function() {
+  // Wait for i18n to be initialized
+  function checkAndExtendI18n() {
+    if (window.i18n) {
+      // Only add the function if it doesn't exist or is causing errors
+      if (!window.i18n.translateDynamicElement || window.i18n.translateDynamicElement.toString().includes('return translateDynamicElement')) {
+        
+        // Define the actual translation function
+        window.i18n.translateDynamicElement = function(element, context = '') {
+          if (!element) return Promise.resolve();
+          
+          // Skip if default language or not initialized
+          if (window.i18n.getCurrentLanguage() === 'en' || !window.i18n.isInitialized()) {
+            return Promise.resolve();
+          }
+          
+          // Process all elements with translation attributes
+          const processElement = (el) => {
+            // Handle data-i18n attribute
+            if (el.hasAttribute('data-i18n')) {
+              const key = el.getAttribute('data-i18n');
+              const translation = window.i18n.t(key);
+              
+              if (translation !== key) {
+                el.textContent = translation;
+              }
+            }
+            
+            // Handle data-i18n-attr attribute
+            if (el.hasAttribute('data-i18n-attr')) {
+              try {
+                const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
+                for (const [attr, key] of Object.entries(attrsMap)) {
+                  const translation = window.i18n.t(key);
+                  if (translation !== key) {
+                    el.setAttribute(attr, translation);
+                  }
+                }
+              } catch (e) {
+                console.error('Error parsing data-i18n-attr:', e);
+              }
+            }
+            
+            // Handle data-i18n-html attribute
+            if (el.hasAttribute('data-i18n-html')) {
+              const key = el.getAttribute('data-i18n-html');
+              const translation = window.i18n.t(key, { interpolation: { escapeValue: false } });
+              
+              if (translation !== key) {
+                el.innerHTML = translation;
+              }
+            }
+          };
+          
+          // Process the element itself
+          processElement(element);
+          
+          // Process all child elements with translation attributes
+          element.querySelectorAll('[data-i18n], [data-i18n-attr], [data-i18n-html]').forEach(el => {
+            processElement(el);
+          });
+          
+          return Promise.resolve();
+        };
+        
+        console.log('Fixed translateDynamicElement function added to i18n');
+      }
+    } else {
+      // If i18n isn't loaded yet, check again in 100ms
+      setTimeout(checkAndExtendI18n, 100);
+    }
+  }
+  
+  // Start checking for i18n
+  checkAndExtendI18n();
+})();
+
+
   /**
    * Preload common namespaces
    */
