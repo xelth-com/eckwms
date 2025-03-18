@@ -30,7 +30,7 @@ function changeLanguage(lang) {
   loadedNamespaces = {};
   translationCache = {};
 
-  // Синхронизируем SVG языковые кнопки в HTML
+  // НОВЫЙ КОД: Синхронизируем SVG языковые кнопки в HTML
   try {
     // Сначала закрываем текущую активную кнопку
     if (previousLanguage) {
@@ -294,116 +294,49 @@ document.addEventListener('keydown', function(e) {
 
   // Set of keys currently being translated to avoid duplicate requests
   const pendingTranslations = new Set();
+  
+  // Standard-Namespaces, die beim Initialisieren geladen werden
+  const preloadNamespaces = ['common', 'auth', 'rma', 'dashboard'];
 
   /**
    * Asynchronous module initialization
    */
-// Улучшенная функция инициализации для html/js/i18n.js
-async function init() {
-  console.log("Инициализация i18n...");
-  
-  // Проверка состояния DOM
-  if (document.readyState !== 'complete' && document.readyState !== 'interactive') {
-    console.log("DOM не готов, ожидаем загрузку...");
-    await new Promise(resolve => {
-      if (document.readyState === 'complete' || document.readyState === 'interactive') {
-        resolve();
-      } else {
-        document.addEventListener('DOMContentLoaded', resolve);
-      }
-    });
-  }
-  
-  // Определяем текущий язык с приоритетами:
-  // 1. Язык из globals (если был установлен из HTML)
-  // 2. Куки
-  // 3. localStorage
-  // 4. Язык браузера
-  // 5. Язык по умолчанию
-  
-  // Проверяем, не был ли язык уже установлен через SVG-кнопки
-  if (window.language && supportedLanguages.includes(window.language)) {
-    console.log(`Обнаружен язык установленный через SVG: ${window.language}`);
-    currentLanguage = window.language;
-  } else {
-    // Стандартное определение языка
-    currentLanguage =
-      getCookie('i18next') ||
-      localStorage.getItem('i18nextLng') ||
-      navigator.language.split('-')[0] ||
-      defaultLanguage;
-  }
-
-  // Если текущий язык не поддерживается, используем язык по умолчанию
-  if (!supportedLanguages.includes(currentLanguage)) {
-    console.log(`Язык ${currentLanguage} не поддерживается, используем ${defaultLanguage}`);
-    currentLanguage = defaultLanguage;
-  }
-
-  console.log(`Установлен язык: ${currentLanguage}`);
-
-  // Устанавливаем атрибут lang для HTML
-  document.documentElement.lang = currentLanguage;
-
-  // Добавляем атрибут dir для RTL языков
-  if (['ar', 'he'].includes(currentLanguage)) {
-    document.documentElement.dir = 'rtl';
-  } else {
-    document.documentElement.dir = 'ltr';
-  }
-
-  // Сохраняем язык в куки и localStorage
-  setCookie('i18next', currentLanguage, 365);
-  localStorage.setItem('i18nextLng', currentLanguage);
-
-  // Синхронизируем с переменной window.language для SVG-кнопок
-  window.language = currentLanguage;
-  
-  // Синхронизируем SVG-кнопки языков
-  try {
-    // Находим все маски языков и закрываем их
-    supportedLanguages.forEach(lang => {
-      const maskElement = document.getElementById(`${lang}Mask`);
-      if (maskElement) {
-        maskElement.setAttribute("mask", "url(#maskClose)");
-      }
-    });
+  async function init() {
+    if (initialized) {
+      console.log('i18n bereits initialisiert');
+      return Promise.resolve();
+    }
     
-    // Открываем маску текущего языка
-    const currentMask = document.getElementById(`${currentLanguage}Mask`);
-    if (currentMask) {
-      currentMask.setAttribute("mask", "url(#maskOpen)");
+    initialized = true;
+    console.log('i18n self-initializing immediately');
+    
+    // Namespace-Präladung mit Promise-Tracking
+    const loadingPromises = [];
+    console.log(`Preloading namespaces for language: ${currentLanguage}`);
+    
+    // Nur einmal laden pro Seitenladung
+    for (const ns of preloadNamespaces) {
+      const loadPromise = loadNamespace(ns);
+      loadingPromises.push(loadPromise);
     }
-  } catch (e) {
-    console.warn("Не удалось синхронизировать SVG маски языков:", e);
+    
+    return Promise.all(loadingPromises)
+      .then(() => {
+        console.log('Translation cache status:', {
+          loadedNamespaces,
+          cacheSize: Object.keys(translationCache).length
+        });
+        
+        // Starte die Übersetzung nach der Initialisierung
+        updatePageTranslations();
+        return true;
+      })
+      .catch(error => {
+        console.error('Error during i18n initialization:', error);
+        initialized = false;
+        return false;
+      });
   }
-
-  // Инициализируем переключатель языков
-  setupLanguageSwitcher();
-
-  // Обновляем переводы только если язык не является языком по умолчанию
-  if (currentLanguage !== defaultLanguage) {
-    try {
-      // Предзагружаем общие пространства имен
-      await preloadCommonNamespaces();
-
-      // Инициализируем переводы на странице
-      updatePageTranslations();
-    } catch (error) {
-      console.error('Ошибка во время инициализации переводов:', error);
-    }
-  }
-
-  // Устанавливаем флаг инициализации
-  initialized = true;
-
-  // Генерируем событие, что i18n инициализирован
-  document.dispatchEvent(new CustomEvent('i18n:initialized', {
-    detail: { language: currentLanguage }
-  }));
-  
-  console.log("i18n успешно инициализирован");
-}
 
   /**
    * This script adds the missing translateDynamicElement function to the i18n.js implementation
@@ -495,43 +428,16 @@ async function init() {
    */
   async function preloadCommonNamespaces() {
     const commonNamespaces = ['common', 'auth', 'rma', 'dashboard'];
-
+    
     console.log(`Preloading namespaces for language: ${currentLanguage}`);
-
-    // Create array of promises for parallel loading
-    const loadPromises = commonNamespaces.map(async (namespace) => {
-      // Skip if already loaded
-      if (loadedNamespaces[`${currentLanguage}:${namespace}`]) {
-        console.log(`Namespace ${namespace} already loaded, skipping`);
-        return;
-      }
-
-      const localePath = `/locales/${currentLanguage}/${namespace}.json`;
-      try {
-        console.log(`Attempting to load namespace: ${namespace} from ${localePath}`);
-        const response = await fetch(localePath);
-
-        if (response.ok) {
-          const translations = await response.json();
-          // Cache translations
-          for (const [k, v] of Object.entries(translations)) {
-            const fullKey = `${currentLanguage}:${namespace}:${k}`;
-            translationCache[fullKey] = v;
-            console.log(`Cached translation for key: ${fullKey}`);
-          }
-          loadedNamespaces[`${currentLanguage}:${namespace}`] = true;
-          console.log(`Successfully loaded namespace: ${namespace} with ${Object.keys(translations).length} keys`);
-        } else {
-          console.warn(`Failed to load namespace ${namespace}: HTTP ${response.status}`);
-        }
-      } catch (error) {
-        console.error(`Error loading namespace ${namespace}: ${error.message}`);
-      }
-    });
-
-    // Wait for all namespaces to load
+    
+    // Wir verwenden den bereits implementierten Locking-Mechanismus
+    // und vermeiden doppelte Anfragen
+    const loadPromises = commonNamespaces.map(namespace => loadNamespace(namespace));
+    
+    // Warten auf alle Namespaces
     await Promise.all(loadPromises);
-
+    
     // Log cache status
     console.log('Translation cache status:', {
       loadedNamespaces,
@@ -1051,60 +957,69 @@ async function init() {
     }, {});
   }
 
-  /**
-   * Load a single namespace translation file
-   * @param {string} namespace - Namespace to load
-   * @returns {Promise} - Promise resolving when file is loaded
-   */
+  // Verbesserte loadNamespace Funktion mit Locking-Mechanismus
+  let loadingNamespaces = {}; // Tracking für laufende Ladeanfragen
+  
   async function loadNamespace(namespace) {
     const cacheKey = `${currentLanguage}:${namespace}`;
-
+    
     // Skip if already loaded
     if (loadedNamespaces[cacheKey]) {
       return Promise.resolve();
     }
-
-    const localePath = `/locales/${currentLanguage}/${namespace}.json`;
-    console.log(`Loading namespace: ${namespace} from ${localePath}`);
-
-    try {
-      const response = await fetch(localePath);
-
-      if (response.ok) {
-        const translations = await response.json();
-
-        // Кэшировать весь объект перевода вместо отдельных ключей
-        translationCache[`${currentLanguage}:${namespace}`] = translations;
-
-        // Для обратной совместимости также сохранять плоскую версию
-        for (const [k, v] of Object.entries(flattenObject(translations, namespace))) {
-          translationCache[`${currentLanguage}:${namespace}:${k}`] = v;
-        }
-
-        loadedNamespaces[cacheKey] = true;
-        console.log(`Успешно загружен namespace: ${namespace} с ${Object.keys(translations).length} ключами`);
-        return translations;
-      } else {
-        console.warn(`Failed to load namespace ${namespace}: HTTP ${response.status}`);
-        loadedNamespaces[cacheKey] = false; // Mark as checked but not found
-        return null;
-      }
-    } catch (error) {
-      console.error(`Error loading namespace ${namespace}: ${error.message}`);
-      loadedNamespaces[cacheKey] = false; // Mark as checked but not found
-
-      // Fallback to default language translations if available
-      const fallbackTranslations = translationCache[`${defaultLanguage}:${namespace}`];
-      if (fallbackTranslations) {
-        console.log(`Using fallback translations for namespace: ${namespace}`);
-        for (const [k, v] of Object.entries(fallbackTranslations)) {
-          translationCache[`${currentLanguage}:${namespace}:${k}`] = v;
-        }
-        loadedNamespaces[cacheKey] = true;
-        return fallbackTranslations;
-      }
-      return null;
+    
+    // Skip if currently loading
+    if (loadingNamespaces[cacheKey]) {
+      return loadingNamespaces[cacheKey]; // Return existing promise
     }
+    
+    const localePath = `/locales/${currentLanguage}/${namespace}.json`;
+    console.log(`Attempting to load namespace: ${namespace} from ${localePath}`);
+    
+    // Create a promise and store it
+    loadingNamespaces[cacheKey] = (async () => {
+      try {
+        const response = await fetch(localePath);
+        
+        if (response.ok) {
+          const translations = await response.json();
+          
+          // Cache translations
+          for (const [k, v] of Object.entries(translations)) {
+            translationCache[`${currentLanguage}:${namespace}:${k}`] = v;
+            console.log(`Cached translation for key: ${currentLanguage}:${namespace}:${k}`);
+          }
+          
+          loadedNamespaces[cacheKey] = true;
+          console.log(`Successfully loaded namespace: ${namespace} with ${Object.keys(translations).length} keys`);
+          return translations;
+        } else {
+          console.warn(`Failed to load namespace ${namespace}: HTTP ${response.status}`);
+          loadedNamespaces[cacheKey] = false; // Mark as checked but not found
+          return null;
+        }
+      } catch (error) {
+        console.error(`Error loading namespace ${namespace}: ${error.message}`);
+        loadedNamespaces[cacheKey] = false; // Mark as checked but not found
+        
+        // Fallback to default language translations if available
+        const fallbackTranslations = translationCache[`${defaultLanguage}:${namespace}`];
+        if (fallbackTranslations) {
+          console.log(`Using fallback translations for namespace: ${namespace}`);
+          for (const [k, v] of Object.entries(fallbackTranslations)) {
+            translationCache[`${currentLanguage}:${namespace}:${k}`] = v;
+          }
+          loadedNamespaces[cacheKey] = true;
+          return fallbackTranslations;
+        }
+        return null;
+      } finally {
+        // Clean up the loading promise when done
+        delete loadingNamespaces[cacheKey];
+      }
+    })();
+    
+    return loadingNamespaces[cacheKey];
   }
 
   /**
@@ -1407,79 +1322,62 @@ async function init() {
     }
   };
 
-  // Call async initialization when script loads
+  // DOMContentLoaded Event Handling
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
-      // Check if initialization already happened
+      // Nur einmal initialisieren
       if (!window.i18nInitStarted) {
         window.i18nInitStarted = true;
         console.log("i18n self-initializing on DOMContentLoaded");
+        // Den aktuellen Sprachzustand bestimmen
+        determineCurrentLanguage();
+        // Initialisieren
         init();
       }
     });
   } else {
-    // Check if initialization already happened
+    // Nur einmal initialisieren
     if (!window.i18nInitStarted) {
       window.i18nInitStarted = true;
       console.log("i18n self-initializing immediately");
+      // Den aktuellen Sprachzustand bestimmen
+      determineCurrentLanguage();
+      // Initialisieren
       init();
     }
   }
-})();
 
-// Добавляем функцию для синхронизации SVG кнопок
-function syncLanguageButtons() {
-  const currentLang = currentLanguage;
-  const buttons = document.querySelectorAll('[id^="langMain"], [id^="langSide"]');
-  
-  buttons.forEach(button => {
-    const langId = button.querySelector('use')?.id;
-    if (langId) {
-      const lang = langId.replace('lang', '');
-      if (lang === currentLang) {
-        button.classList.add('active');
-      } else {
-        button.classList.remove('active');
-      }
+  /**
+   * Determine current language from available sources
+   */
+  function determineCurrentLanguage() {
+    if (currentLanguage !== null) {
+      return; // Bereits festgelegt
     }
-  });
-}
-
-// Обновляем функцию init для добавления синхронизации
-async function init() {
-  if (initialized) return;
-  
-  // ... existing init code ...
-  
-  // Синхронизируем кнопки языков
-  syncLanguageButtons();
-  
-  // ... rest of init code ...
-}
-
-// Функция для установки языка
-function setLanguage(langId) {
-  // Map der Sprachcodes
-  const langMap = {
-    'lang1': 'en',
-    'lang2': 'de',
-    'lang3': 'pl',
-    'lang4': 'cs',
-    'lang5': 'fr',
-    'lang6': 'ko'
-  };
-
-  // Получаем код языка из ID
-  const lang = langMap[langId];
-  if (!lang) {
-    console.error(`Неизвестный ID языка: ${langId}`);
-    return;
+    
+    // Bestimme die Sprache aus verschiedenen Quellen
+    currentLanguage = 
+      getCookie('i18next') ||
+      localStorage.getItem('i18nextLng') ||
+      navigator.language.split('-')[0] ||
+      defaultLanguage;
+      
+    // Nur unterstützte Sprachen verwenden
+    if (!supportedLanguages.includes(currentLanguage)) {
+      console.log(`Sprache ${currentLanguage} wird nicht unterstützt, verwende ${defaultLanguage}`);
+      currentLanguage = defaultLanguage;
+    }
+    
+    console.log(`Aktuelle Sprache auf ${currentLanguage} gesetzt`);
+    
+    // HTML Attribute setzen
+    document.documentElement.lang = currentLanguage;
+    
+    // RTL-Unterstützung
+    if (['ar', 'he'].includes(currentLanguage)) {
+      document.documentElement.dir = 'rtl';
+    } else {
+      document.documentElement.dir = 'ltr';
+    }
   }
-
-  // Используем changeLanguage для установки языка
-  if (window.i18n && window.i18n.changeLanguage) {
-    window.i18n.changeLanguage(lang);
-  } else {
-    console.error('i18n не инициализирован');
-  }
-}
+})();
