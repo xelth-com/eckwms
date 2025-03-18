@@ -102,61 +102,64 @@ function initI18n(options = {}) {
   
   // Initialize i18next
   i18next
-    .use(Backend)
-    .use(i18nextMiddleware.LanguageDetector)
-    .init({
-      backend: {
-        loadPath: path.join(localesPath, '{{lng}}', '{{ns}}.json'),
-        addPath: path.join(localesPath, '{{lng}}', '{{ns}}.missing.json')
-      },
-      fallbackLng: defaultLanguage,
-      preload: supportedLngs,
-      ns: namespaces,
-      defaultNS: 'common',
-      detection: {
-        order: ['cookie', 'querystring', 'header',  'session'],
-        lookupCookie: 'i18next',
-        lookupQuerystring: 'lang',
-        lookupHeader: 'accept-language',
-        lookupSession: 'lang',
-        caches: ['cookie'],
-        cookieExpirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
-        cookieDomain: options.cookieDomain || undefined
-      },
-      load: 'languageOnly',
-      saveMissing: true,
-      // Return key as is for client-side handling
-      parseMissingKeyHandler: (key, defaultValue) => {
-        return key;
-      },
-      missingKeyHandler: (lng, ns, key, fallbackValue) => {
-        // Only queue untranslated keys from non-default languages
-        if (lng !== defaultLanguage) {
-          const queueKey = `${lng}:${ns}:${key}`;
+  .use(Backend)
+  .use(i18nextMiddleware.LanguageDetector)
+  .init({
+    backend: {
+      loadPath: path.join(localesPath, '{{lng}}', '{{ns}}.json'),
+      addPath: path.join(localesPath, '{{lng}}', '{{ns}}.missing.json')
+    },
+    fallbackLng: defaultLanguage,
+    preload: supportedLngs,
+    ns: namespaces,
+    defaultNS: 'common',
+    detection: {
+      order: ['cookie', 'querystring', 'header', 'session'],
+      lookupCookie: 'i18next',
+      lookupQuerystring: 'lang',
+      lookupHeader: 'accept-language',
+      lookupSession: 'lang',
+      caches: ['cookie'],
+      cookieExpirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
+      cookieDomain: options.cookieDomain || undefined
+    },
+    load: 'languageOnly',
+    saveMissing: true,
+    // Return key as is for client-side handling
+    parseMissingKeyHandler: (key, defaultValue) => {
+      return key;
+    },
+    missingKeyHandler: (lng, ns, key, fallbackValue) => {
+      // Fix: Only queue translations TO non-default languages FROM the default language
+      if (lng !== defaultLanguage) {
+        const queueKey = `${lng}:${ns}:${key}`;
+        
+        // Only add to queue if not already in progress
+        if (!translationInProgress.has(queueKey)) {
+          // Get the text from the default language
+          const defaultText = key; // You might want to improve this to get actual text from default language
+
+          translationQueue.enqueue({
+            text: defaultText,
+            targetLang: lng,  // Target is the requested language
+            namespace: ns,
+            key: key
+          });
           
-          // Only add to queue if not already in progress
-          if (!translationInProgress.has(queueKey)) {
-            translationQueue.enqueue({
-              text: key,
-              targetLang: lng,
-              namespace: ns,
-              key: key
-            });
-            
-            if (process.env.NODE_ENV === 'development') {
-              console.log(`[i18n] Added to translation queue: [${lng}] ${ns}:${key}`);
-            }
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[i18n] Added to translation queue: [${lng}] ${ns}:${key}`);
           }
         }
-      },
-      interpolation: {
-        escapeValue: false,
-        formatSeparator: ',',
-        format: function(value, format, lng) {
-          if (format === 'uppercase') return value.toUpperCase();
-          return value;
-        }
-      },
+      }
+    },
+    interpolation: {
+      escapeValue: false,
+      formatSeparator: ',',
+      format: function(value, format, lng) {
+        if (format === 'uppercase') return value.toUpperCase();
+        return value;
+      }
+    },
       ...options
     });
   // Promise-based translation function

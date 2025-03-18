@@ -23,6 +23,44 @@
     "products": "Produkte",
     "status": "Status"
   },
+  "welcome": {
+    "title": "Willkommen auf unserer Webseite!",
+    "message": "Wir bei M3 Mobile GmbH wurden von unserem Mutterunternehmen mit der Aufgabe betraut, den Wert von M3 Mobile-Geräten zu erhalten. Unser Ziel ist es, sicherzustellen, dass jedes Gerät unabhängig von Umständen oder Beschädigungen zuverlässig nutzbar bleibt. Wir bieten umfassenden Service sowohl während als auch nach der Garantiezeit, um die Langlebigkeit Ihrer Geräte zu gewährleisten.",
+    "process": "Der Prozess ist einfach: Senden Sie Ihr M3 Mobile-Gerät an die folgende Adresse:",
+    "contract_info": "Durch das Senden des Pakets wird ein Reparaturvertrag zwischen Ihnen (dem Absender) und uns (dem Empfänger) geschlossen. Sie übernehmen die Versandkosten zu uns, und wir übernehmen die Rücksendungskosten. Inspektion und Kostenschätzung sind kostenlos.",
+    "error_description": "Bitte geben Sie eine detaillierte Fehlerbeschreibung an, da dies die Chancen einer erfolgreichen Reparatur deutlich erhöht.",
+    "important_note": "Wichtiger Hinweis:",
+    "warranty_info": "Wenn Sie einen Garantieanspruch oder einen Service-Pack-Vertrag haben, geben Sie bitte den Namen des Händlers an."
+  },
+  "address": {
+    "recipient": "Empfänger",
+    "sender": "Absender",
+    "example_company": "Beispiel Firma",
+    "example_person": "[z.Hd. Max Mustermann]",
+    "example_street": "Beispielstraße 42",
+    "example_city": "08150 Beispielstadt",
+    "example_phone": "[+49 00 000000]",
+    "example_email": "beispiel@eck3.com",
+    "reseller_note": "[Name des Händlers]"
+  },
+  "rma": {
+    "status_check": "Um den Reparaturstatus zu überprüfen, geben Sie bitte unsere RMA-Nummer oder die Seriennummer des Geräts ein.",
+    "request_button": "RMA-Reparaturanfrage",
+    "process_info": "Sobald wir Ihr Paket erhalten, wird der Vertrag abgeschlossen. Wir weisen Ihrem Paket eine RMA-Nummer zu und erstellen eine eigene Seite dafür. Sie können auf diese Seite zugreifen, indem Sie die von Ihrem Versanddienstleister bereitgestellte Tracking-Nummer auf unserer Homepage im entsprechenden Feld (gelbes Etikett) eingeben.",
+    "tracking_info": "Auf dieser Seite können Sie den Inhalt Ihrer Sendung überprüfen, den Reparaturstatus verfolgen und Zahlungsdetails aktualisieren oder andere Probleme behandeln, falls erforderlich. Anmeldedaten werden auch an die von Ihnen im Paket angegebene E-Mail-Adresse gesendet.",
+    "form_info": "Damit nichts vergessen wird, haben wir ein RMA-Formular erstellt. Wenn Sie dieses Formular ausfüllen und Ihrem Paket beilegen, erhalten wir alle notwendigen Informationen im Voraus und können die Bearbeitungszeit bei der Paketannahme reduzieren. Vielen Dank für Ihre Mitarbeit!"
+  },
+  "service": {
+    "title": "Unsere Service-Center:"
+  },
+  "links": {
+    "title": "Nützliche Links:",
+    "app_manual": "M3 Anwendungshandbuch",
+    "release_notes": "Betriebssystem-Versionshinweise",
+    "technical_support": "Technischer Support",
+    "partner_portal": "Partner-Portal",
+    "homepage": "M3 Mobile Homepage"
+  },
   "common": {
     "save": "Speichern",
     "cancel": "Abbrechen",
