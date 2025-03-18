@@ -5,7 +5,7 @@
  */
 (function() {
   // Default language (fallback)
-  let defaultLanguage = 'de';
+  let defaultLanguage = 'en';
   
   // Current language (initially null, will be set after initialization)
   let currentLanguage = null;
