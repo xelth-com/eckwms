@@ -312,8 +312,7 @@ const tagProcessor = (req, res, next) => {
   
   // Override res.send
   res.send = function(body) {
-    console.log('res.send called');
-    console.log('body', body);
+
     // Check if response is likely HTML
     if (typeof body === 'string' && 
         (res.get('Content-Type')?.includes('text/html') || 

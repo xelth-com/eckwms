@@ -173,30 +173,23 @@
    * @param {string} fallback - Fallback text if key doesn't exist
    * @returns {string} - Translated text or fallback
    */
-  function getTranslation(key, options = {}, fallback = '') {
-    if (!window.i18n || !window.i18n.isInitialized()) {
-      return fallback || key.split('.').pop(); // Just return the fallback or last part of key as text
-    }
-    
-    // Check if key exists in translation files (testing existence, not returning value)
-    let translation;
-    try {
-      // Try to get the translation
-      translation = window.i18n.t(key, options);
-      
-      // If i18next returns the key itself, it means the key doesn't exist
-      // Most i18n libraries return the key when a translation is missing
-      if (translation === key || translation.includes('i18n key not found')) {
-        console.log(`Translation key not found: ${key}`);
-        return fallback || key.split('.').pop(); // Use fallback or extract readable part from key
-      }
-      
-      return translation;
-    } catch (error) {
-      console.error(`Error getting translation for key: ${key}`, error);
-      return fallback || key.split('.').pop();
-    }
+  // Improved helper function to get translations
+function getTranslation(key, options = {}, fallback = '') {
+  if (!window.i18n || !window.i18n.isInitialized()) {
+    console.log("i18n not initialized for key:", key);
+    return fallback || key.split('.').pop(); // Just return the fallback or last part of key as text
   }
+  
+  const translation = window.i18n.t(key, options);
+  
+  // If translation equals key, use fallback
+  if (translation === key) {
+    console.log(`Translation not found for key: ${key}, using fallback`);
+    return fallback || key.split('.').pop();
+  }
+  
+  return translation;
+}
 
   // Add address logic explanation
   function addAddressLogicExplanation() {

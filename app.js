@@ -107,7 +107,64 @@ app.use(morgan('[:date[clf]] :method :url :status :response-time ms - :res[conte
 app.use(requestLogger);
 
 
-
+// Diagnostics for i18n
+app.get('/api/i18n-status', (req, res) => {
+    try {
+      // Prepare file system paths
+      const localesDir = path.join(__dirname, 'html/locales');
+      
+      // Check if directory exists
+      const dirExists = fs.existsSync(localesDir);
+      
+      // Get available languages
+      const languages = dirExists 
+        ? fs.readdirSync(localesDir).filter(file => fs.statSync(path.join(localesDir, file)).isDirectory())
+        : [];
+      
+      // Check language files for DE (as an example)
+      const deNamespaces = [];
+      if (languages.includes('de')) {
+        const deDir = path.join(localesDir, 'de');
+        const files = fs.readdirSync(deDir);
+        
+        for (const file of files) {
+          if (file.endsWith('.json')) {
+            const namespace = file.replace('.json', '');
+            
+            try {
+              const content = fs.readFileSync(path.join(deDir, file), 'utf8');
+              const json = JSON.parse(content);
+              deNamespaces.push({
+                namespace,
+                keys: Object.keys(json).length
+              });
+            } catch (err) {
+              deNamespaces.push({
+                namespace,
+                error: err.message
+              });
+            }
+          }
+        }
+      }
+      
+      res.json({
+        status: 'ok',
+        dirExists,
+        localesDir,
+        languages,
+        fileExamples: {
+          de: deNamespaces
+        }
+      });
+    } catch (error) {
+      res.status(500).json({
+        status: 'error',
+        message: error.message,
+        stack: error.stack
+      });
+    }
+  });
 
 app.use(initI18n());
 

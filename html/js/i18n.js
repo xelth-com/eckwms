@@ -13,6 +13,9 @@
   // Initialization flag
   let initialized = false;
 
+  // Track which namespaces we've loaded
+  let loadedNamespaces = {};
+
   // Check supported languages
   const supportedLanguages = [
     // EU official languages
@@ -66,12 +69,18 @@
 
     // Only update translations if language is not default
     if (currentLanguage !== defaultLanguage) {
+      // Preload common namespaces
+      await preloadCommonNamespaces();
+
       // Initialize translations on page
       updatePageTranslations();
     }
 
     // Initialize language switcher
     setupLanguageSwitcher();
+
+    // Check translation files (diagnostic)
+    checkTranslationFiles();
 
     // Set initialization flag
     initialized = true;
@@ -80,6 +89,60 @@
     document.dispatchEvent(new CustomEvent('i18n:initialized', {
       detail: { language: currentLanguage }
     }));
+  }
+
+  /**
+   * Preload common namespaces
+   */
+  async function preloadCommonNamespaces() {
+    const commonNamespaces = ['common', 'auth', 'rma', 'dashboard'];
+    
+    for (const namespace of commonNamespaces) {
+      const localePath = `/locales/${currentLanguage}/${namespace}.json`;
+      try {
+        console.log(`Attempting to load namespace: ${namespace} from ${localePath}`);
+        const response = await fetch(localePath);
+        
+        if (response.ok) {
+          const translations = await response.json();
+          // Cache translations
+          for (const [k, v] of Object.entries(translations)) {
+            translationCache[`${currentLanguage}:${namespace}:${k}`] = v;
+          }
+          loadedNamespaces[`${currentLanguage}:${namespace}`] = true;
+          console.log(`Successfully loaded namespace: ${namespace} with ${Object.keys(translations).length} keys`);
+        } else {
+          console.warn(`Failed to load namespace ${namespace}: HTTP ${response.status}`);
+        }
+      } catch (error) {
+        console.error(`Error loading namespace ${namespace}: ${error.message}`);
+      }
+    }
+  }
+
+  /**
+   * Check if translation files exist
+   */
+  function checkTranslationFiles() {
+    if (currentLanguage === defaultLanguage) return;
+    
+    const commonNamespaces = ['common', 'auth', 'rma', 'dashboard'];
+    
+    console.log(`----- CHECKING TRANSLATION FILES FOR ${currentLanguage} -----`);
+    
+    for (const namespace of commonNamespaces) {
+      const localePath = `/locales/${currentLanguage}/${namespace}.json`;
+      fetch(localePath)
+        .then(response => {
+          console.log(`${localePath}: ${response.ok ? 'OK ✓' : 'NOT FOUND ✗'}`);
+          if (!response.ok) {
+            console.warn(`HTTP Status: ${response.status}`);
+          }
+        })
+        .catch(error => {
+          console.error(`Error checking ${localePath}: ${error.message}`);
+        });
+    }
   }
 
   /**
@@ -311,11 +374,19 @@
     // Clear retry counters on language change
     translationRetryCount = {};
     pendingTranslations.clear();
+    loadedNamespaces = {};
+    translationCache = {};
+
+    // Check translation files for new language
+    checkTranslationFiles();
 
     // Only update translations if not default language
     if (lang !== defaultLanguage) {
-      // Update translations on page
-      updatePageTranslations();
+      // Preload common namespaces for new language
+      preloadCommonNamespaces().then(() => {
+        // Update translations on page
+        updatePageTranslations();
+      });
     } else {
       // If switching to default language, reload page to get original content
       window.location.reload();
@@ -346,8 +417,7 @@
     if (currentLanguage === defaultLanguage) return;
 
     // Reset retry counters on full page update
-    // FIXED: Change from const to let for variables that get reassigned
-    translationRetryCount = {}; // This was likely declared as const elsewhere
+    translationRetryCount = {};
     pendingTranslations.clear();
 
     // First collect all untranslated elements (with data-i18n attributes)
@@ -372,11 +442,11 @@
   }
 
   /**
- * Process elements in batches to avoid UI blocking
- * @param {NodeList} elements - Elements with data-i18n attribute
- * @param {number} startIndex - Start index for current batch
- * @param {number} batchSize - Size of each batch
- */
+   * Process elements in batches to avoid UI blocking
+   * @param {NodeList} elements - Elements with data-i18n attribute
+   * @param {number} startIndex - Start index for current batch
+   * @param {number} batchSize - Size of each batch
+   */
   function processElementsInBatches(elements, startIndex, batchSize = 50) {
     const endIndex = Math.min(startIndex + batchSize, elements.length);
     const batch = Array.from(elements).slice(startIndex, endIndex);
@@ -388,43 +458,19 @@
 
     batch.forEach(el => {
       const key = el.getAttribute('data-i18n');
-
-      // Check if we already have this in cache
-      const cacheKey = `${currentLanguage}:${key}`;
-      if (translationCache[cacheKey]) {
-        el.textContent = translationCache[cacheKey];
-        return;
+      // Get translation for this key
+      const translation = getTranslation(key);
+      
+      // Apply translation if it's not the same as the key
+      if (translation !== key) {
+        el.textContent = translation;
+      } else {
+        // If we didn't find a translation, add to list for processing
+        textsToTranslate.push(key);
+        keysMap.push(key);
+        elementsMap.push(el);
       }
-
-      // NEW CODE: Check if translation exists via t() method
-      if (window.i18n && typeof window.i18n.t === 'function') {
-        const translation = window.i18n.t(key);
-
-        // If translation exists and is not the key itself
-        if (translation && translation !== key && !translation.includes('i18n key not found')) {
-          el.textContent = translation;
-          translationCache[cacheKey] = translation;
-          return;
-        }
-      }
-
-      // Skip if key is already being translated
-      if (pendingTranslations.has(cacheKey)) {
-        return;
-      }
-
-      textsToTranslate.push(key); // Send the key, not the content
-      keysMap.push(key);
-      elementsMap.push(el);
-
-      // Mark as pending
-      pendingTranslations.add(cacheKey);
     });
-
-    // Request translations for this batch
-    if (textsToTranslate.length > 0) {
-      translateBatch(textsToTranslate, elementsMap, keysMap);
-    }
 
     // If there are more elements, schedule the next batch
     if (endIndex < elements.length) {
@@ -433,6 +479,7 @@
       }, 0);
     }
   }
+
   /**
    * Process HTML content translations
    * @param {NodeList} elements - Elements with data-i18n-html attribute
@@ -444,89 +491,45 @@
 
     elements.forEach(el => {
       const key = el.getAttribute('data-i18n-html');
-
-      // Check if we already have this in cache
-      const cacheKey = `${currentLanguage}:html:${key}`;
-      if (translationCache[cacheKey]) {
-        el.innerHTML = translationCache[cacheKey];
-        return;
+      
+      // Try getting translation with the improved method
+      const translation = getTranslation(key);
+      
+      // If translation found and it's not the same as the key
+      if (translation !== key) {
+        el.innerHTML = translation;
+      } else {
+        textsToTranslate.push(key);
+        keysMap.push(key);
+        elementsMap.push(el);
       }
-
-      // NEW CODE: Check if translation exists via t() method
-      if (window.i18n && typeof window.i18n.t === 'function') {
-        const translation = window.i18n.t(key);
-
-        if (translation && translation !== key && !translation.includes('i18n key not found')) {
-          el.innerHTML = translation;
-          translationCache[cacheKey] = translation;
-          return;
-        }
-      }
-
-      // Skip if key is already being translated
-      if (pendingTranslations.has(cacheKey)) {
-        return;
-      }
-
-      textsToTranslate.push(key);
-      keysMap.push(key);
-      elementsMap.push(el);
-
-      // Mark as pending
-      pendingTranslations.add(cacheKey);
     });
 
+    // Only make API calls if needed
     if (textsToTranslate.length > 0) {
-      fetch('/api/translate-batch', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          texts: textsToTranslate,
-          targetLang: currentLanguage,
-          htmlContent: true
-        })
-      })
-        .then(response => response.json())
-        .then(data => {
-          if (data.translations && data.translations.length === textsToTranslate.length) {
-            // Apply translations
-            elementsMap.forEach((el, index) => {
-              const key = keysMap[index];
-              const cacheKey = `${currentLanguage}:html:${key}`;
-
-              // Remove from pending
-              pendingTranslations.delete(cacheKey);
-
-              if (data.translations[index] && data.translations[index] !== key) {
-                el.innerHTML = data.translations[index];
-                translationCache[cacheKey] = data.translations[index];
-              } else {
-                // Translation failed, schedule retry
-                scheduleRetryForHtmlElement(el, key);
-              }
-            });
+      // First check if we can load these from namespaces
+      loadNamespacesForKeys(textsToTranslate).then(() => {
+        // After loading namespaces, try getting translations again
+        elementsMap.forEach((el, index) => {
+          const key = keysMap[index];
+          const translation = getTranslation(key);
+          
+          if (translation !== key) {
+            el.innerHTML = translation;
+          } else if (!pendingTranslations.has(`${currentLanguage}:html:${key}`)) {
+            // If still no translation, request via API
+            requestApiTranslation(key, getNamespaceFromKey(key), `${currentLanguage}:html:${key}`, true);
+            el.classList.add('i18n-loading');
           }
-        })
-        .catch(error => {
-          console.error('HTML translation error:', error);
-
-          // Handle errors - mark elements for retry
-          elementsMap.forEach((el, index) => {
-            const key = keysMap[index];
-            const cacheKey = `${currentLanguage}:html:${key}`;
-            pendingTranslations.delete(cacheKey);
-            scheduleRetryForHtmlElement(el, key);
-          });
         });
+      });
     }
   }
 
   /**
- * Process attribute translations
- * @param {NodeList} elements - Elements with data-i18n-attr attribute
- */
+   * Process attribute translations
+   * @param {NodeList} elements - Elements with data-i18n-attr attribute
+   */
   function processAttributeTranslations(elements) {
     const attributeTexts = [];
     const attributeMappings = [];
@@ -535,468 +538,286 @@
       try {
         const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
         for (const [attr, key] of Object.entries(attrsMap)) {
-          // Check if we already have this in cache
-          const cacheKey = `${currentLanguage}:attr:${key}`;
-          if (translationCache[cacheKey]) {
-            el.setAttribute(attr, translationCache[cacheKey]);
-            continue;
+          // Try getting translation with the improved method
+          const translation = getTranslation(key);
+          
+          // If translation found and it's not the same as the key
+          if (translation !== key) {
+            el.setAttribute(attr, translation);
+          } else {
+            attributeTexts.push(key);
+            attributeMappings.push({
+              element: el,
+              attribute: attr,
+              key: key
+            });
           }
-
-          // NEW CODE: Check if translation exists via t() method
-          if (window.i18n && typeof window.i18n.t === 'function') {
-            const translation = window.i18n.t(key);
-
-            if (translation && translation !== key && !translation.includes('i18n key not found')) {
-              el.setAttribute(attr, translation);
-              translationCache[cacheKey] = translation;
-              continue;
-            }
-          }
-
-          // Skip if key is already being translated
-          if (pendingTranslations.has(cacheKey)) {
-            continue;
-          }
-
-          attributeTexts.push(key); // Send the key, not the current attribute value
-          attributeMappings.push({
-            element: el,
-            attribute: attr,
-            key: key
-          });
-
-          // Mark as pending
-          pendingTranslations.add(cacheKey);
         }
       } catch (e) {
         console.error('Error parsing data-i18n-attr:', e);
       }
     });
 
-    // If there are attributes to translate
+    // Only make API calls if needed
     if (attributeTexts.length > 0) {
-      fetch('/api/translate-batch', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          texts: attributeTexts,
-          targetLang: currentLanguage
-        })
-      })
-        .then(response => response.json())
-        .then(data => {
-          if (data.translations && data.translations.length === attributeTexts.length) {
-            // Apply translations
-            attributeMappings.forEach((mapping, index) => {
-              const cacheKey = `${currentLanguage}:attr:${mapping.key}`;
-
-              // Remove from pending
-              pendingTranslations.delete(cacheKey);
-
-              if (data.translations[index] && data.translations[index] !== mapping.key) {
-                mapping.element.setAttribute(mapping.attribute, data.translations[index]);
-                translationCache[cacheKey] = data.translations[index];
-              } else {
-                // Schedule retry if needed
-                scheduleRetryForAttribute(mapping.element, mapping.attribute, mapping.key);
-              }
-            });
+      // First try to load namespaces for these keys
+      loadNamespacesForKeys(attributeTexts).then(() => {
+        // After loading namespaces, try getting translations again
+        attributeMappings.forEach(mapping => {
+          const translation = getTranslation(mapping.key);
+          
+          if (translation !== mapping.key) {
+            mapping.element.setAttribute(mapping.attribute, translation);
+          } else if (!pendingTranslations.has(`${currentLanguage}:attr:${mapping.key}`)) {
+            // If still no translation, request via API
+            requestApiTranslation(
+              mapping.key, 
+              getNamespaceFromKey(mapping.key), 
+              `${currentLanguage}:attr:${mapping.key}`
+            );
+            mapping.element.classList.add('i18n-loading');
           }
-        })
-        .catch(error => {
-          console.error('Attribute translation error:', error);
-
-          // Handle errors - mark attributes for retry
-          attributeMappings.forEach(mapping => {
-            const cacheKey = `${currentLanguage}:attr:${mapping.key}`;
-            pendingTranslations.delete(cacheKey);
-            scheduleRetryForAttribute(mapping.element, mapping.attribute, mapping.key);
-          });
         });
-    }
-  }
-
-  /**
-   * Schedule retry for element translation
-   */
-  function scheduleRetryForElement(element, key) {
-    const retryKey = `${currentLanguage}:${key}`;
-
-    // Initialize retry count if not exists
-    if (!translationRetryCount[retryKey]) {
-      translationRetryCount[retryKey] = 0;
-    }
-
-    // Check if we haven't exceeded max retries
-    if (translationRetryCount[retryKey] < MAX_RETRIES) {
-      const retryIndex = translationRetryCount[retryKey];
-      const delay = RETRY_DELAYS[retryIndex];
-
-      setTimeout(() => {
-        // Skip if element no longer in DOM
-        if (!document.contains(element)) return;
-
-        // Skip if already in pending
-        if (pendingTranslations.has(retryKey)) return;
-
-        // Add loading indicator class
-        element.classList.add('i18n-loading');
-
-        // Mark as pending
-        pendingTranslations.add(retryKey);
-
-        // Retry translation using the key, not the current content
-        fetch('/api/translate', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            text: key,
-            targetLang: currentLanguage
-          })
-        })
-          .then(response => response.json())
-          .then(data => {
-            // Remove loading indicator
-            element.classList.remove('i18n-loading');
-
-            // Remove from pending
-            pendingTranslations.delete(retryKey);
-
-            if (data.translated && data.translated !== key) {
-              element.textContent = data.translated;
-              translationCache[retryKey] = data.translated;
-            }
-          })
-          .catch(error => {
-            element.classList.remove('i18n-loading');
-            pendingTranslations.delete(retryKey);
-            console.error('Retry translation error:', error);
-          });
-
-        // Increment retry count
-        translationRetryCount[retryKey]++;
-      }, delay);
-    }
-  }
-
-  /**
-   * Schedule retry for HTML element translation
-   */
-  function scheduleRetryForHtmlElement(element, key) {
-    const retryKey = `${currentLanguage}:html:${key}`;
-
-    if (!translationRetryCount[retryKey]) {
-      translationRetryCount[retryKey] = 0;
-    }
-
-    if (translationRetryCount[retryKey] < MAX_RETRIES) {
-      const retryIndex = translationRetryCount[retryKey];
-      const delay = RETRY_DELAYS[retryIndex];
-
-      setTimeout(() => {
-        // Skip if element no longer in DOM
-        if (!document.contains(element)) return;
-
-        // Skip if already in pending
-        if (pendingTranslations.has(retryKey)) return;
-
-        // Add loading indicator
-        element.classList.add('i18n-loading');
-
-        // Mark as pending
-        pendingTranslations.add(retryKey);
-
-        fetch('/api/translate', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            text: key,
-            targetLang: currentLanguage,
-            htmlContent: true
-          })
-        })
-          .then(response => response.json())
-          .then(data => {
-            element.classList.remove('i18n-loading');
-            pendingTranslations.delete(retryKey);
-
-            if (data.translated && data.translated !== key) {
-              element.innerHTML = data.translated;
-              translationCache[retryKey] = data.translated;
-            }
-          })
-          .catch(error => {
-            element.classList.remove('i18n-loading');
-            pendingTranslations.delete(retryKey);
-            console.error('Retry HTML translation error:', error);
-          });
-
-        translationRetryCount[retryKey]++;
-      }, delay);
-    }
-  }
-
-  /**
-   * Schedule retry for attribute translation
-   */
-  function scheduleRetryForAttribute(element, attribute, key) {
-    const retryKey = `${currentLanguage}:attr:${key}`;
-
-    if (!translationRetryCount[retryKey]) {
-      translationRetryCount[retryKey] = 0;
-    }
-
-    if (translationRetryCount[retryKey] < MAX_RETRIES) {
-      const retryIndex = translationRetryCount[retryKey];
-      const delay = RETRY_DELAYS[retryIndex];
-
-      setTimeout(() => {
-        // Skip if element no longer in DOM
-        if (!document.contains(element)) return;
-
-        // Skip if already in pending
-        if (pendingTranslations.has(retryKey)) return;
-
-        // Add loading indicator to parent element
-        element.classList.add('i18n-loading');
-
-        // Mark as pending
-        pendingTranslations.add(retryKey);
-
-        fetch('/api/translate', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            text: key,
-            targetLang: currentLanguage
-          })
-        })
-          .then(response => response.json())
-          .then(data => {
-            element.classList.remove('i18n-loading');
-            pendingTranslations.delete(retryKey);
-
-            if (data.translated && data.translated !== key) {
-              element.setAttribute(attribute, data.translated);
-              translationCache[retryKey] = data.translated;
-            }
-          })
-          .catch(error => {
-            element.classList.remove('i18n-loading');
-            pendingTranslations.delete(retryKey);
-            console.error('Retry attribute translation error:', error);
-          });
-
-        translationRetryCount[retryKey]++;
-      }, delay);
-    }
-  }
-
-  /**
-   * Helper function to check if translation exists
-   * @param {string} key - Translation key
-   * @returns {string|null} - Translation or null if not found
-   */
-  function checkExistingTranslation(key) {
-    if (!window.i18n || typeof window.i18n.t !== 'function') {
-      return null;
-    }
-
-    const translation = window.i18n.t(key);
-
-    // If translation equals key or contains error message, it doesn't exist
-    if (!translation || translation === key || translation.includes('i18n key not found')) {
-      return null;
-    }
-
-    return translation;
-  }
-
-
-  /**
- * Function to translate dynamically created element
- * @param {HTMLElement} element - HTML element to translate
- * @param {string} context - Translation context
- * @returns {Promise} - Promise with translation result
- */
-  function translateDynamicElement(element, context = '') {
-    // If language equals default, no translation needed
-    if (currentLanguage === defaultLanguage) return Promise.resolve();
-
-    // First, look for any data-i18n attributes
-    const i18nElements = element.querySelectorAll('[data-i18n]');
-    const i18nAttrElements = element.querySelectorAll('[data-i18n-attr]');
-    const i18nHtmlElements = element.querySelectorAll('[data-i18n-html]');
-
-    if (i18nElements.length > 0) {
-      processElementsInBatches(i18nElements, 0);
-    }
-
-    if (i18nAttrElements.length > 0) {
-      processAttributeTranslations(i18nAttrElements);
-    }
-
-    if (i18nHtmlElements.length > 0) {
-      processHtmlTranslations(i18nHtmlElements);
-    }
-
-    // Now handle text nodes that don't have data-i18n already
-    const textNodes = [];
-    const walker = document.createTreeWalker(
-      element,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode: function (node) {
-          // Skip empty text nodes and nodes in script/style
-          if (node.nodeValue.trim() === '') return NodeFilter.FILTER_REJECT;
-
-          const parent = node.parentNode;
-          if (parent.nodeType === Node.ELEMENT_NODE &&
-            (parent.tagName === 'SCRIPT' ||
-              parent.tagName === 'STYLE' ||
-              parent.hasAttribute('data-i18n') ||
-              parent.hasAttribute('data-i18n-html'))) {
-            return NodeFilter.FILTER_REJECT;
-          }
-
-          return NodeFilter.FILTER_ACCEPT;
-        }
-      },
-      false
-    );
-
-    let node;
-    while (node = walker.nextNode()) {
-      if (node.nodeValue.trim() !== '') {
-        textNodes.push(node);
-      }
-    }
-
-    // Attributes with text to translate
-    const attributesToTranslate = ['placeholder', 'title', 'alt', 'value'];
-
-    // Find elements with these attributes
-    const elementsWithAttributes = element.querySelectorAll(
-      attributesToTranslate.map(attr => `[${attr}]`).join(',')
-    );
-
-    // All text values to send to server
-    const textsToTranslate = [];
-    const nodesToTranslate = [];
-    const attributesToTranslateMap = [];
-
-    // Process text nodes with t() check
-    textNodes.forEach(node => {
-      const text = node.nodeValue.trim();
-      if (!text) return;
-
-      // Check if this text might be a key format (namespace:key.subkey)
-      const isKeyFormat = /^[a-z0-9_.-]+(\:[a-z0-9_.-]+)+$/i.test(text);
-
-      if (isKeyFormat && window.i18n && typeof window.i18n.t === 'function') {
-        // Try to get translation directly
-        const translation = window.i18n.t(text);
-
-        if (translation && translation !== text && !translation.includes('i18n key not found')) {
-          node.nodeValue = translation;
-          // Cache this translation
-          translationCache[`${currentLanguage}:${text}`] = translation;
-          return;
-        }
-      }
-
-      // If no direct translation available, add to batch request
-      textsToTranslate.push(text);
-      nodesToTranslate.push(node);
-    });
-
-    // Process attributes with t() check
-    elementsWithAttributes.forEach(el => {
-      attributesToTranslate.forEach(attr => {
-        if (el.hasAttribute(attr) && el.getAttribute(attr).trim() !== '') {
-          const attrValue = el.getAttribute(attr).trim();
-
-          // Check if this attribute value might be a key format
-          const isKeyFormat = /^[a-z0-9_.-]+(\:[a-z0-9_.-]+)+$/i.test(attrValue);
-
-          if (isKeyFormat && window.i18n && typeof window.i18n.t === 'function') {
-            // Try to get translation directly
-            const translation = window.i18n.t(attrValue);
-
-            if (translation && translation !== attrValue && !translation.includes('i18n key not found')) {
-              el.setAttribute(attr, translation);
-              // Cache this translation
-              translationCache[`${currentLanguage}:attr:${attrValue}`] = translation;
-              return;
-            }
-          }
-
-          textsToTranslate.push(attrValue);
-          attributesToTranslateMap.push({ element: el, attribute: attr });
-        }
       });
+    }
+  }
+
+  /**
+   * Load JSON translation files for namespaces needed by keys
+   * @param {string[]} keys - Translation keys
+   * @returns {Promise} - Promise resolving when files are loaded
+   */
+  async function loadNamespacesForKeys(keys) {
+    // Extract namespaces from keys
+    const namespaces = new Set();
+    
+    keys.forEach(key => {
+      const namespace = getNamespaceFromKey(key);
+      if (namespace && !loadedNamespaces[`${currentLanguage}:${namespace}`]) {
+        namespaces.add(namespace);
+      }
     });
+    
+    // Load each namespace
+    const promises = [];
+    
+    namespaces.forEach(namespace => {
+      if (!loadedNamespaces[`${currentLanguage}:${namespace}`]) {
+        const promise = loadNamespace(namespace);
+        promises.push(promise);
+      }
+    });
+    
+    return Promise.all(promises);
+  }
 
-    // If nothing to translate, exit
-    if (textsToTranslate.length === 0) return Promise.resolve();
+  /**
+   * Load a single namespace translation file
+   * @param {string} namespace - Namespace to load
+   * @returns {Promise} - Promise resolving when file is loaded
+   */
+  async function loadNamespace(namespace) {
+    const cacheKey = `${currentLanguage}:${namespace}`;
+    
+    // Skip if already loaded
+    if (loadedNamespaces[cacheKey]) {
+      return Promise.resolve();
+    }
+    
+    const localePath = `/locales/${currentLanguage}/${namespace}.json`;
+    console.log(`Loading namespace: ${namespace} from ${localePath}`);
+    
+    try {
+      const response = await fetch(localePath);
+      
+      if (response.ok) {
+        const translations = await response.json();
+        
+        // Cache translations
+        for (const [k, v] of Object.entries(translations)) {
+          translationCache[`${currentLanguage}:${namespace}:${k}`] = v;
+        }
+        
+        loadedNamespaces[cacheKey] = true;
+        console.log(`Successfully loaded namespace: ${namespace} with ${Object.keys(translations).length} keys`);
+        return translations;
+      } else {
+        console.warn(`Failed to load namespace ${namespace}: HTTP ${response.status}`);
+        loadedNamespaces[cacheKey] = false; // Mark as checked but not found
+        return null;
+      }
+    } catch (error) {
+      console.error(`Error loading namespace ${namespace}: ${error.message}`);
+      loadedNamespaces[cacheKey] = false; // Mark as checked but not found
+      return null;
+    }
+  }
 
-    // Send translation request
-    return fetch('/api/translate-batch', {
+  /**
+   * Extract namespace from translation key
+   * @param {string} key - Translation key
+   * @returns {string} - Namespace
+   */
+  function getNamespaceFromKey(key) {
+    const parts = key.split(':');
+    return parts.length > 1 ? parts[0] : 'common';
+  }
+
+  /**
+   * Function to get a translation value
+   * @param {string} key - Translation key
+   * @param {Object} options - Options for interpolation
+   * @returns {string} - Translated text or original key
+   */
+  function getTranslation(key, options = {}) {
+    // If i18n not initialized, return key
+    if (!initialized) {
+      console.log("i18n not initialized, returning key:", key);
+      return key;
+    }
+
+    // If default language or empty key, just return the key
+    if (currentLanguage === defaultLanguage || !key) {
+      return key;
+    }
+
+    // Parse key into namespace and actual key
+    const parts = key.split(':');
+    const namespace = parts.length > 1 ? parts[0] : 'common';
+    const actualKey = parts.length > 1 ? parts.slice(1).join(':') : key;
+
+    // Check cache first
+    const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
+    if (translationCache[cacheKey]) {
+      return interpolate(translationCache[cacheKey], options);
+    }
+
+    // Check if the namespace is loaded
+    if (!loadedNamespaces[`${currentLanguage}:${namespace}`]) {
+      // Schedule loading this namespace
+      if (!pendingTranslations.has(`${currentLanguage}:${namespace}`)) {
+        pendingTranslations.add(`${currentLanguage}:${namespace}`);
+        
+        loadNamespace(namespace).then(translations => {
+          pendingTranslations.delete(`${currentLanguage}:${namespace}`);
+          
+          // If key is found in loaded namespace, update elements
+          if (translations && translations[actualKey]) {
+            updateElementsWithKey(key, translations[actualKey]);
+          } else if (!pendingTranslations.has(cacheKey)) {
+            // If key not found in namespace, try API translation
+            requestApiTranslation(key, namespace, cacheKey);
+          }
+        });
+      }
+      
+      // Return key while namespace is loading
+      return key;
+    }
+    
+    // If namespace is loaded but key not found (and not being translated)
+    if (!pendingTranslations.has(cacheKey)) {
+      // Request API translation as fallback
+      requestApiTranslation(key, namespace, cacheKey);
+    }
+    
+    // Return key if no translation available yet
+    return key;
+  }
+
+  /**
+   * Request translation from API
+   * @param {string} key - Translation key
+   * @param {string} namespace - Namespace
+   * @param {string} cacheKey - Cache key
+   * @param {boolean} isHtml - Whether content is HTML
+   */
+  function requestApiTranslation(key, namespace, cacheKey, isHtml = false) {
+    if (pendingTranslations.has(cacheKey)) return;
+    
+    console.log(`Key "${key}" not found in static files, requesting API translation`);
+    pendingTranslations.add(cacheKey);
+    
+    fetch('/api/translate', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        texts: textsToTranslate,
+        text: key,
         targetLang: currentLanguage,
-        context: context
+        context: namespace,
+        htmlContent: isHtml
       })
     })
-      .then(response => response.json())
-      .then(data => {
-        if (!data.translations || data.translations.length !== textsToTranslate.length) {
-          throw new Error('Invalid translation response');
+    .then(response => response.json())
+    .then(data => {
+      pendingTranslations.delete(cacheKey);
+      
+      if (data.translated && data.translated !== key) {
+        console.log(`API returned translation for "${key}": "${data.translated}"`);
+        translationCache[cacheKey] = data.translated;
+        updateElementsWithKey(key, data.translated, isHtml);
+      } else {
+        console.warn(`API translation for "${key}" failed or returned key itself`);
+      }
+    })
+    .catch(error => {
+      console.error('API translation error:', error);
+      pendingTranslations.delete(cacheKey);
+    });
+  }
+
+  /**
+   * Update all DOM elements using a translation key
+   * @param {string} key - Translation key
+   * @param {string} translation - Translated text
+   * @param {boolean} isHtml - Whether content is HTML
+   */
+  function updateElementsWithKey(key, translation, isHtml = false) {
+    // Find all elements with this key
+    document.querySelectorAll(`[data-i18n="${key}"]`).forEach(el => {
+      el.textContent = translation;
+      el.classList.remove('i18n-loading');
+    });
+    
+    // Also check attributes
+    document.querySelectorAll('[data-i18n-attr]').forEach(el => {
+      try {
+        const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
+        for (const [attr, attrKey] of Object.entries(attrsMap)) {
+          if (attrKey === key) {
+            el.setAttribute(attr, translation);
+            el.classList.remove('i18n-loading');
+          }
         }
-
-        // Apply translations to text nodes
-        let index = 0;
-        nodesToTranslate.forEach(node => {
-          const original = node.nodeValue.trim();
-          const translated = data.translations[index++];
-
-          // Store in cache for future use
-          const cacheKey = `${currentLanguage}:${original}`;
-          translationCache[cacheKey] = translated;
-
-          node.nodeValue = translated;
-        });
-
-        // Apply translations to attributes
-        attributesToTranslateMap.forEach(item => {
-          const original = item.element.getAttribute(item.attribute).trim();
-          const translated = data.translations[index++];
-
-          // Store in cache for future use
-          const cacheKey = `${currentLanguage}:attr:${original}`;
-          translationCache[cacheKey] = translated;
-
-          item.element.setAttribute(item.attribute, translated);
-        });
-
-        return data;
-      })
-      .catch(error => {
-        console.error('Translation error:', error);
-        return null;
+      } catch (e) {
+        console.error('Error updating attribute translation:', e);
+      }
+    });
+    
+    // Update HTML content if applicable
+    if (isHtml) {
+      document.querySelectorAll(`[data-i18n-html="${key}"]`).forEach(el => {
+        el.innerHTML = translation;
+        el.classList.remove('i18n-loading');
       });
+    }
+  }
+
+  /**
+   * Interpolate variables in a string
+   * @param {string} text - Template with variables
+   * @param {Object} options - Variables
+   * @returns {string} - Interpolated string
+   */
+  function interpolate(text, options) {
+    if (!options || typeof text !== 'string') {
+      return text;
+    }
+
+    // Replace {{var}} with values from options
+    return text.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
+      return options[key] !== undefined ? options[key] : match;
+    });
   }
 
   /**
@@ -1033,106 +854,28 @@
     return null;
   }
 
-
-
-  /**
-   * Функция для получения перевода по ключу
-   * @param {string} key - Ключ перевода, может включать пространство имен (например, "rma:device.title")
-   * @param {Object} options - Опции перевода (например, для интерполяции)
-   * @returns {string} - Переведенный текст или исходный ключ, если перевод не найден
-   */
-  function getTranslation(key, options = {}) {
-    // Если i18n не инициализирован, вернуть ключ
-    if (!initialized) {
-      return key;
-    }
-
-    // Разбор ключа на namespace и собственно ключ
-    const parts = key.split(':');
-    const namespace = parts.length > 1 ? parts[0] : 'common';
-    const actualKey = parts.length > 1 ? parts[1] : key;
-
-    // Формируем ключ для кэша
-    const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
-
-    // Проверяем кэш
-    if (translationCache[cacheKey]) {
-      return interpolate(translationCache[cacheKey], options);
-    }
-
-    // Если перевода нет в кэше и язык не совпадает с дефолтным, 
-    // добавляем в очередь для асинхронного перевода
-    if (currentLanguage !== defaultLanguage) {
-      if (!pendingTranslations.has(cacheKey)) {
-        fetch('/api/translate', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            text: key,
-            targetLang: currentLanguage,
-            context: namespace
-          })
-        })
-          .then(response => response.json())
-          .then(data => {
-            if (data.translated) {
-              translationCache[cacheKey] = data.translated;
-            }
-          })
-          .catch(error => {
-            console.error('Translation error:', error);
-          });
-
-        pendingTranslations.add(cacheKey);
-      }
-    }
-
-    // Возвращаем ключ, если перевод не найден
-    return key;
-  }
-
-  /**
-   * Вспомогательная функция для подстановки переменных в перевод
-   * @param {string} text - Шаблон с переменными типа {{var}}
-   * @param {Object} options - Объект с переменными для подстановки
-   * @returns {string} - Текст с подставленными значениями
-   */
-  function interpolate(text, options) {
-    if (!options || typeof text !== 'string') {
-      return text;
-    }
-
-    // Заменяем переменные вида {{count}} на значения из options
-    return text.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
-      return options[key] !== undefined ? options[key] : match;
-    });
-  }
-
-
-  // Добавьте функцию t в экспортируемый объект window.i18n
+  // Export to window.i18n
   window.i18n = {
     init,
     changeLanguage,
     getCurrentLanguage: () => currentLanguage || defaultLanguage,
     updatePageTranslations,
-    translateDynamicElement,
+    translateDynamicElement: (element, context = '') => {
+      if (!element) return Promise.resolve();
+      return translateDynamicElement(element, context);
+    },
     isInitialized: () => initialized,
-    // Новые добавленные функции:
-    t: getTranslation, // Алиас для getTranslation
-    // Дополнительные полезные методы
+    t: getTranslation,
+    checkTranslationFiles,
     exists: function (key) {
       const parts = key.split(':');
       const namespace = parts.length > 1 ? parts[0] : 'common';
-      const actualKey = parts.length > 1 ? parts[1] : key;
+      const actualKey = parts.length > 1 ? parts.slice(1).join(':') : key;
       const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
       return translationCache[cacheKey] !== undefined;
     }
   };
 
-
-  // MODIFIED: Add a check to prevent duplicate initialization
   // Call async initialization when script loads
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
@@ -1151,18 +894,4 @@
       init();
     }
   }
-
-  // Call async initialization when script loads
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => init());
-  } else {
-    init();
-  }
 })();
-
-
-
-
-
-
-

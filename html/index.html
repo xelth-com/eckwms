@@ -2686,7 +2686,33 @@
         </g>
       </defs>
     </svg>
+<!-- Diagnostic Tools for i18n -->
+<div id="i18n-debug" style="position: fixed; bottom: 10px; right: 10px; z-index: 1000; background: rgba(0,0,0,0.7); color: white; padding: 10px; border-radius: 5px; font-size: 12px; display: none;">
+  <h4>i18n Debug</h4>
+  <button onclick="window.i18n && window.i18n.checkTranslationFiles()">Check Translation Files</button>
+  <button onclick="document.getElementById('i18n-debug').style.display='none'">Close</button>
+  <div>
+    <label for="debug-lang">Test Language:</label>
+    <select id="debug-lang">
+      <option value="de">German (de)</option>
+      <option value="ru">Russian (ru)</option>
+      <option value="ko">Korean (ko)</option>
+    </select>
+    <button onclick="window.i18n && window.i18n.changeLanguage(document.getElementById('debug-lang').value)">Switch</button>
+  </div>
+</div>
 
+<script>
+// Add diagnostic keyboard shortcut (Ctrl+Shift+I)
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.shiftKey && e.key === 'I') {
+    const debugPanel = document.getElementById('i18n-debug');
+    if (debugPanel) {
+      debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
+    }
+  }
+});
+</script>
     <!-- Add i18n script right before the closing body tag -->
     <script src="/js/i18n.js" defer></script>
 </body>
