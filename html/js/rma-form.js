@@ -165,6 +165,39 @@
     rmaForm.insertBefore(langContainer, firstChild);
   }
 
+  /**
+   * Helper function to safely get a translation
+   * This function checks if the translation key exists and returns a sensible fallback
+   * @param {string} key - Translation key
+   * @param {Object} options - Translation options
+   * @param {string} fallback - Fallback text if key doesn't exist
+   * @returns {string} - Translated text or fallback
+   */
+  function getTranslation(key, options = {}, fallback = '') {
+    if (!window.i18n || !window.i18n.isInitialized()) {
+      return fallback || key.split('.').pop(); // Just return the fallback or last part of key as text
+    }
+    
+    // Check if key exists in translation files (testing existence, not returning value)
+    let translation;
+    try {
+      // Try to get the translation
+      translation = window.i18n.t(key, options);
+      
+      // If i18next returns the key itself, it means the key doesn't exist
+      // Most i18n libraries return the key when a translation is missing
+      if (translation === key || translation.includes('i18n key not found')) {
+        console.log(`Translation key not found: ${key}`);
+        return fallback || key.split('.').pop(); // Use fallback or extract readable part from key
+      }
+      
+      return translation;
+    } catch (error) {
+      console.error(`Error getting translation for key: ${key}`, error);
+      return fallback || key.split('.').pop();
+    }
+  }
+
   // Add address logic explanation
   function addAddressLogicExplanation() {
     const devicesContainer = document.getElementById('devices-container');
@@ -359,53 +392,50 @@
     return deviceEntry;
   }
 
-  // Display address source info
-// Find the updateAddressSourceInfo function (around line 367)
-function updateAddressSourceInfo(deviceIndex) {
-  const deviceEntries = document.querySelectorAll('.device-entry');
+  // Display address source info - FIX THE ISSUE HERE
+  function updateAddressSourceInfo(deviceIndex) {
+    const deviceEntries = document.querySelectorAll('.device-entry');
 
-  // Loop through all devices
-  deviceEntries.forEach(entry => {
-    const entryIndex = parseInt(entry.dataset.index, 10);
+    // Loop through all devices
+    deviceEntries.forEach(entry => {
+      const entryIndex = parseInt(entry.dataset.index, 10);
 
-    // Skip current and previous devices
-    if (entryIndex < deviceIndex) return;
+      // Skip current and previous devices
+      if (entryIndex < deviceIndex) return;
 
-    // Find nearest address source above
-    let addressSource = findNearestAddressSource(entryIndex);
-    const toggleBtn = entry.querySelector('button');
+      // Find nearest address source above
+      let addressSource = findNearestAddressSource(entryIndex);
+      const toggleBtn = entry.querySelector('button');
 
-    if (!toggleBtn) return;
+      if (!toggleBtn) return;
 
-    // Check if alternate address section is open for this device
-    const altAddressSection = document.getElementById(`alternate-address-${entryIndex}`);
-    const hasAltAddress = altAddressSection && altAddressSection.style.display !== 'none';
+      // Check if alternate address section is open for this device
+      const altAddressSection = document.getElementById(`alternate-address-${entryIndex}`);
+      const hasAltAddress = altAddressSection && altAddressSection.style.display !== 'none';
 
-    if (hasAltAddress) {
-      // Device has its own address
-      toggleBtn.style.backgroundColor = '#e6f7ff';
-    } else if (addressSource === 0) {
-      // Using billing address
-      // FIXED: Check if translation function exists before using it
-      if (window.i18n && typeof window.i18n.t === 'function' && window.i18n.isInitialized()) {
-        toggleBtn.textContent = window.i18n.t('rma:device.using_billing');
+      if (hasAltAddress) {
+        // Device has its own address
+        toggleBtn.style.backgroundColor = '#e6f7ff';
+      } else if (addressSource === 0) {
+        // Using billing address - FIX: Use getTranslation helper function
+        toggleBtn.textContent = getTranslation(
+          'rma:device.using_billing', 
+          {}, 
+          'Using Billing Address'
+        );
+        toggleBtn.style.backgroundColor = '#f0f0f0';
       } else {
-        toggleBtn.textContent = 'Using Billing Address';
+        // Using another device's address - FIX: Use getTranslation helper function
+        const translateOptions = {count: addressSource};
+        toggleBtn.textContent = getTranslation(
+          'rma:device.using_address', 
+          translateOptions, 
+          `Using Address from Device #${addressSource}`
+        );
+        toggleBtn.style.backgroundColor = '#f0f0f0';
       }
-      toggleBtn.style.backgroundColor = '#f0f0f0';
-    } else {
-      // Using another device's address
-      const translateOptions = {count: addressSource};
-      // FIXED: Check if translation function exists before using it
-      if (window.i18n && typeof window.i18n.t === 'function' && window.i18n.isInitialized()) {
-        toggleBtn.textContent = window.i18n.t('rma:device.using_address', translateOptions);
-      } else {
-        toggleBtn.textContent = `Using Address from Device #${addressSource}`;
-      }
-      toggleBtn.style.backgroundColor = '#f0f0f0';
-    }
-  });
-}
+    });
+  }
 
   // Find nearest address source above
   function findNearestAddressSource(deviceIndex) {
@@ -437,8 +467,12 @@ function updateAddressSourceInfo(deviceIndex) {
         if (addressSection) {
           if (addressSection.style.display === 'none') {
             addressSection.style.display = 'block';
-            toggleButton.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en' ? 
-              window.i18n.t('rma:device.hide_address') : 'Hide Return Address';
+            // FIX: Use getTranslation helper function
+            toggleButton.textContent = getTranslation(
+              'rma:device.hide_address', 
+              {}, 
+              'Hide Return Address'
+            );
             toggleButton.style.backgroundColor = '#e6f7ff';
 
             // Translate the address section if it was just opened
@@ -447,8 +481,12 @@ function updateAddressSourceInfo(deviceIndex) {
             }
           } else {
             addressSection.style.display = 'none';
-            toggleButton.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en' ? 
-              window.i18n.t('rma:device.address_button') : 'Specify Different Return Address';
+            // FIX: Use getTranslation helper function
+            toggleButton.textContent = getTranslation(
+              'rma:device.address_button', 
+              {}, 
+              'Specify Different Return Address'
+            );
             toggleButton.style.backgroundColor = '#eee';
           }
 

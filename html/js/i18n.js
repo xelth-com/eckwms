@@ -24,7 +24,7 @@
   ];
   
   // Translation cache
-  const translationCache = {};
+  let translationCache = {};
 
   // Translation retry tracking
   let translationRetryCount = {};
@@ -971,17 +971,104 @@ function updatePageTranslations() {
     }
     return null;
   }
+
+
   
-  // Export functions to global namespace
-  window.i18n = {
-    init,
-    changeLanguage,
-    getCurrentLanguage: () => currentLanguage || defaultLanguage,
-    updatePageTranslations,
-    translateDynamicElement,
-    isInitialized: () => initialized,
-    updateTranslations: updatePageTranslations
-  };
+/**
+ * Функция для получения перевода по ключу
+ * @param {string} key - Ключ перевода, может включать пространство имен (например, "rma:device.title")
+ * @param {Object} options - Опции перевода (например, для интерполяции)
+ * @returns {string} - Переведенный текст или исходный ключ, если перевод не найден
+ */
+function getTranslation(key, options = {}) {
+  // Если i18n не инициализирован, вернуть ключ
+  if (!initialized) {
+    return key;
+  }
+  
+  // Разбор ключа на namespace и собственно ключ
+  const parts = key.split(':');
+  const namespace = parts.length > 1 ? parts[0] : 'common';
+  const actualKey = parts.length > 1 ? parts[1] : key;
+  
+  // Формируем ключ для кэша
+  const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
+  
+  // Проверяем кэш
+  if (translationCache[cacheKey]) {
+    return interpolate(translationCache[cacheKey], options);
+  }
+  
+  // Если перевода нет в кэше и язык не совпадает с дефолтным, 
+  // добавляем в очередь для асинхронного перевода
+  if (currentLanguage !== defaultLanguage) {
+    if (!pendingTranslations.has(cacheKey)) {
+      fetch('/api/translate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          text: key,
+          targetLang: currentLanguage,
+          context: namespace
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.translated) {
+          translationCache[cacheKey] = data.translated;
+        }
+      })
+      .catch(error => {
+        console.error('Translation error:', error);
+      });
+      
+      pendingTranslations.add(cacheKey);
+    }
+  }
+  
+  // Возвращаем ключ, если перевод не найден
+  return key;
+}
+
+/**
+ * Вспомогательная функция для подстановки переменных в перевод
+ * @param {string} text - Шаблон с переменными типа {{var}}
+ * @param {Object} options - Объект с переменными для подстановки
+ * @returns {string} - Текст с подставленными значениями
+ */
+function interpolate(text, options) {
+  if (!options || typeof text !== 'string') {
+    return text;
+  }
+  
+  // Заменяем переменные вида {{count}} на значения из options
+  return text.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
+    return options[key] !== undefined ? options[key] : match;
+  });
+}
+  
+
+// Добавьте функцию t в экспортируемый объект window.i18n
+window.i18n = {
+  init,
+  changeLanguage,
+  getCurrentLanguage: () => currentLanguage || defaultLanguage,
+  updatePageTranslations,
+  translateDynamicElement,
+  isInitialized: () => initialized,
+  // Новые добавленные функции:
+  t: getTranslation, // Алиас для getTranslation
+  // Дополнительные полезные методы
+  exists: function(key) {
+    const parts = key.split(':');
+    const namespace = parts.length > 1 ? parts[0] : 'common';
+    const actualKey = parts.length > 1 ? parts[1] : key;
+    const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
+    return translationCache[cacheKey] !== undefined;
+  }
+};
   
 
 // MODIFIED: Add a check to prevent duplicate initialization
@@ -1011,3 +1098,10 @@ if (document.readyState === 'loading') {
     init();
   }
 })();
+
+
+
+
+
+
+
