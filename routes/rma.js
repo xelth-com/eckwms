@@ -72,16 +72,16 @@ router.post('/generate', (req, res) => {
 
   // Get user data if logged in
   let userData = { 
-    company: '',
+                  company: '',
     vat: '',
-    person: '',
-    street: '',
+                  person: '',
+                  street: '',
     houseNumber: '',
     addressLine2: '',
     city: '', 
-    postalCode: '',
-    country: 'Germany',
-    email: '',
+                  postalCode: '',
+                  country: 'Germany',
+                  email: '',
     phone: '' 
   };
 
@@ -147,7 +147,7 @@ router.post('/generate', (req, res) => {
       <label for="country" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.country">Country:</b></label>
       <input type="text" id="country" value="${userData.country}" required 
              style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
-    </div>
+                      </div>
                       
     <!-- Contact Information Section -->
     <div style="margin-top: 20px; border: 1px solid #ddd; padding: 15px; border-radius: 4px;">
@@ -168,7 +168,7 @@ router.post('/generate', (req, res) => {
       <label for="resellerName" style="display: block; margin-top: 10px;"><span data-i18n="rma:form.reseller_name">In case of warranty, please provide the reseller's name:</span></label>
       <input type="text" id="resellerName" 
              style="width: 95%; padding: 5px; font-size: 20px; background-color: #eee; margin-top: 5px;">
-    </div>
+                  </div>
                   
     <!-- Hidden user ID if logged in -->
     ${req.user ? `<input type="hidden" id="userId" value="${req.user.id}">` : ''}
@@ -180,29 +180,29 @@ router.post('/generate', (req, res) => {
       
       <div id="devices-container">
         <!-- Initial device entry will be added by JavaScript -->
-      </div>
+                        </div>
                         
       <div style="margin-top: 20px; text-align: center;">
         <button type="button" id="add-device-btn" style="background-color: #1e2071; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer;" data-i18n="rma:form.add_device">
-          Add Another Device
-        </button>
-      </div>
-    </div>
+                      Add Another Device
+                    </button>
+                  </div>
+                </div>
                 
     <!-- Submit Button -->
     <div style="margin-top: 30px; display: flex; justify-content: space-between;">
       <button class="buttonFlat" type="button" onclick="location.reload()" 
         style="font-size: 20px; padding: 10px 20px; background-color: #1e2071; border: none; border-radius: 4px; cursor: pointer;" data-i18n="rma:form.back"> 
-        Back
-      </button>
+                    Back
+                  </button>
                   
       <button class="buttonFlat" type="submit" 
         style="font-size: 20px; padding: 10px 20px; background-color: #1e2071; color: white; border: none; border-radius: 4px; cursor: pointer;" data-i18n="rma:form.submit"> 
         Submit Form
-      </button>
-    </div>
-  </form>
-</div>
+                  </button>
+                </div>
+              </form>
+            </div>
 
 <script>
   // Load rma-form.js for dynamic device entries
@@ -214,8 +214,8 @@ router.post('/generate', (req, res) => {
       window.i18n.updatePageTranslations();
     }
   });
-</script>
-`);
+      </script>
+  `);
 });
 
 // Submit RMA form

@@ -106,95 +106,30 @@ app.use(bodyParser.text({ type: 'text/html' }));
 app.use(morgan('[:date[clf]] :method :url :status :response-time ms - :res[content-length]'));
 app.use(requestLogger);
 
-
-// Diagnostics for i18n
-app.get('/api/i18n-status', (req, res) => {
-    try {
-      // Prepare file system paths
-      const localesDir = path.join(__dirname, 'html/locales');
-      
-      // Check if directory exists
-      const dirExists = fs.existsSync(localesDir);
-      
-      // Get available languages
-      const languages = dirExists 
-        ? fs.readdirSync(localesDir).filter(file => fs.statSync(path.join(localesDir, file)).isDirectory())
-        : [];
-      
-      // Check language files for DE (as an example)
-      const deNamespaces = [];
-      if (languages.includes('de')) {
-        const deDir = path.join(localesDir, 'de');
-        const files = fs.readdirSync(deDir);
-        
-        for (const file of files) {
-          if (file.endsWith('.json')) {
-            const namespace = file.replace('.json', '');
-            
-            try {
-              const content = fs.readFileSync(path.join(deDir, file), 'utf8');
-              const json = JSON.parse(content);
-              deNamespaces.push({
-                namespace,
-                keys: Object.keys(json).length
-              });
-            } catch (err) {
-              deNamespaces.push({
-                namespace,
-                error: err.message
-              });
-            }
-          }
-        }
-      }
-      
-      res.json({
-        status: 'ok',
-        dirExists,
-        localesDir,
-        languages,
-        fileExamples: {
-          de: deNamespaces
-        }
-      });
-    } catch (error) {
-      res.status(500).json({
-        status: 'error',
-        message: error.message,
-        stack: error.stack
-      });
-    }
-  });
-
+// Initialize i18n first
 app.use(initI18n());
 
-// После инициализации i18next, добавьте:
-// Обратите внимание: этот код должен быть ПОСЛЕ инициализации i18next
-// но ДО других middleware, включая static files
-
-// Создаем перехватчик HTML с доступом к i18next
+// Create HTML translator with access to i18next
 const htmlTranslator = htmlInterceptor(i18next);
-
-// Добавляем его в app middleware chain
 app.use(htmlTranslator);
 
-
+// Request logging middleware
 app.use((req, res, next) => {
     console.log('========= REQUEST HEADERS =========');
-    
     console.log('URL:', req.url);
     console.log('Original URL:', req.originalUrl);
     console.log('Cookies:', req.cookies);
     console.log('Accept-Language:', req.headers['accept-language']);
-    console.log('Detected Language:', req.language); // Add this line
+    console.log('Detected Language:', req.language);
     console.log('Query:', req.query);
     console.log('==================================');
     next();
-  });
+});
 
-// Serve static files 
-app.use('/locales', express.static(path.join(__dirname, 'locales')));
+// Serve static files last
+app.use('/locales', express.static(path.join(__dirname, 'html', 'locales')));
 app.use(express.static(path.join(__dirname, 'html')));
+
 // Routes
 app.use('/api', apiRoutes);
 app.use('/rma', rmaRoutes);

@@ -67,20 +67,21 @@
     setCookie('i18next', currentLanguage, 365); // for 365 days
     localStorage.setItem('i18nextLng', currentLanguage);
 
-    // Only update translations if language is not default
-    if (currentLanguage !== defaultLanguage) {
-      // Preload common namespaces
-      await preloadCommonNamespaces();
-
-      // Initialize translations on page
-      updatePageTranslations();
-    }
-
-    // Initialize language switcher
+    // Initialize language switcher first
     setupLanguageSwitcher();
 
-    // Check translation files (diagnostic)
-    checkTranslationFiles();
+    // Only update translations if language is not default
+    if (currentLanguage !== defaultLanguage) {
+      try {
+        // Preload common namespaces
+        await preloadCommonNamespaces();
+        
+        // Initialize translations on page
+        updatePageTranslations();
+      } catch (error) {
+        console.error('Error during translation initialization:', error);
+      }
+    }
 
     // Set initialization flag
     initialized = true;
@@ -116,6 +117,7 @@
             // Handle data-i18n attribute
             if (el.hasAttribute('data-i18n')) {
               const key = el.getAttribute('data-i18n');
+              console.log('data-i18n key', key);
               const translation = window.i18n.t(key);
               
               if (translation !== key) {
@@ -128,6 +130,7 @@
               try {
                 const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
                 for (const [attr, key] of Object.entries(attrsMap)) {
+                  console.log('data-i18n-attr key', key);
                   const translation = window.i18n.t(key);
                   if (translation !== key) {
                     el.setAttribute(attr, translation);
@@ -141,6 +144,7 @@
             // Handle data-i18n-html attribute
             if (el.hasAttribute('data-i18n-html')) {
               const key = el.getAttribute('data-i18n-html');
+              console.log('data-i18n-html key', key);
               const translation = window.i18n.t(key, { interpolation: { escapeValue: false } });
               
               if (translation !== key) {
@@ -179,7 +183,16 @@
   async function preloadCommonNamespaces() {
     const commonNamespaces = ['common', 'auth', 'rma', 'dashboard'];
     
-    for (const namespace of commonNamespaces) {
+    console.log(`Preloading namespaces for language: ${currentLanguage}`);
+    
+    // Create array of promises for parallel loading
+    const loadPromises = commonNamespaces.map(async (namespace) => {
+      // Skip if already loaded
+      if (loadedNamespaces[`${currentLanguage}:${namespace}`]) {
+        console.log(`Namespace ${namespace} already loaded, skipping`);
+        return;
+      }
+
       const localePath = `/locales/${currentLanguage}/${namespace}.json`;
       try {
         console.log(`Attempting to load namespace: ${namespace} from ${localePath}`);
@@ -189,7 +202,9 @@
           const translations = await response.json();
           // Cache translations
           for (const [k, v] of Object.entries(translations)) {
-            translationCache[`${currentLanguage}:${namespace}:${k}`] = v;
+            const fullKey = `${currentLanguage}:${namespace}:${k}`;
+            translationCache[fullKey] = v;
+            console.log(`Cached translation for key: ${fullKey}`);
           }
           loadedNamespaces[`${currentLanguage}:${namespace}`] = true;
           console.log(`Successfully loaded namespace: ${namespace} with ${Object.keys(translations).length} keys`);
@@ -199,7 +214,16 @@
       } catch (error) {
         console.error(`Error loading namespace ${namespace}: ${error.message}`);
       }
-    }
+    });
+
+    // Wait for all namespaces to load
+    await Promise.all(loadPromises);
+    
+    // Log cache status
+    console.log('Translation cache status:', {
+      loadedNamespaces,
+      cacheSize: Object.keys(translationCache).length
+    });
   }
 
   /**
@@ -498,12 +522,15 @@
     // If language equals default language, no translation needed
     if (currentLanguage === defaultLanguage) return;
 
+    console.log('Starting page translation update');
+
     // Reset retry counters on full page update
     translationRetryCount = {};
     pendingTranslations.clear();
 
     // First collect all untranslated elements (with data-i18n attributes)
     const elements = document.querySelectorAll('[data-i18n]');
+    console.log(`Found ${elements.length} elements with data-i18n attribute`);
 
     // Process the elements in batches for better performance
     if (elements.length > 0) {
@@ -512,15 +539,19 @@
 
     // Also handle attribute translations
     const attributeElements = document.querySelectorAll('[data-i18n-attr]');
+    console.log(`Found ${attributeElements.length} elements with data-i18n-attr attribute`);
     if (attributeElements.length > 0) {
       processAttributeTranslations(attributeElements);
     }
 
     // Handle HTML content translations
     const htmlElements = document.querySelectorAll('[data-i18n-html]');
+    console.log(`Found ${htmlElements.length} elements with data-i18n-html attribute`);
     if (htmlElements.length > 0) {
       processHtmlTranslations(htmlElements);
     }
+
+    console.log('Finished page translation update');
   }
 
   /**
@@ -731,6 +762,17 @@
     } catch (error) {
       console.error(`Error loading namespace ${namespace}: ${error.message}`);
       loadedNamespaces[cacheKey] = false; // Mark as checked but not found
+      
+      // Fallback to default language translations if available
+      const fallbackTranslations = translationCache[`${defaultLanguage}:${namespace}`];
+      if (fallbackTranslations) {
+        console.log(`Using fallback translations for namespace: ${namespace}`);
+        for (const [k, v] of Object.entries(fallbackTranslations)) {
+          translationCache[`${currentLanguage}:${namespace}:${k}`] = v;
+        }
+        loadedNamespaces[cacheKey] = true;
+        return fallbackTranslations;
+      }
       return null;
     }
   }
@@ -770,12 +812,16 @@
 
     // Check cache first
     const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
+    console.log(`Checking cache for key: ${cacheKey}`);
+    
     if (translationCache[cacheKey]) {
+      console.log(`Found translation in cache for key: ${key}`);
       return interpolate(translationCache[cacheKey], options);
     }
 
     // Check if the namespace is loaded
     if (!loadedNamespaces[`${currentLanguage}:${namespace}`]) {
+      console.log(`Namespace ${namespace} not loaded, scheduling load`);
       // Schedule loading this namespace
       if (!pendingTranslations.has(`${currentLanguage}:${namespace}`)) {
         pendingTranslations.add(`${currentLanguage}:${namespace}`);
@@ -785,9 +831,11 @@
           
           // If key is found in loaded namespace, update elements
           if (translations && translations[actualKey]) {
+            console.log(`Found translation after loading namespace for key: ${key}`);
             updateElementsWithKey(key, translations[actualKey]);
           } else if (!pendingTranslations.has(cacheKey)) {
             // If key not found in namespace, try API translation
+            console.log(`Key ${key} not found in namespace, requesting API translation`);
             requestApiTranslation(key, namespace, cacheKey);
           }
         });
@@ -799,6 +847,7 @@
     
     // If namespace is loaded but key not found (and not being translated)
     if (!pendingTranslations.has(cacheKey)) {
+      console.log(`Key ${key} not found in loaded namespace, requesting API translation`);
       // Request API translation as fallback
       requestApiTranslation(key, namespace, cacheKey);
     }
@@ -817,14 +866,40 @@
   function requestApiTranslation(key, namespace, cacheKey, isHtml = false) {
     if (pendingTranslations.has(cacheKey)) return;
     
-    console.log(`Key "${key}" not found in static files, requesting API translation`);
+    // Find an element with this key
+    const elementWithKey = document.querySelector(`[data-i18n="${key}"]`);
+    
+    // Get the text content or use a fallback
+    let englishText;
+    if (elementWithKey) {
+      englishText = elementWithKey.textContent.trim();
+    } else {
+      // Try to get the text from the default language namespace
+      const defaultNamespace = namespace || 'common';
+      const defaultKey = key.split(':').pop(); // Get the last part of the key
+      const defaultTranslation = translationCache[`${defaultLanguage}:${defaultNamespace}:${defaultKey}`];
+      englishText = defaultTranslation || key;
+    }
+    
+    // If the text is still a key, try to get the actual text
+    if (englishText.startsWith('rma:')) {
+      const parts = englishText.split(':');
+      const ns = parts[0];
+      const actualKey = parts.slice(1).join(':');
+      const defaultTranslation = translationCache[`${defaultLanguage}:${ns}:${actualKey}`];
+      if (defaultTranslation) {
+        englishText = defaultTranslation;
+      }
+    }
+    
+    console.log(`Key "${key}" not found in static files, requesting API translation ${englishText}`);
     pendingTranslations.add(cacheKey);
     
     fetch('/api/translate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: key,
+        text: englishText,
         targetLang: currentLanguage,
         context: namespace,
         htmlContent: isHtml
@@ -855,20 +930,34 @@
    * @param {boolean} isHtml - Whether content is HTML
    */
   function updateElementsWithKey(key, translation, isHtml = false) {
+    console.log(`Updating elements with key: ${key}`);
+    
     // Find all elements with this key
-    document.querySelectorAll(`[data-i18n="${key}"]`).forEach(el => {
-      el.textContent = translation;
+    const elements = document.querySelectorAll(`[data-i18n="${key}"]`);
+    console.log(`Found ${elements.length} elements with key ${key}`);
+    
+    elements.forEach(el => {
+      if (isHtml) {
+        el.innerHTML = translation;
+      } else {
+        el.textContent = translation;
+      }
       el.classList.remove('i18n-loading');
+      console.log(`Updated element with key ${key}`);
     });
     
     // Also check attributes
-    document.querySelectorAll('[data-i18n-attr]').forEach(el => {
+    const attrElements = document.querySelectorAll('[data-i18n-attr]');
+    console.log(`Checking ${attrElements.length} elements with data-i18n-attr`);
+    
+    attrElements.forEach(el => {
       try {
         const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
         for (const [attr, attrKey] of Object.entries(attrsMap)) {
           if (attrKey === key) {
             el.setAttribute(attr, translation);
             el.classList.remove('i18n-loading');
+            console.log(`Updated attribute ${attr} for element with key ${key}`);
           }
         }
       } catch (e) {
@@ -878,9 +967,13 @@
     
     // Update HTML content if applicable
     if (isHtml) {
-      document.querySelectorAll(`[data-i18n-html="${key}"]`).forEach(el => {
+      const htmlElements = document.querySelectorAll(`[data-i18n-html="${key}"]`);
+      console.log(`Found ${htmlElements.length} elements with HTML content for key ${key}`);
+      
+      htmlElements.forEach(el => {
         el.innerHTML = translation;
         el.classList.remove('i18n-loading');
+        console.log(`Updated HTML content for element with key ${key}`);
       });
     }
   }

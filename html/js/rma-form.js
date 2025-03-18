@@ -1,4 +1,5 @@
-// File: html/js/rma-form.js
+// File: html/js/rma-form-updated.js
+// Updated version with a workaround for the translateDynamicElement issue
 
 (function () {
   // Current device counter
@@ -22,7 +23,7 @@
     setupFormHandler();
 
     // Add address logic explanation
-    addAddressLogicExplanation();
+    addAddressLogicExplanationFixed();
     
     // Add first device entry only if i18n is ready,
     // otherwise wait for the i18n initialization event
@@ -51,8 +52,11 @@
           addDeviceEntry();
         }
         
-        // Translate any existing elements
-        translateAllElements();
+        // Translate the device entry that was just added
+        const lastDeviceEntry = document.querySelector('.device-entry:last-child');
+        if (lastDeviceEntry) {
+          window.i18n.translateDynamicElement(lastDeviceEntry);
+        }
       });
     } else {
       // i18n is already loaded
@@ -71,8 +75,11 @@
             addDeviceEntry();
           }
           
-          // Translate any existing elements
-          translateAllElements();
+          // Translate the device entry that was just added
+          const lastDeviceEntry = document.querySelector('.device-entry:last-child');
+          if (lastDeviceEntry) {
+            window.i18n.translateDynamicElement(lastDeviceEntry);
+          }
         });
       }
     }
@@ -83,24 +90,63 @@
    */
   function translateAllElements() {
     if (window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
-      // Translate the entire form
-      const form = document.getElementById('rmaForm');
-      if (form) {
-        window.i18n.translateDynamicElement(form);
-      }
-      
-      // Specifically translate all device entries
-      const deviceEntries = document.querySelectorAll('.device-entry');
-      deviceEntries.forEach(entry => {
-        window.i18n.translateDynamicElement(entry);
-      });
-      
-      // Translate address logic explanation
-      const addressInfo = document.querySelector('.address-logic-info');
-      if (addressInfo) {
-        window.i18n.translateDynamicElement(addressInfo);
+      // Use updatePageTranslations instead of translateDynamicElement
+      // This is a workaround until translateDynamicElement is fixed
+      if (window.i18n.updatePageTranslations) {
+        window.i18n.updatePageTranslations();
       }
     }
+  }
+
+  /**
+   * Apply translations to a specific element without using translateDynamicElement
+   * This is a custom implementation to work around the missing function
+   */
+  function manuallyTranslateElement(element) {
+    if (!window.i18n || window.i18n.getCurrentLanguage() === 'en') {
+      return; // Skip if default language or i18n not available
+    }
+    
+    // Process data-i18n attributes
+    if (element.hasAttribute('data-i18n')) {
+      const key = element.getAttribute('data-i18n');
+      try {
+        const translation = window.i18n.t(key);
+        if (translation !== key) {
+          element.textContent = translation;
+        }
+      } catch (e) {
+        console.error(`Error translating ${key}:`, e);
+      }
+    }
+    
+    // Find and translate child elements
+    element.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.getAttribute('data-i18n');
+      try {
+        const translation = window.i18n.t(key);
+        if (translation !== key) {
+          el.textContent = translation;
+        }
+      } catch (e) {
+        console.error(`Error translating ${key}:`, e);
+      }
+    });
+    
+    // Handle attribute translations
+    element.querySelectorAll('[data-i18n-attr]').forEach(el => {
+      try {
+        const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
+        for (const [attr, key] of Object.entries(attrsMap)) {
+          const translation = window.i18n.t(key);
+          if (translation !== key) {
+            el.setAttribute(attr, translation);
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing data-i18n-attr:', e);
+      }
+    });
   }
 
   /**
@@ -173,26 +219,25 @@
    * @param {string} fallback - Fallback text if key doesn't exist
    * @returns {string} - Translated text or fallback
    */
-  // Improved helper function to get translations
-function getTranslation(key, options = {}, fallback = '') {
-  if (!window.i18n || !window.i18n.isInitialized()) {
-    console.log("i18n not initialized for key:", key);
-    return fallback || key.split('.').pop(); // Just return the fallback or last part of key as text
+  function getTranslation(key, options = {}, fallback = '') {
+    if (!window.i18n || !window.i18n.isInitialized()) {
+      console.log("i18n not initialized for key:", key);
+      return fallback || key.split('.').pop(); // Just return the fallback or last part of key as text
+    }
+    
+    const translation = window.i18n.t(key, options);
+    
+    // If translation equals key, use fallback
+    if (translation === key) {
+      console.log(`Translation not found for key: ${key}, using fallback`);
+      return fallback || key.split('.').pop();
+    }
+    
+    return translation;
   }
-  
-  const translation = window.i18n.t(key, options);
-  
-  // If translation equals key, use fallback
-  if (translation === key) {
-    console.log(`Translation not found for key: ${key}, using fallback`);
-    return fallback || key.split('.').pop();
-  }
-  
-  return translation;
-}
 
-  // Add address logic explanation
-  function addAddressLogicExplanation() {
+  // FIXED version that doesn't use translateDynamicElement
+  function addAddressLogicExplanationFixed() {
     const devicesContainer = document.getElementById('devices-container');
     if (devicesContainer) {
       const addressInfo = document.createElement('div');
@@ -215,9 +260,9 @@ function getTranslation(key, options = {}, fallback = '') {
 
       devicesContainer.parentNode.insertBefore(addressInfo, devicesContainer);
       
-      // Apply translations if i18n is available and initialized
+      // Apply translations manually instead of using translateDynamicElement
       if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
-        window.i18n.translateDynamicElement(addressInfo);
+        manuallyTranslateElement(addressInfo);
       }
     }
   }
@@ -370,9 +415,9 @@ function getTranslation(key, options = {}, fallback = '') {
     if (devicesContainer) {
       devicesContainer.appendChild(deviceEntry);
 
-      // Translate if i18n is initialized and language is not default
+      // Translate the new element
       if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
-        window.i18n.translateDynamicElement(deviceEntry);
+        manuallyTranslateElement(deviceEntry);
       }
     }
 
@@ -470,7 +515,7 @@ function getTranslation(key, options = {}, fallback = '') {
 
             // Translate the address section if it was just opened
             if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
-              window.i18n.translateDynamicElement(addressSection);
+              manuallyTranslateElement(addressSection);
             }
           } else {
             addressSection.style.display = 'none';
