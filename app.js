@@ -99,7 +99,7 @@ app.use(bodyParser.text({ type: 'text/html' }));
 // Затем ваш логирующий middleware
 
 
-//app.use('/locales', express.static(path.join(__dirname, 'locales')));
+//
 
 
 // Logging middleware
@@ -136,6 +136,7 @@ app.use((req, res, next) => {
   });
 
 // Serve static files 
+app.use('/locales', express.static(path.join(__dirname, 'locales')));
 app.use(express.static(path.join(__dirname, 'html')));
 // Routes
 app.use('/api', apiRoutes);

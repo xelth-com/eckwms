@@ -28,7 +28,6 @@
     addAddressLogicExplanation();
   }
 
-  // 2. После функции init() добавить:
   /**
    * Загружает скрипт i18n, если он еще не загружен
    */
@@ -75,6 +74,7 @@
     // Создаем заголовок
     const langTitle = document.createElement('span');
     langTitle.textContent = 'Sprache / Language: ';
+    langTitle.setAttribute('data-i18n', 'common:language.select');
     langTitle.style.marginRight = '10px';
 
     // Создаем селектор
@@ -103,15 +103,20 @@
       addressInfo.style.fontSize = '14px';
 
       addressInfo.innerHTML = `
-  <p data-i18n="rma.address_logic.title"><strong>Device Return Information:</strong></p>
+  <p data-i18n="rma:address_logic.title"><strong>Device Return Information:</strong></p>
   <ul style="margin-top: 5px; padding-left: 20px;">
-    <li data-i18n="rma.address_logic.info.0">By default, all devices are shipped to the address specified in the "Billing Information" section.</li>
-    <li data-i18n="rma.address_logic.info.1">You can specify an alternative return address for any device.</li>
-    <li data-i18n="rma.address_logic.info.2">If you haven't specified an address for a device, the nearest address above in the list will be used.</li>
+    <li data-i18n="rma:address_logic.info.0">By default, all devices are shipped to the address specified in the "Billing Information" section.</li>
+    <li data-i18n="rma:address_logic.info.1">You can specify an alternative return address for any device.</li>
+    <li data-i18n="rma:address_logic.info.2">If you haven't specified an address for a device, the nearest address above in the list will be used.</li>
   </ul>
 `;
 
       devicesContainer.parentNode.insertBefore(addressInfo, devicesContainer);
+      
+      // Apply translations if i18n is available
+      if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
+        window.i18n.translateDynamicElement(addressInfo);
+      }
     }
   }
 
@@ -137,6 +142,8 @@
     deviceHeader.style.marginBottom = '15px';
 
     const deviceTitle = document.createElement('h4');
+    deviceTitle.setAttribute('data-i18n', 'rma:device.title');
+    deviceTitle.setAttribute('data-i18n-options', JSON.stringify({count: deviceIndex}));
     deviceTitle.textContent = `Device #${deviceIndex}`;
     deviceTitle.style.margin = '0';
     deviceTitle.style.color = '#1e2071';
@@ -144,6 +151,7 @@
     // Toggle button for alternate shipping address
     const toggleButton = document.createElement('button');
     toggleButton.type = 'button';
+    toggleButton.setAttribute('data-i18n', 'rma:device.address_button');
     toggleButton.textContent = 'Specify Different Return Address';
     toggleButton.style.backgroundColor = '#eee';
     toggleButton.style.border = '1px solid #ccc';
@@ -168,34 +176,34 @@
 
     // Add alternate address fields
     alternateAddressSection.innerHTML = `
-        <h4 style="margin-top: 0; color: #1e2071;">Alternate Return Address</h4>
-        <p style="font-style: italic; margin-bottom: 10px;">Specify a different address for returning this device.</p>
+        <h4 style="margin-top: 0; color: #1e2071;" data-i18n="rma:device.alternate_address">Alternate Return Address</h4>
+        <p style="font-style: italic; margin-bottom: 10px;" data-i18n="rma:device.address_info">Specify a different address for returning this device.</p>
         
-        <label for="alt_company_${deviceIndex}" style="display: block; margin-top: 10px;"><b>Company Name:</b></label>
+        <label for="alt_company_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.company_name">Company Name:</b></label>
         <input type="text" id="alt_company_${deviceIndex}" name="alt_company_${deviceIndex}" 
                style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
   
-        <label for="alt_person_${deviceIndex}" style="display: block; margin-top: 10px;">Contact Person:</label>
+        <label for="alt_person_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="rma:form.contact_person">Contact Person:</label>
         <input type="text" id="alt_person_${deviceIndex}" name="alt_person_${deviceIndex}" 
                style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
   
-        <label for="alt_street_${deviceIndex}" style="display: block; margin-top: 10px;"><b>Street and House Number:</b></label>
+        <label for="alt_street_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.street">Street and House Number:</b></label>
         <input type="text" id="alt_street_${deviceIndex}" name="alt_street_${deviceIndex}" 
                style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
   
-        <label for="alt_addressLine2_${deviceIndex}" style="display: block; margin-top: 10px;">Additional Address Line:</label>
+        <label for="alt_addressLine2_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="rma:form.additional_address">Additional Address Line:</label>
   <input type="text" id="alt_addressLine2_${deviceIndex}" name="alt_addressLine2_${deviceIndex}" 
          style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-  <label for="alt_postalCode_${deviceIndex}" style="display: block; margin-top: 10px;"><b>Postal Code:</b></label>
+  <label for="alt_postalCode_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.postal_code">Postal Code:</b></label>
   <input type="text" id="alt_postalCode_${deviceIndex}" name="alt_postalCode_${deviceIndex}" 
          style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-  <label for="alt_city_${deviceIndex}" style="display: block; margin-top: 10px;"><b>City:</b></label>
+  <label for="alt_city_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.city">City:</b></label>
   <input type="text" id="alt_city_${deviceIndex}" name="alt_city_${deviceIndex}" 
          style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-        <label for="alt_country_${deviceIndex}" style="display: block; margin-top: 10px;"><b>Country:</b></label>
+        <label for="alt_country_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.country">Country:</b></label>
         <input type="text" id="alt_country_${deviceIndex}" name="alt_country_${deviceIndex}" value="Germany" 
                style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
       `;
@@ -208,6 +216,7 @@
     // Serial number input
     const serialLabel = document.createElement('label');
     serialLabel.htmlFor = `serial${deviceIndex}`;
+    serialLabel.setAttribute('data-i18n', 'rma:device.serial_number');
     serialLabel.textContent = 'Serial Number:';
     serialLabel.style.display = 'block';
     serialLabel.style.marginTop = '10px';
@@ -217,6 +226,7 @@
     serialInput.type = 'text';
     serialInput.id = `serial${deviceIndex}`;
     serialInput.name = `serial${deviceIndex}`;
+    serialInput.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "rma:device.serial_placeholder"}));
     serialInput.style.width = '95%';
     serialInput.style.padding = '5px';
     serialInput.style.fontSize = '18px';
@@ -226,6 +236,7 @@
     // Description textarea
     const descLabel = document.createElement('label');
     descLabel.htmlFor = `description${deviceIndex}`;
+    descLabel.setAttribute('data-i18n', 'rma:device.issue_description');
     descLabel.textContent = 'Issue Description:';
     descLabel.style.display = 'block';
     descLabel.style.marginTop = '10px';
@@ -234,6 +245,7 @@
     const descTextarea = document.createElement('textarea');
     descTextarea.id = `description${deviceIndex}`;
     descTextarea.name = `description${deviceIndex}`;
+    descTextarea.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "rma:device.description_placeholder"}));
     descTextarea.rows = 3;
     descTextarea.style.width = '95%';
     descTextarea.style.padding = '5px';
@@ -258,7 +270,7 @@
 
       // Переводим если язык не немецкий и если доступен i18n
       if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
-        window.i18n.translateDynamicElement(deviceEntry, 'rma-device');
+        window.i18n.translateDynamicElement(deviceEntry);
       }
     }
 
@@ -297,11 +309,14 @@
         toggleBtn.style.backgroundColor = '#e6f7ff';
       } else if (addressSource === 0) {
         // Using billing address
-        toggleBtn.textContent = 'Using Billing Address';
+        toggleBtn.textContent = window.i18n && window.i18n.getCurrentLanguage() !== 'de' ? 
+          window.i18n.t('rma:device.using_billing') : 'Using Billing Address';
         toggleBtn.style.backgroundColor = '#f0f0f0';
       } else {
         // Using another device's address
-        toggleBtn.textContent = `Using Address from Device #${addressSource}`;
+        const translateOptions = {count: addressSource};
+        toggleBtn.textContent = window.i18n && window.i18n.getCurrentLanguage() !== 'de' ? 
+          window.i18n.t('rma:device.using_address', translateOptions) : `Using Address from Device #${addressSource}`;
         toggleBtn.style.backgroundColor = '#f0f0f0';
       }
     });
@@ -337,16 +352,18 @@
         if (addressSection) {
           if (addressSection.style.display === 'none') {
             addressSection.style.display = 'block';
-            toggleButton.textContent = 'Hide Return Address';
+            toggleButton.textContent = window.i18n && window.i18n.getCurrentLanguage() !== 'de' ? 
+              window.i18n.t('rma:device.hide_address') : 'Hide Return Address';
             toggleButton.style.backgroundColor = '#e6f7ff';
 
             // Переводим адресный раздел, если он только что открыт
             if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
-              window.i18n.translateDynamicElement(addressSection, 'rma-address');
+              window.i18n.translateDynamicElement(addressSection);
             }
           } else {
             addressSection.style.display = 'none';
-            toggleButton.textContent = 'Specify Different Return Address';
+            toggleButton.textContent = window.i18n && window.i18n.getCurrentLanguage() !== 'de' ? 
+              window.i18n.t('rma:device.address_button') : 'Specify Different Return Address';
             toggleButton.style.backgroundColor = '#eee';
           }
 
