@@ -98,7 +98,25 @@ function initI18n(options = {}) {
     // Additional languages
     'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja'
   ];
-  
+  // Создание промежуточного ПО для определения языка
+  const languageDetectorMiddleware = (req, res, next) => {
+    // Определение языка пользователя
+    const userLanguage = 
+      req.cookies?.i18next ||
+      req.query?.lang ||
+      req.headers['accept-language']?.split(',')[0]?.split('-')[0] ||
+      defaultLanguage;
+    
+    // Проверяем, поддерживается ли язык
+    req.language = supportedLngs.includes(userLanguage) ? userLanguage : defaultLanguage;
+    
+    // Сохраняем язык в куки, если он изменился
+    if (req.cookies?.i18next !== req.language) {
+      res.cookie('i18next', req.language, { maxAge: 365 * 24 * 60 * 60 * 1000, path: '/' });
+    }
+    
+    next();
+  };
   // Namespaces list
   const namespaces = ['common', 'rma', 'dashboard', 'auth'];
   
@@ -386,7 +404,7 @@ const tagProcessor = (req, res, next) => {
 };
 
 // Combine i18next middleware with our tag processor
-return [i18nextMiddleware.handle(i18next), tagProcessor];
+return [languageDetectorMiddleware, i18nextMiddleware.handle(i18next), tagProcessor];
 }
 
 module.exports = initI18n;

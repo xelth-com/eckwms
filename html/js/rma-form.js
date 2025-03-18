@@ -1,5 +1,71 @@
 // File: html/js/rma-form-updated.js
 // Updated version with a workaround for the translateDynamicElement issue
+// Проверка наличия функции translateDynamicElement
+function fixTranslateDynamicElement() {
+  if (!window.i18n || !window.i18n.translateDynamicElement || 
+      window.i18n.translateDynamicElement.toString().includes('return translateDynamicElement')) {
+    
+    console.log('Исправление функции translateDynamicElement...');
+    
+    // Определить функцию, если она отсутствует или имеет ошибки
+    window.i18n.translateDynamicElement = function(element, context = '') {
+      if (!element) return Promise.resolve();
+      
+      if (window.i18n.getCurrentLanguage() === 'en' || !window.i18n.isInitialized()) {
+        return Promise.resolve();
+      }
+      
+      // Рекурсивно обработать все элементы с атрибутами перевода
+      const translateElements = (el) => {
+        // Обработать data-i18n
+        if (el.hasAttribute('data-i18n')) {
+          const key = el.getAttribute('data-i18n');
+          const translation = window.i18n.t(key);
+          
+          if (translation !== key) {
+            el.textContent = translation;
+          }
+        }
+        
+        // Обработать data-i18n-attr
+        if (el.hasAttribute('data-i18n-attr')) {
+          try {
+            const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
+            for (const [attr, key] of Object.entries(attrsMap)) {
+              const translation = window.i18n.t(key);
+              if (translation !== key) {
+                el.setAttribute(attr, translation);
+              }
+            }
+          } catch (e) {
+            console.error('Ошибка разбора data-i18n-attr:', e);
+          }
+        }
+        
+        // Обработать data-i18n-html
+        if (el.hasAttribute('data-i18n-html')) {
+          const key = el.getAttribute('data-i18n-html');
+          const translation = window.i18n.t(key, { interpolation: { escapeValue: false } });
+          
+          if (translation !== key) {
+            el.innerHTML = translation;
+          }
+        }
+        
+        // Рекурсивно обработать дочерние элементы
+        Array.from(el.children).forEach(translateElements);
+      };
+      
+      // Начать обработку с переданного элемента
+      translateElements(element);
+      
+      return Promise.resolve();
+    };
+  }
+}
+
+// Вызвать функцию исправления сразу после определения
+fixTranslateDynamicElement();
 
 (function () {
   // Current device counter
