@@ -794,65 +794,77 @@
    * @returns {string} - Translated text or original key
    */
   function getTranslation(key, options = {}) {
-    // If i18n not initialized, return key
-    if (!initialized) {
-      console.log("i18n not initialized, returning key:", key);
+    // Early returns for initialization checks and default language
+    if (!initialized || currentLanguage === defaultLanguage || !key) {
       return key;
     }
-
-    // If default language or empty key, just return the key
-    if (currentLanguage === defaultLanguage || !key) {
-      return key;
-    }
-
-    // Parse key into namespace and actual key
+  
+    // Parse namespace
     const parts = key.split(':');
     const namespace = parts.length > 1 ? parts[0] : 'common';
     const actualKey = parts.length > 1 ? parts.slice(1).join(':') : key;
-
-    // Check cache first
-    const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
-    console.log(`Checking cache for key: ${cacheKey}`);
     
-    if (translationCache[cacheKey]) {
-      console.log(`Found translation in cache for key: ${key}`);
-      return interpolate(translationCache[cacheKey], options);
-    }
-
-    // Check if the namespace is loaded
-    if (!loadedNamespaces[`${currentLanguage}:${namespace}`]) {
-      console.log(`Namespace ${namespace} not loaded, scheduling load`);
-      // Schedule loading this namespace
-      if (!pendingTranslations.has(`${currentLanguage}:${namespace}`)) {
-        pendingTranslations.add(`${currentLanguage}:${namespace}`);
-        
-        loadNamespace(namespace).then(translations => {
-          pendingTranslations.delete(`${currentLanguage}:${namespace}`);
-          
-          // If key is found in loaded namespace, update elements
-          if (translations && translations[actualKey]) {
-            console.log(`Found translation after loading namespace for key: ${key}`);
-            updateElementsWithKey(key, translations[actualKey]);
-          } else if (!pendingTranslations.has(cacheKey)) {
-            // If key not found in namespace, try API translation
-            console.log(`Key ${key} not found in namespace, requesting API translation`);
-            requestApiTranslation(key, namespace, cacheKey);
-          }
-        });
-      }
-      
-      // Return key while namespace is loading
+    // Get the base namespace object from cache
+    const baseNamespaceKey = `${currentLanguage}:${namespace}`;
+    
+    // Check if namespace is loaded
+    if (!loadedNamespaces[baseNamespaceKey]) {
+      // Schedule loading the namespace
+      // ...existing loading code...
       return key;
     }
     
-    // If namespace is loaded but key not found (and not being translated)
+    // Now handle nested paths using dot notation
+    const pathParts = actualKey.split('.');
+    
+    // Start with the full namespace object
+    let translation = null;
+    let currentObject = null;
+    
+    // First get the base object for this namespace
+    for (const cacheKey in translationCache) {
+      if (cacheKey.startsWith(`${currentLanguage}:${namespace}:`)) {
+        const objectKey = cacheKey.substring(`${currentLanguage}:${namespace}:`.length);
+        if (objectKey === pathParts[0]) {
+          currentObject = translationCache[cacheKey];
+          break;
+        }
+      }
+    }
+    
+    // Navigate through the nested structure
+    if (currentObject) {
+      // For single-level keys
+      if (pathParts.length === 1) {
+        translation = currentObject;
+      } 
+      // For multi-level keys
+      else {
+        let current = currentObject;
+        // Start from index 1 as we already matched the first part
+        for (let i = 1; i < pathParts.length; i++) {
+          if (current && typeof current === 'object' && current[pathParts[i]] !== undefined) {
+            current = current[pathParts[i]];
+          } else {
+            current = null;
+            break;
+          }
+        }
+        translation = current;
+      }
+    }
+    
+    // If translation found, return it with interpolation
+    if (translation !== null) {
+      return interpolate(translation, options);
+    }
+    
+    // Request API translation as fallback (if not in progress)
+    const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
     if (!pendingTranslations.has(cacheKey)) {
-      console.log(`Key ${key} not found in loaded namespace, requesting API translation`);
-      // Request API translation as fallback
       requestApiTranslation(key, namespace, cacheKey);
     }
     
-    // Return key if no translation available yet
     return key;
   }
 
