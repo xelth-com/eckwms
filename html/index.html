@@ -791,7 +791,7 @@
             targetElement.innerHTML = blob;
 
             // Add this translation update
-            if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
+            if (window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
               window.i18n.updatePageTranslations();
             }
 
@@ -895,7 +895,7 @@
       }
 
       // Обновляем переводы в указанном контейнере
-      if (window.i18n && window.i18n.getCurrentLanguage() !== 'de') {
+      if (window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
         if (container) {
           // Обновляем переводы только для элементов в контейнере
           window.i18n.updateTranslations(container);

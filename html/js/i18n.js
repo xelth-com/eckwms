@@ -27,7 +27,7 @@
   const translationCache = {};
 
   // Translation retry tracking
-  const translationRetryCount = {};
+  let translationRetryCount = {};
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [3000, 10000, 30000]; // 3sec, 10sec, 30sec
   
@@ -338,37 +338,38 @@
     }));
   }
   
-  /**
-   * Update translations on page
-   */
-  function updatePageTranslations() {
-    // If language equals default language, no translation needed
-    if (currentLanguage === defaultLanguage) return;
-    
-    // Reset retry counters on full page update
-    translationRetryCount = {};
-    pendingTranslations.clear();
-    
-    // First collect all untranslated elements (with data-i18n attributes)
-    const elements = document.querySelectorAll('[data-i18n]');
-    
-    // Process the elements in batches for better performance
-    if (elements.length > 0) {
-      processElementsInBatches(elements, 0);
-    }
-    
-    // Also handle attribute translations
-    const attributeElements = document.querySelectorAll('[data-i18n-attr]');
-    if (attributeElements.length > 0) {
-      processAttributeTranslations(attributeElements);
-    }
-    
-    // Handle HTML content translations
-    const htmlElements = document.querySelectorAll('[data-i18n-html]');
-    if (htmlElements.length > 0) {
-      processHtmlTranslations(htmlElements);
-    }
+/**
+ * Update translations on page
+ */
+function updatePageTranslations() {
+  // If language equals default language, no translation needed
+  if (currentLanguage === defaultLanguage) return;
+  
+  // Reset retry counters on full page update
+  // FIXED: Change from const to let for variables that get reassigned
+  translationRetryCount = {}; // This was likely declared as const elsewhere
+  pendingTranslations.clear();
+  
+  // First collect all untranslated elements (with data-i18n attributes)
+  const elements = document.querySelectorAll('[data-i18n]');
+  
+  // Process the elements in batches for better performance
+  if (elements.length > 0) {
+    processElementsInBatches(elements, 0);
   }
+  
+  // Also handle attribute translations
+  const attributeElements = document.querySelectorAll('[data-i18n-attr]');
+  if (attributeElements.length > 0) {
+    processAttributeTranslations(attributeElements);
+  }
+  
+  // Handle HTML content translations
+  const htmlElements = document.querySelectorAll('[data-i18n-html]');
+  if (htmlElements.length > 0) {
+    processHtmlTranslations(htmlElements);
+  }
+}
   
   /**
    * Process elements in batches to avoid UI blocking
@@ -982,6 +983,27 @@
     updateTranslations: updatePageTranslations
   };
   
+
+// MODIFIED: Add a check to prevent duplicate initialization
+// Call async initialization when script loads
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    // Check if initialization already happened
+    if (!window.i18nInitStarted) {
+      window.i18nInitStarted = true;
+      console.log("i18n self-initializing on DOMContentLoaded");
+      init();
+    }
+  });
+} else {
+  // Check if initialization already happened
+  if (!window.i18nInitStarted) {
+    window.i18nInitStarted = true;
+    console.log("i18n self-initializing immediately");
+    init();
+  }
+}
+
   // Call async initialization when script loads
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => init());

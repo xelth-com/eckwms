@@ -39,10 +39,12 @@
   function setupI18n() {
     // If i18n is not defined, load it
     if (typeof window.i18n === 'undefined') {
+      console.log("i18n not loaded, loading now...");
       loadI18nScript();
       
       // Listen for i18n initialization event
       document.addEventListener('i18n:initialized', function() {
+        console.log("i18n:initialized event received");
         i18nInitialized = true;
         // Now that i18n is ready, add the first device entry if none exist yet
         if (deviceCount === 0) {
@@ -54,11 +56,15 @@
       });
     } else {
       // i18n is already loaded
+      console.log("i18n already loaded, checking if initialized");
       if (window.i18n.isInitialized()) {
+        console.log("i18n is already initialized");
         i18nInitialized = true;
       } else {
+        console.log("i18n is loaded but not yet initialized, waiting for event");
         // i18n is loaded but not initialized, wait for it
         document.addEventListener('i18n:initialized', function() {
+          console.log("i18n:initialized event received");
           i18nInitialized = true;
           // Add the first device entry if none exist yet
           if (deviceCount === 0) {
@@ -354,43 +360,52 @@
   }
 
   // Display address source info
-  function updateAddressSourceInfo(deviceIndex) {
-    const deviceEntries = document.querySelectorAll('.device-entry');
+// Find the updateAddressSourceInfo function (around line 367)
+function updateAddressSourceInfo(deviceIndex) {
+  const deviceEntries = document.querySelectorAll('.device-entry');
 
-    // Loop through all devices
-    deviceEntries.forEach(entry => {
-      const entryIndex = parseInt(entry.dataset.index, 10);
+  // Loop through all devices
+  deviceEntries.forEach(entry => {
+    const entryIndex = parseInt(entry.dataset.index, 10);
 
-      // Skip current and previous devices
-      if (entryIndex < deviceIndex) return;
+    // Skip current and previous devices
+    if (entryIndex < deviceIndex) return;
 
-      // Find nearest address source above
-      let addressSource = findNearestAddressSource(entryIndex);
-      const toggleBtn = entry.querySelector('button');
+    // Find nearest address source above
+    let addressSource = findNearestAddressSource(entryIndex);
+    const toggleBtn = entry.querySelector('button');
 
-      if (!toggleBtn) return;
+    if (!toggleBtn) return;
 
-      // Check if alternate address section is open for this device
-      const altAddressSection = document.getElementById(`alternate-address-${entryIndex}`);
-      const hasAltAddress = altAddressSection && altAddressSection.style.display !== 'none';
+    // Check if alternate address section is open for this device
+    const altAddressSection = document.getElementById(`alternate-address-${entryIndex}`);
+    const hasAltAddress = altAddressSection && altAddressSection.style.display !== 'none';
 
-      if (hasAltAddress) {
-        // Device has its own address
-        toggleBtn.style.backgroundColor = '#e6f7ff';
-      } else if (addressSource === 0) {
-        // Using billing address
-        toggleBtn.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en' ? 
-          window.i18n.t('rma:device.using_billing') : 'Using Billing Address';
-        toggleBtn.style.backgroundColor = '#f0f0f0';
+    if (hasAltAddress) {
+      // Device has its own address
+      toggleBtn.style.backgroundColor = '#e6f7ff';
+    } else if (addressSource === 0) {
+      // Using billing address
+      // FIXED: Check if translation function exists before using it
+      if (window.i18n && typeof window.i18n.t === 'function' && window.i18n.isInitialized()) {
+        toggleBtn.textContent = window.i18n.t('rma:device.using_billing');
       } else {
-        // Using another device's address
-        const translateOptions = {count: addressSource};
-        toggleBtn.textContent = window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en' ? 
-          window.i18n.t('rma:device.using_address', translateOptions) : `Using Address from Device #${addressSource}`;
-        toggleBtn.style.backgroundColor = '#f0f0f0';
+        toggleBtn.textContent = 'Using Billing Address';
       }
-    });
-  }
+      toggleBtn.style.backgroundColor = '#f0f0f0';
+    } else {
+      // Using another device's address
+      const translateOptions = {count: addressSource};
+      // FIXED: Check if translation function exists before using it
+      if (window.i18n && typeof window.i18n.t === 'function' && window.i18n.isInitialized()) {
+        toggleBtn.textContent = window.i18n.t('rma:device.using_address', translateOptions);
+      } else {
+        toggleBtn.textContent = `Using Address from Device #${addressSource}`;
+      }
+      toggleBtn.style.backgroundColor = '#f0f0f0';
+    }
+  });
+}
 
   // Find nearest address source above
   function findNearestAddressSource(deviceIndex) {
