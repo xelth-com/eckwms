@@ -34,7 +34,8 @@
     "alternate_address": "Alternative Rücksendeadresse",
     "address_info": "Geben Sie eine andere Adresse für die Rücksendung dieses Geräts an.",
     "using_address": "Verwendet Adresse von Gerät #{{count}}",
-    "using_billing": "Verwendet Rechnungsadresse"
+    "using_billing": "Verwendet Rechnungsadresse",
+    "info_text": "Fügen Sie Geräte hinzu, die repariert werden müssen. Jedes Gerät kann bei Bedarf an eine andere Adresse versendet werden."
   },
   "address_logic": {
     "title": "Geräterücksendeinformationen",
