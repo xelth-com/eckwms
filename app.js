@@ -106,7 +106,7 @@ app.use(bodyParser.text({ type: 'text/html' }));
 app.use(morgan('[:date[clf]] :method :url :status :response-time ms - :res[content-length]'));
 app.use(requestLogger);
 
-// Initialize i18n first
+/// Initialize i18n first
 app.use(initI18n());
 
 // Create HTML translator with access to i18next
@@ -115,19 +115,25 @@ app.use(htmlTranslator);
 
 // Request logging middleware
 app.use((req, res, next) => {
-    console.log('========= REQUEST HEADERS =========');
-    console.log('URL:', req.url);
-    console.log('Original URL:', req.originalUrl);
-    console.log('Cookies:', req.cookies);
-    console.log('Accept-Language:', req.headers['accept-language']);
-    console.log('Detected Language:', req.language);
-    console.log('Query:', req.query);
-    console.log('==================================');
-    next();
+  console.log('========= REQUEST HEADERS =========');
+  console.log('URL:', req.url);
+  console.log('Original URL:', req.originalUrl);
+  console.log('Cookies:', req.cookies);
+  console.log('Accept-Language:', req.headers['accept-language']);
+  console.log('Detected Language:', req.language);
+  console.log('Query:', req.query);
+  console.log('==================================');
+  next();
 });
 
 // Serve static files last
-app.use('/locales', express.static(path.join(__dirname, 'html', 'locales')));
+app.use('/locales', (req, res, next) => {
+  // Set cache control headers for translation files
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+}, express.static(path.join(__dirname, 'html', 'locales')));
 app.use(express.static(path.join(__dirname, 'html')));
 
 // Routes

@@ -98,25 +98,34 @@ function initI18n(options = {}) {
     // Additional languages
     'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja'
   ];
-  // Создание промежуточного ПО для определения языка
-  const languageDetectorMiddleware = (req, res, next) => {
-    // Определение языка пользователя
-    const userLanguage = 
-      req.cookies?.i18next ||
-      req.query?.lang ||
-      req.headers['accept-language']?.split(',')[0]?.split('-')[0] ||
-      defaultLanguage;
-    
-    // Проверяем, поддерживается ли язык
-    req.language = supportedLngs.includes(userLanguage) ? userLanguage : defaultLanguage;
-    
-    // Сохраняем язык в куки, если он изменился
-    if (req.cookies?.i18next !== req.language) {
-      res.cookie('i18next', req.language, { maxAge: 365 * 24 * 60 * 60 * 1000, path: '/' });
-    }
-    
-    next();
-  };
+// Создание промежуточного ПО для определения языка
+const languageDetectorMiddleware = (req, res, next) => {
+  // Определение языка пользователя с приоритетом:
+  // 1. Куки i18next
+  // 2. Параметр lang в URL
+  // 3. Заголовок Accept-Language
+  // 4. Язык по умолчанию
+  const userLanguage = 
+    req.cookies?.i18next ||
+    req.query?.lang ||
+    req.headers['accept-language']?.split(',')[0]?.split('-')[0] ||
+    defaultLanguage;
+  
+  // Проверяем, поддерживается ли язык
+  req.language = supportedLngs.includes(userLanguage) ? userLanguage : defaultLanguage;
+  
+  // Сохраняем язык в куки, если он изменился
+  if (req.cookies?.i18next !== req.language) {
+    res.cookie('i18next', req.language, { 
+      maxAge: 365 * 24 * 60 * 60 * 1000, // 1 год
+      path: '/' 
+    });
+  }
+  
+  console.log(`Language detection: ${req.language} (from: ${req.cookies?.i18next ? 'cookie' : req.query?.lang ? 'query' : 'header'})`);
+  
+  next();
+};
   // Namespaces list
   const namespaces = ['common', 'rma', 'dashboard', 'auth'];
   

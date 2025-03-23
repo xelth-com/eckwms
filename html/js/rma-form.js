@@ -417,7 +417,7 @@ fixTranslateDynamicElement();
          style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
         <label for="alt_country_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.country">Country:</b></label>
-        <input type="text" id="alt_country_${deviceIndex}" name="alt_country_${deviceIndex}" value="Germany" 
+        <input type="text" id="alt_country_${deviceIndex}" name="alt_country_${deviceIndex}" 
                style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
       `;
 
