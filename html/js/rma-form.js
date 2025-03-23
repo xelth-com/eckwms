@@ -1,76 +1,12 @@
-// File: html/js/rma-form-updated.js
-// Updated version with a workaround for the translateDynamicElement issue
-// Проверка наличия функции translateDynamicElement
-function fixTranslateDynamicElement() {
-  if (!window.i18n || !window.i18n.translateDynamicElement || 
-      window.i18n.translateDynamicElement.toString().includes('return translateDynamicElement')) {
-    
-    console.log('Исправление функции translateDynamicElement...');
-    
-    // Определить функцию, если она отсутствует или имеет ошибки
-    window.i18n.translateDynamicElement = function(element, context = '') {
-      if (!element) return Promise.resolve();
-      
-      if (window.i18n.getCurrentLanguage() === 'en' || !window.i18n.isInitialized()) {
-        return Promise.resolve();
-      }
-      
-      // Рекурсивно обработать все элементы с атрибутами перевода
-      const translateElements = (el) => {
-        // Обработать data-i18n
-        if (el.hasAttribute('data-i18n')) {
-          const key = el.getAttribute('data-i18n');
-          const translation = window.i18n.t(key);
-          
-          if (translation !== key) {
-            el.textContent = translation;
-          }
-        }
-        
-        // Обработать data-i18n-attr
-        if (el.hasAttribute('data-i18n-attr')) {
-          try {
-            const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
-            for (const [attr, key] of Object.entries(attrsMap)) {
-              const translation = window.i18n.t(key);
-              if (translation !== key) {
-                el.setAttribute(attr, translation);
-              }
-            }
-          } catch (e) {
-            console.error('Ошибка разбора data-i18n-attr:', e);
-          }
-        }
-        
-        // Обработать data-i18n-html
-        if (el.hasAttribute('data-i18n-html')) {
-          const key = el.getAttribute('data-i18n-html');
-          const translation = window.i18n.t(key, { interpolation: { escapeValue: false } });
-          
-          if (translation !== key) {
-            el.innerHTML = translation;
-          }
-        }
-        
-        // Рекурсивно обработать дочерние элементы
-        Array.from(el.children).forEach(translateElements);
-      };
-      
-      // Начать обработку с переданного элемента
-      translateElements(element);
-      
-      return Promise.resolve();
-    };
-  }
-}
-
-// Вызвать функцию исправления сразу после определения
-fixTranslateDynamicElement();
+// File: html/js/rma-form.js
+// Исправленная версия с правильной обработкой переводов
 
 (function () {
   // Current device counter
   let deviceCount = 0;
   let i18nInitialized = false;
+  let translationsReady = false;
+  let translations = {}; // Кэш переводов
 
   // Initialization function
   function init() {
@@ -89,7 +25,7 @@ fixTranslateDynamicElement();
     setupFormHandler();
 
     // Add address logic explanation
-    addAddressLogicExplanationFixed();
+    addAddressLogicExplanation();
     
     // Add first device entry only if i18n is ready,
     // otherwise wait for the i18n initialization event
@@ -113,15 +49,22 @@ fixTranslateDynamicElement();
       document.addEventListener('i18n:initialized', function() {
         console.log("i18n:initialized event received");
         i18nInitialized = true;
-        // Now that i18n is ready, add the first device entry if none exist yet
-        if (deviceCount === 0) {
-          addDeviceEntry();
-        }
         
-        // Translate the device entry that was just added
-        const lastDeviceEntry = document.querySelector('.device-entry:last-child');
-        if (lastDeviceEntry) {
-          window.i18n.translateDynamicElement(lastDeviceEntry);
+        // Загружаем переводы, если не английский язык
+        if (window.i18n.getCurrentLanguage() !== 'en') {
+          loadRmaTranslations().then(() => {
+            if (deviceCount === 0) {
+              addDeviceEntry();
+            } else {
+              // Обновляем переводы для существующих элементов
+              updateAllTranslations();
+            }
+          });
+        } else {
+          // Для английского языка просто добавляем элемент
+          if (deviceCount === 0) {
+            addDeviceEntry();
+          }
         }
       });
     } else {
@@ -130,21 +73,45 @@ fixTranslateDynamicElement();
       if (window.i18n.isInitialized()) {
         console.log("i18n is already initialized");
         i18nInitialized = true;
+        
+        // Загружаем переводы, если не английский язык
+        if (window.i18n.getCurrentLanguage() !== 'en') {
+          loadRmaTranslations().then(() => {
+            if (deviceCount === 0) {
+              addDeviceEntry();
+            } else {
+              // Обновляем переводы для существующих элементов
+              updateAllTranslations();
+            }
+          });
+        } else {
+          // Для английского языка просто добавляем элемент
+          if (deviceCount === 0) {
+            addDeviceEntry();
+          }
+        }
       } else {
         console.log("i18n is loaded but not yet initialized, waiting for event");
         // i18n is loaded but not initialized, wait for it
         document.addEventListener('i18n:initialized', function() {
           console.log("i18n:initialized event received");
           i18nInitialized = true;
-          // Add the first device entry if none exist yet
-          if (deviceCount === 0) {
-            addDeviceEntry();
-          }
           
-          // Translate the device entry that was just added
-          const lastDeviceEntry = document.querySelector('.device-entry:last-child');
-          if (lastDeviceEntry) {
-            window.i18n.translateDynamicElement(lastDeviceEntry);
+          // Загружаем переводы, если не английский язык
+          if (window.i18n.getCurrentLanguage() !== 'en') {
+            loadRmaTranslations().then(() => {
+              if (deviceCount === 0) {
+                addDeviceEntry();
+              } else {
+                // Обновляем переводы для существующих элементов
+                updateAllTranslations();
+              }
+            });
+          } else {
+            // Для английского языка просто добавляем элемент
+            if (deviceCount === 0) {
+              addDeviceEntry();
+            }
           }
         });
       }
@@ -152,33 +119,102 @@ fixTranslateDynamicElement();
   }
 
   /**
-   * Translate all elements with i18n tags
+   * Загружает и кэширует переводы для пространства имен 'rma'
    */
-  function translateAllElements() {
-    if (window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
-      // Use updatePageTranslations instead of translateDynamicElement
-      // This is a workaround until translateDynamicElement is fixed
-      if (window.i18n.updatePageTranslations) {
-        window.i18n.updatePageTranslations();
+  async function loadRmaTranslations() {
+    try {
+      // Если переводы уже загружены, просто возвращаем их
+      if (translationsReady) {
+        return translations;
       }
+      
+      const lang = window.i18n.getCurrentLanguage();
+      console.log(`Loading RMA translations for ${lang}...`);
+      
+      // Пробуем загрузить переводы через API fetch вместо loadTranslationFile
+      try {
+        // URL для загрузки локализации
+        const localeUrl = `/locales/${lang}/rma.json`;
+        console.log(`Fetching translations from: ${localeUrl}`);
+        
+        const response = await fetch(localeUrl);
+        
+        if (!response.ok) {
+          throw new Error(`Failed to load translations: ${response.status} ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log("RMA translations loaded:", data);
+        
+        // Разворачиваем структуру переводов для прямого доступа по ключам
+        translations = flattenTranslations(data);
+        translationsReady = true;
+        
+        return translations;
+      } catch (error) {
+        console.error("Error loading RMA translations:", error);
+        return {};
+      }
+    } catch (error) {
+      console.error("Error in loadRmaTranslations:", error);
+      return {};
+    }
+  }
+  
+  /**
+   * Преобразует вложенную структуру переводов в плоскую с ключами через точку
+   * Например: { form: { title: "Заголовок" } } => { "form.title": "Заголовок" }
+   */
+  function flattenTranslations(obj, prefix = '') {
+    return Object.keys(obj).reduce((acc, key) => {
+      const prefixedKey = prefix ? `${prefix}.${key}` : key;
+      
+      if (typeof obj[key] === 'object' && obj[key] !== null) {
+        Object.assign(acc, flattenTranslations(obj[key], prefixedKey));
+      } else {
+        acc[prefixedKey] = obj[key];
+      }
+      
+      return acc;
+    }, {});
+  }
+  
+  /**
+   * Обновляет переводы для всех элементов формы
+   */
+  function updateAllTranslations() {
+    // Обновляем переводы для заголовка и описания инструкций
+    const addressInfo = document.querySelector('.address-logic-info');
+    if (addressInfo) {
+      manuallyTranslateElement(addressInfo);
+    }
+    
+    // Обновляем переводы для всех устройств
+    const deviceEntries = document.querySelectorAll('.device-entry');
+    deviceEntries.forEach(entry => {
+      manuallyTranslateElement(entry);
+    });
+    
+    // Обновляем статусные тексты на кнопках
+    for (let i = 1; i <= deviceCount; i++) {
+      updateAddressSourceInfo(i);
     }
   }
 
   /**
-   * Apply translations to a specific element without using translateDynamicElement
-   * This is a custom implementation to work around the missing function
+   * Применяет переводы к конкретному элементу
    */
   function manuallyTranslateElement(element) {
-    if (!window.i18n || window.i18n.getCurrentLanguage() === 'en') {
-      return; // Skip if default language or i18n not available
+    if (!window.i18n || window.i18n.getCurrentLanguage() === 'en' || !translationsReady) {
+      return; // Пропускаем, если язык по умолчанию или переводы не готовы
     }
     
-    // Process data-i18n attributes
+    // Обрабатываем атрибуты data-i18n
     if (element.hasAttribute('data-i18n')) {
       const key = element.getAttribute('data-i18n');
       try {
-        const translation = window.i18n.t(key);
-        if (translation !== key) {
+        const translation = getTranslation(key);
+        if (translation && translation !== key) {
           element.textContent = translation;
         }
       } catch (e) {
@@ -186,12 +222,12 @@ fixTranslateDynamicElement();
       }
     }
     
-    // Find and translate child elements
+    // Находим и переводим дочерние элементы
     element.querySelectorAll('[data-i18n]').forEach(el => {
       const key = el.getAttribute('data-i18n');
       try {
-        const translation = window.i18n.t(key);
-        if (translation !== key) {
+        const translation = getTranslation(key);
+        if (translation && translation !== key) {
           el.textContent = translation;
         }
       } catch (e) {
@@ -199,13 +235,13 @@ fixTranslateDynamicElement();
       }
     });
     
-    // Handle attribute translations
+    // Обрабатываем атрибуты для перевода
     element.querySelectorAll('[data-i18n-attr]').forEach(el => {
       try {
         const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
         for (const [attr, key] of Object.entries(attrsMap)) {
-          const translation = window.i18n.t(key);
-          if (translation !== key) {
+          const translation = getTranslation(key);
+          if (translation && translation !== key) {
             el.setAttribute(attr, translation);
           }
         }
@@ -213,6 +249,39 @@ fixTranslateDynamicElement();
         console.error('Error parsing data-i18n-attr:', e);
       }
     });
+  }
+
+  /**
+   * Улучшенная функция для получения перевода по ключу
+   */
+  function getTranslation(key, options = {}, fallback = '') {
+    if (!window.i18n || !translationsReady || window.i18n.getCurrentLanguage() === 'en') {
+      return fallback || key.split('.').pop(); 
+    }
+    
+    try {
+      // Удаляем префикс 'rma:' если он есть
+      const cleanKey = key.includes(':') ? key.split(':')[1] : key;
+      
+      // Ищем перевод в нашем кэше
+      if (translations[cleanKey]) {
+        // Обрабатываем параметры, если есть (например, count)
+        let result = translations[cleanKey];
+        
+        // Простая обработка подстановки переменных {{count}}
+        if (options.count !== undefined && result.includes('{{count}}')) {
+          result = result.replace('{{count}}', options.count);
+        }
+        
+        return result;
+      }
+      
+      console.log(`Translation not found for key: ${key}, using fallback`);
+      return fallback || key.split('.').pop();
+    } catch (e) {
+      console.error(`Error getting translation for ${key}:`, e);
+      return fallback || key.split('.').pop();
+    }
   }
 
   /**
@@ -277,33 +346,7 @@ fixTranslateDynamicElement();
     rmaForm.insertBefore(langContainer, firstChild);
   }
 
-  /**
-   * Helper function to safely get a translation
-   * This function checks if the translation key exists and returns a sensible fallback
-   * @param {string} key - Translation key
-   * @param {Object} options - Translation options
-   * @param {string} fallback - Fallback text if key doesn't exist
-   * @returns {string} - Translated text or fallback
-   */
-  function getTranslation(key, options = {}, fallback = '') {
-    if (!window.i18n || !window.i18n.isInitialized()) {
-      console.log("i18n not initialized for key:", key);
-      return fallback || key.split('.').pop(); // Just return the fallback or last part of key as text
-    }
-    
-    const translation = window.i18n.t(key, options);
-    
-    // If translation equals key, use fallback
-    if (translation === key) {
-      console.log(`Translation not found for key: ${key}, using fallback`);
-      return fallback || key.split('.').pop();
-    }
-    
-    return translation;
-  }
-
-  // FIXED version that doesn't use translateDynamicElement
-  function addAddressLogicExplanationFixed() {
+  function addAddressLogicExplanation() {
     const devicesContainer = document.getElementById('devices-container');
     if (devicesContainer) {
       const addressInfo = document.createElement('div');
@@ -316,19 +359,21 @@ fixTranslateDynamicElement();
       addressInfo.style.fontSize = '14px';
 
       addressInfo.innerHTML = `
-  <p data-i18n="rma:address_logic.title"><strong>Device Return Information:</strong></p>
+  <p data-i18n="address_logic.title"><strong>Device Return Information:</strong></p>
   <ul style="margin-top: 5px; padding-left: 20px;">
-    <li data-i18n="rma:address_logic.info.0">By default, all devices are shipped to the address specified in the "Billing Information" section.</li>
-    <li data-i18n="rma:address_logic.info.1">You can specify an alternative return address for any device.</li>
-    <li data-i18n="rma:address_logic.info.2">If you haven't specified an address for a device, the nearest address above in the list will be used.</li>
+    <li data-i18n="address_logic.info.0">By default, all devices are shipped to the address specified in the "Billing Information" section.</li>
+    <li data-i18n="address_logic.info.1">You can specify an alternative return address for any device.</li>
+    <li data-i18n="address_logic.info.2">If you haven't specified an address for a device, the nearest address above in the list will be used.</li>
   </ul>
 `;
 
       devicesContainer.parentNode.insertBefore(addressInfo, devicesContainer);
       
-      // Apply translations manually instead of using translateDynamicElement
+      // Применяем переводы вручную
       if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
-        manuallyTranslateElement(addressInfo);
+        loadRmaTranslations().then(() => {
+          manuallyTranslateElement(addressInfo);
+        });
       }
     }
   }
@@ -355,7 +400,7 @@ fixTranslateDynamicElement();
     deviceHeader.style.marginBottom = '15px';
 
     const deviceTitle = document.createElement('h4');
-    deviceTitle.setAttribute('data-i18n', 'rma:device.title');
+    deviceTitle.setAttribute('data-i18n', 'device.title');
     deviceTitle.setAttribute('data-i18n-options', JSON.stringify({count: deviceIndex}));
     deviceTitle.textContent = `Device #${deviceIndex}`;
     deviceTitle.style.margin = '0';
@@ -364,7 +409,7 @@ fixTranslateDynamicElement();
     // Toggle button for alternate shipping address
     const toggleButton = document.createElement('button');
     toggleButton.type = 'button';
-    toggleButton.setAttribute('data-i18n', 'rma:device.address_button');
+    toggleButton.setAttribute('data-i18n', 'device.address_button');
     toggleButton.textContent = 'Specify Different Return Address';
     toggleButton.style.backgroundColor = '#eee';
     toggleButton.style.border = '1px solid #ccc';
@@ -389,34 +434,34 @@ fixTranslateDynamicElement();
 
     // Add alternate address fields
     alternateAddressSection.innerHTML = `
-        <h4 style="margin-top: 0; color: #1e2071;" data-i18n="rma:device.alternate_address">Alternate Return Address</h4>
-        <p style="font-style: italic; margin-bottom: 10px;" data-i18n="rma:device.address_info">Specify a different address for returning this device.</p>
+        <h4 style="margin-top: 0; color: #1e2071;" data-i18n="device.alternate_address">Alternate Return Address</h4>
+        <p style="font-style: italic; margin-bottom: 10px;" data-i18n="device.address_info">Specify a different address for returning this device.</p>
         
-        <label for="alt_company_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.company_name">Company Name:</b></label>
+        <label for="alt_company_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.company_name">Company Name:</b></label>
         <input type="text" id="alt_company_${deviceIndex}" name="alt_company_${deviceIndex}" 
                style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
   
-        <label for="alt_person_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="rma:form.contact_person">Contact Person:</label>
+        <label for="alt_person_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="form.contact_person">Contact Person:</label>
         <input type="text" id="alt_person_${deviceIndex}" name="alt_person_${deviceIndex}" 
                style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
   
-        <label for="alt_street_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.street">Street and House Number:</b></label>
+        <label for="alt_street_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.street">Street and House Number:</b></label>
         <input type="text" id="alt_street_${deviceIndex}" name="alt_street_${deviceIndex}" 
                style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
   
-        <label for="alt_addressLine2_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="rma:form.additional_address">Additional Address Line:</label>
+        <label for="alt_addressLine2_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="form.additional_address">Additional Address Line:</label>
   <input type="text" id="alt_addressLine2_${deviceIndex}" name="alt_addressLine2_${deviceIndex}" 
          style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-  <label for="alt_postalCode_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.postal_code">Postal Code:</b></label>
+  <label for="alt_postalCode_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.postal_code">Postal Code:</b></label>
   <input type="text" id="alt_postalCode_${deviceIndex}" name="alt_postalCode_${deviceIndex}" 
          style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-  <label for="alt_city_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.city">City:</b></label>
+  <label for="alt_city_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.city">City:</b></label>
   <input type="text" id="alt_city_${deviceIndex}" name="alt_city_${deviceIndex}" 
          style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-        <label for="alt_country_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="rma:form.country">Country:</b></label>
+        <label for="alt_country_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.country">Country:</b></label>
         <input type="text" id="alt_country_${deviceIndex}" name="alt_country_${deviceIndex}" 
                style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
       `;
@@ -429,7 +474,7 @@ fixTranslateDynamicElement();
     // Serial number input
     const serialLabel = document.createElement('label');
     serialLabel.htmlFor = `serial${deviceIndex}`;
-    serialLabel.setAttribute('data-i18n', 'rma:device.serial_number');
+    serialLabel.setAttribute('data-i18n', 'device.serial_number');
     serialLabel.textContent = 'Serial Number:';
     serialLabel.style.display = 'block';
     serialLabel.style.marginTop = '10px';
@@ -439,7 +484,7 @@ fixTranslateDynamicElement();
     serialInput.type = 'text';
     serialInput.id = `serial${deviceIndex}`;
     serialInput.name = `serial${deviceIndex}`;
-    serialInput.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "rma:device.serial_placeholder"}));
+    serialInput.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "device.serial_placeholder"}));
     serialInput.style.width = '95%';
     serialInput.style.padding = '5px';
     serialInput.style.fontSize = '18px';
@@ -449,7 +494,7 @@ fixTranslateDynamicElement();
     // Description textarea
     const descLabel = document.createElement('label');
     descLabel.htmlFor = `description${deviceIndex}`;
-    descLabel.setAttribute('data-i18n', 'rma:device.issue_description');
+    descLabel.setAttribute('data-i18n', 'device.issue_description');
     descLabel.textContent = 'Issue Description:';
     descLabel.style.display = 'block';
     descLabel.style.marginTop = '10px';
@@ -458,7 +503,7 @@ fixTranslateDynamicElement();
     const descTextarea = document.createElement('textarea');
     descTextarea.id = `description${deviceIndex}`;
     descTextarea.name = `description${deviceIndex}`;
-    descTextarea.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "rma:device.description_placeholder"}));
+    descTextarea.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "device.description_placeholder"}));
     descTextarea.rows = 3;
     descTextarea.style.width = '95%';
     descTextarea.style.padding = '5px';
@@ -483,7 +528,9 @@ fixTranslateDynamicElement();
 
       // Translate the new element
       if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
-        manuallyTranslateElement(deviceEntry);
+        loadRmaTranslations().then(() => {
+          manuallyTranslateElement(deviceEntry);
+        });
       }
     }
 
@@ -496,8 +543,14 @@ fixTranslateDynamicElement();
     return deviceEntry;
   }
 
-  // Display address source info - FIX THE ISSUE HERE
+  // Display address source info
   function updateAddressSourceInfo(deviceIndex) {
+    if (!translationsReady && window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
+      // Если переводы еще не загружены, загрузим их сначала
+      loadRmaTranslations().then(() => updateAddressSourceInfo(deviceIndex));
+      return;
+    }
+    
     const deviceEntries = document.querySelectorAll('.device-entry');
 
     // Loop through all devices
@@ -519,23 +572,16 @@ fixTranslateDynamicElement();
 
       if (hasAltAddress) {
         // Device has its own address
+        toggleBtn.textContent = getTranslation('device.hide_address', {}, 'Hide Return Address');
         toggleBtn.style.backgroundColor = '#e6f7ff';
       } else if (addressSource === 0) {
-        // Using billing address - FIX: Use getTranslation helper function
-        toggleBtn.textContent = getTranslation(
-          'rma:device.using_billing', 
-          {}, 
-          'Using Billing Address'
-        );
+        // Using billing address
+        toggleBtn.textContent = getTranslation('device.using_billing', {}, 'Using Billing Address');
         toggleBtn.style.backgroundColor = '#f0f0f0';
       } else {
-        // Using another device's address - FIX: Use getTranslation helper function
+        // Using another device's address
         const translateOptions = {count: addressSource};
-        toggleBtn.textContent = getTranslation(
-          'rma:device.using_address', 
-          translateOptions, 
-          `Using Address from Device #${addressSource}`
-        );
+        toggleBtn.textContent = getTranslation('device.using_address', translateOptions, `Using Address from Device #${addressSource}`);
         toggleBtn.style.backgroundColor = '#f0f0f0';
       }
     });
@@ -571,26 +617,18 @@ fixTranslateDynamicElement();
         if (addressSection) {
           if (addressSection.style.display === 'none') {
             addressSection.style.display = 'block';
-            // FIX: Use getTranslation helper function
-            toggleButton.textContent = getTranslation(
-              'rma:device.hide_address', 
-              {}, 
-              'Hide Return Address'
-            );
+            toggleButton.textContent = getTranslation('device.hide_address', {}, 'Hide Return Address');
             toggleButton.style.backgroundColor = '#e6f7ff';
 
             // Translate the address section if it was just opened
             if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
-              manuallyTranslateElement(addressSection);
+              loadRmaTranslations().then(() => {
+                manuallyTranslateElement(addressSection);
+              });
             }
           } else {
             addressSection.style.display = 'none';
-            // FIX: Use getTranslation helper function
-            toggleButton.textContent = getTranslation(
-              'rma:device.address_button', 
-              {}, 
-              'Specify Different Return Address'
-            );
+            toggleButton.textContent = getTranslation('device.address_button', {}, 'Specify Different Return Address');
             toggleButton.style.backgroundColor = '#eee';
           }
 
