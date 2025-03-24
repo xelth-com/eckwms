@@ -61,9 +61,208 @@ console.log("App config loaded:", window.APP_CONFIG);
           console.log(`Found translation tags: ${i18nTagCount} standard, ${i18nAttrCount} attribute, ${i18nHtmlCount} HTML`);
 
           if (i18nTagCount + i18nAttrCount + i18nHtmlCount > 0) {
-            // Process translations...
-            // This is a placeholder for your translation processing code
-            // If you had code here in the original file, you should restore it
+            // Important: Make current HTML available for the existing missingKeyHandler
+            // Use the variable name that aligns with your missingKeyHandler implementation
+            global.currentProcessingHtml = modifiedBody;
+            
+            // Optional: Create a map to store HTML content for each i18n key
+            // This is complementary to the direct HTML access and helps with
+            // specific element content lookup
+            if (!global.elementContents) {
+              global.elementContents = new Map();
+            }
+            
+            // Extract content from all elements with data-i18n attributes for reference
+            modifiedBody.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, 
+              (match, tag1, key, attrs, content, tag2) => {
+                if (content && content.trim()) {
+                  // Store the content by key for the missingKeyHandler to use
+                  global.elementContents.set(key, content.trim());
+                  if (process.env.NODE_ENV === 'development') {
+                    console.log(`Stored content for key ${key}: "${content.trim()}"`);
+                  }
+                }
+                return match; // Return unchanged, this is just for extraction
+              }
+            );
+            
+            // Process regular translations (data-i18n attribute)
+            modifiedBody = modifiedBody.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
+              // Try to get translation - namespace may be included in the key
+              let namespace = 'common';
+              let translationKey = key;
+
+              if (key.includes(':')) {
+                const parts = key.split(':');
+                namespace = parts[0];
+                translationKey = parts.slice(1).join(':');
+              }
+
+              console.log(`Translating: ${translationKey} in namespace ${namespace}`);
+              
+              try {
+                // Add safeguard against infinite recursion
+                const uniqueKey = `${language}:${namespace}:${translationKey}`;
+                const processingKeys = global.processingKeys || new Set();
+                
+                if (processingKeys.has(uniqueKey)) {
+                  return match; // Skip if already processing this key
+                }
+                
+                processingKeys.add(uniqueKey);
+                global.processingKeys = processingKeys;
+                
+                const translation = i18next.t(translationKey, { ns: namespace });
+                
+                processingKeys.delete(uniqueKey);
+                global.processingKeys = processingKeys;
+
+                // If translation equals key (not found), leave as is for frontend to handle
+                if (translation === translationKey) {
+                  return match; // Keep original tag for frontend retry
+                }
+
+                console.log(`Translated: ${translationKey} → ${translation}`);
+                
+                // Return element with translation but KEEP the data-i18n attribute
+                // so frontend can update it later if needed
+                return `<${tag1} data-i18n="${key}"${attrs}>${translation}</${tag2}>`;
+              } catch (error) {
+                console.error(`Error translating ${translationKey}:`, error);
+                return match; // Return original on error
+              }
+            });
+
+            // Process attribute translations (data-i18n-attr)
+            modifiedBody = modifiedBody.replace(/<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g, (match, tag, attrsJson, restAttrs) => {
+              try {
+                const attrsMap = JSON.parse(attrsJson);
+                let newTag = `<${tag}${restAttrs}`;
+                let allTranslated = true;
+
+                for (const [attr, key] of Object.entries(attrsMap)) {
+                  console.log(`Translating attribute: ${attr} with key ${key}`);
+                  // Extract namespace if present
+                  let namespace = 'common';
+                  let translationKey = key;
+
+                  if (key.includes(':')) {
+                    const parts = key.split(':');
+                    namespace = parts[0];
+                    translationKey = parts.slice(1).join(':');
+                  }
+
+                  // Add safeguard against infinite recursion
+                  const uniqueKey = `${language}:${namespace}:${translationKey}`;
+                  const processingKeys = global.processingKeys || new Set();
+                  
+                  if (processingKeys.has(uniqueKey)) {
+                    allTranslated = false;
+                    continue; // Skip if already processing this key
+                  }
+                  
+                  try {
+                    processingKeys.add(uniqueKey);
+                    global.processingKeys = processingKeys;
+                    
+                    const translation = i18next.t(translationKey, { ns: namespace });
+                    
+                    processingKeys.delete(uniqueKey);
+                    global.processingKeys = processingKeys;
+
+                    // Get current attribute value if present
+                    const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
+                    const attrValueMatch = match.match(attrRegex);
+                    const currentValue = attrValueMatch ? attrValueMatch[1] : '';
+
+                    // If translation differs from key, replace attribute value
+                    if (translation !== translationKey) {
+                      console.log(`Translated attr: ${translationKey} → ${translation}`);
+                      if (attrValueMatch) {
+                        newTag = newTag.replace(
+                          `${attr}="${currentValue}"`,
+                          `${attr}="${translation}"`
+                        );
+                      } else {
+                        // Attribute not present, add it
+                        newTag = newTag + ` ${attr}="${translation}"`;
+                      }
+                    } else {
+                      allTranslated = false; // Mark that not all attributes are translated
+                    }
+                  } catch (error) {
+                    console.error(`Error translating attribute ${translationKey}:`, error);
+                    allTranslated = false;
+                  }
+                }
+
+                // Keep data-i18n-attr for frontend retries if not all translated
+                if (!allTranslated) {
+                  return newTag + '>';
+                }
+
+                // Otherwise remove data-i18n-attr but keep the tag
+                return newTag.replace(/\s+data-i18n-attr=['"][^'"]+['"]/, '') + '>';
+              } catch (e) {
+                console.error('Error parsing data-i18n-attr:', e);
+                return match;
+              }
+            });
+
+            // Process HTML content translations (data-i18n-html)
+            modifiedBody = modifiedBody.replace(/<([^>]+)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
+              // Apply the same namespace extraction logic for HTML content
+              let namespace = 'common';
+              let translationKey = key;
+
+              if (key.includes(':')) {
+                const parts = key.split(':');
+                namespace = parts[0];
+                translationKey = parts.slice(1).join(':');
+              }
+
+              console.log(`Translating HTML: ${translationKey} in namespace ${namespace}`);
+              
+              try {
+                // Add safeguard against infinite recursion
+                const uniqueKey = `${language}:${namespace}:${translationKey}`;
+                const processingKeys = global.processingKeys || new Set();
+                
+                if (processingKeys.has(uniqueKey)) {
+                  return match; // Skip if already processing this key
+                }
+                
+                processingKeys.add(uniqueKey);
+                global.processingKeys = processingKeys;
+                
+                const translation = i18next.t(translationKey, {
+                  ns: namespace,
+                  interpolation: { escapeValue: false }
+                });
+                
+                processingKeys.delete(uniqueKey);
+                global.processingKeys = processingKeys;
+
+                // If translation equals key (not found), leave as is for frontend to handle
+                if (translation === translationKey) {
+                  // Store the HTML content for translation
+                  if (content && content.trim()) {
+                    global.elementContents.set(key, content.trim());
+                  }
+                  return match;
+                }
+
+                console.log(`Translated HTML: ${translationKey}`);
+                // Return element with HTML translation and keep the data-i18n-html attribute
+                return `<${tag1} data-i18n-html="${key}"${attrs}>${translation}</${tag2}>`;
+              } catch (error) {
+                console.error(`Error translating HTML ${translationKey}:`, error);
+                return match; // Return original on error
+              }
+            });
+
+            // Clean up global variables
+            global.currentProcessingHtml = null;
           } else {
             console.log('No translation tags found in HTML');
           }

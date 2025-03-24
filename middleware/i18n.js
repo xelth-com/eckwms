@@ -218,7 +218,7 @@ function initI18n(options = {}) {
       parseMissingKeyHandler: (key, defaultValue) => {
         return key;
       },
-      missingKeyHandler: (lng, ns, key, fallbackValue) => {
+      missingKeyHandler: (lng, ns, key, fallbackValue, options, req) => {
         // Get the primary language from the array or use the language if it's already a string
         const primaryLang = Array.isArray(lng) ? lng[0] : lng;
         
@@ -238,22 +238,43 @@ function initI18n(options = {}) {
             
             // Get text from default language WITHOUT triggering missing key handler
             let defaultText = key;
+            let foundInDefaultLang = false;
             
             // Only try to get default text if the key isn't already being processed
             if (i18next.exists(key, { ns, lng: defaultLanguage })) {
               defaultText = i18next.t(key, { ns, lng: defaultLanguage });
+              foundInDefaultLang = true;
+            } else {
+              // Try to extract content from current HTML being processed
+              // Мы должны сначала получить доступ к обрабатываемому HTML
+              if (global.currentProcessingHtml) {
+                try {
+                  // Ищем HTML элемент с этим ключом data-i18n
+                  const regex = new RegExp(`<[^>]+data-i18n=["']${key}["'][^>]*>([^<]+)<\/[^>]+>`, 'g');
+                  const match = regex.exec(global.currentProcessingHtml);
+                  
+                  if (match && match[1]) {
+                    defaultText = match[1].trim();
+                    console.log(`Found content in HTML for key ${key}: "${defaultText}"`);
+                  }
+                } catch (error) {
+                  console.error(`Error extracting HTML content for ${key}:`, error);
+                }
+              }
             }
             
             // Queue for translation with the primary language (not the array)
             translationQueue.enqueue({
               text: defaultText,
-              targetLang: primaryLang, // Use the single language string
+              targetLang: primaryLang,
               namespace: ns,
-              key: key
+              key: key,
+              // Добавляем флаг, чтобы знать источник текста
+              sourceType: foundInDefaultLang ? 'defaultLang' : 'htmlContent'
             });
       
             if (process.env.NODE_ENV === 'development') {
-              console.log(`[i18n] Added to translation queue: [${primaryLang}] ${ns}:${key}`);
+              console.log(`[i18n] Added to translation queue: [${primaryLang}] ${ns}:${key} (source: ${foundInDefaultLang ? 'default language' : 'HTML content'})`);
             }
           } finally {
             // Always remove from processing list when done
