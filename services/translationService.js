@@ -108,11 +108,17 @@ function addToMemoryCache(key, value) {
 /**
  * Save translation to memory cache and database
  * @param {string} text - Source text
- * @param {string} targetLang - Target language
+ * @param {string} targetLang - Target language (must be a string)
  * @param {string} translatedText - Translated text
  * @param {string} context - Translation context
  */
 async function saveToCache(text, targetLang, translatedText, context = '') {
+  // Make sure targetLang is a string
+  if (Array.isArray(targetLang)) {
+    console.warn("targetLang was an array, converting to string");
+    targetLang = targetLang[0];
+  }
+  
   const key = generateKey(text, context);
   const cacheKey = `${targetLang}:${key}`;
   const startTime = global.translationStartTime || Date.now();
@@ -123,6 +129,7 @@ async function saveToCache(text, targetLang, translatedText, context = '') {
   // Save to database if available
   if (TranslationCache) {
     try {
+      console.log(`Saving translation to cache for language: ${targetLang}`);
       const [record, created] = await TranslationCache.findOrCreate({
         where: {
           key,
@@ -165,22 +172,27 @@ function containsHtmlTags(text) {
 
 /**
  * Translate text using OpenAI
- * @param {string} text - Source text
- * @param {string} targetLang - Target language
+ * @param {string|string[]} text - Source text
+ * @param {string|string[]} targetLang - Target language
  * @param {string} context - Translation context
- * @param {string} sourceLang - Source language (default: de)
+ * @param {string|string[]} sourceLang - Source language (default: en)
  * @returns {Promise<string>} - Translated text
  */
 async function translateText(text, targetLang, context = '', sourceLang = 'en') {
-  console.log('translateText', text, targetLang, context, sourceLang);
   try {
+    // Ensure language parameters are strings, not arrays
+    const targetLanguage = Array.isArray(targetLang) ? targetLang[0] : targetLang;
+    const sourceLanguage = Array.isArray(sourceLang) ? sourceLang[0] : sourceLang;
+    
     // If text is empty, return as is
     if (!text || text.trim() === '') {
       return text;
     }
     
+    console.log(`Translating: "${text.substring(0, 30)}..." to ${targetLanguage}`);
+    
     // Check cache before API call
-    const cachedTranslation = await checkCache(text, targetLang, context);
+    const cachedTranslation = await checkCache(text, targetLanguage, context);
     if (cachedTranslation) return cachedTranslation;
     
     // Get full language name for more accurate translation
@@ -196,8 +208,8 @@ async function translateText(text, targetLang, context = '', sourceLang = 'en') 
       'ja': 'Japanese'
     };
     
-    const targetLanguageName = languageNames[targetLang] || targetLang;
-    const sourceLanguageName = languageNames[sourceLang] || sourceLang;
+    const targetLanguageName = languageNames[targetLanguage] || targetLanguage;
+    const sourceLanguageName = languageNames[sourceLanguage] || sourceLanguage;
     
     // Create system prompt with context
     let systemPrompt = `You are a professional translator for a warehouse management system. 
@@ -215,14 +227,16 @@ Ensure the translation sounds natural in the target language.`;
     }
     
     // Special instructions for specific languages
-    if (targetLang === 'ar' || targetLang === 'he') {
+    if (targetLanguage === 'ar' || targetLanguage === 'he') {
       systemPrompt += '\nNote: This language is read from right to left.';
-    } else if (targetLang === 'zh') {
+    } else if (targetLanguage === 'zh') {
       systemPrompt += '\nUse Simplified Chinese characters.';
-    } else if (targetLang === 'ja' || targetLang === 'ko') {
+    } else if (targetLanguage === 'ja' || targetLanguage === 'ko') {
       systemPrompt += '\nPreserve technical terms in their standard form for this language.';
     }
-    console.log('OpenAI API call', text);
+    
+    console.log(`Calling OpenAI API for translation to ${targetLanguage}`);
+    
     // Call OpenAI API
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini", // or another available model
@@ -236,12 +250,12 @@ Ensure the translation sounds natural in the target language.`;
     
     const translatedText = response.choices[0].message.content.trim();
     
-    // Save to cache
-    await saveToCache(text, targetLang, translatedText, context);
+    // Save to cache - with proper string language parameter
+    await saveToCache(text, targetLanguage, translatedText, context);
     
     return translatedText;
   } catch (error) {
-    console.error("Translation error:", error);
+    console.error(`Translation error for language ${Array.isArray(targetLang) ? targetLang[0] : targetLang}:`, error);
     // In case of error, return original text
     return text;
   }
@@ -250,13 +264,18 @@ Ensure the translation sounds natural in the target language.`;
 /**
  * Batch translation function
  * @param {Array<string>} texts - Array of texts to translate
- * @param {string} targetLang - Target language
+ * @param {string|string[]} targetLang - Target language
  * @param {string} context - Translation context
- * @param {string} sourceLang - Source language (default: de)
+ * @param {string|string[]} sourceLang - Source language (default: en)
  * @returns {Promise<Array<string>>} - Array of translated texts
  */
 async function batchTranslate(texts, targetLang, context = '', sourceLang = 'en') {
-  console.log('batchTranslate', texts, targetLang, context, sourceLang);
+  // Ensure language parameters are strings, not arrays
+  const targetLanguage = Array.isArray(targetLang) ? targetLang[0] : targetLang;
+  const sourceLanguage = Array.isArray(sourceLang) ? sourceLang[0] : sourceLang;
+  
+  console.log(`Batch translating ${texts.length} texts to ${targetLanguage}`);
+  
   // Check if all texts are in cache
   const results = [];
   const missingTexts = [];
@@ -278,7 +297,8 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = 'en'
       continue;
     }
     
-    const cachedText = await checkCache(texts[i], targetLang, context);
+    // Use the single language string when checking cache
+    const cachedText = await checkCache(texts[i], targetLanguage, context);
     if (cachedText) {
       results[i] = cachedText;
     } else {
@@ -312,8 +332,9 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = 'en'
         'ja': 'Japanese'
       };
       
-      const targetLanguageName = languageNames[targetLang] || targetLang;
-      const sourceLanguageName = languageNames[sourceLang] || sourceLang;
+      // Use the string language values for names
+      const targetLanguageName = languageNames[targetLanguage] || targetLanguage;
+      const sourceLanguageName = languageNames[sourceLanguage] || sourceLanguage;
       
       const systemPrompt = `You are a professional translator for a warehouse management system.
 Translate the following texts from ${sourceLanguageName} to ${targetLanguageName}.
@@ -324,7 +345,9 @@ Return ONLY the translated texts, with each separated by "---SEPARATOR---".
 Keep the same order of texts.
 
 IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in the original text.`;
-      console.log('OpenAI API batch call', combinedText);
+      
+      console.log(`OpenAI API batch call for ${currentBatch.length} texts to ${targetLanguage}`);
+      
       try {
         const response = await openai.chat.completions.create({
           model: "gpt-4o-mini", // or another available model
@@ -345,8 +368,8 @@ IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in
             const originalText = currentBatch[i];
             const translatedText = translatedTexts[i];
             
-            // Save to cache
-            await saveToCache(originalText, targetLang, translatedText, context);
+            // Save to cache - with proper string language parameter
+            await saveToCache(originalText, targetLanguage, translatedText, context);
             
             // Fill results
             results[currentIndexes[i]] = translatedText;
@@ -354,7 +377,13 @@ IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in
         } else {
           // If mismatch, translate individually
           for (let i = 0; i < currentBatch.length; i++) {
-            const translatedText = await translateText(currentBatch[i], targetLang, context, sourceLang);
+            // Pass the string language to translateText
+            const translatedText = await translateText(
+              currentBatch[i], 
+              targetLanguage,  // Use string language
+              context, 
+              sourceLanguage   // Use string language
+            );
             results[currentIndexes[i]] = translatedText;
           }
         }
@@ -363,7 +392,13 @@ IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in
         
         // In case of error, translate individually
         for (let i = 0; i < currentBatch.length; i++) {
-          const translatedText = await translateText(currentBatch[i], targetLang, context, sourceLang);
+          // Pass the string language to translateText
+          const translatedText = await translateText(
+            currentBatch[i], 
+            targetLanguage,  // Use string language
+            context, 
+            sourceLanguage   // Use string language
+          );
           results[currentIndexes[i]] = translatedText;
         }
       }

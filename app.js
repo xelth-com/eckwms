@@ -14,6 +14,7 @@ const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
 const passport = require('passport');
 const initI18n = require('./middleware/i18n');
+const { translationQueue } = require('./middleware/i18n');
 // Import middleware/auth
 const { requireAdmin } = require('./middleware/auth');
 const htmlInterceptor = require('./middleware/htmlInterceptor');
@@ -115,24 +116,24 @@ app.use(htmlTranslator);
 
 // Request logging middleware
 app.use((req, res, next) => {
-  console.log('========= REQUEST HEADERS =========');
-  console.log('URL:', req.url);
-  console.log('Original URL:', req.originalUrl);
-  console.log('Cookies:', req.cookies);
-  console.log('Accept-Language:', req.headers['accept-language']);
-  console.log('Detected Language:', req.language);
-  console.log('Query:', req.query);
-  console.log('==================================');
-  next();
+    console.log('========= REQUEST HEADERS =========');
+    console.log('URL:', req.url);
+    console.log('Original URL:', req.originalUrl);
+    console.log('Cookies:', req.cookies);
+    console.log('Accept-Language:', req.headers['accept-language']);
+    console.log('Detected Language:', req.language);
+    console.log('Query:', req.query);
+    console.log('==================================');
+    next();
 });
 
 // Serve static files last
 app.use('/locales', (req, res, next) => {
-  // Set cache control headers for translation files
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  next();
+    // Set cache control headers for translation files
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
 }, express.static(path.join(__dirname, 'html', 'locales')));
 app.use(express.static(path.join(__dirname, 'html')));
 
@@ -304,31 +305,27 @@ initialize();
  */
 async function runTranslationMaintenance() {
     try {
-      // Clean up stalled translation jobs
-      if (translationQueue) {
-        const cleanedCount = translationQueue.cleanupStalled();
-        if (cleanedCount > 0) {
-          console.log(`Translation maintenance: Cleaned up ${cleanedCount} stalled jobs`);
+        // Проверяем, что очередь существует перед использованием
+        if (translationQueue) {
+            const cleanedCount = translationQueue.cleanupStalled();
+            if (cleanedCount > 0) {
+                console.log(`Translation maintenance: Cleaned up ${cleanedCount} stalled jobs`);
+            }
+        } else {
+            console.log('Translation queue not available for maintenance');
         }
-      }
-      
-      // Update stats for monitoring
-      if (process.env.NODE_ENV === 'development') {
-        const queueStats = translationQueue.getStats();
-        console.log('Translation queue stats:', queueStats);
-      }
-      
-      // Schedule next maintenance
-      setTimeout(runTranslationMaintenance, 5 * 60 * 1000); // Every 5 minutes
+
+        // Schedule next maintenance
+        setTimeout(runTranslationMaintenance, 5 * 60 * 1000); // Every 5 minutes
     } catch (error) {
-      console.error('Error in translation maintenance:', error);
-      // Still schedule next run even if there was an error
-      setTimeout(runTranslationMaintenance, 5 * 60 * 1000);
+        console.error('Error in translation maintenance:', error);
+        // Still schedule next run even if there was an error
+        setTimeout(runTranslationMaintenance, 5 * 60 * 1000);
     }
-  }
-  
-  // Start maintenance after app initialization
-  setTimeout(runTranslationMaintenance, 2 * 60 * 1000); // Start after 2 minutes
+}
+
+// Start maintenance after app initialization
+setTimeout(runTranslationMaintenance, 2 * 60 * 1000); // Start after 2 minutes
 
 
 module.exports = app;

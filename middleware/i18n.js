@@ -219,10 +219,13 @@ function initI18n(options = {}) {
         return key;
       },
       missingKeyHandler: (lng, ns, key, fallbackValue) => {
+        // Get the primary language from the array or use the language if it's already a string
+        const primaryLang = Array.isArray(lng) ? lng[0] : lng;
+        
         // Fix: Only queue translations TO non-default languages FROM the default language
-        if (lng !== defaultLanguage) {
+        if (primaryLang !== defaultLanguage) {
           // Create a unique key to track this missing key
-          const uniqueKey = `${lng}:${ns}:${key}`;
+          const uniqueKey = `${primaryLang}:${ns}:${key}`;
           
           // Prevent recursive calls - skip if we're already processing this key
           if (processingKeys.has(uniqueKey)) {
@@ -241,16 +244,16 @@ function initI18n(options = {}) {
               defaultText = i18next.t(key, { ns, lng: defaultLanguage });
             }
             
-            // Queue for translation
+            // Queue for translation with the primary language (not the array)
             translationQueue.enqueue({
               text: defaultText,
-              targetLang: lng,
+              targetLang: primaryLang, // Use the single language string
               namespace: ns,
               key: key
             });
-
+      
             if (process.env.NODE_ENV === 'development') {
-              console.log(`[i18n] Added to translation queue: [${lng}] ${ns}:${key}`);
+              console.log(`[i18n] Added to translation queue: [${primaryLang}] ${ns}:${key}`);
             }
           } finally {
             // Always remove from processing list when done
@@ -549,3 +552,4 @@ function initI18n(options = {}) {
 
 module.exports = initI18n;
 module.exports.i18next = i18next;
+module.exports.translationQueue = translationQueue; 
