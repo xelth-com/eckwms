@@ -2,7 +2,7 @@
 const { OpenAI } = require('openai');
 const crypto = require('crypto');
 const path = require('path');
-const fs = require('fs');
+
 
 // Initialize OpenAI API
 const openai = new OpenAI({
@@ -21,13 +21,7 @@ try {
   console.warn('PostgreSQL not configured for translation cache. Using file-based cache only.');
 }
 
-// Directory for file-based translation cache
-const CACHE_DIR = path.join(process.cwd(), 'cache', 'translations');
 
-// Create cache directory if it doesn't exist
-if (!fs.existsSync(CACHE_DIR)) {
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
-}
 
 // In-memory cache for faster lookup of recent translations
 const memoryCache = new Map();
@@ -53,16 +47,16 @@ function generateKey(text, context = '') {
  * @param {string} context - Translation context
  * @returns {Promise<string|null>} - Translation or null if not found
  */
+// services/translationService.js - Оптимизированная версия
 async function checkCache(text, targetLang, context = '') {
   const key = generateKey(text, context);
   const cacheKey = `${targetLang}:${key}`;
   
-  // First check memory cache for fastest response
+  // Проверяем только память и БД, убираем файловый кеш
   if (memoryCache.has(cacheKey)) {
     return memoryCache.get(cacheKey);
   }
   
-  // Then check database cache if available
   if (TranslationCache) {
     try {
       const cachedTranslation = await TranslationCache.findOne({
@@ -73,13 +67,13 @@ async function checkCache(text, targetLang, context = '') {
       });
       
       if (cachedTranslation) {
-        // Update usage count and date
+        // Обновляем метрики использования
         await cachedTranslation.update({
           lastUsed: new Date(),
           useCount: cachedTranslation.useCount + 1
         });
         
-        // Add to memory cache
+        // Добавляем в кеш памяти
         addToMemoryCache(cacheKey, cachedTranslation.translatedText);
         
         return cachedTranslation.translatedText;
@@ -89,23 +83,10 @@ async function checkCache(text, targetLang, context = '') {
     }
   }
   
-  // Finally check file cache
-  const cacheFile = path.join(CACHE_DIR, `${targetLang}_${key}.json`);
-  if (fs.existsSync(cacheFile)) {
-    try {
-      const cacheData = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
-      
-      // Add to memory cache
-      addToMemoryCache(cacheKey, cacheData.translatedText);
-      
-      return cacheData.translatedText;
-    } catch (error) {
-      console.error('Error reading file cache:', error);
-    }
-  }
-  
   return null;
 }
+
+// Удаляем функции для работы с файловым кешем
 
 /**
  * Add translation to memory cache with size limit
@@ -131,56 +112,50 @@ function addToMemoryCache(key, value) {
  * @param {string} translatedText - Translated text
  * @param {string} context - Translation context
  */
+// services/translationService.js - Оптимизированное сохранение в кеш
 async function saveToCache(text, targetLang, translatedText, context = '') {
   const key = generateKey(text, context);
   const cacheKey = `${targetLang}:${key}`;
   
-  // Add to memory cache
+  // Добавляем в кеш памяти
   addToMemoryCache(cacheKey, translatedText);
   
-  // Save to database if available
+  // Сохраняем в БД с дополнительными метаданными
   if (TranslationCache) {
     try {
-      await TranslationCache.findOrCreate({
+      const [record, created] = await TranslationCache.findOrCreate({
         where: {
           key,
           language: targetLang
         },
         defaults: {
-          originalText: text,
-          translatedText: translatedText,
-          context: context || null
-        }
-      }).then(([record, created]) => {
-        if (!created) {
-          // Update existing record
-          return record.update({
-            translatedText: translatedText,
-            lastUsed: new Date(),
-            useCount: record.useCount + 1
-          });
+          originalText: text.substring(0, 500), // Ограничиваем размер текста
+          translatedText,
+          context: context || null,
+          source: 'openai',
+          charCount: text.length,
+          // Добавляем дополнительные поля для анализа
+          processingTime: Date.now() - (startTime || Date.now()),
+          apiVersion: 'gpt-4o-mini'
         }
       });
+      
+      if (!created) {
+        // Обновляем существующую запись
+        await record.update({
+          translatedText,
+          lastUsed: new Date(),
+          useCount: record.useCount + 1
+        });
+      }
+      
+      // Проверяем, нужно ли добавить перевод в статический JSON
+      if (record.useCount > HIGH_USAGE_THRESHOLD) {
+        await addToStaticJsonFile(targetLang, context, key, translatedText);
+      }
     } catch (error) {
       console.error('Error saving to database cache:', error);
     }
-  }
-  
-  // Always save to file cache as backup
-  const cacheFile = path.join(CACHE_DIR, `${targetLang}_${key}.json`);
-  const cacheData = {
-    key,
-    language: targetLang,
-    originalText: text,
-    translatedText: translatedText,
-    context: context || null,
-    timestamp: new Date().toISOString()
-  };
-  
-  try {
-    fs.writeFileSync(cacheFile, JSON.stringify(cacheData, null, 2), 'utf8');
-  } catch (error) {
-    console.error('Error saving to file cache:', error);
   }
 }
 
