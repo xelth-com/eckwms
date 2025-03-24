@@ -239,42 +239,48 @@ function initI18n(options = {}) {
             // Get text from default language WITHOUT triggering missing key handler
             let defaultText = key;
             let foundInDefaultLang = false;
+            let sourceType = 'key'; // Track where we found the source text
             
-            // Only try to get default text if the key isn't already being processed
+            // 1. Check if the key exists in the default language
             if (i18next.exists(key, { ns, lng: defaultLanguage })) {
               defaultText = i18next.t(key, { ns, lng: defaultLanguage });
               foundInDefaultLang = true;
-            } else {
-              // Try to extract content from current HTML being processed
-              // Мы должны сначала получить доступ к обрабатываемому HTML
-              if (global.currentProcessingHtml) {
-                try {
-                  // Ищем HTML элемент с этим ключом data-i18n
-                  const regex = new RegExp(`<[^>]+data-i18n=["']${key}["'][^>]*>([^<]+)<\/[^>]+>`, 'g');
-                  const match = regex.exec(global.currentProcessingHtml);
-                  
-                  if (match && match[1]) {
-                    defaultText = match[1].trim();
-                    console.log(`Found content in HTML for key ${key}: "${defaultText}"`);
-                  }
-                } catch (error) {
-                  console.error(`Error extracting HTML content for ${key}:`, error);
+              sourceType = 'defaultLang';
+            } 
+            // 2. Check if the content was saved in elementContents map
+            else if (global.elementContents && global.elementContents.has(key)) {
+              defaultText = global.elementContents.get(key);
+              sourceType = 'elementMap';
+              console.log(`Found content in elementContents map for key ${key}: "${defaultText}"`);
+            }
+            // 3. Try to extract from HTML as a last resort
+            else if (global.currentProcessingHtml) {
+              try {
+                // Look for HTML element with this data-i18n key
+                const regex = new RegExp(`<[^>]+data-i18n=["']${key}["'][^>]*>([^<]+)<\/[^>]+>`, 'g');
+                const match = regex.exec(global.currentProcessingHtml);
+                
+                if (match && match[1]) {
+                  defaultText = match[1].trim();
+                  sourceType = 'htmlContent';
+                  console.log(`Found content in HTML for key ${key}: "${defaultText}"`);
                 }
+              } catch (error) {
+                console.error(`Error extracting HTML content for ${key}:`, error);
               }
             }
             
-            // Queue for translation with the primary language (not the array)
+            // Queue for translation with the primary language
             translationQueue.enqueue({
               text: defaultText,
               targetLang: primaryLang,
               namespace: ns,
               key: key,
-              // Добавляем флаг, чтобы знать источник текста
-              sourceType: foundInDefaultLang ? 'defaultLang' : 'htmlContent'
+              sourceType: sourceType
             });
       
             if (process.env.NODE_ENV === 'development') {
-              console.log(`[i18n] Added to translation queue: [${primaryLang}] ${ns}:${key} (source: ${foundInDefaultLang ? 'default language' : 'HTML content'})`);
+              console.log(`[i18n] Added to translation queue: [${primaryLang}] ${ns}:${key} (source: ${sourceType})`);
             }
           } finally {
             // Always remove from processing list when done

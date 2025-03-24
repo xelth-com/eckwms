@@ -22,7 +22,6 @@ module.exports = function createHtmlInterceptor(i18next) {
       // This function is called after the response body is complete
       intercept: (body, send) => {
         console.log('Intercepted HTML response!');
-        console.log('Body length:', body.length);
 
         // Modify HTML to inject app configuration
         let modifiedBody = body;
@@ -61,18 +60,15 @@ console.log("App config loaded:", window.APP_CONFIG);
           console.log(`Found translation tags: ${i18nTagCount} standard, ${i18nAttrCount} attribute, ${i18nHtmlCount} HTML`);
 
           if (i18nTagCount + i18nAttrCount + i18nHtmlCount > 0) {
-            // Important: Make current HTML available for the existing missingKeyHandler
-            // Use the variable name that aligns with your missingKeyHandler implementation
+            // Make current HTML available for the missingKeyHandler
             global.currentProcessingHtml = modifiedBody;
             
-            // Optional: Create a map to store HTML content for each i18n key
-            // This is complementary to the direct HTML access and helps with
-            // specific element content lookup
-            if (!global.elementContents) {
-              global.elementContents = new Map();
-            }
+            // Create a map to store HTML content for each i18n key
+            // This is used by missingKeyHandler when default translation is missing
+            global.elementContents = new Map();
             
-            // Extract content from all elements with data-i18n attributes for reference
+            // First step: Extract all content from elements with data-i18n attributes
+            // This pre-processing step makes content available for missingKeyHandler
             modifiedBody.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, 
               (match, tag1, key, attrs, content, tag2) => {
                 if (content && content.trim()) {
@@ -117,15 +113,16 @@ console.log("App config loaded:", window.APP_CONFIG);
                 processingKeys.delete(uniqueKey);
                 global.processingKeys = processingKeys;
 
-                // If translation equals key (not found), leave as is for frontend to handle
+                // IMPORTANT: We ALWAYS keep the data-i18n attribute
+                // so frontend can update it later when translation becomes available
                 if (translation === translationKey) {
-                  return match; // Keep original tag for frontend retry
+                  // Translation not found - missingKeyHandler will queue it
+                  return match; // Return original content with data-i18n tag
                 }
 
                 console.log(`Translated: ${translationKey} → ${translation}`);
                 
-                // Return element with translation but KEEP the data-i18n attribute
-                // so frontend can update it later if needed
+                // Return element with translation while KEEPING the data-i18n attribute
                 return `<${tag1} data-i18n="${key}"${attrs}>${translation}</${tag2}>`;
               } catch (error) {
                 console.error(`Error translating ${translationKey}:`, error);
@@ -196,13 +193,8 @@ console.log("App config loaded:", window.APP_CONFIG);
                   }
                 }
 
-                // Keep data-i18n-attr for frontend retries if not all translated
-                if (!allTranslated) {
-                  return newTag + '>';
-                }
-
-                // Otherwise remove data-i18n-attr but keep the tag
-                return newTag.replace(/\s+data-i18n-attr=['"][^'"]+['"]/, '') + '>';
+                // IMPORTANT: Always keep data-i18n-attr for frontend retries
+                return newTag + '>';
               } catch (e) {
                 console.error('Error parsing data-i18n-attr:', e);
                 return match;
@@ -243,17 +235,18 @@ console.log("App config loaded:", window.APP_CONFIG);
                 processingKeys.delete(uniqueKey);
                 global.processingKeys = processingKeys;
 
-                // If translation equals key (not found), leave as is for frontend to handle
+                // Store the HTML content for potential translation
+                if (content && content.trim()) {
+                  global.elementContents.set(key, content.trim());
+                }
+
+                // ALWAYS keep the data-i18n-html attribute for frontend to update later
                 if (translation === translationKey) {
-                  // Store the HTML content for translation
-                  if (content && content.trim()) {
-                    global.elementContents.set(key, content.trim());
-                  }
-                  return match;
+                  return match; // Keep original with attribute for frontend to find
                 }
 
                 console.log(`Translated HTML: ${translationKey}`);
-                // Return element with HTML translation and keep the data-i18n-html attribute
+                // Return element with HTML translation while KEEPING the data-i18n-html attribute
                 return `<${tag1} data-i18n-html="${key}"${attrs}>${translation}</${tag2}>`;
               } catch (error) {
                 console.error(`Error translating HTML ${translationKey}:`, error);
@@ -261,8 +254,11 @@ console.log("App config loaded:", window.APP_CONFIG);
               }
             });
 
-            // Clean up global variables
-            global.currentProcessingHtml = null;
+            // Clean up global variables after processing
+            setTimeout(() => {
+              global.currentProcessingHtml = null;
+              global.elementContents = null;
+            }, 1000);
           } else {
             console.log('No translation tags found in HTML');
           }
