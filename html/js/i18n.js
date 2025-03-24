@@ -443,22 +443,22 @@ async function loadNamespace(language, namespace, version = '') {
   
   // Пропускаем, если уже загружен с текущей версией
   if (loadedNamespaces[cacheKey] && !version) {
-    return Promise.resolve();
-  }
-  
-  try {
+      return Promise.resolve();
+    }
+    
+    try {
     // Добавляем версию для предотвращения кеширования устаревших данных
     const versionParam = version ? `?v=${version}` : `?t=${Date.now()}`;
     const response = await fetch(`/locales/${language}/${namespace}.json${versionParam}`);
-    
-    if (response.ok) {
-      const translations = await response.json();
       
+      if (response.ok) {
+        const translations = await response.json();
+        
       // Оптимизированное добавление переводов в кеш
       batchAddToTranslationCache(language, namespace, translations);
       
       // Отмечаем namespace как загруженный
-      loadedNamespaces[cacheKey] = true;
+        loadedNamespaces[cacheKey] = true;
       
       // Сохраняем в localStorage для быстрой загрузки при следующем визите
       try {
@@ -467,8 +467,8 @@ async function loadNamespace(language, namespace, version = '') {
         // Если localStorage полный, очищаем менее важные данные
         cleanupLocalStorage();
       }
-    }
-  } catch (error) {
+      }
+    } catch (error) {
     console.error(`Failed to load namespace ${namespace} for ${language}:`, error);
     
     // Пробуем загрузить из localStorage

@@ -296,4 +296,39 @@ async function logOut(mainDirectory) {
 // Initialize and start the application
 initialize();
 
+// Add this to app.js or a maintenance service file
+// Around initialization code
+
+/**
+ * Scheduled maintenance for translation system
+ */
+async function runTranslationMaintenance() {
+    try {
+      // Clean up stalled translation jobs
+      if (translationQueue) {
+        const cleanedCount = translationQueue.cleanupStalled();
+        if (cleanedCount > 0) {
+          console.log(`Translation maintenance: Cleaned up ${cleanedCount} stalled jobs`);
+        }
+      }
+      
+      // Update stats for monitoring
+      if (process.env.NODE_ENV === 'development') {
+        const queueStats = translationQueue.getStats();
+        console.log('Translation queue stats:', queueStats);
+      }
+      
+      // Schedule next maintenance
+      setTimeout(runTranslationMaintenance, 5 * 60 * 1000); // Every 5 minutes
+    } catch (error) {
+      console.error('Error in translation maintenance:', error);
+      // Still schedule next run even if there was an error
+      setTimeout(runTranslationMaintenance, 5 * 60 * 1000);
+    }
+  }
+  
+  // Start maintenance after app initialization
+  setTimeout(runTranslationMaintenance, 2 * 60 * 1000); // Start after 2 minutes
+
+
 module.exports = app;

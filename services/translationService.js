@@ -41,22 +41,22 @@ function generateKey(text, context = '') {
 }
 
 /**
- * Check translation cache
+ * Check translation cache in memory and database
  * @param {string} text - Source text
  * @param {string} targetLang - Target language
  * @param {string} context - Translation context
  * @returns {Promise<string|null>} - Translation or null if not found
  */
-// services/translationService.js - Оптимизированная версия
 async function checkCache(text, targetLang, context = '') {
   const key = generateKey(text, context);
   const cacheKey = `${targetLang}:${key}`;
   
-  // Проверяем только память и БД, убираем файловый кеш
+  // Check memory cache first for fastest access
   if (memoryCache.has(cacheKey)) {
     return memoryCache.get(cacheKey);
   }
   
+  // Then check database cache if available
   if (TranslationCache) {
     try {
       const cachedTranslation = await TranslationCache.findOne({
@@ -67,13 +67,13 @@ async function checkCache(text, targetLang, context = '') {
       });
       
       if (cachedTranslation) {
-        // Обновляем метрики использования
+        // Update usage metrics
         await cachedTranslation.update({
           lastUsed: new Date(),
           useCount: cachedTranslation.useCount + 1
         });
         
-        // Добавляем в кеш памяти
+        // Add to memory cache for faster future access
         addToMemoryCache(cacheKey, cachedTranslation.translatedText);
         
         return cachedTranslation.translatedText;
@@ -106,21 +106,21 @@ function addToMemoryCache(key, value) {
 }
 
 /**
- * Save translation to cache
+ * Save translation to memory cache and database
  * @param {string} text - Source text
  * @param {string} targetLang - Target language
  * @param {string} translatedText - Translated text
  * @param {string} context - Translation context
  */
-// services/translationService.js - Оптимизированное сохранение в кеш
 async function saveToCache(text, targetLang, translatedText, context = '') {
   const key = generateKey(text, context);
   const cacheKey = `${targetLang}:${key}`;
+  const startTime = global.translationStartTime || Date.now();
   
-  // Добавляем в кеш памяти
+  // Add to memory cache
   addToMemoryCache(cacheKey, translatedText);
   
-  // Сохраняем в БД с дополнительными метаданными
+  // Save to database if available
   if (TranslationCache) {
     try {
       const [record, created] = await TranslationCache.findOrCreate({
@@ -129,29 +129,24 @@ async function saveToCache(text, targetLang, translatedText, context = '') {
           language: targetLang
         },
         defaults: {
-          originalText: text.substring(0, 500), // Ограничиваем размер текста
+          originalText: text.substring(0, 500), // Limit text size
           translatedText,
           context: context || null,
           source: 'openai',
           charCount: text.length,
-          // Добавляем дополнительные поля для анализа
-          processingTime: Date.now() - (startTime || Date.now()),
+          // Add metrics for analysis
+          processingTime: Date.now() - startTime,
           apiVersion: 'gpt-4o-mini'
         }
       });
       
       if (!created) {
-        // Обновляем существующую запись
+        // Update existing record
         await record.update({
           translatedText,
           lastUsed: new Date(),
           useCount: record.useCount + 1
         });
-      }
-      
-      // Проверяем, нужно ли добавить перевод в статический JSON
-      if (record.useCount > HIGH_USAGE_THRESHOLD) {
-        await addToStaticJsonFile(targetLang, context, key, translatedText);
       }
     } catch (error) {
       console.error('Error saving to database cache:', error);
