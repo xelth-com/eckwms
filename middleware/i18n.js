@@ -10,6 +10,8 @@ const fs = require('fs');
 // Create translation queue for deferred translations
 const translationQueue = new Queue();
 const namespaceVersions = new Map();
+// Track keys currently being processed to prevent recursion
+const processingKeys = new Set();
 
 /**
  * Load namespace with version tracking
@@ -23,7 +25,7 @@ async function loadNamespace(language, namespace, version = '') {
   const currentVersion = namespaceVersions.get(cacheKey) || '';
   
   // Skip if already loaded with current version
-  if (loadedNamespaces[cacheKey] && currentVersion === version && !version) {
+  if (loadedNamespaces && loadedNamespaces[cacheKey] && currentVersion === version && !version) {
     return Promise.resolve();
   }
   
@@ -38,7 +40,7 @@ async function loadNamespace(language, namespace, version = '') {
     
     // If we have current version and file hasn't changed, skip loading
     if (currentVersion && fileModTime <= parseInt(currentVersion)) {
-      loadedNamespaces[cacheKey] = true;
+      if (loadedNamespaces) loadedNamespaces[cacheKey] = true;
       return Promise.resolve();
     }
     
@@ -50,7 +52,7 @@ async function loadNamespace(language, namespace, version = '') {
     i18next.addResourceBundle(language, namespace, translations, true, true);
     
     // Mark namespace as loaded and update version
-    loadedNamespaces[cacheKey] = true;
+    if (loadedNamespaces) loadedNamespaces[cacheKey] = true;
     namespaceVersions.set(cacheKey, fileModTime.toString());
     
     console.log(`[i18n] Loaded namespace: ${language}:${namespace} (version: ${fileModTime})`);
@@ -62,7 +64,6 @@ async function loadNamespace(language, namespace, version = '') {
 }
 
 // Process translation queue
-// Further down around line 48-49, update the processTranslationQueue function
 function processTranslationQueue() {
   if (translationQueue.isEmpty()) {
     setTimeout(processTranslationQueue, 5000);
@@ -82,8 +83,39 @@ function processTranslationQueue() {
       try {
         // FIXED PATH: Using html/locales instead of just locales
         const filePath = path.join(process.cwd(), 'html', 'locales', item.targetLang, `${item.namespace}.json`);
-        // Rest of the saving logic remains the same...
+        
+        // Check if file exists
+        let translations = {};
+        if (fs.existsSync(filePath)) {
+          const content = fs.readFileSync(filePath, 'utf8');
+          translations = JSON.parse(content);
+        } else {
+          // Create directory if it doesn't exist
+          const dir = path.dirname(filePath);
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+        }
 
+        // Add or update translation
+        const keyPath = item.key.split('.');
+        let current = translations;
+        
+        // Create nested objects for the key path
+        for (let i = 0; i < keyPath.length - 1; i++) {
+          const segment = keyPath[i];
+          if (!current[segment]) {
+            current[segment] = {};
+          }
+          current = current[segment];
+        }
+        
+        // Set the translation
+        current[keyPath[keyPath.length - 1]] = translatedText;
+        
+        // Write to file
+        fs.writeFileSync(filePath, JSON.stringify(translations, null, 2), 'utf8');
+        
         console.log(`[i18n] Translated and saved: [${item.targetLang}] ${item.namespace}:${item.key}`);
         // Mark as successfully processed
         translationQueue.markProcessed(item, true);
@@ -108,6 +140,9 @@ function processTranslationQueue() {
  * @returns {Function} Middleware for Express
  */
 function initI18n(options = {}) {
+  // Initialize loaded namespaces tracking
+  global.loadedNamespaces = {};
+  
   // FIXED PATH: Using html/locales instead of just locales
   const localesPath = path.join(process.cwd(), 'html', 'locales');
   const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
@@ -121,26 +156,27 @@ function initI18n(options = {}) {
     // Additional languages
     'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja'
   ];
-  // Создание промежуточного ПО для определения языка
+  
+  // Middleware for language detection
   const languageDetectorMiddleware = (req, res, next) => {
-    // Определение языка пользователя с приоритетом:
-    // 1. Куки i18next
-    // 2. Параметр lang в URL
-    // 3. Заголовок Accept-Language
-    // 4. Язык по умолчанию
+    // Determine user's language with priority:
+    // 1. i18next cookie
+    // 2. lang query param
+    // 3. Accept-Language header
+    // 4. Default language
     const userLanguage =
       req.cookies?.i18next ||
       req.query?.lang ||
       req.headers['accept-language']?.split(',')[0]?.split('-')[0] ||
       defaultLanguage;
 
-    // Проверяем, поддерживается ли язык
+    // Check if language is supported
     req.language = supportedLngs.includes(userLanguage) ? userLanguage : defaultLanguage;
 
-    // Сохраняем язык в куки, если он изменился
+    // Save language in cookie if it changed
     if (req.cookies?.i18next !== req.language) {
       res.cookie('i18next', req.language, {
-        maxAge: 365 * 24 * 60 * 60 * 1000, // 1 год
+        maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
         path: '/'
       });
     }
@@ -149,6 +185,7 @@ function initI18n(options = {}) {
 
     next();
   };
+  
   // Namespaces list
   const namespaces = ['common', 'rma', 'dashboard', 'auth'];
 
@@ -184,22 +221,42 @@ function initI18n(options = {}) {
       missingKeyHandler: (lng, ns, key, fallbackValue) => {
         // Fix: Only queue translations TO non-default languages FROM the default language
         if (lng !== defaultLanguage) {
-          // Get the text from the default language
-          const defaultText = i18next.t(key, { ns, lng: defaultLanguage }) || key;
+          // Create a unique key to track this missing key
+          const uniqueKey = `${lng}:${ns}:${key}`;
+          
+          // Prevent recursive calls - skip if we're already processing this key
+          if (processingKeys.has(uniqueKey)) {
+            return;
+          }
+          
+          try {
+            // Mark that we're processing this key
+            processingKeys.add(uniqueKey);
+            
+            // Get text from default language WITHOUT triggering missing key handler
+            let defaultText = key;
+            
+            // Only try to get default text if the key isn't already being processed
+            if (i18next.exists(key, { ns, lng: defaultLanguage })) {
+              defaultText = i18next.t(key, { ns, lng: defaultLanguage });
+            }
+            
+            // Queue for translation
+            translationQueue.enqueue({
+              text: defaultText,
+              targetLang: lng,
+              namespace: ns,
+              key: key
+            });
 
-          // Use the enhanced Queue's enqueue method
-          translationQueue.enqueue({
-            text: defaultText,
-            targetLang: lng,
-            namespace: ns,
-            key: key
-          });
-
-          if (process.env.NODE_ENV === 'development') {
-            console.log(`[i18n] Added to translation queue: [${lng}] ${ns}:${key}`);
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[i18n] Added to translation queue: [${lng}] ${ns}:${key}`);
+            }
+          } finally {
+            // Always remove from processing list when done
+            processingKeys.delete(uniqueKey);
           }
         }
-
       },
       interpolation: {
         escapeValue: false,
@@ -211,6 +268,7 @@ function initI18n(options = {}) {
       },
       ...options
     });
+    
   // Promise-based translation function
   i18next.getTranslationAsync = async (key, options, lng) => {
     return new Promise((resolve) => {
@@ -244,6 +302,18 @@ function initI18n(options = {}) {
 
       console.log(`Processing HTML content for language: ${language}`);
 
+      // Count translation tags to see if any exist
+      const i18nTagCount = (body.match(/data-i18n=/g) || []).length;
+      const i18nAttrCount = (body.match(/data-i18n-attr=/g) || []).length;
+      const i18nHtmlCount = (body.match(/data-i18n-html=/g) || []).length;
+
+      console.log(`Found translation tags: ${i18nTagCount} standard, ${i18nAttrCount} attribute, ${i18nHtmlCount} HTML`);
+
+      if (i18nTagCount + i18nAttrCount + i18nHtmlCount === 0) {
+        console.log('No translation tags found in HTML');
+        return body;
+      }
+
       // Process tags with multiple pattern support for different element types
       // 1. Simple elements with text content
       body = body.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
@@ -258,16 +328,30 @@ function initI18n(options = {}) {
         }
 
         console.log(`Translating: ${translationKey} in namespace ${namespace}`);
-        const translation = req.i18n.t(translationKey, { ns: namespace });
+        
+        try {
+          // Add safeguard against infinite recursion
+          const uniqueKey = `${language}:${namespace}:${translationKey}`;
+          if (processingKeys.has(uniqueKey)) {
+            return match; // Skip if already processing this key
+          }
+          
+          processingKeys.add(uniqueKey);
+          const translation = req.i18n.t(translationKey, { ns: namespace });
+          processingKeys.delete(uniqueKey);
 
-        // If translation equals key (not found), leave as is for frontend to handle
-        if (translation === translationKey) {
-          return match; // Keep original tag for frontend retry
+          // If translation equals key (not found), leave as is for frontend to handle
+          if (translation === translationKey) {
+            return match; // Keep original tag for frontend retry
+          }
+
+          console.log(`Translated: ${translationKey} → ${translation}`);
+          // Return element with translation but REMOVE the data-i18n attribute
+          return `<${tag1}${attrs}>${translation}</${tag2}>`;
+        } catch (error) {
+          console.error(`Error translating ${translationKey}:`, error);
+          return match; // Return original on error
         }
-
-        console.log(`Translated: ${translationKey} → ${translation}`);
-        // Return element with translation but REMOVE the data-i18n attribute
-        return `<${tag1}${attrs}>${translation}</${tag2}>`;
       });
 
       // 2. Process data-i18n-attr attributes
@@ -289,27 +373,41 @@ function initI18n(options = {}) {
               translationKey = parts.slice(1).join(':');
             }
 
-            const translation = req.i18n.t(translationKey, { ns: namespace });
+            // Add safeguard against infinite recursion
+            const uniqueKey = `${language}:${namespace}:${translationKey}`;
+            if (processingKeys.has(uniqueKey)) {
+              allTranslated = false;
+              continue; // Skip if already processing this key
+            }
+            
+            try {
+              processingKeys.add(uniqueKey);
+              const translation = req.i18n.t(translationKey, { ns: namespace });
+              processingKeys.delete(uniqueKey);
 
-            // Get current attribute value if present
-            const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
-            const attrValueMatch = match.match(attrRegex);
-            const currentValue = attrValueMatch ? attrValueMatch[1] : '';
+              // Get current attribute value if present
+              const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
+              const attrValueMatch = match.match(attrRegex);
+              const currentValue = attrValueMatch ? attrValueMatch[1] : '';
 
-            // If translation differs from key, replace attribute value
-            if (translation !== translationKey) {
-              console.log(`Translated attr: ${translationKey} → ${translation}`);
-              if (attrValueMatch) {
-                newTag = newTag.replace(
-                  `${attr}="${currentValue}"`,
-                  `${attr}="${translation}"`
-                );
+              // If translation differs from key, replace attribute value
+              if (translation !== translationKey) {
+                console.log(`Translated attr: ${translationKey} → ${translation}`);
+                if (attrValueMatch) {
+                  newTag = newTag.replace(
+                    `${attr}="${currentValue}"`,
+                    `${attr}="${translation}"`
+                  );
+                } else {
+                  // Attribute not present, add it
+                  newTag = newTag + ` ${attr}="${translation}"`;
+                }
               } else {
-                // Attribute not present, add it
-                newTag = newTag + ` ${attr}="${translation}"`;
+                allTranslated = false; // Mark that not all attributes are translated
               }
-            } else {
-              allTranslated = false; // Mark that not all attributes are translated
+            } catch (error) {
+              console.error(`Error translating attribute ${translationKey}:`, error);
+              allTranslated = false;
             }
           }
 
@@ -339,19 +437,33 @@ function initI18n(options = {}) {
         }
 
         console.log(`Translating HTML: ${translationKey} in namespace ${namespace}`);
-        const translation = req.i18n.t(translationKey, {
-          ns: namespace,
-          interpolation: { escapeValue: false }
-        });
+        
+        try {
+          // Add safeguard against infinite recursion
+          const uniqueKey = `${language}:${namespace}:${translationKey}`;
+          if (processingKeys.has(uniqueKey)) {
+            return match; // Skip if already processing this key
+          }
+          
+          processingKeys.add(uniqueKey);
+          const translation = req.i18n.t(translationKey, {
+            ns: namespace,
+            interpolation: { escapeValue: false }
+          });
+          processingKeys.delete(uniqueKey);
 
-        // If translation equals key (not found), leave as is for frontend to handle
-        if (translation === translationKey) {
-          return match;
+          // If translation equals key (not found), leave as is for frontend to handle
+          if (translation === translationKey) {
+            return match;
+          }
+
+          console.log(`Translated HTML: ${translationKey}`);
+          // Return element with HTML translation and REMOVE the data-i18n-html attribute
+          return `<${tag1}${attrs}>${translation}</${tag2}>`;
+        } catch (error) {
+          console.error(`Error translating HTML ${translationKey}:`, error);
+          return match; // Return original on error
         }
-
-        console.log(`Translated HTML: ${translationKey}`);
-        // Return element with HTML translation and REMOVE the data-i18n-html attribute
-        return `<${tag1}${attrs}>${translation}</${tag2}>`;
       });
 
       return body;
@@ -359,7 +471,6 @@ function initI18n(options = {}) {
 
     // Override res.send
     res.send = function (body) {
-
       // Check if response is likely HTML
       if (typeof body === 'string' &&
         (res.get('Content-Type')?.includes('text/html') ||
