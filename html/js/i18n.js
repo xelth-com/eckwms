@@ -36,16 +36,23 @@
 
   // Set of keys currently being translated to avoid duplicate requests
   const pendingTranslations = new Set();
+  
+  // Utility function for dev-only console logging
+  function devLog(...args) {
+    if (window.APP_CONFIG?.NODE_ENV === 'development') {
+      console.log(...args);
+    }
+  }
 
   /**
    * Asynchronous module initialization
    */
   async function init() {
-    console.log("Initializing i18n...");
+    devLog("Initializing i18n...");
 
     // Check DOM state
     if (document.readyState !== 'complete' && document.readyState !== 'interactive') {
-      console.log("DOM not ready, waiting for load...");
+      devLog("DOM not ready, waiting for load...");
       await new Promise(resolve => {
         if (document.readyState === 'complete' || document.readyState === 'interactive') {
           resolve();
@@ -69,13 +76,13 @@
 
     // If the detected language is not supported, use default
     if (!supportedLanguages.includes(detectedLanguage)) {
-      console.log(`Language ${detectedLanguage} is not supported, using ${defaultLanguage}`);
+      devLog(`Language ${detectedLanguage} is not supported, using ${defaultLanguage}`);
       detectedLanguage = defaultLanguage;
     }
 
     // Set the current language
     currentLanguage = detectedLanguage;
-    console.log(`Set language: ${currentLanguage}`);
+    devLog(`Set language: ${currentLanguage}`);
 
     // Set HTML lang attribute
     document.documentElement.lang = currentLanguage;
@@ -96,9 +103,6 @@
 
     // Synchronize SVG language buttons
     syncLanguageMasks();
-
-    // Setup language switcher
-    setupLanguageSwitcher();
 
     // Update translations only if not the default language
     if (currentLanguage !== defaultLanguage) {
@@ -121,11 +125,9 @@
         const cleanUrl = new URL(window.location.href);
         cleanUrl.searchParams.delete('i18n_cb');
         window.history.replaceState({}, document.title, cleanUrl.toString());
-        console.log('Removed cache busting parameter from URL');
+        devLog('Removed cache busting parameter from URL');
       }, 2000); // 2 seconds delay to ensure page loaded
     }
-
-
 
     // Set initialization flag
     initialized = true;
@@ -135,7 +137,7 @@
       detail: { language: currentLanguage }
     }));
 
-    console.log("i18n successfully initialized");
+    devLog("i18n successfully initialized");
   }
 
   /**
@@ -219,7 +221,7 @@
   function changeLanguage(lang) {
     if (lang === currentLanguage) return;
 
-    console.log(`i18n.changeLanguage: switching to ${lang}`);
+    devLog(`i18n.changeLanguage: switching to ${lang}`);
 
     // Save previous language
     const previousLanguage = currentLanguage;
@@ -244,8 +246,6 @@
       const cacheBuster = Date.now();
       const url = new URL(window.location.href);
       url.searchParams.set('i18n_cb', cacheBuster);
-
-
 
       window.location.href = url.toString();
       return;
@@ -282,7 +282,7 @@
       } else {
         // Force update content without reload if flag set
         updatePageTranslations();
-        console.log("Switching to default language without page reload");
+        devLog("Switching to default language without page reload");
       }
     }
 
@@ -311,7 +311,7 @@
     const namespaces = ['common', 'auth', 'rma', 'dashboard'];
     const timestamp = Date.now();
 
-    console.log(`Checking translation files for ${currentLanguage}...`);
+    devLog(`Checking translation files for ${currentLanguage}...`);
 
     for (const namespace of namespaces) {
       try {
@@ -480,48 +480,6 @@
     });
   }
 
-  /**
-   * Create a simple language switcher UI
-   */
-  function setupLanguageSwitcher() {
-    // Create a simple language switcher that avoids page reload
-    const languages = {
-      'en': 'English',
-      'de': 'Deutsch',
-      'ko': '한국어',
-      'fr': 'Français',
-      'cs': 'Čeština',
-      'pl': 'Polski'
-    };
-
-    // Find a good place to insert the language switcher
-    const container = document.createElement('div');
-    container.className = 'i18n-language-switcher';
-    container.style.position = 'fixed';
-    container.style.bottom = '20px';
-    container.style.left = '20px';
-    container.style.zIndex = '1000';
-    container.style.backgroundColor = 'rgba(255,255,255,0.8)';
-    container.style.padding = '5px';
-    container.style.borderRadius = '5px';
-
-    Object.entries(languages).forEach(([code, name]) => {
-      const button = document.createElement('button');
-      button.textContent = name;
-      button.onclick = () => window.i18n.changeLanguage(code);
-      button.style.margin = '2px';
-      button.style.padding = '3px 8px';
-      button.style.backgroundColor = currentLanguage === code ? '#1e2071' : '#f0f0f0';
-      button.style.color = currentLanguage === code ? 'white' : 'black';
-      button.style.border = 'none';
-      button.style.borderRadius = '3px';
-      button.style.cursor = 'pointer';
-      container.appendChild(button);
-    });
-
-    document.body.appendChild(container);
-  }
-
   // Helper function to set cookie
   function setCookie(name, value, days) {
     let expires = '';
@@ -552,16 +510,16 @@
     debugMode: false,
     toggleDebug: function () {
       this.debugMode = !this.debugMode;
-      console.log(`i18n debug mode ${this.debugMode ? 'enabled' : 'disabled'}`);
+      devLog(`i18n debug mode ${this.debugMode ? 'enabled' : 'disabled'}`);
       if (this.debugMode) {
         this.checkTranslationStructure();
       }
     },
     checkTranslationStructure: function () {
-      console.log('===== LOADED TRANSLATIONS =====');
-      console.log('Translation cache:', translationCache);
-      console.log('Loaded namespaces:', loadedNamespaces);
-      console.log('Current language:', currentLanguage);
+      devLog('===== LOADED TRANSLATIONS =====');
+      devLog('Translation cache:', translationCache);
+      devLog('Loaded namespaces:', loadedNamespaces);
+      devLog('Current language:', currentLanguage);
     },
     init,
     changeLanguage,
@@ -571,7 +529,7 @@
       if (!element) return Promise.resolve();
 
       // Skip if default language or not initialized
-      if (window.i18n.getCurrentLanguage() === 'en' || !window.i18n.isInitialized()) {
+      if (window.i18n.getCurrentLanguage() === defaultLanguage || !window.i18n.isInitialized()) {
         return Promise.resolve();
       }
 
@@ -690,7 +648,7 @@
       // Check if initialization already happened
       if (!window.i18nInitStarted) {
         window.i18nInitStarted = true;
-        console.log("i18n self-initializing on DOMContentLoaded");
+        devLog("i18n self-initializing on DOMContentLoaded");
         init();
       }
     });
@@ -698,7 +656,7 @@
     // Check if initialization already happened
     if (!window.i18nInitStarted) {
       window.i18nInitStarted = true;
-      console.log("i18n self-initializing immediately");
+      devLog("i18n self-initializing immediately");
       init();
     }
   }

@@ -1,7 +1,8 @@
 // File: html/js/rma-form.js
 
 (function () {
-  const defaultLang = window.APP_CONFIG?.DEFAULT_LANGUAGE || 'en';
+  // Use global config for default language instead of hardcoded value
+  const defaultLanguage = window.APP_CONFIG?.DEFAULT_LANGUAGE || 'en';
   // Current device counter
   let deviceCount = 0;
   let i18nInitialized = false;
@@ -12,6 +13,13 @@
   let translationLoading = false;
   // Promise for translation loading to avoid multiple simultaneous loads
   let translationLoadingPromise = null;
+
+  // Utility function for dev-only console logging
+  function devLog(...args) {
+    if (window.APP_CONFIG?.NODE_ENV === 'development') {
+      console.log(...args);
+    }
+  }
 
   // Initialization function
   function init() {
@@ -36,7 +44,7 @@
     // otherwise wait for the i18n initialization event
     if (i18nInitialized || 
         (window.i18n && window.i18n.isInitialized()) || 
-        (window.i18n && window.i18n.getCurrentLanguage() === 'en')) {
+        (window.i18n && window.i18n.getCurrentLanguage() === defaultLanguage)) {
       addDeviceEntry();
     }
   }
@@ -47,16 +55,16 @@
   function setupI18n() {
     // If i18n is not defined, load it
     if (typeof window.i18n === 'undefined') {
-      console.log("i18n not loaded, loading now...");
+      devLog("i18n not loaded, loading now...");
       loadI18nScript();
       
       // Listen for i18n initialization event
       document.addEventListener('i18n:initialized', function() {
-        console.log("i18n:initialized event received");
+        devLog("i18n:initialized event received");
         i18nInitialized = true;
         
-        // Load translations if not English language
-        if (window.i18n.getCurrentLanguage() !== defaultLang) {
+        // Load translations if not using default language
+        if (window.i18n.getCurrentLanguage() !== defaultLanguage) {
           loadRmaTranslations().then(() => {
             if (deviceCount === 0) {
               addDeviceEntry();
@@ -66,7 +74,7 @@
             }
           });
         } else {
-          // For English, just add the element
+          // For default language, just add the element
           if (deviceCount === 0) {
             addDeviceEntry();
           }
@@ -74,13 +82,13 @@
       });
     } else {
       // i18n is already loaded
-      console.log("i18n already loaded, checking if initialized");
+      devLog("i18n already loaded, checking if initialized");
       if (window.i18n.isInitialized()) {
-        console.log("i18n is already initialized");
+        devLog("i18n is already initialized");
         i18nInitialized = true;
         
-        // Load translations if not English language
-        if (window.i18n.getCurrentLanguage() !== defaultLang) {
+        // Load translations if not using default language
+        if (window.i18n.getCurrentLanguage() !== defaultLanguage) {
           loadRmaTranslations().then(() => {
             if (deviceCount === 0) {
               addDeviceEntry();
@@ -90,20 +98,20 @@
             }
           });
         } else {
-          // For English, just add the element
+          // For default language, just add the element
           if (deviceCount === 0) {
             addDeviceEntry();
           }
         }
       } else {
-        console.log("i18n is loaded but not yet initialized, waiting for event");
+        devLog("i18n is loaded but not yet initialized, waiting for event");
         // i18n is loaded but not initialized, wait for it
         document.addEventListener('i18n:initialized', function() {
-          console.log("i18n:initialized event received");
+          devLog("i18n:initialized event received");
           i18nInitialized = true;
           
-          // Load translations if not English language
-          if (window.i18n.getCurrentLanguage() !== defaultLang) {
+          // Load translations if not using default language
+          if (window.i18n.getCurrentLanguage() !== defaultLanguage) {
             loadRmaTranslations().then(() => {
               if (deviceCount === 0) {
                 addDeviceEntry();
@@ -113,7 +121,7 @@
               }
             });
           } else {
-            // For English, just add the element
+            // For default language, just add the element
             if (deviceCount === 0) {
               addDeviceEntry();
             }
@@ -140,14 +148,14 @@
       }
       
       const lang = window.i18n.getCurrentLanguage();
-      console.log(`Loading RMA translations for ${lang}...`);
+      devLog(`Loading RMA translations for ${lang}...`);
       
       // Create a new loading promise
       translationLoadingPromise = (async () => {
         try {
           // URL for loading localization
           const localeUrl = `/locales/${lang}/rma.json`;
-          console.log(`Fetching translations from: ${localeUrl}`);
+          devLog(`Fetching translations from: ${localeUrl}`);
           
           const response = await fetch(localeUrl);
           
@@ -156,7 +164,7 @@
           }
           
           const data = await response.json();
-          console.log("RMA translations loaded:", data);
+          devLog("RMA translations loaded:", data);
           
           // Flatten the translation structure for direct access by keys
           translations = flattenTranslations(data);
@@ -224,7 +232,7 @@
    * Applies translations to a specific element
    */
   function manuallyTranslateElement(element) {
-    if (!window.i18n || window.i18n.getCurrentLanguage() === 'en' || !translationsReady) {
+    if (!window.i18n || window.i18n.getCurrentLanguage() === defaultLanguage || !translationsReady) {
       return; // Skip if default language or translations not ready
     }
     
@@ -296,7 +304,7 @@
    * Improved function to get translation by key
    */
   function getTranslation(key, options = {}, fallback = '') {
-    if (!window.i18n || !translationsReady || window.i18n.getCurrentLanguage() === 'en') {
+    if (!window.i18n || !translationsReady || window.i18n.getCurrentLanguage() === defaultLanguage) {
       return fallback || key.split('.').pop(); 
     }
     
@@ -317,7 +325,7 @@
         return result;
       }
       
-      console.log(`Translation not found for key: ${key}, using fallback`);
+      devLog(`Translation not found for key: ${key}, using fallback`);
       return fallback || key.split('.').pop();
     } catch (e) {
       console.error(`Error getting translation for ${key}:`, e);
@@ -348,43 +356,10 @@
     script.onload = function () {
       if (window.i18n) {
         window.i18n.init();
-        addLanguageSelector();
       }
     };
 
     document.body.appendChild(script);
-  }
-
-  /**
-   * Adds a language selector to the form
-   */
-  function addLanguageSelector() {
-    const rmaForm = document.getElementById('rmaForm');
-    if (!rmaForm) return;
-
-    // Create container for language selector
-    const langContainer = document.createElement('div');
-    langContainer.className = 'form-language-selector';
-    langContainer.style.textAlign = 'right';
-    langContainer.style.margin = '0 0 20px 0';
-
-    // Create title
-    const langTitle = document.createElement('span');
-    langTitle.textContent = 'Sprache / Language: ';
-    langTitle.setAttribute('data-i18n', 'common:language.select');
-    langTitle.style.marginRight = '10px';
-
-    // Create selector
-    const langSelector = document.createElement('div');
-    langSelector.className = 'language-selector';
-
-    // Add to DOM
-    langContainer.appendChild(langTitle);
-    langContainer.appendChild(langSelector);
-
-    // Insert before main content
-    const firstChild = rmaForm.firstChild;
-    rmaForm.insertBefore(langContainer, firstChild);
   }
 
   function addAddressLogicExplanation() {
@@ -411,7 +386,7 @@
       devicesContainer.parentNode.insertBefore(addressInfo, devicesContainer);
       
       // Apply translations manually
-      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
+      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== defaultLanguage) {
         loadRmaTranslations().then(() => {
           manuallyTranslateElement(addressInfo);
         });
@@ -568,7 +543,7 @@
       devicesContainer.appendChild(deviceEntry);
 
       // Translate the new element
-      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
+      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== defaultLanguage) {
         loadRmaTranslations().then(() => {
           manuallyTranslateElement(deviceEntry);
         }).catch(err => {
@@ -588,7 +563,7 @@
 
   // Display address source info
   function updateAddressSourceInfo(deviceIndex) {
-    if (!translationsReady && window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
+    if (!translationsReady && window.i18n && window.i18n.getCurrentLanguage() !== defaultLanguage) {
       // If translations aren't loaded yet, load them first
       loadRmaTranslations().then(() => updateAddressSourceInfo(deviceIndex))
       .catch(err => {
@@ -667,7 +642,7 @@
             toggleButton.style.backgroundColor = '#e6f7ff';
 
             // Translate the address section if it was just opened
-            if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
+            if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== defaultLanguage) {
               loadRmaTranslations().then(() => {
                 manuallyTranslateElement(addressSection);
               }).catch(err => {
