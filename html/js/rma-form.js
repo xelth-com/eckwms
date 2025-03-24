@@ -1,12 +1,17 @@
 // File: html/js/rma-form.js
-// Исправленная версия с правильной обработкой переводов
 
 (function () {
+  const defaultLang = window.APP_CONFIG?.DEFAULT_LANGUAGE || 'en';
   // Current device counter
   let deviceCount = 0;
   let i18nInitialized = false;
   let translationsReady = false;
-  let translations = {}; // Кэш переводов
+  let translations = {}; // Translation cache
+  
+  // Track if translation is currently loading to prevent duplicate requests
+  let translationLoading = false;
+  // Promise for translation loading to avoid multiple simultaneous loads
+  let translationLoadingPromise = null;
 
   // Initialization function
   function init() {
@@ -50,18 +55,18 @@
         console.log("i18n:initialized event received");
         i18nInitialized = true;
         
-        // Загружаем переводы, если не английский язык
-        if (window.i18n.getCurrentLanguage() !== 'en') {
+        // Load translations if not English language
+        if (window.i18n.getCurrentLanguage() !== defaultLang) {
           loadRmaTranslations().then(() => {
             if (deviceCount === 0) {
               addDeviceEntry();
             } else {
-              // Обновляем переводы для существующих элементов
+              // Update translations for existing elements
               updateAllTranslations();
             }
           });
         } else {
-          // Для английского языка просто добавляем элемент
+          // For English, just add the element
           if (deviceCount === 0) {
             addDeviceEntry();
           }
@@ -74,18 +79,18 @@
         console.log("i18n is already initialized");
         i18nInitialized = true;
         
-        // Загружаем переводы, если не английский язык
-        if (window.i18n.getCurrentLanguage() !== 'en') {
+        // Load translations if not English language
+        if (window.i18n.getCurrentLanguage() !== defaultLang) {
           loadRmaTranslations().then(() => {
             if (deviceCount === 0) {
               addDeviceEntry();
             } else {
-              // Обновляем переводы для существующих элементов
+              // Update translations for existing elements
               updateAllTranslations();
             }
           });
         } else {
-          // Для английского языка просто добавляем элемент
+          // For English, just add the element
           if (deviceCount === 0) {
             addDeviceEntry();
           }
@@ -97,18 +102,18 @@
           console.log("i18n:initialized event received");
           i18nInitialized = true;
           
-          // Загружаем переводы, если не английский язык
-          if (window.i18n.getCurrentLanguage() !== 'en') {
+          // Load translations if not English language
+          if (window.i18n.getCurrentLanguage() !== defaultLang) {
             loadRmaTranslations().then(() => {
               if (deviceCount === 0) {
                 addDeviceEntry();
               } else {
-                // Обновляем переводы для существующих элементов
+                // Update translations for existing elements
                 updateAllTranslations();
               }
             });
           } else {
-            // Для английского языка просто добавляем элемент
+            // For English, just add the element
             if (deviceCount === 0) {
               addDeviceEntry();
             }
@@ -119,51 +124,65 @@
   }
 
   /**
-   * Загружает и кэширует переводы для пространства имен 'rma'
+   * Loads and caches translations for the 'rma' namespace
+   * Using a shared promise to prevent duplicate requests
    */
   async function loadRmaTranslations() {
     try {
-      // Если переводы уже загружены, просто возвращаем их
+      // If translations are already loaded, simply return them
       if (translationsReady) {
         return translations;
+      }
+      
+      // If a loading operation is already in progress, return that promise
+      if (translationLoadingPromise) {
+        return translationLoadingPromise;
       }
       
       const lang = window.i18n.getCurrentLanguage();
       console.log(`Loading RMA translations for ${lang}...`);
       
-      // Пробуем загрузить переводы через API fetch вместо loadTranslationFile
-      try {
-        // URL для загрузки локализации
-        const localeUrl = `/locales/${lang}/rma.json`;
-        console.log(`Fetching translations from: ${localeUrl}`);
-        
-        const response = await fetch(localeUrl);
-        
-        if (!response.ok) {
-          throw new Error(`Failed to load translations: ${response.status} ${response.statusText}`);
+      // Create a new loading promise
+      translationLoadingPromise = (async () => {
+        try {
+          // URL for loading localization
+          const localeUrl = `/locales/${lang}/rma.json`;
+          console.log(`Fetching translations from: ${localeUrl}`);
+          
+          const response = await fetch(localeUrl);
+          
+          if (!response.ok) {
+            throw new Error(`Failed to load translations: ${response.status} ${response.statusText}`);
+          }
+          
+          const data = await response.json();
+          console.log("RMA translations loaded:", data);
+          
+          // Flatten the translation structure for direct access by keys
+          translations = flattenTranslations(data);
+          translationsReady = true;
+          
+          return translations;
+        } catch (error) {
+          console.error("Error loading RMA translations:", error);
+          return {};
+        } finally {
+          // Clear the loading promise once complete (whether successful or not)
+          translationLoadingPromise = null;
         }
-        
-        const data = await response.json();
-        console.log("RMA translations loaded:", data);
-        
-        // Разворачиваем структуру переводов для прямого доступа по ключам
-        translations = flattenTranslations(data);
-        translationsReady = true;
-        
-        return translations;
-      } catch (error) {
-        console.error("Error loading RMA translations:", error);
-        return {};
-      }
+      })();
+      
+      return translationLoadingPromise;
     } catch (error) {
       console.error("Error in loadRmaTranslations:", error);
+      translationLoadingPromise = null;
       return {};
     }
   }
   
   /**
-   * Преобразует вложенную структуру переводов в плоскую с ключами через точку
-   * Например: { form: { title: "Заголовок" } } => { "form.title": "Заголовок" }
+   * Converts a nested translation structure to a flat one with dot-separated keys
+   * For example: { form: { title: "Title" } } => { "form.title": "Title" }
    */
   function flattenTranslations(obj, prefix = '') {
     return Object.keys(obj).reduce((acc, key) => {
@@ -180,40 +199,51 @@
   }
   
   /**
-   * Обновляет переводы для всех элементов формы
+   * Updates translations for all form elements
    */
   function updateAllTranslations() {
-    // Обновляем переводы для заголовка и описания инструкций
+    // Update translations for header and instruction description
     const addressInfo = document.querySelector('.address-logic-info');
     if (addressInfo) {
       manuallyTranslateElement(addressInfo);
     }
     
-    // Обновляем переводы для всех устройств
+    // Update translations for all devices
     const deviceEntries = document.querySelectorAll('.device-entry');
     deviceEntries.forEach(entry => {
       manuallyTranslateElement(entry);
     });
     
-    // Обновляем статусные тексты на кнопках
+    // Update status texts on buttons
     for (let i = 1; i <= deviceCount; i++) {
       updateAddressSourceInfo(i);
     }
   }
 
   /**
-   * Применяет переводы к конкретному элементу
+   * Applies translations to a specific element
    */
   function manuallyTranslateElement(element) {
     if (!window.i18n || window.i18n.getCurrentLanguage() === 'en' || !translationsReady) {
-      return; // Пропускаем, если язык по умолчанию или переводы не готовы
+      return; // Skip if default language or translations not ready
     }
     
-    // Обрабатываем атрибуты data-i18n
+    // Process element with data-i18n attribute
     if (element.hasAttribute('data-i18n')) {
       const key = element.getAttribute('data-i18n');
+      
+      // Extract options if available
+      let options = {};
+      if (element.hasAttribute('data-i18n-options')) {
+        try {
+          options = JSON.parse(element.getAttribute('data-i18n-options'));
+        } catch (e) {
+          console.error('Error parsing data-i18n-options:', e);
+        }
+      }
+      
       try {
-        const translation = getTranslation(key);
+        const translation = getTranslation(key, options);
         if (translation && translation !== key) {
           element.textContent = translation;
         }
@@ -222,11 +252,22 @@
       }
     }
     
-    // Находим и переводим дочерние элементы
+    // Find and translate child elements with the same options fix
     element.querySelectorAll('[data-i18n]').forEach(el => {
       const key = el.getAttribute('data-i18n');
+      
+      // Extract options if available
+      let options = {};
+      if (el.hasAttribute('data-i18n-options')) {
+        try {
+          options = JSON.parse(el.getAttribute('data-i18n-options'));
+        } catch (e) {
+          console.error('Error parsing data-i18n-options:', e);
+        }
+      }
+      
       try {
-        const translation = getTranslation(key);
+        const translation = getTranslation(key, options);
         if (translation && translation !== key) {
           el.textContent = translation;
         }
@@ -235,7 +276,7 @@
       }
     });
     
-    // Обрабатываем атрибуты для перевода
+    // Process attribute translations
     element.querySelectorAll('[data-i18n-attr]').forEach(el => {
       try {
         const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
@@ -252,7 +293,7 @@
   }
 
   /**
-   * Улучшенная функция для получения перевода по ключу
+   * Improved function to get translation by key
    */
   function getTranslation(key, options = {}, fallback = '') {
     if (!window.i18n || !translationsReady || window.i18n.getCurrentLanguage() === 'en') {
@@ -260,17 +301,17 @@
     }
     
     try {
-      // Удаляем префикс 'rma:' если он есть
+      // Remove 'rma:' prefix if present
       const cleanKey = key.includes(':') ? key.split(':')[1] : key;
       
-      // Ищем перевод в нашем кэше
+      // Look for translation in our cache
       if (translations[cleanKey]) {
-        // Обрабатываем параметры, если есть (например, count)
+        // Process parameters if any (e.g., count)
         let result = translations[cleanKey];
         
-        // Простая обработка подстановки переменных {{count}}
+        // Simple placeholder substitution for {{count}}
         if (options.count !== undefined && result.includes('{{count}}')) {
-          result = result.replace('{{count}}', options.count);
+          result = result.replace(/\{\{count\}\}/g, options.count);
         }
         
         return result;
@@ -369,7 +410,7 @@
 
       devicesContainer.parentNode.insertBefore(addressInfo, devicesContainer);
       
-      // Применяем переводы вручную
+      // Apply translations manually
       if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
         loadRmaTranslations().then(() => {
           manuallyTranslateElement(addressInfo);
@@ -530,6 +571,8 @@
       if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
         loadRmaTranslations().then(() => {
           manuallyTranslateElement(deviceEntry);
+        }).catch(err => {
+          console.error("Error translating new device entry:", err);
         });
       }
     }
@@ -546,8 +589,11 @@
   // Display address source info
   function updateAddressSourceInfo(deviceIndex) {
     if (!translationsReady && window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
-      // Если переводы еще не загружены, загрузим их сначала
-      loadRmaTranslations().then(() => updateAddressSourceInfo(deviceIndex));
+      // If translations aren't loaded yet, load them first
+      loadRmaTranslations().then(() => updateAddressSourceInfo(deviceIndex))
+      .catch(err => {
+        console.error("Error loading translations for address info:", err);
+      });
       return;
     }
     
@@ -624,6 +670,8 @@
             if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
               loadRmaTranslations().then(() => {
                 manuallyTranslateElement(addressSection);
+              }).catch(err => {
+                console.error("Error translating address section:", err);
               });
             }
           } else {
@@ -713,6 +761,7 @@
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
-    init();
+    // Set a short timeout to ensure this runs after other scripts
+    setTimeout(init, 0);
   }
 })();

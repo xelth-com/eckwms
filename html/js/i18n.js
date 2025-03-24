@@ -5,7 +5,7 @@
  */
 (function () {
   // Default language (fallback)
-  let defaultLanguage = 'en';
+  let defaultLanguage = window.APP_CONFIG?.DEFAULT_LANGUAGE || 'en';
 
   // Current language (initially null, will be set after initialization)
   let currentLanguage = null;
