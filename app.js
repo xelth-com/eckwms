@@ -14,11 +14,10 @@ const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
 const passport = require('passport');
 const initI18n = require('./middleware/i18n');
-const { translationQueue } = require('./middleware/i18n');
+const { i18next, translationQueue } = require('./middleware/i18n');
 // Import middleware/auth
 const { requireAdmin } = require('./middleware/auth');
 const htmlInterceptor = require('./middleware/htmlInterceptor');
-const i18next = require('i18next');
 
 
 // Import routes
@@ -300,29 +299,23 @@ initialize();
 // Add this to app.js or a maintenance service file
 // Around initialization code
 
-/**
- * Scheduled maintenance for translation system
- */
 async function runTranslationMaintenance() {
     try {
-        // Проверяем, что очередь существует перед использованием
-        if (translationQueue) {
-            const cleanedCount = translationQueue.cleanupStalled();
-            if (cleanedCount > 0) {
-                console.log(`Translation maintenance: Cleaned up ${cleanedCount} stalled jobs`);
-            }
-        } else {
-            console.log('Translation queue not available for maintenance');
+      if (translationQueue) {
+        const stats = translationQueue.getStats();
+        console.log(`Translation maintenance: Queue contains ${stats.queuedItems} items, processing ${stats.processingItems} items`);
+        
+        const cleanedCount = translationQueue.cleanupStalled();
+        if (cleanedCount > 0) {
+          console.log(`Translation maintenance: Cleaned up ${cleanedCount} stalled jobs`);
         }
-
-        // Schedule next maintenance
-        setTimeout(runTranslationMaintenance, 5 * 60 * 1000); // Every 5 minutes
+      }
+      setTimeout(runTranslationMaintenance, 5 * 60 * 1000);
     } catch (error) {
-        console.error('Error in translation maintenance:', error);
-        // Still schedule next run even if there was an error
-        setTimeout(runTranslationMaintenance, 5 * 60 * 1000);
+      console.error('Error in translation maintenance:', error);
+      setTimeout(runTranslationMaintenance, 5 * 60 * 1000);
     }
-}
+  }
 
 // Start maintenance after app initialization
 setTimeout(runTranslationMaintenance, 2 * 60 * 1000); // Start after 2 minutes

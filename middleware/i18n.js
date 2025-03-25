@@ -3,7 +3,7 @@ const i18next = require('i18next');
 const i18nextMiddleware = require('i18next-http-middleware');
 const Backend = require('i18next-fs-backend');
 const path = require('path');
-const { translateText, saveToCache } = require('../services/translationService');
+const { translateText, saveToCache,batchTranslate } = require('../services/translationService');
 const { Queue } = require('../utils/queue');
 const fs = require('fs');
 const { stripBOM, parseJSONWithBOM } = require('../utils/bomUtils');
@@ -64,77 +64,153 @@ async function loadNamespace(language, namespace, version = '') {
   }
 }
 
-// Process translation queue
+// Improved processTranslationQueue function with batch support
+// Replace this function in middleware/i18n.js
+
+// Process translation queue with batch processing
 function processTranslationQueue() {
-  console.log('---QUEUE STATUS---');
-  console.log('Queue size:', translationQueue.size());
-  console.log('Items:', translationQueue.items);
   if (translationQueue.isEmpty()) {
     setTimeout(processTranslationQueue, 5000);
     return;
   }
 
-  const item = translationQueue.dequeue();
-  if (!item) {
-    setTimeout(processTranslationQueue, 100);
-    return;
+  console.log(`[i18n] Processing translation queue: ${translationQueue.size()} items`);
+
+  // Group items by language and namespace to process in batches
+  const batches = {};
+  const batchSize = 20; // Process 20 items at a time
+  const processedItems = [];
+
+  // Dequeue multiple items at once
+  for (let i = 0; i < batchSize && !translationQueue.isEmpty(); i++) {
+    const item = translationQueue.dequeue();
+    if (!item) continue;
+
+    const batchKey = `${item.targetLang}:${item.namespace || 'common'}`;
+    
+    if (!batches[batchKey]) {
+      batches[batchKey] = {
+        targetLang: item.targetLang,
+        namespace: item.namespace || 'common',
+        items: []
+      };
+    }
+    
+    batches[batchKey].items.push(item);
+    processedItems.push(item);
   }
 
-  // No need to track in-progress separately as it's now handled by the Queue
-  translateText(item.text, item.targetLang, item.namespace)
-    .then(translatedText => {
-      // Save translation to localization file
-      try {
-        // FIXED PATH: Using html/locales instead of just locales
-        const filePath = path.join(process.cwd(), 'html', 'locales', item.targetLang, `${item.namespace}.json`);
-        
-        // Check if file exists
-        let translations = {};
-        if (fs.existsSync(filePath)) {
-          const content = fs.readFileSync(filePath, 'utf8');
-          translations = parseJSONWithBOM(content);
-        } else {
-          // Create directory if it doesn't exist
-          const dir = path.dirname(filePath);
-          if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-          }
-        }
+  // Process each batch
+  const batchPromises = Object.values(batches).map(async (batch) => {
+    try {
+      // Extract texts and save item mapping
+      const texts = batch.items.map(item => item.text);
+      
+      // Use batchTranslate function to translate all texts at once
+      const translatedTexts = await batchTranslate(
+        texts,
+        batch.targetLang,
+        batch.namespace, // Use namespace as context
+        'en' // Assuming English is the source language
+      );
 
-        // Add or update translation
-        const keyPath = item.key.split('.');
-        let current = translations;
-        
-        // Create nested objects for the key path
-        for (let i = 0; i < keyPath.length - 1; i++) {
-          const segment = keyPath[i];
-          if (!current[segment]) {
-            current[segment] = {};
+      // Prepare translations for saving to file
+      const fileUpdates = {};
+      
+      // Make sure we have the same number of translations as source texts
+      if (translatedTexts.length === batch.items.length) {
+        translatedTexts.forEach((translatedText, index) => {
+          const item = batch.items[index];
+          const namespaceFile = item.namespace || 'common';
+          
+          if (!fileUpdates[namespaceFile]) {
+            fileUpdates[namespaceFile] = [];
           }
-          current = current[segment];
+          
+          fileUpdates[namespaceFile].push({
+            key: item.key,
+            value: translatedText
+          });
+          
+          console.log(`[i18n] Translated: [${batch.targetLang}] ${item.namespace}:${item.key}`);
+        });
+      } else {
+        throw new Error(`Translation count mismatch: expected ${batch.items.length}, got ${translatedTexts.length}`);
+      }
+
+      // Save translations to files (one file write per namespace)
+      for (const [namespace, updates] of Object.entries(fileUpdates)) {
+        // Path to translation file
+        const filePath = path.join(process.cwd(), 'html', 'locales', batch.targetLang, `${namespace}.json`);
+        
+        // Read existing translations
+        let translations = {};
+        try {
+          if (fs.existsSync(filePath)) {
+            const content = fs.readFileSync(filePath, 'utf8');
+            translations = parseJSONWithBOM(content);
+          }
+        } catch (error) {
+          console.error(`[i18n] Error reading translation file: ${error.message}`);
+          // Continue with empty translations if file can't be read
         }
         
-        // Set the translation
-        current[keyPath[keyPath.length - 1]] = translatedText;
+        // Apply all updates to the translation object
+        let updateCount = 0;
+        updates.forEach(update => {
+          const keyPath = update.key.split('.');
+          let current = translations;
+          
+          // Create nested objects for the key path
+          for (let i = 0; i < keyPath.length - 1; i++) {
+            const segment = keyPath[i];
+            if (!current[segment]) {
+              current[segment] = {};
+            }
+            current = current[segment];
+          }
+          
+          // Set the translation
+          current[keyPath[keyPath.length - 1]] = update.value;
+          updateCount++;
+        });
         
-        // Write to file
+        // Ensure directory exists
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        
+        // Write updated translations to file
         fs.writeFileSync(filePath, JSON.stringify(translations, null, 2), 'utf8');
         
-        console.log(`[i18n] Translated and saved: [${item.targetLang}] ${item.namespace}:${item.key}`);
-        // Mark as successfully processed
-        translationQueue.markProcessed(item, true);
-      } catch (error) {
-        console.error(`[i18n] Error saving translation: ${error.message}`);
-        translationQueue.markProcessed(item, false);
+        console.log(`[i18n] Batch saved: [${batch.targetLang}] ${namespace} (${updateCount} items)`);
       }
-    })
-    .catch(error => {
-      console.error(`[i18n] Translation error: ${error.message}`);
-      translationQueue.markProcessed(item, false);
-    })
-    .finally(() => {
-      // Continue processing queue
-      setTimeout(processTranslationQueue, 1000);
+
+      // Mark all items as processed
+      batch.items.forEach(item => {
+        translationQueue.markProcessed(item, true);
+      });
+    } catch (error) {
+      console.error(`[i18n] Batch processing error: ${error.message}`);
+      
+      // Mark all items as failed
+      batch.items.forEach(item => {
+        translationQueue.markProcessed(item, false);
+      });
+    }
+  });
+
+  // Wait for all batches to complete
+  Promise.allSettled(batchPromises)
+    .then(() => {
+      // Continue processing queue immediately if there are more items
+      if (!translationQueue.isEmpty()) {
+        setImmediate(processTranslationQueue);
+      } else {
+        // Otherwise, schedule next check after a short delay
+        setTimeout(processTranslationQueue, 1000);
+      }
     });
 }
 

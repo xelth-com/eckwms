@@ -289,115 +289,97 @@ Ensure the translation sounds natural in the target language.`;
 }
 
 /**
- * Batch translation function
- * @param {Array<string>} texts - Array of texts to translate
- * @param {string|string[]} targetLang - Target language
- * @param {string} context - Translation context
- * @param {string|string[]} sourceLang - Source language (default: en)
- * @returns {Promise<Array<string>>} - Array of translated texts
+ * Optimize the batch translation by checking the cache first
+ * and only sending uncached items to the API
  */
 async function batchTranslate(texts, targetLang, context = '', sourceLang = process.env.DEFAULT_LANGUAGE || 'en') {
-  // Ensure language parameters are strings, not arrays
+  // Ensure language parameters are strings
   const targetLanguage = Array.isArray(targetLang) ? targetLang[0] : targetLang;
   const sourceLanguage = Array.isArray(sourceLang) ? sourceLang[0] : sourceLang;
   
+  if (!texts || !texts.length) {
+    return [];
+  }
+  
   console.log(`Batch translating ${texts.length} texts to ${targetLanguage}`);
   
-  // Check if all texts are in cache
-  const results = [];
+  // Record start time for performance tracking
+  const startTime = Date.now();
+  global.translationStartTime = startTime;
+  
+  // First check what's already in cache
+  const results = new Array(texts.length);
   const missingTexts = [];
   const missingIndexes = [];
   
-  // First check if texts are in cache
   for (let i = 0; i < texts.length; i++) {
-    // Strip BOM if present
-    const cleanText = stripBOM(texts[i]);
+    const text = texts[i]?.trim();
     
-    if (!cleanText || cleanText.trim() === '') {
-      results[i] = cleanText;
+    // Skip empty texts
+    if (!text) {
+      results[i] = text;
       continue;
     }
     
-    // Check if the text is a tagged key
-    const isTaggedKey = /^data-i18n=["'][^"']+["']$/.test(cleanText);
-    
-    if (isTaggedKey) {
-      // Keep tag as is for later frontend processing
-      results[i] = cleanText;
-      continue;
-    }
-    
-    // Use the single language string when checking cache
-    const cachedText = await checkCache(cleanText, targetLanguage, context);
+    // Check if it's in the cache
+    const cachedText = await checkCache(text, targetLanguage, context);
     if (cachedText) {
       results[i] = cachedText;
     } else {
-      missingTexts.push(cleanText);
+      missingTexts.push(text);
       missingIndexes.push(i);
     }
   }
   
-  // If there are missing translations, translate them as a batch
-  if (missingTexts.length > 0) {
-    // Split into batches of 20 texts for API optimization
-    const BATCH_SIZE = 20;
+  // If we found everything in cache, return immediately
+  if (missingTexts.length === 0) {
+    console.log(`All ${texts.length} texts found in cache!`);
+    return results;
+  }
+  
+  // Only send uncached texts to the API, in batches of 20 
+  const BATCH_SIZE = 20;
+  const apiCalls = [];
+  
+  for (let i = 0; i < missingTexts.length; i += BATCH_SIZE) {
+    const batch = missingTexts.slice(i, i + BATCH_SIZE);
+    const batchIndexes = missingIndexes.slice(i, i + BATCH_SIZE);
     
-    for (let batchStart = 0; batchStart < missingTexts.length; batchStart += BATCH_SIZE) {
-      const batchEnd = Math.min(batchStart + BATCH_SIZE, missingTexts.length);
-      const currentBatch = missingTexts.slice(batchStart, batchEnd);
-      const currentIndexes = missingIndexes.slice(batchStart, batchEnd);
-      
-      const combinedText = currentBatch.join("\n---SEPARATOR---\n");
-      
-      // Get full language names
-      const languageNames = {
-        'de': 'German', 'en': 'English', 'fr': 'French', 'it': 'Italian',
-        'es': 'Spanish', 'pt': 'Portuguese', 'nl': 'Dutch', 'da': 'Danish',
-        'sv': 'Swedish', 'fi': 'Finnish', 'el': 'Greek', 'cs': 'Czech',
-        'pl': 'Polish', 'hu': 'Hungarian', 'sk': 'Slovak', 'sl': 'Slovenian',
-        'et': 'Estonian', 'lv': 'Latvian', 'lt': 'Lithuanian', 'ro': 'Romanian',
-        'bg': 'Bulgarian', 'hr': 'Croatian', 'ga': 'Irish', 'mt': 'Maltese',
-        'ru': 'Russian', 'tr': 'Turkish', 'ar': 'Arabic', 'zh': 'Chinese',
-        'uk': 'Ukrainian', 'sr': 'Serbian', 'he': 'Hebrew', 'ko': 'Korean', 
-        'ja': 'Japanese'
-      };
-      
-      // Use the string language values for names
-      const targetLanguageName = languageNames[targetLanguage] || targetLanguage;
-      const sourceLanguageName = languageNames[sourceLanguage] || sourceLanguage;
-      
-      // Get domain description from environment variable
-      const domainDescription = process.env.TRANSLATION_DOMAIN || 'for a warehouse management system';
-      
-      // Determine if we're doing grammar correction or translation
-      const isGrammarCorrection = sourceLanguage === targetLanguage;
-      
-      const systemPrompt = isGrammarCorrection 
-        ? `You are a professional editor and proofreader ${domainDescription}.
-Review and correct the following texts in ${targetLanguageName}.
-Each text is separated by "---SEPARATOR---".
-Fix any grammatical errors, improve clarity and consistency, and ensure proper terminology.
-Maintain the same overall meaning and style.
-Return the corrected texts, with each separated by "---SEPARATOR---".
-Keep the same order of texts.
-Do not explain your changes.
-
-IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in the original text.`
-        : `You are a professional translator ${domainDescription}.
+    // Join with specific separator for reliable splitting
+    const combinedText = batch.join("\n---TRANSLATION_SEPARATOR---\n");
+    
+    // Get language names for better translation quality
+    const languageNames = {
+      'de': 'German', 'en': 'English', 'fr': 'French', 'it': 'Italian',
+      'es': 'Spanish', 'pt': 'Portuguese', 'nl': 'Dutch', 'ru': 'Russian',
+      'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean', 'ar': 'Arabic',
+      'pl': 'Polish', 'cs': 'Czech', 'fi': 'Finnish', 'sv': 'Swedish'
+    };
+    
+    const targetLanguageName = languageNames[targetLanguage] || targetLanguage;
+    const sourceLanguageName = languageNames[sourceLanguage] || sourceLanguage;
+    
+    // Domain context from environment
+    const domainDescription = process.env.TRANSLATION_DOMAIN || 'for a warehouse management system';
+    
+    // Create a specialized prompt for batch translation
+    const systemPrompt = `You are a professional translator ${domainDescription}.
 Translate the following texts from ${sourceLanguageName} to ${targetLanguageName}.
-Each text is separated by "---SEPARATOR---".
-Maintain the same tone, formatting and technical terminology.
+Each text is separated by "---TRANSLATION_SEPARATOR---".
+Maintain the same tone, formatting, and technical terminology.
 Ensure the translations sound natural in ${targetLanguageName}.
-Return ONLY the translated texts, with each separated by "---SEPARATOR---".
-Keep the same order of texts.
+Return ONLY the translated texts, with each separated by "---TRANSLATION_SEPARATOR---".
+Keep the exact same order of texts.
 
-IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in the original text.`;
-      
-      console.log(`OpenAI API batch call for ${currentBatch.length} texts for ${isGrammarCorrection ? 'grammar correction' : 'translation'} to ${targetLanguage}`);
-      
+IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in the original text.
+IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated by "---TRANSLATION_SEPARATOR---".`;
+    
+    apiCalls.push(async () => {
       try {
+        console.log(`Calling OpenAI API for batch of ${batch.length} texts (${targetLanguage})`);
+        
         const response = await openai.chat.completions.create({
-          model: "gpt-4o-mini", // or another available model
+          model: "gpt-4o-mini",
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: combinedText }
@@ -405,53 +387,54 @@ IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in
           temperature: 0.3
         });
         
-        // Strip BOM if present in response
+        // Parse response and handle the translated texts
         const translatedContent = stripBOM(response.choices[0].message.content.trim());
-        const translatedTexts = translatedContent.split("---SEPARATOR---").map(t => stripBOM(t.trim()));
+        const translatedTexts = translatedContent.split("---TRANSLATION_SEPARATOR---").map(t => stripBOM(t.trim()));
         
-        // Check if number of translated texts matches source
-        if (translatedTexts.length === currentBatch.length) {
-          // Save translations to cache and fill results
-          for (let i = 0; i < currentBatch.length; i++) {
-            const originalText = currentBatch[i];
-            const translatedText = translatedTexts[i];
-            
-            // Save to cache - with proper string language parameter
-            await saveToCache(originalText, targetLanguage, translatedText, context);
-            
-            // Fill results
-            results[currentIndexes[i]] = translatedText;
+        // Validate that we got the right number of translations
+        if (translatedTexts.length !== batch.length) {
+          console.error(`Translation count mismatch! Expected ${batch.length}, got ${translatedTexts.length}`);
+          // If count doesn't match, translate individually as fallback
+          for (let j = 0; j < batch.length; j++) {
+            const singleText = await translateText(batch[j], targetLanguage, context, sourceLanguage);
+            results[batchIndexes[j]] = singleText;
           }
         } else {
-          // If mismatch, translate individually
-          for (let i = 0; i < currentBatch.length; i++) {
-            // Pass the string language to translateText
-            const translatedText = await translateText(
-              currentBatch[i], 
-              targetLanguage,  // Use string language
-              context, 
-              sourceLanguage   // Use string language
-            );
-            results[currentIndexes[i]] = translatedText;
+          // Save each translation to cache and results array
+          for (let j = 0; j < translatedTexts.length; j++) {
+            const originalText = batch[j];
+            const translatedText = translatedTexts[j];
+            
+            // Save to cache
+            await saveToCache(originalText, targetLanguage, translatedText, context);
+            
+            // Store in results array
+            results[batchIndexes[j]] = translatedText;
           }
         }
       } catch (error) {
-        console.error("Batch translation error:", error);
+        console.error("Batch API error:", error);
         
-        // In case of error, translate individually
-        for (let i = 0; i < currentBatch.length; i++) {
-          // Pass the string language to translateText
-          const translatedText = await translateText(
-            currentBatch[i], 
-            targetLanguage,  // Use string language
-            context, 
-            sourceLanguage   // Use string language
-          );
-          results[currentIndexes[i]] = translatedText;
+        // Fall back to individual translations
+        for (let j = 0; j < batch.length; j++) {
+          const singleText = await translateText(batch[j], targetLanguage, context, sourceLanguage);
+          results[batchIndexes[j]] = singleText;
         }
       }
-    }
+    });
   }
+  
+  // Execute API calls in parallel (limit concurrency to avoid rate limits)
+  const concurrencyLimit = 2; // Max 2 concurrent API calls
+  for (let i = 0; i < apiCalls.length; i += concurrencyLimit) {
+    const batchCalls = apiCalls.slice(i, i + concurrencyLimit);
+    await Promise.all(batchCalls.map(call => call()));
+  }
+  
+  // Log performance metrics
+  const totalTime = Date.now() - startTime;
+  const timePerText = totalTime / texts.length;
+  console.log(`Batch translation complete: ${texts.length} texts in ${totalTime}ms (avg ${timePerText.toFixed(2)}ms per text)`);
   
   return results;
 }

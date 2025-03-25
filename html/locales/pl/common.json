@@ -1,1 +1,44 @@
-﻿{}
+{
+  "footer": {
+    "copyright": "© 2025 M3 Mobile GmbH. Wszelkie prawa zastrzeżone."
+  },
+  "links": {
+    "homepage": "Strona główna M3 Mobile",
+    "partner_portal": "Portal Partnera",
+    "technical_support": "Wsparcie Techniczne",
+    "release_notes": "Notatki dotyczące wydania systemu operacyjnego",
+    "app_manual": "Podręcznik aplikacji M3",
+    "title": "Przydatne linki:"
+  },
+  "service": {
+    "title": "Nasze Centra Serwisowe:"
+  },
+  "rma": {
+    "request_button": "Wniosek o naprawę RMA",
+    "status_check": "Aby sprawdzić status naprawy, proszę wprowadzić numer RMA lub numer seryjny urządzenia.",
+    "form_info": "Aby upewnić się, że nic nie zostanie pominięte, stworzyliśmy formularz RMA. Wypełniając ten formularz i dołączając go do swojej paczki, otrzymamy wszystkie niezbędne informacje z wyprzedzeniem, co pomoże skrócić czas przetwarzania podczas przyjmowania paczki. Dziękujemy za współpracę!",
+    "tracking_info": "Na tej stronie możesz sprawdzić zawartość swojej przesyłki, śledzić status naprawy oraz zaktualizować dane płatności lub zgłosić inne problemy, jeśli zajdzie taka potrzeba. Informacje logowania zostaną również wysłane na adres e-mail, który podałeś wraz z paczką.",
+    "process_info": "Po otrzymaniu Twojej paczki umowa zostaje zawarta. Przypisujemy Twojej paczce numer RMA i tworzymy dedykowaną stronę dla niej. Możesz uzyskać dostęp do tej strony, wpisując numer śledzenia podany przez Twoją usługę wysyłkową w odpowiednim polu (żółta etykieta) na naszej stronie głównej."
+  },
+  "address": {
+    "example_email": "example@eck3.com",
+    "example_phone": "[+48 00 000 000]",
+    "example_city": "08150 Przykładowe Miasto",
+    "example_street": "Ulica Przykładowa 42",
+    "example_person": "[Uwaga: Max Mustermann]",
+    "example_company": "Przykładowa Firma",
+    "sender": "Nadawca",
+    "reseller_note": "[Nazwa Resellera]",
+    "recipient": "Odbiorca"
+  },
+  "welcome": {
+    "important_note": "Ważna uwaga:",
+    "warranty_info": "Jeśli masz roszczenie gwarancyjne lub umowę na pakiet serwisowy, prosimy podać nazwisko sprzedawcy.",
+    "error_description": "Proszę podać szczegółowy opis błędu, ponieważ znacznie zwiększa to prawdopodobieństwo udanej naprawy.",
+    "contract_info": "Wysyłając paczkę, nawiązuje się umowa naprawy pomiędzy Tobą (nadawcą) a nami (odbiorcą). Ty ponosisz koszty wysyłki do nas, podczas gdy my pokryjemy koszty wysyłki zwrotnej. Inspekcja oraz oszacowanie kosztów są świadczone bezpłatnie.",
+    "message": "Strona internetowa jest obecnie zamknięta. Proszę użyć",
+    "title": "⚠️ Ważne Powiadomienie ⚠️",
+    "process": "Proces jest prosty: wyślij swoje urządzenie M3 Mobile na poniższy adres:",
+    "note": "P.S. Możesz użyć formularza, aby wydrukować PDF, jeśli główna strona internetowa przestanie działać."
+  }
+}
