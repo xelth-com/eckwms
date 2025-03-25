@@ -30,8 +30,7 @@
     "contract_info": "Durch das Senden des Pakets wird ein Reparaturvertrag zwischen Ihnen (dem Absender) und uns (dem Empfänger) geschlossen. Sie übernehmen die Versandkosten zu uns, und wir übernehmen die Rücksendungskosten. Inspektion und Kostenschätzung sind kostenlos.",
     "error_description": "Bitte geben Sie eine detaillierte Fehlerbeschreibung an, da dies die Chancen einer erfolgreichen Reparatur deutlich erhöht.",
     "important_note": "Wichtiger Hinweis:",
-    "warranty_info": "Wenn Sie einen Garantieanspruch oder einen Service-Pack-Vertrag haben, geben Sie bitte den Namen des Händlers an.",
-    "note": "P.S. Sie können dieses Formular verwenden, um ein PDF zu drucken, falls die Hauptwebsite nicht verfügbar ist."
+    "warranty_info": "Wenn Sie einen Garantieanspruch oder einen Service-Pack-Vertrag haben, geben Sie bitte den Namen des Händlers an."
   },
   "address": {
     "recipient": "Empfänger",

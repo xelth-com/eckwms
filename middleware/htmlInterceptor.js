@@ -1,10 +1,7 @@
 // middleware/htmlInterceptor.js [UPDATED VERSION]
 const interceptor = require('express-interceptor');
 const { stripBOM, parseJSONWithBOM } = require('../utils/bomUtils');
-const { AsyncLocalStorage } = require('async_hooks');
-
-// Создаем хранилище для языкового контекста
-const i18nStorage = new AsyncLocalStorage();
+const { i18nStorage } = require('../utils/i18nStorage');
 
 /**
  * Create HTML interceptor middleware for translations and app configuration
@@ -53,18 +50,7 @@ console.log("App config loaded:", window.APP_CONFIG);
         // Process the complete HTML body for translations
         const language = req.language || defaultLanguage;
         // Добавить следующую строку для сохранения текущего языка в глобальном контексте
-        // Создаем обертку для хранения контекста запроса
-        function i18nContextMiddleware(req, res, next) {
-          const language = req.language || defaultLanguage;
 
-          // Создаем контекст для этого запроса
-          const i18nContext = { language };
-
-          // Выполняем все в контексте этого запроса
-          i18nStorage.run(i18nContext, () => {
-            next();
-          });
-        }
 
         console.log(`Setting global current processing language to: ${language}`);
 

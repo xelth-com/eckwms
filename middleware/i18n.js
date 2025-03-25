@@ -8,8 +8,7 @@ const { Queue } = require('../utils/queue');
 const fs = require('fs');
 const { stripBOM, parseJSONWithBOM } = require('../utils/bomUtils');
 // В начале файла middleware/i18n.js
-const { AsyncLocalStorage } = require('async_hooks');
-const i18nStorage = new AsyncLocalStorage();
+const { i18nStorage } = require('../utils/i18nStorage');
 
 // Create translation queue for deferred translations
 const translationQueue = new Queue();
@@ -612,9 +611,14 @@ function initI18n(options = {}) {
 
     next();
   };
-
+  // Создаем middleware для контекста языка
+  const i18nContextMiddleware = (req, res, next) => {
+    const language = req.language || defaultLanguage;
+    // Запускаем все последующие middleware в этом контексте
+    i18nStorage.run({ language }, next);
+  };
   // Combine i18next middleware with our tag processor
-  return [languageDetectorMiddleware, i18nextMiddleware.handle(i18next), tagProcessor];
+  return [languageDetectorMiddleware, i18nContextMiddleware, i18nextMiddleware.handle(i18next), tagProcessor];
 }
 
 module.exports = initI18n;
