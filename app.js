@@ -14,10 +14,11 @@ const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
 const passport = require('passport');
 const initI18n = require('./middleware/i18n');
-const { i18next, translationQueue } = require('./middleware/i18n');
+const {  translationQueue } = require('./middleware/i18n');
 // Import middleware/auth
 const { requireAdmin } = require('./middleware/auth');
 const htmlInterceptor = require('./middleware/htmlInterceptor');
+const i18next = require('i18next');
 
 
 // Import routes

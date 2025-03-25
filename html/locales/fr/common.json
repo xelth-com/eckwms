@@ -1,1 +1,44 @@
-﻿{}
+{
+  "footer": {
+    "copyright": "© 2025 M3 Mobile GmbH. Tous droits réservés."
+  },
+  "links": {
+    "homepage": "Page d'accueil M3 Mobile",
+    "partner_portal": "Portail Partenaire",
+    "technical_support": "Support Technique",
+    "release_notes": "Notes de version du système d'exploitation",
+    "app_manual": "Guide du Manuel de l'Application M3",
+    "title": "Liens Utiles :"
+  },
+  "service": {
+    "title": "Nos Centres de Service :"
+  },
+  "rma": {
+    "request_button": "Demande de Réparation RMA",
+    "status_check": "Pour vérifier l'état de la réparation, veuillez entrer votre numéro RMA ou le numéro de série de l'appareil.",
+    "form_info": "Pour s'assurer que rien n'est négligé, nous avons créé un formulaire RMA. En remplissant ce formulaire et en l'incluant avec votre colis, nous recevrons toutes les informations nécessaires à l'avance, ce qui aidera à réduire le temps de traitement lors de la réception du colis. Merci de votre coopération !",
+    "tracking_info": "Sur cette page, vous pouvez vérifier le contenu de votre expédition, suivre l'état de la réparation et mettre à jour les détails de paiement ou résoudre d'autres problèmes si nécessaire. Les informations de connexion seront également envoyées à l'adresse e-mail que vous avez fournie avec le colis.",
+    "process_info": "Une fois que nous avons reçu votre colis, le contrat est conclu. Nous attribuons à votre colis un numéro RMA et créons une page dédiée pour celui-ci. Vous pouvez accéder à cette page en entrant le numéro de suivi fourni par votre service d'expédition dans le champ correspondant (étiquette jaune) sur notre page d'accueil."
+  },
+  "address": {
+    "example_email": "example@eck3.com",
+    "example_phone": "[+49 00 000 000]",
+    "example_city": "08150 Ville Exemple",
+    "example_street": "42 Rue Exemple",
+    "example_person": "[Attention : Max Mustermann]",
+    "example_company": "Société Exemple",
+    "sender": "Expéditeur",
+    "reseller_note": "[Nom du Revendeur]",
+    "recipient": "Destinataire"
+  },
+  "welcome": {
+    "important_note": "Note Importante :",
+    "warranty_info": "Si vous avez une demande de garantie ou un accord de pack de service, veuillez fournir le nom du revendeur.",
+    "error_description": "Veuillez fournir une description détaillée de l'erreur, car cela augmente considérablement les chances d'une réparation réussie.",
+    "contract_info": "En envoyant le colis, un contrat de réparation est établi entre vous (l'expéditeur) et nous (le destinataire). Vous êtes responsable des frais d'expédition vers nous, tandis que nous prendrons en charge les frais d'expédition de retour. L'inspection et l'estimation des coûts sont fournies gratuitement.",
+    "message": "Le site web est actuellement fermé. Veuillez utiliser",
+    "title": "⚠️ Avis Important ⚠️",
+    "process": "Le processus est simple : envoyez votre appareil M3 Mobile à l'adresse ci-dessous :",
+    "note": "P.S. Vous pouvez utiliser ce formulaire pour imprimer un PDF si le site principal est indisponible."
+  }
+}

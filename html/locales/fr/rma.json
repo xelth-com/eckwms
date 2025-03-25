@@ -1,1 +1,26 @@
-﻿{}
+{
+  "form": {
+    "submit": "Soumettre le formulaire",
+    "back": "Retour",
+    "add_device": "Ajouter un autre appareil",
+    "device_info": "Informations sur l'appareil",
+    "phone": "Téléphone",
+    "invoice_email": "Email de la facture électronique",
+    "contact_email": "Email de contact",
+    "contact_info": "Informations de contact",
+    "reseller_name": "En cas de garantie, veuillez fournir le nom du revendeur",
+    "country": "Pays",
+    "city": "Ville",
+    "postal_code": "Code postal",
+    "additional_address": "Ligne d'adresse supplémentaire",
+    "house_number": "Numéro de maison",
+    "street": "Rue",
+    "contact_person": "Personne de contact",
+    "vat_number": "Numéro de TVA",
+    "company_name": "Nom de l'entreprise",
+    "billing_info": "Informations de facturation"
+  },
+  "device": {
+    "info_text": "device.info_text"
+  }
+}

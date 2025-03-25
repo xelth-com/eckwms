@@ -441,7 +441,7 @@ IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated b
 
 module.exports = {
   translateText,
-  batchTranslate,
+  batchTranslate,  // This should be here
   checkCache,
   saveToCache
 };
