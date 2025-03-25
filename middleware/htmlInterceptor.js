@@ -1,5 +1,6 @@
-// middleware/htmlInterceptor.js
+// middleware/htmlInterceptor.js [UPDATED VERSION]
 const interceptor = require('express-interceptor');
+const { stripBOM, parseJSONWithBOM } = require('../utils/bomUtils');
 
 /**
  * Create HTML interceptor middleware for translations and app configuration
@@ -133,7 +134,8 @@ console.log("App config loaded:", window.APP_CONFIG);
             // Process attribute translations (data-i18n-attr)
             modifiedBody = modifiedBody.replace(/<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g, (match, tag, attrsJson, restAttrs) => {
               try {
-                const attrsMap = JSON.parse(attrsJson);
+                // Use BOM-aware JSON parsing
+                const attrsMap = parseJSONWithBOM(attrsJson);
                 let newTag = `<${tag}${restAttrs}`;
                 let allTranslated = true;
 

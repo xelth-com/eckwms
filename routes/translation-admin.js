@@ -1,4 +1,4 @@
-// routes/translation-admin.js
+// routes/translation-admin.js [UPDATED VERSION]
 const express = require('express');
 const router = express.Router();
 const path = require('path');
@@ -7,6 +7,7 @@ const { sequelize } = require('../models/postgresql');
 const { TranslationCache } = require('../models/postgresql');
 const { translateText, batchTranslate } = require('../services/translationService');
 const { requireAdmin } = require('../middleware/auth');
+const { stripBOM, parseJSONWithBOM, readJSONWithBOMSync } = require('../utils/bomUtils');
 
 // Получение списка доступных переводов
 router.get('/available-translations', requireAdmin, (req, res) => {
@@ -37,8 +38,9 @@ router.get('/translation/:lang/:ns', requireAdmin, (req, res) => {
       return res.status(404).json({ error: 'Translation file not found' });
     }
     
-    const content = fs.readFileSync(filePath, 'utf8');
-    res.json(JSON.parse(content));
+    // Use BOM-aware JSON reader
+    const translations = readJSONWithBOMSync(filePath, fs);
+    res.json(translations);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -85,7 +87,8 @@ router.get('/statistics', requireAdmin, async (req, res) => {
       
       for (const ns of namespaces) {
         const filePath = path.join(localesDir, lang, ns);
-        const content = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        // Use BOM-aware JSON reader
+        const content = readJSONWithBOMSync(filePath, fs);
         
         const nsName = ns.replace('.json', '');
         const keys = Object.keys(content);
@@ -123,8 +126,6 @@ router.get('/statistics', requireAdmin, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-// ... rest of the file with the same path fixes applied (clearCache, autoTranslate) ...
 
 // Очистка кэша переводов
 router.post('/clear-cache', requireAdmin, async (req, res) => {
@@ -166,7 +167,8 @@ router.post('/auto-translate', requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Source file not found' });
     }
     
-    const sourceTranslations = JSON.parse(fs.readFileSync(sourceFile, 'utf8'));
+    // Use BOM-aware JSON reader
+    const sourceTranslations = readJSONWithBOMSync(sourceFile, fs);
     
     // Загружаем целевой файл (или создаем новый)
     // FIXED PATH: Using html/locales instead of just locales
@@ -174,7 +176,8 @@ router.post('/auto-translate', requireAdmin, async (req, res) => {
     let targetTranslations = {};
     
     if (fs.existsSync(targetFile)) {
-      targetTranslations = JSON.parse(fs.readFileSync(targetFile, 'utf8'));
+      // Use BOM-aware JSON reader
+      targetTranslations = readJSONWithBOMSync(targetFile, fs);
     } else {
       // Создаем директорию, если её нет
       // FIXED PATH: Using html/locales instead of just locales

@@ -1,8 +1,8 @@
-// services/translationService.js
+// services/translationService.js [UPDATED VERSION]
 const { OpenAI } = require('openai');
 const crypto = require('crypto');
 const path = require('path');
-
+const { stripBOM } = require('../utils/bomUtils');
 
 // Initialize OpenAI API
 const openai = new OpenAI({
@@ -21,8 +21,6 @@ try {
   console.warn('PostgreSQL not configured for translation cache. Using file-based cache only.');
 }
 
-
-
 // In-memory cache for faster lookup of recent translations
 const memoryCache = new Map();
 const MEMORY_CACHE_MAX_SIZE = 1000; // Limit memory cache size
@@ -34,9 +32,11 @@ const MEMORY_CACHE_MAX_SIZE = 1000; // Limit memory cache size
  * @returns {string} - MD5 hash
  */
 function generateKey(text, context = '') {
+  // Ensure BOM is stripped before generating the hash key
+  const cleanText = stripBOM(text);
   return crypto
     .createHash('md5')
-    .update(`${text}_${context}`)
+    .update(`${cleanText}_${context}`)
     .digest('hex');
 }
 
@@ -48,6 +48,8 @@ function generateKey(text, context = '') {
  * @returns {Promise<string|null>} - Translation or null if not found
  */
 async function checkCache(text, targetLang, context = '') {
+  // Strip BOM before generating key
+  text = stripBOM(text);
   const key = generateKey(text, context);
   const cacheKey = `${targetLang}:${key}`;
   
@@ -86,8 +88,6 @@ async function checkCache(text, targetLang, context = '') {
   return null;
 }
 
-// Удаляем функции для работы с файловым кешем
-
 /**
  * Add translation to memory cache with size limit
  * @param {string} key - Cache key
@@ -119,6 +119,8 @@ async function saveToCache(text, targetLang, translatedText, context = '') {
     targetLang = targetLang[0];
   }
   
+  // Strip BOM before generating key
+  text = stripBOM(text);
   const key = generateKey(text, context);
   const cacheKey = `${targetLang}:${key}`;
   const startTime = global.translationStartTime || Date.now();
@@ -183,6 +185,9 @@ async function translateText(text, targetLang, context = '', sourceLang = proces
     // Ensure language parameters are strings, not arrays
     const targetLanguage = Array.isArray(targetLang) ? targetLang[0] : targetLang;
     const sourceLanguage = Array.isArray(sourceLang) ? sourceLang[0] : sourceLang;
+    
+    // Strip BOM if present
+    text = stripBOM(text);
     
     // If text is empty, return as is
     if (!text || text.trim() === '') {
@@ -267,7 +272,10 @@ Ensure the translation sounds natural in the target language.`;
       max_tokens: Math.max(text.length * 2, 500) // Dynamic token limit
     });
     
-    const translatedText = response.choices[0].message.content.trim();
+    let translatedText = response.choices[0].message.content.trim();
+    
+    // Strip BOM from translated text if present
+    translatedText = stripBOM(translatedText);
     
     // Save to cache - with proper string language parameter
     await saveToCache(text, targetLanguage, translatedText, context);
@@ -302,26 +310,29 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = proc
   
   // First check if texts are in cache
   for (let i = 0; i < texts.length; i++) {
-    if (!texts[i] || texts[i].trim() === '') {
-      results[i] = texts[i];
+    // Strip BOM if present
+    const cleanText = stripBOM(texts[i]);
+    
+    if (!cleanText || cleanText.trim() === '') {
+      results[i] = cleanText;
       continue;
     }
     
     // Check if the text is a tagged key
-    const isTaggedKey = /^data-i18n=["'][^"']+["']$/.test(texts[i]);
+    const isTaggedKey = /^data-i18n=["'][^"']+["']$/.test(cleanText);
     
     if (isTaggedKey) {
       // Keep tag as is for later frontend processing
-      results[i] = texts[i];
+      results[i] = cleanText;
       continue;
     }
     
     // Use the single language string when checking cache
-    const cachedText = await checkCache(texts[i], targetLanguage, context);
+    const cachedText = await checkCache(cleanText, targetLanguage, context);
     if (cachedText) {
       results[i] = cachedText;
     } else {
-      missingTexts.push(texts[i]);
+      missingTexts.push(cleanText);
       missingIndexes.push(i);
     }
   }
@@ -394,8 +405,9 @@ IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in
           temperature: 0.3
         });
         
-        const translatedContent = response.choices[0].message.content.trim();
-        const translatedTexts = translatedContent.split("---SEPARATOR---").map(t => t.trim());
+        // Strip BOM if present in response
+        const translatedContent = stripBOM(response.choices[0].message.content.trim());
+        const translatedTexts = translatedContent.split("---SEPARATOR---").map(t => stripBOM(t.trim()));
         
         // Check if number of translated texts matches source
         if (translatedTexts.length === currentBatch.length) {

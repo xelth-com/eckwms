@@ -1,4 +1,4 @@
-// middleware/i18n.js
+// middleware/i18n.js [UPDATED VERSION]
 const i18next = require('i18next');
 const i18nextMiddleware = require('i18next-http-middleware');
 const Backend = require('i18next-fs-backend');
@@ -6,6 +6,7 @@ const path = require('path');
 const { translateText, saveToCache } = require('../services/translationService');
 const { Queue } = require('../utils/queue');
 const fs = require('fs');
+const { stripBOM, parseJSONWithBOM } = require('../utils/bomUtils');
 
 // Create translation queue for deferred translations
 const translationQueue = new Queue();
@@ -44,9 +45,9 @@ async function loadNamespace(language, namespace, version = '') {
       return Promise.resolve();
     }
     
-    // Load and parse the file
+    // Load and parse the file with BOM handling
     const content = await fs.promises.readFile(filePath, 'utf8');
-    const translations = JSON.parse(content);
+    const translations = parseJSONWithBOM(content);
     
     // Update i18next resources
     i18next.addResourceBundle(language, namespace, translations, true, true);
@@ -88,7 +89,7 @@ function processTranslationQueue() {
         let translations = {};
         if (fs.existsSync(filePath)) {
           const content = fs.readFileSync(filePath, 'utf8');
-          translations = JSON.parse(content);
+          translations = parseJSONWithBOM(content);
         } else {
           // Create directory if it doesn't exist
           const dir = path.dirname(filePath);
@@ -196,7 +197,8 @@ function initI18n(options = {}) {
     .init({
       backend: {
         loadPath: path.join(localesPath, '{{lng}}', '{{ns}}.json'),
-        addPath: path.join(localesPath, '{{lng}}', '{{ns}}.missing.json')
+        addPath: path.join(localesPath, '{{lng}}', '{{ns}}.missing.json'),
+        parse: (data) => parseJSONWithBOM(data) // Use BOM-aware parser
       },
       fallbackLng: defaultLanguage,
       preload: supportedLngs,
@@ -386,7 +388,8 @@ function initI18n(options = {}) {
       // 2. Process data-i18n-attr attributes
       body = body.replace(/<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g, (match, tag, attrsJson, restAttrs) => {
         try {
-          const attrsMap = JSON.parse(attrsJson);
+          // Parse with BOM handling
+          const attrsMap = parseJSONWithBOM(attrsJson);
           let newTag = `<${tag}${restAttrs}`;
           let allTranslated = true;
 
@@ -578,4 +581,4 @@ function initI18n(options = {}) {
 
 module.exports = initI18n;
 module.exports.i18next = i18next;
-module.exports.translationQueue = translationQueue; 
+module.exports.translationQueue = translationQueue;
