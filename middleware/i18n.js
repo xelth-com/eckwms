@@ -262,7 +262,7 @@ console.log(`Using language for translation queue: ${targetLanguage}`);
         } catch (err) {
           console.error(`[i18n] Error checking if translation exists: ${err.message}`);
         }
-        
+        console.log(`Using language for translation queue222222222222222222: ${targetLanguage}`);
         // Prevent recursive calls - skip if we're already processing this key
         if (processingKeys.has(uniqueKey)) {
           return;
@@ -305,7 +305,7 @@ console.log(`Using language for translation queue: ${targetLanguage}`);
               console.error(`Error extracting HTML content for ${key}:`, error);
             }
           }
-          
+          console.log('////////////////////////////////////////////////////////')
           // Important fix: Use the correct target language for the queue
           translationQueue.enqueue({
             text: defaultText,
