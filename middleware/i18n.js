@@ -222,8 +222,7 @@ function initI18n(options = {}) {
         // Get the primary language from the array or use the language if it's already a string
         const primaryLang = Array.isArray(lng) ? lng[0] : lng;
         
-        // Fix: Only queue translations TO non-default languages FROM the default language
-        if (primaryLang !== defaultLanguage) {
+        
           // Create a unique key to track this missing key
           const uniqueKey = `${primaryLang}:${ns}:${key}`;
           
@@ -286,7 +285,7 @@ function initI18n(options = {}) {
             // Always remove from processing list when done
             processingKeys.delete(uniqueKey);
           }
-        }
+        
       },
       interpolation: {
         escapeValue: false,

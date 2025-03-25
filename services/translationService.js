@@ -178,7 +178,7 @@ function containsHtmlTags(text) {
  * @param {string|string[]} sourceLang - Source language (default: en)
  * @returns {Promise<string>} - Translated text
  */
-async function translateText(text, targetLang, context = '', sourceLang = 'en') {
+async function translateText(text, targetLang, context = '', sourceLang = process.env.DEFAULT_LANGUAGE || 'en') {
   try {
     // Ensure language parameters are strings, not arrays
     const targetLanguage = Array.isArray(targetLang) ? targetLang[0] : targetLang;
@@ -211,11 +211,30 @@ async function translateText(text, targetLang, context = '', sourceLang = 'en') 
     const targetLanguageName = languageNames[targetLanguage] || targetLanguage;
     const sourceLanguageName = languageNames[sourceLanguage] || sourceLanguage;
     
-    // Create system prompt with context
-    let systemPrompt = `You are a professional translator for a warehouse management system. 
+    // Get domain description from environment variable
+    const domainDescription = process.env.TRANSLATION_DOMAIN || 'for a warehouse management system';
+    
+    // Create system prompt based on whether it's a translation or grammar correction
+    let systemPrompt;
+    
+    if (sourceLanguage === targetLanguage) {
+      // Grammar correction prompt when languages are the same
+      systemPrompt = `You are a professional editor and proofreader ${domainDescription}. 
+Review and correct the text in ${targetLanguageName}.
+Fix any grammatical errors, improve clarity and consistency, and ensure proper terminology.
+Maintain the same overall meaning and style.
+Return the corrected text without explaining the changes.`;
+
+      console.log(`Grammar correction for text in ${targetLanguageName}`);
+    } else {
+      // Translation prompt when languages are different
+      systemPrompt = `You are a professional translator ${domainDescription}. 
 Translate the text from ${sourceLanguageName} to ${targetLanguageName}. 
 Maintain the same tone, formatting and technical terminology.
 Ensure the translation sounds natural in the target language.`;
+
+      console.log(`Translation from ${sourceLanguageName} to ${targetLanguageName}`);
+    }
     
     // Add instructions for preserving HTML tags if present
     if (containsHtmlTags(text)) {
@@ -235,7 +254,7 @@ Ensure the translation sounds natural in the target language.`;
       systemPrompt += '\nPreserve technical terms in their standard form for this language.';
     }
     
-    console.log(`Calling OpenAI API for translation to ${targetLanguage}`);
+    console.log(`Calling OpenAI API for ${sourceLanguage === targetLanguage ? 'grammar correction' : 'translation'} to ${targetLanguage}`);
     
     // Call OpenAI API
     const response = await openai.chat.completions.create({
@@ -244,7 +263,7 @@ Ensure the translation sounds natural in the target language.`;
         { role: "system", content: systemPrompt },
         { role: "user", content: text }
       ],
-      temperature: 0.3, // Low temperature for more accurate translations
+      temperature: 0.3, // Low temperature for more accurate translations/corrections
       max_tokens: Math.max(text.length * 2, 500) // Dynamic token limit
     });
     
@@ -269,7 +288,7 @@ Ensure the translation sounds natural in the target language.`;
  * @param {string|string[]} sourceLang - Source language (default: en)
  * @returns {Promise<Array<string>>} - Array of translated texts
  */
-async function batchTranslate(texts, targetLang, context = '', sourceLang = 'en') {
+async function batchTranslate(texts, targetLang, context = '', sourceLang = process.env.DEFAULT_LANGUAGE || 'en') {
   // Ensure language parameters are strings, not arrays
   const targetLanguage = Array.isArray(targetLang) ? targetLang[0] : targetLang;
   const sourceLanguage = Array.isArray(sourceLang) ? sourceLang[0] : sourceLang;
@@ -336,7 +355,24 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = 'en'
       const targetLanguageName = languageNames[targetLanguage] || targetLanguage;
       const sourceLanguageName = languageNames[sourceLanguage] || sourceLanguage;
       
-      const systemPrompt = `You are a professional translator for a warehouse management system.
+      // Get domain description from environment variable
+      const domainDescription = process.env.TRANSLATION_DOMAIN || 'for a warehouse management system';
+      
+      // Determine if we're doing grammar correction or translation
+      const isGrammarCorrection = sourceLanguage === targetLanguage;
+      
+      const systemPrompt = isGrammarCorrection 
+        ? `You are a professional editor and proofreader ${domainDescription}.
+Review and correct the following texts in ${targetLanguageName}.
+Each text is separated by "---SEPARATOR---".
+Fix any grammatical errors, improve clarity and consistency, and ensure proper terminology.
+Maintain the same overall meaning and style.
+Return the corrected texts, with each separated by "---SEPARATOR---".
+Keep the same order of texts.
+Do not explain your changes.
+
+IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in the original text.`
+        : `You are a professional translator ${domainDescription}.
 Translate the following texts from ${sourceLanguageName} to ${targetLanguageName}.
 Each text is separated by "---SEPARATOR---".
 Maintain the same tone, formatting and technical terminology.
@@ -346,7 +382,7 @@ Keep the same order of texts.
 
 IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in the original text.`;
       
-      console.log(`OpenAI API batch call for ${currentBatch.length} texts to ${targetLanguage}`);
+      console.log(`OpenAI API batch call for ${currentBatch.length} texts for ${isGrammarCorrection ? 'grammar correction' : 'translation'} to ${targetLanguage}`);
       
       try {
         const response = await openai.chat.completions.create({
