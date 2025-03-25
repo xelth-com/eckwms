@@ -33,11 +33,27 @@ class Queue {
     
     // Skip if this item is currently being processed
     if (this.processingMap.has(uniqueKey)) {
+      console.log(`[i18n] Skipping item already being processed: ${uniqueKey}`);
       return false;
     }
     
     // Skip if this key has already been processed (unless force=true)
     if (!item.force && this.processedKeys.has(uniqueKey)) {
+      console.log(`[i18n] Skipping item already processed: ${uniqueKey}`);
+      return false;
+    }
+    
+    // NEW: Check if this item is already in the queue
+    const isDuplicate = this.items.some(existingItem => 
+      existingItem.uniqueKey === uniqueKey || (
+        existingItem.targetLang === item.targetLang && 
+        existingItem.namespace === (item.namespace || 'common') && 
+        existingItem.key === item.key
+      )
+    );
+    
+    if (isDuplicate) {
+      console.log(`[i18n] Skipping duplicate in queue: ${uniqueKey}`);
       return false;
     }
     
