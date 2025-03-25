@@ -242,8 +242,9 @@ function initI18n(options = {}) {
         // Get the primary language from the array or use the language if it's already a string
         const primaryLang = Array.isArray(lng) ? lng[0] : lng;
         
-        // Fix: Get language from request or use primaryLang as fallback
-        const targetLanguage = req?.language || primaryLang;
+        const targetLanguage = req?.language || global.currentProcessingLanguage || primaryLang;
+
+console.log(`Using language for translation queue: ${targetLanguage}`);
         
         // Create a unique key to track this missing key
         const uniqueKey = `${targetLanguage}:${ns}:${key}`;
