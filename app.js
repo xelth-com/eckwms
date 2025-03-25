@@ -115,17 +115,17 @@ const htmlTranslator = htmlInterceptor(i18next);
 app.use(htmlTranslator);
 
 // Request logging middleware
-app.use((req, res, next) => {
-    console.log('========= REQUEST HEADERS =========');
-    console.log('URL:', req.url);
-    console.log('Original URL:', req.originalUrl);
-    console.log('Cookies:', req.cookies);
-    console.log('Accept-Language:', req.headers['accept-language']);
-    console.log('Detected Language:', req.language);
-    console.log('Query:', req.query);
-    console.log('==================================');
-    next();
-});
+// app.use((req, res, next) => {
+//     console.log('========= REQUEST HEADERS =========');
+//     console.log('URL:', req.url);
+//     console.log('Original URL:', req.originalUrl);
+//     console.log('Cookies:', req.cookies);
+//     console.log('Accept-Language:', req.headers['accept-language']);
+//     console.log('Detected Language:', req.language);
+//     console.log('Query:', req.query);
+//     console.log('==================================');
+//     next();
+// });
 
 // Serve static files last
 app.use('/locales', (req, res, next) => {

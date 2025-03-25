@@ -66,6 +66,9 @@ async function loadNamespace(language, namespace, version = '') {
 
 // Process translation queue
 function processTranslationQueue() {
+  console.log('---QUEUE STATUS---');
+  console.log('Queue size:', translationQueue.size());
+  console.log('Items:', translationQueue.items);
   if (translationQueue.isEmpty()) {
     setTimeout(processTranslationQueue, 5000);
     return;
@@ -158,34 +161,45 @@ function initI18n(options = {}) {
     'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja'
   ];
   
-  // Middleware for language detection
-  const languageDetectorMiddleware = (req, res, next) => {
-    // Determine user's language with priority:
-    // 1. i18next cookie
-    // 2. lang query param
-    // 3. Accept-Language header
-    // 4. Default language
-    const userLanguage =
-      req.cookies?.i18next ||
-      req.query?.lang ||
-      req.headers['accept-language']?.split(',')[0]?.split('-')[0] ||
-      defaultLanguage;
-
-    // Check if language is supported
-    req.language = supportedLngs.includes(userLanguage) ? userLanguage : defaultLanguage;
-
-    // Save language in cookie if it changed
-    if (req.cookies?.i18next !== req.language) {
-      res.cookie('i18next', req.language, {
-        maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
-        path: '/'
-      });
-    }
-
-    console.log(`Language detection: ${req.language} (from: ${req.cookies?.i18next ? 'cookie' : req.query?.lang ? 'query' : 'header'})`);
-
+  // Optimized language detection middleware
+const languageDetectorMiddleware = (req, res, next) => {
+  // First, quickly check if this is likely an HTML request
+  const acceptHeader = req.headers['accept'] || '';
+  const path = req.path || '';
+  
+  // Skip non-HTML requests early
+  const isLikelyHtml = 
+    acceptHeader.includes('text/html') || 
+    path.endsWith('.html') || 
+    path === '/' || 
+    (!path.includes('.') && !path.startsWith('/api/'));
+  
+  if (!isLikelyHtml) {
+    // Skip language detection for non-HTML requests
     next();
-  };
+    return;
+  }
+  
+  // For HTML requests, perform language detection
+  const userLanguage =
+    req.cookies?.i18next ||
+    req.query?.lang ||
+    req.headers['accept-language']?.split(',')[0]?.split('-')[0] ||
+    defaultLanguage;
+
+  // Check if language is supported
+  req.language = supportedLngs.includes(userLanguage) ? userLanguage : defaultLanguage;
+
+  // Save language in cookie if it changed
+  if (req.cookies?.i18next !== req.language) {
+    res.cookie('i18next', req.language, {
+      maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
+      path: '/'
+    });
+  }
+
+  next();
+};
   
   // Namespaces list
   const namespaces = ['common', 'rma', 'dashboard', 'auth'];
@@ -200,7 +214,7 @@ function initI18n(options = {}) {
         addPath: path.join(localesPath, '{{lng}}', '{{ns}}.missing.json'),
         parse: (data) => parseJSONWithBOM(data) // Use BOM-aware parser
       },
-      fallbackLng: defaultLanguage,
+      fallbackLng: false,
       preload: supportedLngs,
       ns: namespaces,
       defaultNS: 'common',
@@ -274,7 +288,7 @@ function initI18n(options = {}) {
             // Queue for translation with the primary language
             translationQueue.enqueue({
               text: defaultText,
-              targetLang: primaryLang,
+              targetLang:  req.language || primaryLang,
               namespace: ns,
               key: key,
               sourceType: sourceType

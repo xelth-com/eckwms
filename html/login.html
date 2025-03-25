@@ -1,18 +1,16 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title data-i18n="auth:register.page_title">Register - M3mobile</title>
+  <title data-i18n="auth:login.page_title">Login - M3mobile</title>
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
   <link rel="manifest" href="/site.webmanifest">
   <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5bbad5">
-  
   <meta name="msapplication-TileColor" content="#da532c">
   <meta name="theme-color" content="#ffffff">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-  
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -25,7 +23,7 @@
     }
     
     .container {
-      max-width: 600px;
+      max-width: 400px;
       margin: 80px auto;
       padding: 20px;
       background-color: #fff;
@@ -51,20 +49,6 @@
       border: 1px solid #ddd;
       border-radius: 4px;
       box-sizing: border-box;
-    }
-    
-    .form-row {
-      display: flex;
-      gap: 20px;
-    }
-    
-    .form-row .form-group {
-      flex: 1;
-    }
-    
-    .form-footer {
-      margin-top: 30px;
-      text-align: center;
     }
     
     .btn {
@@ -137,296 +121,96 @@
     .links a:hover {
       text-decoration: underline;
     }
-    
-    .account-type-selector {
-      margin-bottom: 20px;
-      text-align: center;
-    }
-    
-    .account-type-btn {
-      padding: 10px 20px;
-      margin: 0 10px;
-      background: #f5f5f5;
-      border: 2px solid #ddd;
-      border-radius: 4px;
-      cursor: pointer;
-      transition: all 0.3s;
-    }
-    
-    .account-type-btn.active {
-      background: #e6f7ff;
-      border-color: #1e2071;
-      color: #1e2071;
-      font-weight: bold;
-    }
-    
-    .tabs {
-      display: none;
-    }
-    
-    .tabs.active {
-      display: block;
-    }
   </style>
 </head>
 <body>
   <div class="header-logo">M3mobile</div>
-
   <div class="container">
-    <h2 style="text-align: center; color: #1e2071;" data-i18n="auth:register.title">Create Account</h2>
-    
-    <div id="error-box" class="error-message" style="display: none;"></div>
-    
-    <div class="account-type-selector">
-      <button id="individual-btn" class="account-type-btn active" onclick="switchAccountType('individual')" data-i18n="auth:register.individual">
-        Individual Account
-      </button>
-      <button id="company-btn" class="account-type-btn" onclick="switchAccountType('company')" data-i18n="auth:register.company">
-        Company Account
-      </button>
-    </div>
-    
-    <form id="register-form">
-      <input type="hidden" id="userType" name="userType" value="individual">
-      
-      <div id="individual-fields" class="tabs active">
-        <div class="form-row">
-          <div class="form-group">
-            <label for="username" data-i18n="auth:register.username">Username</label>
-            <input type="text" id="username" name="username" required data-i18n-attr='{"placeholder": "auth:register.username_placeholder"}'>
-          </div>
-          
-          <div class="form-group">
-            <label for="name" data-i18n="auth:register.full_name">Full Name</label>
-            <input type="text" id="name" name="name" data-i18n-attr='{"placeholder": "auth:register.full_name_placeholder"}'>
-          </div>
-        </div>
-      </div>
-      
-      <div id="company-fields" class="tabs">
-        <div class="form-row">
-          <div class="form-group">
-            <label for="username-company" data-i18n="auth:register.username">Username</label>
-            <input type="text" id="username-company" name="username" required data-i18n-attr='{"placeholder": "auth:register.username_placeholder"}'>
-          </div>
-          
-          <div class="form-group">
-            <label for="company" data-i18n="auth:register.company_name">Company Name</label>
-            <input type="text" id="company" name="company" required data-i18n-attr='{"placeholder": "auth:register.company_name_placeholder"}'>
-          </div>
-        </div>
-        
-        <div class="form-group">
-          <label for="name-company" data-i18n="auth:register.contact_person">Contact Person</label>
-          <input type="text" id="name-company" name="name" data-i18n-attr='{"placeholder": "auth:register.contact_person_placeholder"}'>
-        </div>
-      </div>
-      
-      <div class="form-group">
-        <label for="email" data-i18n="auth:register.email">Email</label>
-        <input type="email" id="email" name="email" required data-i18n-attr='{"placeholder": "auth:register.email_placeholder"}'>
-      </div>
-      
-      <div class="form-row">
-        <div class="form-group">
-          <label for="password" data-i18n="auth:register.password">Password</label>
-          <input type="password" id="password" name="password" required data-i18n-attr='{"placeholder": "auth:register.password_placeholder"}'>
-        </div>
-        
-        <div class="form-group">
-          <label for="confirmPassword" data-i18n="auth:register.confirm_password">Confirm Password</label>
-          <input type="password" id="confirmPassword" name="confirmPassword" required data-i18n-attr='{"placeholder": "auth:register.confirm_password_placeholder"}'>
-        </div>
-      </div>
-      
-      <div class="form-group">
-        <label for="phone" data-i18n="auth:register.phone">Phone Number</label>
-        <input type="tel" id="phone" name="phone" data-i18n-attr='{"placeholder": "auth:register.phone_placeholder"}'>
-      </div>
-      
-      <h3 style="margin-top: 30px; margin-bottom: 15px; color: #1e2071; border-bottom: 1px solid #eee;" data-i18n="auth:register.address_info">Address Information</h3>
-      
-      <div class="form-group">
-        <label for="street" data-i18n="auth:register.street">Street and House Number</label>
-        <input type="text" id="street" name="street" data-i18n-attr='{"placeholder": "auth:register.street_placeholder"}'>
-      </div>
-      
-      <div class="form-row">
-        <div class="form-group">
-          <label for="postalCode" data-i18n="auth:register.postal_code">Postal Code</label>
-          <input type="text" id="postalCode" name="postalCode" data-i18n-attr='{"placeholder": "auth:register.postal_code_placeholder"}'>
-        </div>
-        
-        <div class="form-group">
-          <label for="city" data-i18n="auth:register.city">City</label>
-          <input type="text" id="city" name="city" data-i18n-attr='{"placeholder": "auth:register.city_placeholder"}'>
-        </div>
-      </div>
-      
-      <div class="form-group">
-        <label for="country" data-i18n="auth:register.country">Country</label>
-        <input type="text" id="country" name="country" value="Germany" data-i18n-attr='{"placeholder": "auth:register.country_placeholder"}'>
-      </div>
-      
-      <div style="text-align: center; margin-top: 30px;">
-        <button type="submit" class="btn" data-i18n="auth:register.register_button">Register</button>
-      </div>
-    </form>
-    
-    <div class="oauth-buttons">
-      <a href="/auth/google" class="oauth-btn">
-        <img src="https://cdn.cdnlogo.com/logos/g/35/google-icon.svg" width="18" height="18">
-        <span data-i18n="auth:register.register_with">Sign up with Google</span>
-      </a>
-    </div>
-    
-    <div class="links">
-      <a href="/auth/login" data-i18n="auth:register.have_account">Already have an account? Log in</a>
-      <span style="color: #ddd;">|</span>
-      <a href="/" data-i18n="auth:register.back_to_home">Back to home</a>
-    </div>
+    <h2 style="text-align: center; color: #1e2071;" data-i18n="auth:login.title">Login</h2>
+Kopieren<div id="error-box" class="error-message" style="display: none;"></div>
+
+<form id="login-form">
+  <div class="form-group">
+    <label for="email" data-i18n="auth:login.email">Email or Username</label>
+    <input type="text" id="email" name="email" required data-i18n-attr='{"placeholder": "auth:login.email_placeholder"}'>
   </div>
   
+  <div class="form-group">
+    <label for="password" data-i18n="auth:login.password">Password</label>
+    <input type="password" id="password" name="password" required data-i18n-attr='{"placeholder": "auth:login.password_placeholder"}'>
+  </div>
+  
+  <div style="text-align: center;">
+    <button type="submit" class="btn" data-i18n="auth:login.login_button">Login</button>
+  </div>
+</form>
+
+<div class="oauth-buttons">
+  <a href="/auth/google" class="oauth-btn">
+    <img src="https://cdn.cdnlogo.com/logos/g/35/google-icon.svg" width="18" height="18">
+    <span data-i18n="auth:login.login_with">Sign in with Google</span>
+  </a>
+</div>
+
+<div class="links">
+  <a href="#" data-i18n="auth:login.forgot_password">Forgot Password?</a>
+  <span style="color: #ddd;">|</span>
+  <a href="/auth/register" data-i18n="auth:login.no_account">No account? Create one</a>
+</div>
+  </div>
   <script>
-    // Improved switchAccountType function
-function switchAccountType(type) {
-  // Update hidden field
-  document.getElementById('userType').value = type;
-  
-  if (type === 'individual') {
-    // Update button styles
-    document.getElementById('individual-btn').classList.add('active');
-    document.getElementById('company-btn').classList.remove('active');
-    
-    // Show individual fields, hide company fields
-    document.getElementById('individual-fields').classList.add('active');
-    document.getElementById('company-fields').classList.remove('active');
-    
-    // Enable individual fields, disable company fields
-    const individualInputs = document.querySelectorAll('#individual-fields input');
-    const companyInputs = document.querySelectorAll('#company-fields input');
-    
-    individualInputs.forEach(input => {
-      input.disabled = false;
-    });
-    
-    companyInputs.forEach(input => {
-      input.disabled = true;
-    });
-  } else {
-    // Update button styles
-    document.getElementById('individual-btn').classList.remove('active');
-    document.getElementById('company-btn').classList.add('active');
-    
-    // Show company fields, hide individual fields
-    document.getElementById('individual-fields').classList.remove('active');
-    document.getElementById('company-fields').classList.add('active');
-    
-    // Enable company fields, disable individual fields
-    const individualInputs = document.querySelectorAll('#individual-fields input');
-    const companyInputs = document.querySelectorAll('#company-fields input');
-    
-    individualInputs.forEach(input => {
-      input.disabled = true;
-    });
-    
-    companyInputs.forEach(input => {
-      input.disabled = false;
-    });
-  }
-}
-
-// Make sure to call switchAccountType on page load to set initial state
-document.addEventListener('DOMContentLoaded', () => {
-  switchAccountType('individual');
-});
-
-document.getElementById('register-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  
-  const password = document.getElementById('password').value;
-  const confirmPassword = document.getElementById('confirmPassword').value;
-  const errorBox = document.getElementById('error-box');
-  const userType = document.getElementById('userType').value;
-  
-  if (password !== confirmPassword) {
-    errorBox.textContent = window.i18n ? window.i18n.t('auth:errors.passwords_dont_match') : 'Passwords do not match';
-    errorBox.style.display = 'block';
-    return;
-  }
-  
-  // Get the correct username and name based on account type
-  const username = userType === 'individual' 
-    ? document.getElementById('username').value 
-    : document.getElementById('username-company').value;
-    
-  const name = userType === 'individual'
-    ? document.getElementById('name').value
-    : document.getElementById('name-company').value;
-  
-  // Only include company value if company type
-  const companyValue = userType === 'company' ? document.getElementById('company').value : null;
-  
-  const userData = {
-    username: username,
-    email: document.getElementById('email').value,
-    password: password,
-    name: name,
-    company: companyValue,
-    phone: document.getElementById('phone').value || null,
-    street: document.getElementById('street').value || null,
-    city: document.getElementById('city').value || null,
-    postalCode: document.getElementById('postalCode').value || null,
-    country: document.getElementById('country').value || null,
-    userType: userType
-  };
-  
-  try {
-    const response = await fetch('/auth/register', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(userData)
-    });
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      throw new Error(data.error || 'Registration failed');
-    }
-    
-    // Store tokens
-    localStorage.setItem('auth_token', data.tokens.accessToken);
-    localStorage.setItem('refresh_token', data.tokens.refreshToken);
-    
-    // Redirect to home page or previous page
-    const returnUrl = new URLSearchParams(window.location.search).get('returnUrl');
-    window.location.href = returnUrl || '/';
-    
-  } catch (err) {
-    console.error('Registration error:', err);
-    
-    // Try to translate error message if i18n is available
-    if (window.i18n) {
-      const errorKey = `auth:errors.${err.message.toLowerCase().replace(/\s+/g, '_')}`;
-      const translation = window.i18n.t(errorKey);
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
       
-      // If a translation was found (not equal to the key itself)
-      if (translation !== errorKey) {
-        errorBox.textContent = translation;
-      } else {
-        errorBox.textContent = err.message;
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const errorBox = document.getElementById('error-box');
+      
+      try {
+        const response = await fetch('/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email, password })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Login failed');
+        }
+        
+        // Store tokens
+        localStorage.setItem('auth_token', data.tokens.accessToken);
+        localStorage.setItem('refresh_token', data.tokens.refreshToken);
+        
+        // Redirect to home page or previous page
+        const returnUrl = new URLSearchParams(window.location.search).get('returnUrl');
+        window.location.href = returnUrl || '/';
+        
+      } catch (err) {
+        console.error('Login error:', err);
+        
+        // Try to translate error message if i18n is available
+        if (window.i18n) {
+          const errorKey = `auth:errors.${err.message.toLowerCase().replace(/\s+/g, '_')}`;
+          const translation = window.i18n.t(errorKey);
+          
+          // If a translation was found (not equal to the key itself)
+          if (translation !== errorKey) {
+            errorBox.textContent = translation;
+          } else {
+            errorBox.textContent = err.message;
+          }
+        } else {
+          errorBox.textContent = err.message;
+        }
+        
+        errorBox.style.display = 'block';
       }
-    } else {
-      errorBox.textContent = err.message;
-    }
-    
-    errorBox.style.display = 'block';
-  }
-});
+    });
   </script>
-
   <!-- Add i18n script for translation -->
   <script src="/js/i18n.js" defer></script>
 </body>
