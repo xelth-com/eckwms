@@ -263,10 +263,10 @@ console.log(`Using language for translation queue: ${targetLanguage}`);
           console.error(`[i18n] Error checking if translation exists: ${err.message}`);
         }
         console.log(`Using language for translation queue222222222222222222: ${[...processingKeys]}`);
-        // Prevent recursive calls - skip if we're already processing this key
-        if (processingKeys.has(uniqueKey)) {
-          return;
-        }
+        // // Prevent recursive calls - skip if we're already processing this key
+        // if (processingKeys.has(uniqueKey)) {
+        //   return;
+        // }
         console.log(`Using language for translation queue333333333333: ${targetLanguage}`);
         try {
           // Mark that we're processing this key
