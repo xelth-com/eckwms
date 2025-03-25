@@ -1,7 +1,6 @@
 // middleware/htmlInterceptor.js [UPDATED VERSION]
 const interceptor = require('express-interceptor');
 const { stripBOM, parseJSONWithBOM } = require('../utils/bomUtils');
-const { i18nStorage } = require('../utils/i18nStorage');
 
 /**
  * Create HTML interceptor middleware for translations and app configuration
@@ -36,23 +35,19 @@ module.exports = function createHtmlInterceptor(i18next) {
             API_BASE_URL: process.env.API_BASE_URL || '',
             APP_VERSION: process.env.npm_package_version || '1.0.0'
           };
-
+          
           const configScript = `<head>
 <script>
 // Global app configuration
 window.APP_CONFIG = ${JSON.stringify(appConfig)};
 console.log("App config loaded:", window.APP_CONFIG);
 </script>`;
-
+          
           modifiedBody = modifiedBody.replace('<head>', configScript);
         }
 
         // Process the complete HTML body for translations
         const language = req.language || defaultLanguage;
-        // Добавить следующую строку для сохранения текущего языка в глобальном контексте
-
-
-        console.log(`Setting global current processing language to: ${language}`);
 
         // Only perform translations when NOT using default language
         if (language !== defaultLanguage) {
@@ -68,14 +63,14 @@ console.log("App config loaded:", window.APP_CONFIG);
           if (i18nTagCount + i18nAttrCount + i18nHtmlCount > 0) {
             // Make current HTML available for the missingKeyHandler
             global.currentProcessingHtml = modifiedBody;
-
+            
             // Create a map to store HTML content for each i18n key
             // This is used by missingKeyHandler when default translation is missing
             global.elementContents = new Map();
-
+            
             // First step: Extract all content from elements with data-i18n attributes
             // This pre-processing step makes content available for missingKeyHandler
-            modifiedBody.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g,
+            modifiedBody.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, 
               (match, tag1, key, attrs, content, tag2) => {
                 if (content && content.trim()) {
                   // Store the content by key for the missingKeyHandler to use
@@ -87,7 +82,7 @@ console.log("App config loaded:", window.APP_CONFIG);
                 return match; // Return unchanged, this is just for extraction
               }
             );
-
+            
             // Process regular translations (data-i18n attribute)
             modifiedBody = modifiedBody.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
               // Try to get translation - namespace may be included in the key
@@ -101,21 +96,21 @@ console.log("App config loaded:", window.APP_CONFIG);
               }
 
               console.log(`Translating: ${translationKey} in namespace ${namespace}`);
-
+              
               try {
                 // Add safeguard against infinite recursion
                 const uniqueKey = `${language}:${namespace}:${translationKey}`;
                 const processingKeys = global.processingKeys || new Set();
-
+                
                 if (processingKeys.has(uniqueKey)) {
                   return match; // Skip if already processing this key
                 }
-
+                
                 processingKeys.add(uniqueKey);
                 global.processingKeys = processingKeys;
-
+                
                 const translation = i18next.t(translationKey, { ns: namespace });
-
+                
                 processingKeys.delete(uniqueKey);
                 global.processingKeys = processingKeys;
 
@@ -127,7 +122,7 @@ console.log("App config loaded:", window.APP_CONFIG);
                 }
 
                 console.log(`Translated: ${translationKey} → ${translation}`);
-
+                
                 // Return element with translation while KEEPING the data-i18n attribute
                 return `<${tag1} data-i18n="${key}"${attrs}>${translation}</${tag2}>`;
               } catch (error) {
@@ -159,18 +154,18 @@ console.log("App config loaded:", window.APP_CONFIG);
                   // Add safeguard against infinite recursion
                   const uniqueKey = `${language}:${namespace}:${translationKey}`;
                   const processingKeys = global.processingKeys || new Set();
-
+                  
                   if (processingKeys.has(uniqueKey)) {
                     allTranslated = false;
                     continue; // Skip if already processing this key
                   }
-
+                  
                   try {
                     processingKeys.add(uniqueKey);
                     global.processingKeys = processingKeys;
-
+                    
                     const translation = i18next.t(translationKey, { ns: namespace });
-
+                    
                     processingKeys.delete(uniqueKey);
                     global.processingKeys = processingKeys;
 
@@ -221,24 +216,24 @@ console.log("App config loaded:", window.APP_CONFIG);
               }
 
               console.log(`Translating HTML: ${translationKey} in namespace ${namespace}`);
-
+              
               try {
                 // Add safeguard against infinite recursion
                 const uniqueKey = `${language}:${namespace}:${translationKey}`;
                 const processingKeys = global.processingKeys || new Set();
-
+                
                 if (processingKeys.has(uniqueKey)) {
                   return match; // Skip if already processing this key
                 }
-
+                
                 processingKeys.add(uniqueKey);
                 global.processingKeys = processingKeys;
-
+                
                 const translation = i18next.t(translationKey, {
                   ns: namespace,
                   interpolation: { escapeValue: false }
                 });
-
+                
                 processingKeys.delete(uniqueKey);
                 global.processingKeys = processingKeys;
 
