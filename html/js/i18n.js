@@ -37,6 +37,15 @@
   // Set of keys currently being translated to avoid duplicate requests
   const pendingTranslations = new Set();
 
+  // Track retry attempts
+  let retryCount = 0;
+  // Retry intervals in milliseconds (3s, 7s, 15s, 25s, 35s, 50s, 70s)
+  const RETRY_INTERVALS = [3000, 7000, 15000, 25000, 35000, 50000, 70000];
+  // Maximum number of retry attempts
+  const MAX_RETRY_ATTEMPTS = RETRY_INTERVALS.length;
+  // Retry timer ID for cleaning up
+  let retryTimerId = null;
+
   // Utility function for dev-only console logging
   function devLog(...args) {
     if (window.APP_CONFIG?.NODE_ENV === 'development') {
@@ -44,75 +53,189 @@
     }
   }
 
-// Add these functions to your i18n.js file, before they're used
-
-/**
- * Flattens a nested translation object into a flat structure with dot notation
- * Example: { form: { title: "Hello" } } becomes { "form.title": "Hello" }
- * @param {Object} obj - The nested object to flatten
- * @param {string} prefix - The prefix for keys (used in recursion)
- * @returns {Object} - A flattened object with dot notation keys
- */
-function flattenTranslations(obj, prefix = '') {
-  return Object.keys(obj).reduce((acc, key) => {
-    const prefixedKey = prefix ? `${prefix}.${key}` : key;
+  // Function to find untranslated elements in DOM
+  function findUntranslatedElements() {
+    const untranslatedElements = {
+      standard: [],
+      attributes: [],
+      html: []
+    };
     
-    if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
-      Object.assign(acc, flattenTranslations(obj[key], prefixedKey));
-    } else {
-      acc[prefixedKey] = obj[key];
+    // Check standard text elements
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.getAttribute('data-i18n');
+      // Check if the element's text content equals the key (untranslated)
+      if (el.textContent === key || !el.textContent.trim()) {
+        untranslatedElements.standard.push({
+          element: el,
+          key: key
+        });
+      }
+    });
+    
+    // Check attribute translations
+    document.querySelectorAll('[data-i18n-attr]').forEach(el => {
+      try {
+        const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
+        for (const [attr, key] of Object.entries(attrsMap)) {
+          // Check if attribute is missing or equals the key
+          const attrValue = el.getAttribute(attr);
+          if (!attrValue || attrValue === key) {
+            untranslatedElements.attributes.push({
+              element: el,
+              key: key,
+              attribute: attr
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing data-i18n-attr:', e);
+      }
+    });
+    
+    // Check HTML content translations
+    document.querySelectorAll('[data-i18n-html]').forEach(el => {
+      const key = el.getAttribute('data-i18n-html');
+      // Consider HTML untranslated if it contains the key or is empty
+      if (el.innerHTML.includes(key) || !el.innerHTML.trim()) {
+        untranslatedElements.html.push({
+          element: el,
+          key: key
+        });
+      }
+    });
+    
+    // Count total untranslated elements
+    const totalUntranslated = 
+      untranslatedElements.standard.length + 
+      untranslatedElements.attributes.length + 
+      untranslatedElements.html.length;
+    
+    return {
+      elements: untranslatedElements,
+      count: totalUntranslated
+    };
+  }
+
+  // Scan for untranslated elements and schedule retry if needed
+  function checkAndScheduleRetry() {
+    // Cancel any existing retry timer
+    if (retryTimerId) {
+      clearTimeout(retryTimerId);
+      retryTimerId = null;
     }
     
-    return acc;
-  }, {});
-}
-
-/**
- * Alias for flattenTranslations - both functions serve the same purpose
- * @param {Object} obj - The nested object to flatten
- * @param {string} prefix - The prefix for keys (used in recursion)
- * @returns {Object} - A flattened object with dot notation keys
- */
-function flattenObject(obj, prefix = '') {
-  return flattenTranslations(obj, prefix);
-}
-
-/**
- * Attempts to load translations from localStorage
- * @param {string} language - Language code
- * @param {string} namespace - Namespace to load
- * @returns {boolean} - Whether loading from localStorage was successful
- */
-function tryLoadFromLocalStorage(language, namespace) {
-  try {
-    const cacheKey = `${language}:${namespace}`;
-    const localData = localStorage.getItem(`i18n_${language}_${namespace}`);
+    // Find untranslated elements
+    const untranslated = findUntranslatedElements();
     
-    if (localData) {
-      // Try to parse the data
-      const parsedData = JSON.parse(localData);
+    // If we have no untranslated elements, we're done
+    if (untranslated.count === 0) {
+      devLog("[i18n] All elements translated successfully!");
+      retryCount = 0;
+      return;
+    }
+    
+    // If we've reached the maximum retries, log warning and stop
+    if (retryCount >= MAX_RETRY_ATTEMPTS) {
+      console.warn(`[i18n] Maximum retries (${MAX_RETRY_ATTEMPTS}) reached. ${untranslated.count} translations still missing.`);
+      retryCount = 0;
+      return;
+    }
+    
+    // Get delay for this retry
+    const delay = RETRY_INTERVALS[retryCount];
+    
+    devLog(`[i18n] Found ${untranslated.count} untranslated elements, scheduling retry #${retryCount+1} in ${delay}ms`);
+    
+    // Schedule retry
+    retryTimerId = setTimeout(() => {
+      // Reload translations and update page
+      preloadCommonNamespaces(true)
+        .then(() => {
+          // Force update translations
+          updatePageTranslations();
+          
+          // Increment retry count for next attempt
+          retryCount++;
+          
+          // Check again for any remaining untranslated elements
+          checkAndScheduleRetry();
+        })
+        .catch(error => {
+          console.error("[i18n] Error during translation retry:", error);
+          // Even on error, continue with retry schedule
+          retryCount++;
+          checkAndScheduleRetry();
+        });
+    }, delay);
+  }
+
+  /**
+   * Flattens a nested translation object into a flat structure with dot notation
+   * Example: { form: { title: "Hello" } } becomes { "form.title": "Hello" }
+   * @param {Object} obj - The nested object to flatten
+   * @param {string} prefix - The prefix for keys (used in recursion)
+   * @returns {Object} - A flattened object with dot notation keys
+   */
+  function flattenTranslations(obj, prefix = '') {
+    return Object.keys(obj).reduce((acc, key) => {
+      const prefixedKey = prefix ? `${prefix}.${key}` : key;
       
-      // Process translations and add to cache
-      const flattened = flattenObject(parsedData);
-      
-      for (const [key, value] of Object.entries(flattened)) {
-        const fullCacheKey = `${language}:${namespace}:${key}`;
-        translationCache[fullCacheKey] = value;
+      if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
+        Object.assign(acc, flattenTranslations(obj[key], prefixedKey));
+      } else {
+        acc[prefixedKey] = obj[key];
       }
       
-      // Mark namespace as loaded
-      loadedNamespaces[cacheKey] = true;
-      
-      devLog(`Loaded namespace ${namespace} from localStorage`);
-      return true;
-    }
-  } catch (error) {
-    console.warn(`Failed to load namespace ${namespace} from localStorage:`, error);
+      return acc;
+    }, {});
   }
-  
-  return false;
-}
 
+  /**
+   * Alias for flattenTranslations - both functions serve the same purpose
+   * @param {Object} obj - The nested object to flatten
+   * @param {string} prefix - The prefix for keys (used in recursion)
+   * @returns {Object} - A flattened object with dot notation keys
+   */
+  function flattenObject(obj, prefix = '') {
+    return flattenTranslations(obj, prefix);
+  }
+
+  /**
+   * Attempts to load translations from localStorage
+   * @param {string} language - Language code
+   * @param {string} namespace - Namespace to load
+   * @returns {boolean} - Whether loading from localStorage was successful
+   */
+  function tryLoadFromLocalStorage(language, namespace) {
+    try {
+      const cacheKey = `${language}:${namespace}`;
+      const localData = localStorage.getItem(`i18n_${language}_${namespace}`);
+      
+      if (localData) {
+        // Try to parse the data
+        const parsedData = JSON.parse(localData);
+        
+        // Process translations and add to cache
+        const flattened = flattenObject(parsedData);
+        
+        for (const [key, value] of Object.entries(flattened)) {
+          const fullCacheKey = `${language}:${namespace}:${key}`;
+          translationCache[fullCacheKey] = value;
+        }
+        
+        // Mark namespace as loaded
+        loadedNamespaces[cacheKey] = true;
+        
+        devLog(`Loaded namespace ${namespace} from localStorage`);
+        return true;
+      }
+    } catch (error) {
+      console.warn(`Failed to load namespace ${namespace} from localStorage:`, error);
+    }
+    
+    return false;
+  }
 
   /**
    * Asynchronous module initialization
@@ -202,8 +325,6 @@ function tryLoadFromLocalStorage(language, namespace) {
     // Set initialization flag
     initialized = true;
 
-    // Add this to your initialization code after 'initialized = true;'
-
     // Set up mutation observer to translate dynamically added content
     if (window.MutationObserver && currentLanguage !== defaultLanguage) {
       const observer = new MutationObserver((mutations) => {
@@ -246,13 +367,10 @@ function tryLoadFromLocalStorage(language, namespace) {
       devLog('Translation mutation observer started');
     }
 
-
     // Generate event that i18n is initialized
     document.dispatchEvent(new CustomEvent('i18n:initialized', {
       detail: { language: currentLanguage }
     }));
-
-    // Add this to the bottom of your initialization function in i18n.js
 
     // Force update translations when the page is fully loaded
     window.addEventListener('load', () => {
@@ -265,6 +383,9 @@ function tryLoadFromLocalStorage(language, namespace) {
         // Do another update after a short delay to catch any late-rendered elements
         setTimeout(() => {
           updatePageTranslations();
+
+          // Start checking for untranslated elements
+          checkAndScheduleRetry();
 
           // Log translation status
           if (window.APP_CONFIG?.NODE_ENV === 'development') {
@@ -310,7 +431,7 @@ function tryLoadFromLocalStorage(language, namespace) {
  /**
  * Preload common namespaces with improved error handling
  */
-async function preloadCommonNamespaces() {
+async function preloadCommonNamespaces(force = false) {
   if (currentLanguage === defaultLanguage) {
     devLog("Using default language, skipping namespace preload");
     return;
@@ -324,8 +445,8 @@ async function preloadCommonNamespaces() {
   for (const namespace of namespaces) {
     const cacheKey = `${currentLanguage}:${namespace}`;
     
-    // Skip if already loaded
-    if (loadedNamespaces[cacheKey]) {
+    // Skip if already loaded and not forced
+    if (loadedNamespaces[cacheKey] && !force) {
       devLog(`Namespace ${namespace} already loaded, skipping`);
       continue;
     }
@@ -448,6 +569,12 @@ async function preloadCommonNamespaces() {
     pendingTranslations.clear();
     loadedNamespaces = {};
     translationCache = {};
+    retryCount = 0;
+    
+    if (retryTimerId) {
+      clearTimeout(retryTimerId);
+      retryTimerId = null;
+    }
 
     // Update global window.language for SVG sync
     window.language = lang;
@@ -700,6 +827,32 @@ async function preloadCommonNamespaces() {
   }
 
   /**
+   * Clean up localStorage when it's full
+   */
+  function cleanupLocalStorage() {
+    try {
+      // Get all i18n keys in localStorage
+      const i18nKeys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key.startsWith('i18n_')) {
+          i18nKeys.push(key);
+        }
+      }
+      
+      // Remove half of them (oldest first - sort is just alphabetical here)
+      const removeCount = Math.ceil(i18nKeys.length / 2);
+      i18nKeys.sort().slice(0, removeCount).forEach(key => {
+        localStorage.removeItem(key);
+      });
+      
+      console.warn(`Cleaned up ${removeCount} translation entries from localStorage`);
+    } catch (e) {
+      console.error('Error cleaning up localStorage:', e);
+    }
+  }
+
+  /**
    * Update translations on the current page with improved error handling
    */
   function updatePageTranslations() {
@@ -786,9 +939,53 @@ async function preloadCommonNamespaces() {
           console.error('Error updating HTML translation for element:', el, error);
         }
       });
+      
+      // After updating translations, check if we need to schedule more retries
+      // Only do this if not in a retry already (prevent recursion)
+      if (!retryTimerId && retryCount === 0) {
+        checkAndScheduleRetry();
+      }
     } catch (error) {
       console.error('Error in updatePageTranslations:', error);
     }
+  }
+
+  // Update translations for elements with specific key
+  function updateTranslationsForKey(key) {
+    if (currentLanguage === defaultLanguage || !initialized) return;
+
+    // Find all elements with this key
+    document.querySelectorAll(`[data-i18n="${key}"]`).forEach(el => {
+      const translation = getTranslation(key);
+      if (translation && translation !== key) {
+        el.textContent = translation;
+      }
+    });
+
+    // Also check for attribute translations
+    document.querySelectorAll('[data-i18n-attr]').forEach(el => {
+      try {
+        const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
+        for (const [attr, attrKey] of Object.entries(attrsMap)) {
+          if (attrKey === key) {
+            const translation = getTranslation(key);
+            if (translation && translation !== key) {
+              el.setAttribute(attr, translation);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing data-i18n-attr:', e);
+      }
+    });
+
+    // And HTML content translations
+    document.querySelectorAll(`[data-i18n-html="${key}"]`).forEach(el => {
+      const translation = getTranslation(key);
+      if (translation && translation !== key) {
+        el.innerHTML = translation;
+      }
+    });
   }
 
   // Helper function to set cookie
@@ -901,7 +1098,20 @@ async function preloadCommonNamespaces() {
       return translationCache[cacheKey] !== undefined;
     },
     syncLanguageMasks, // Export the sync function for external use
-    loadTranslationFile // Export for external use
+    loadTranslationFile, // Export for external use
+    
+    // Added method to start retry checking manually
+    startRetryCheck: function() {
+      // Reset retry count and clear any existing timer
+      retryCount = 0;
+      if (retryTimerId) {
+        clearTimeout(retryTimerId);
+        retryTimerId = null;
+      }
+      
+      // Start checking for untranslated elements
+      checkAndScheduleRetry();
+    }
   };
 
   // Unified setLanguage function exposed to global scope
