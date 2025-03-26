@@ -14,12 +14,11 @@ const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
 const passport = require('passport');
 const initI18n = require('./middleware/i18n');
-const {  translationQueue } = require('./middleware/i18n');
+const { translationQueue } = require('./middleware/i18n');
 // Import middleware/auth
 const { requireAdmin } = require('./middleware/auth');
 const htmlInterceptor = require('./middleware/htmlInterceptor');
 const i18next = require('i18next');
-
 
 // Import routes
 const apiRoutes = require('./routes/api');
@@ -67,75 +66,97 @@ global.serialP = 1;
 // Create JWT secret
 global.secretJwt = createSecretJwtKey(process.env.JWT_SECRET);
 
-
-
-
 // Security middleware
 app.use(helmet({
     contentSecurityPolicy: false, // Disable CSP to avoid issues with inline scripts
     crossOriginEmbedderPolicy: false
 }));
 
-
-
 // Initialize Passport
 const configPassport = require('./config/passport');
 const passportInstance = configPassport(global.secretJwt);
 app.use(passport.initialize());
 
-// Middleware
+// Core middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-
-
-
 app.use(bodyParser.text({ type: 'text/html' }));
 
-
-
-// Serve static files
-//app.use(express.static(path.join(__dirname, 'html')));
-
-// Затем ваш логирующий middleware
-
-
-//
-
-
-// Logging middleware
+// Logging middleware - applied early but after compression
 app.use(morgan('[:date[clf]] :method :url :status :response-time ms - :res[content-length]'));
 app.use(requestLogger);
 
-/// Initialize i18n first
+// Specific routes for heavily accessed static assets to apply strong caching
+app.get('/favicon*.png', (req, res) => {
+  res.set({
+    'Cache-Control': `public, max-age=${60 * 60 * 24 * 30}`, // 30 days
+    'Expires': new Date(Date.now() + 60 * 60 * 24 * 30 * 1000).toUTCString()
+  });
+  res.sendFile(path.join(__dirname, 'html', req.path));
+});
+
+app.get('/android-chrome-*.png', (req, res) => {
+  res.set({
+    'Cache-Control': `public, max-age=${60 * 60 * 24 * 30}`, // 30 days
+    'Expires': new Date(Date.now() + 60 * 60 * 24 * 30 * 1000).toUTCString()
+  });
+  res.sendFile(path.join(__dirname, 'html', req.path));
+});
+
+app.get('/apple-touch-icon*.png', (req, res) => {
+  res.set({
+    'Cache-Control': `public, max-age=${60 * 60 * 24 * 30}`, // 30 days
+    'Expires': new Date(Date.now() + 60 * 60 * 24 * 30 * 1000).toUTCString()
+  });
+  res.sendFile(path.join(__dirname, 'html', req.path));
+});
+
+app.get('/mstile-*.png', (req, res) => {
+  res.set({
+    'Cache-Control': `public, max-age=${60 * 60 * 24 * 30}`, // 30 days
+    'Expires': new Date(Date.now() + 60 * 60 * 24 * 30 * 1000).toUTCString()
+  });
+  res.sendFile(path.join(__dirname, 'html', req.path));
+});
+
+// Static file middleware - BEFORE i18n and HTML processing
+// Serve static files with different cache settings for different file types
+app.use(express.static(path.join(__dirname, 'html'), {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    
+    // Apply appropriate caching based on file type
+    if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico'].includes(ext)) {
+      // Images
+      res.set('Cache-Control', `public, max-age=${60 * 60 * 24 * 7}`); // 7 days
+    } else if (['.css', '.js'].includes(ext)) {
+      // CSS/JS files with medium caching
+      res.set('Cache-Control', `public, max-age=${60 * 60 * 24 * 3}`); // 3 days
+    } else if (['.woff', '.woff2', '.ttf', '.eot', '.otf'].includes(ext)) {
+      // Font files with long caching
+      res.set('Cache-Control', `public, max-age=${60 * 60 * 24 * 30}`); // 30 days
+    } else {
+      // Other static files with shorter caching
+      res.set('Cache-Control', `public, max-age=${60 * 60 * 24}`); // 1 day
+    }
+  }
+}));
+
+// Special handling for locale files
+app.use('/locales', (req, res, next) => {
+  // Different cache strategy for locale files
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+}, express.static(path.join(__dirname, 'html', 'locales')));
+
+/// Initialize i18n AFTER static files
 app.use(initI18n());
 
-// Create HTML translator with access to i18next
+// Create HTML translator with access to i18next - AFTER static files
 const htmlTranslator = htmlInterceptor(i18next);
 app.use(htmlTranslator);
-
-// Request logging middleware
-// app.use((req, res, next) => {
-//     console.log('========= REQUEST HEADERS =========');
-//     console.log('URL:', req.url);
-//     console.log('Original URL:', req.originalUrl);
-//     console.log('Cookies:', req.cookies);
-//     console.log('Accept-Language:', req.headers['accept-language']);
-//     console.log('Detected Language:', req.language);
-//     console.log('Query:', req.query);
-//     console.log('==================================');
-//     next();
-// });
-
-// Serve static files last
-app.use('/locales', (req, res, next) => {
-    // Set cache control headers for translation files
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    next();
-}, express.static(path.join(__dirname, 'html', 'locales')));
-app.use(express.static(path.join(__dirname, 'html')));
 
 // Routes
 app.use('/api', apiRoutes);
@@ -145,6 +166,7 @@ app.use('/admin', adminRoutes);
 app.use('/auth', authRoutes);
 app.use('/api', translationApiRoutes);
 app.use('/translation-admin', translationAdminRoutes);
+
 // Main route for the application
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'html', 'index.html'));
@@ -194,8 +216,6 @@ app.post('/', async (req, res) => {
     }
 });
 
-
-
 // Logging function
 async function writeLog(str) {
     const dateTemp = new Date(Date.now());
@@ -215,8 +235,6 @@ async function generateCsvData() {
     let csv = 'SN /PN;Model;IN DATE;Out Date;Customer;SKU;email;Address;Zip Code;City;Complaint;Verification;Cause;Result;Shipping;Invoice number;Special note; warranty;condition;Used New Parts;Used Refurbished Parts\n';
 
     // Generate CSV data logic from the original application
-    // This is a simplified version - implement full logic based on original code
-
     boxes.forEach((element) => {
         let packIn = false;
         let packOut = false;
@@ -294,9 +312,6 @@ async function logOut(mainDirectory) {
     }
 }
 
-// Initialize and start the application
-initialize();
-
 // Add this to app.js or a maintenance service file
 // Around initialization code
 
@@ -316,10 +331,12 @@ async function runTranslationMaintenance() {
       console.error('Error in translation maintenance:', error);
       setTimeout(runTranslationMaintenance, 5 * 60 * 1000);
     }
-  }
+}
 
 // Start maintenance after app initialization
 setTimeout(runTranslationMaintenance, 2 * 60 * 1000); // Start after 2 minutes
 
+// Start the app initialization
+initialize();
 
 module.exports = app;

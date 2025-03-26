@@ -1,1 +1,26 @@
-﻿{}
+{
+  "form": {
+    "submit": "Prześlij formularz",
+    "back": "Wstecz",
+    "add_device": "Dodaj inne urządzenie",
+    "device_info": "Informacje o urządzeniu",
+    "phone": "Telefon",
+    "invoice_email": "E-mail do faktury elektronicznej",
+    "contact_email": "E-mail kontaktowy",
+    "contact_info": "Informacje kontaktowe",
+    "reseller_name": "W przypadku gwarancji proszę podać nazwę sprzedawcy",
+    "country": "Kraj",
+    "city": "Miasto",
+    "postal_code": "Kod pocztowy",
+    "additional_address": "Dodatkowa linia adresowa",
+    "house_number": "Numer domu",
+    "street": "Ulica",
+    "contact_person": "Osoba kontaktowa",
+    "vat_number": "Numer VAT",
+    "company_name": "Nazwa firmy",
+    "billing_info": "Informacje do faktury"
+  },
+  "device": {
+    "info_text": "device.info_text"
+  }
+}

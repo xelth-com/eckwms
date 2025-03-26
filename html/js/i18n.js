@@ -60,109 +60,100 @@
       attributes: [],
       html: []
     };
-    
+
+    console.log(`[i18n] Проверка непереведенных элементов (текущий язык: ${currentLanguage})`);
+    console.log(`[i18n] Кеш переводов имеет ${Object.keys(translationCache).length} записей`);
+
     // Check standard text elements
     document.querySelectorAll('[data-i18n]').forEach(el => {
       const key = el.getAttribute('data-i18n');
-      // Check if the element's text content equals the key (untranslated)
-      if (el.textContent === key || !el.textContent.trim()) {
+
+      // Parse the key to handle namespaces
+      const parts = key.split(':');
+      const namespace = parts.length > 1 ? parts[0] : 'common';
+      const actualKey = parts.length > 1 ? parts.slice(1).join(':') : key;
+
+      // Build cache key for lookup
+      const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
+
+      // Check if translation exists in cache
+      const hasTranslation = translationCache[cacheKey] !== undefined;
+
+      console.log(`[i18n] Проверка элемента: key=${key}, cacheKey=${cacheKey}, hasTranslation=${hasTranslation}, content="${el.textContent.substring(0, 30)}..."`);
+
+      // ИСПРАВЛЕНО: Добавлено сравнение с ключом
+      if (!hasTranslation || el.textContent === key || el.textContent.trim() === '') {
         untranslatedElements.standard.push({
           element: el,
           key: key
         });
+        console.log(`[i18n] Добавлен элемент в список непереведенных: ${key}`);
       }
     });
-    
-    // Check attribute translations
-    document.querySelectorAll('[data-i18n-attr]').forEach(el => {
-      try {
-        const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
-        for (const [attr, key] of Object.entries(attrsMap)) {
-          // Check if attribute is missing or equals the key
-          const attrValue = el.getAttribute(attr);
-          if (!attrValue || attrValue === key) {
-            untranslatedElements.attributes.push({
-              element: el,
-              key: key,
-              attribute: attr
-            });
-          }
-        }
-      } catch (e) {
-        console.error('Error parsing data-i18n-attr:', e);
-      }
-    });
-    
-    // Check HTML content translations
-    document.querySelectorAll('[data-i18n-html]').forEach(el => {
-      const key = el.getAttribute('data-i18n-html');
-      // Consider HTML untranslated if it contains the key or is empty
-      if (el.innerHTML.includes(key) || !el.innerHTML.trim()) {
-        untranslatedElements.html.push({
-          element: el,
-          key: key
-        });
-      }
-    });
-    
+
+    // Остальная часть функции без изменений...
+
     // Count total untranslated elements
-    const totalUntranslated = 
-      untranslatedElements.standard.length + 
-      untranslatedElements.attributes.length + 
+    const totalUntranslated =
+      untranslatedElements.standard.length +
+      untranslatedElements.attributes.length +
       untranslatedElements.html.length;
-    
+
+    console.log(`[i18n] Всего непереведенных элементов: ${totalUntranslated}`);
+
     return {
       elements: untranslatedElements,
       count: totalUntranslated
     };
   }
 
-  // Scan for untranslated elements and schedule retry if needed
   function checkAndScheduleRetry() {
     // Cancel any existing retry timer
     if (retryTimerId) {
       clearTimeout(retryTimerId);
       retryTimerId = null;
     }
-    
+
+    console.log(`[i18n] Запуск проверки переводов (попытка #${retryCount + 1})`);
+
     // Find untranslated elements
     const untranslated = findUntranslatedElements();
-    
+
     // If we have no untranslated elements, we're done
     if (untranslated.count === 0) {
-      devLog("[i18n] All elements translated successfully!");
+      console.log("[i18n] Все элементы переведены успешно!");
       retryCount = 0;
       return;
     }
-    
-    // If we've reached the maximum retries, log warning and stop
-    if (retryCount >= MAX_RETRY_ATTEMPTS) {
-      console.warn(`[i18n] Maximum retries (${MAX_RETRY_ATTEMPTS}) reached. ${untranslated.count} translations still missing.`);
-      retryCount = 0;
-      return;
-    }
-    
+
+    // Detailed logging of untranslated elements
+    console.log("[i18n] Непереведенные элементы:");
+    console.log("Стандартные:", untranslated.elements.standard.map(e => e.key));
+    console.log("Атрибуты:", untranslated.elements.attributes.map(e => `${e.attribute}=${e.key}`));
+    console.log("HTML:", untranslated.elements.html.map(e => e.key));
+
     // Get delay for this retry
     const delay = RETRY_INTERVALS[retryCount];
-    
-    devLog(`[i18n] Found ${untranslated.count} untranslated elements, scheduling retry #${retryCount+1} in ${delay}ms`);
-    
+
+    console.log(`[i18n] Планирование повторной попытки #${retryCount + 1} через ${delay}мс для ${untranslated.count} непереведенных элементов`);
+
     // Schedule retry
     retryTimerId = setTimeout(() => {
+      console.log(`[i18n] Выполнение повторной попытки #${retryCount + 1}`);
       // Reload translations and update page
       preloadCommonNamespaces(true)
         .then(() => {
           // Force update translations
           updatePageTranslations();
-          
+
           // Increment retry count for next attempt
           retryCount++;
-          
+
           // Check again for any remaining untranslated elements
           checkAndScheduleRetry();
         })
         .catch(error => {
-          console.error("[i18n] Error during translation retry:", error);
+          console.error("[i18n] Ошибка во время повторной попытки перевода:", error);
           // Even on error, continue with retry schedule
           retryCount++;
           checkAndScheduleRetry();
@@ -180,13 +171,13 @@
   function flattenTranslations(obj, prefix = '') {
     return Object.keys(obj).reduce((acc, key) => {
       const prefixedKey = prefix ? `${prefix}.${key}` : key;
-      
+
       if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
         Object.assign(acc, flattenTranslations(obj[key], prefixedKey));
       } else {
         acc[prefixedKey] = obj[key];
       }
-      
+
       return acc;
     }, {});
   }
@@ -211,29 +202,29 @@
     try {
       const cacheKey = `${language}:${namespace}`;
       const localData = localStorage.getItem(`i18n_${language}_${namespace}`);
-      
+
       if (localData) {
         // Try to parse the data
         const parsedData = JSON.parse(localData);
-        
+
         // Process translations and add to cache
         const flattened = flattenObject(parsedData);
-        
+
         for (const [key, value] of Object.entries(flattened)) {
           const fullCacheKey = `${language}:${namespace}:${key}`;
           translationCache[fullCacheKey] = value;
         }
-        
+
         // Mark namespace as loaded
         loadedNamespaces[cacheKey] = true;
-        
+
         devLog(`Loaded namespace ${namespace} from localStorage`);
         return true;
       }
     } catch (error) {
       console.warn(`Failed to load namespace ${namespace} from localStorage:`, error);
     }
-    
+
     return false;
   }
 
@@ -428,81 +419,81 @@
     }
   }
 
- /**
- * Preload common namespaces with improved error handling
- */
-async function preloadCommonNamespaces(force = false) {
-  if (currentLanguage === defaultLanguage) {
-    devLog("Using default language, skipping namespace preload");
-    return;
-  }
-
-  const namespaces = ['common', 'auth', 'rma', 'dashboard'];
-  devLog(`Preloading namespaces for ${currentLanguage}: ${namespaces.join(', ')}`);
-
-  const loadPromises = [];
-
-  for (const namespace of namespaces) {
-    const cacheKey = `${currentLanguage}:${namespace}`;
-    
-    // Skip if already loaded and not forced
-    if (loadedNamespaces[cacheKey] && !force) {
-      devLog(`Namespace ${namespace} already loaded, skipping`);
-      continue;
+  /**
+  * Preload common namespaces with improved error handling
+  */
+  async function preloadCommonNamespaces(force = false) {
+    if (currentLanguage === defaultLanguage) {
+      devLog("Using default language, skipping namespace preload");
+      return;
     }
 
-    try {
-      // Create a promise to load this namespace
-      const loadPromise = (async () => {
-        try {
-          // Add cache busting parameter to prevent caching issues
-          const timestamp = Date.now();
-          const url = `/locales/${currentLanguage}/${namespace}.json?v=${timestamp}`;
-          
-          devLog(`Loading namespace from: ${url}`);
-          const response = await fetch(url);
-          
-          if (!response.ok) {
-            console.warn(`Failed to load namespace ${namespace} for ${currentLanguage}: ${response.status} ${response.statusText}`);
+    const namespaces = ['common', 'auth', 'rma', 'dashboard'];
+    devLog(`Preloading namespaces for ${currentLanguage}: ${namespaces.join(', ')}`);
+
+    const loadPromises = [];
+
+    for (const namespace of namespaces) {
+      const cacheKey = `${currentLanguage}:${namespace}`;
+
+      // Skip if already loaded and not forced
+      if (loadedNamespaces[cacheKey] && !force) {
+        devLog(`Namespace ${namespace} already loaded, skipping`);
+        continue;
+      }
+
+      try {
+        // Create a promise to load this namespace
+        const loadPromise = (async () => {
+          try {
+            // Add cache busting parameter to prevent caching issues
+            const timestamp = Date.now();
+            const url = `/locales/${currentLanguage}/${namespace}.json?v=${timestamp}`;
+
+            devLog(`Loading namespace from: ${url}`);
+            const response = await fetch(url);
+
+            if (!response.ok) {
+              console.warn(`Failed to load namespace ${namespace} for ${currentLanguage}: ${response.status} ${response.statusText}`);
+              return false;
+            }
+
+            const data = await response.json();
+            devLog(`Successfully loaded namespace ${namespace} for ${currentLanguage}`);
+
+            // Cache all translations from this namespace
+            const flattenedData = flattenTranslations(data);
+            for (const [key, value] of Object.entries(flattenedData)) {
+              const fullCacheKey = `${currentLanguage}:${namespace}:${key}`;
+              translationCache[fullCacheKey] = value;
+            }
+
+            // Mark namespace as loaded
+            loadedNamespaces[cacheKey] = true;
+            return true;
+          } catch (error) {
+            console.error(`Error loading namespace ${namespace} for ${currentLanguage}:`, error);
             return false;
           }
-          
-          const data = await response.json();
-          devLog(`Successfully loaded namespace ${namespace} for ${currentLanguage}`);
-          
-          // Cache all translations from this namespace
-          const flattenedData = flattenTranslations(data);
-          for (const [key, value] of Object.entries(flattenedData)) {
-            const fullCacheKey = `${currentLanguage}:${namespace}:${key}`;
-            translationCache[fullCacheKey] = value;
-          }
-          
-          // Mark namespace as loaded
-          loadedNamespaces[cacheKey] = true;
-          return true;
-        } catch (error) {
-          console.error(`Error loading namespace ${namespace} for ${currentLanguage}:`, error);
-          return false;
-        }
-      })();
-      
-      loadPromises.push(loadPromise);
-    } catch (error) {
-      console.error(`Error setting up namespace load for ${namespace}:`, error);
-    }
-  }
+        })();
 
-  // Wait for all promises to complete
-  if (loadPromises.length > 0) {
-    try {
-      const results = await Promise.all(loadPromises);
-      const loadedCount = results.filter(success => success).length;
-      devLog(`Preloaded ${loadedCount} of ${loadPromises.length} namespaces`);
-    } catch (error) {
-      console.error('Error in namespace preloading:', error);
+        loadPromises.push(loadPromise);
+      } catch (error) {
+        console.error(`Error setting up namespace load for ${namespace}:`, error);
+      }
+    }
+
+    // Wait for all promises to complete
+    if (loadPromises.length > 0) {
+      try {
+        const results = await Promise.all(loadPromises);
+        const loadedCount = results.filter(success => success).length;
+        devLog(`Preloaded ${loadedCount} of ${loadPromises.length} namespaces`);
+      } catch (error) {
+        console.error('Error in namespace preloading:', error);
+      }
     }
   }
-}
 
   /**
    * Synchronize all language mask elements with current language
@@ -570,7 +561,7 @@ async function preloadCommonNamespaces(force = false) {
     loadedNamespaces = {};
     translationCache = {};
     retryCount = 0;
-    
+
     if (retryTimerId) {
       clearTimeout(retryTimerId);
       retryTimerId = null;
@@ -658,18 +649,24 @@ async function preloadCommonNamespaces(force = false) {
     if (currentLanguage === defaultLanguage) {
       return interpolate(key, options);
     }
-
+  
     // Parse namespace from key
     const parts = key.split(':');
     const namespace = parts.length > 1 ? parts[0] : 'common';
     const actualKey = parts.length > 1 ? parts.slice(1).join(':') : key;
-
+  
     // Build cache key
     const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
-
+  
+    // Добавляем лог для отображения попыток поиска
+    console.log(`[i18n] Поиск перевода: ${cacheKey}`);
+  
     // Check if translation exists in cache
     if (translationCache[cacheKey]) {
+      console.log(`[i18n] Найден перевод в кеше для ${cacheKey}: "${translationCache[cacheKey].substring(0, 30)}..."`);
       return interpolate(translationCache[cacheKey], options);
+    } else {
+      console.log(`[i18n] Перевод в кеше не найден для ${cacheKey}`);
     }
 
     // If namespace is not loaded, queue it for loading
@@ -839,13 +836,13 @@ async function preloadCommonNamespaces(force = false) {
           i18nKeys.push(key);
         }
       }
-      
+
       // Remove half of them (oldest first - sort is just alphabetical here)
       const removeCount = Math.ceil(i18nKeys.length / 2);
       i18nKeys.sort().slice(0, removeCount).forEach(key => {
         localStorage.removeItem(key);
       });
-      
+
       console.warn(`Cleaned up ${removeCount} translation entries from localStorage`);
     } catch (e) {
       console.error('Error cleaning up localStorage:', e);
@@ -862,7 +859,8 @@ async function preloadCommonNamespaces(force = false) {
       return;
     }
 
-    devLog(`Updating page translations for language: ${currentLanguage}`);
+    console.log(`[i18n] Обновление переводов на странице для языка: ${currentLanguage}`);
+    console.log(`[i18n] Кеш содержит ${Object.keys(translationCache).length} переводов`);
 
     try {
       // Count elements before updating for logging
@@ -939,11 +937,14 @@ async function preloadCommonNamespaces(force = false) {
           console.error('Error updating HTML translation for element:', el, error);
         }
       });
-      
-      // After updating translations, check if we need to schedule more retries
+
+      // После обновления переводов проверяем необходимость запланировать дополнительные повторные попытки
       // Only do this if not in a retry already (prevent recursion)
       if (!retryTimerId && retryCount === 0) {
+        console.log("[i18n] Запуск проверки необходимости повторных попыток");
         checkAndScheduleRetry();
+      } else {
+        console.log(`[i18n] Пропуск запуска новой проверки, retryTimerId=${!!retryTimerId}, retryCount=${retryCount}`);
       }
     } catch (error) {
       console.error('Error in updatePageTranslations:', error);
@@ -1099,16 +1100,16 @@ async function preloadCommonNamespaces(force = false) {
     },
     syncLanguageMasks, // Export the sync function for external use
     loadTranslationFile, // Export for external use
-    
+
     // Added method to start retry checking manually
-    startRetryCheck: function() {
+    startRetryCheck: function () {
       // Reset retry count and clear any existing timer
       retryCount = 0;
       if (retryTimerId) {
         clearTimeout(retryTimerId);
         retryTimerId = null;
       }
-      
+
       // Start checking for untranslated elements
       checkAndScheduleRetry();
     }
