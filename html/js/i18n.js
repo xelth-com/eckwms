@@ -107,59 +107,47 @@
     };
   }
 
-  function checkAndScheduleRetry() {
-    // Cancel any existing retry timer
-    if (retryTimerId) {
-      clearTimeout(retryTimerId);
-      retryTimerId = null;
-    }
-
-    console.log(`[i18n] Запуск проверки переводов (попытка #${retryCount + 1})`);
-
-    // Find untranslated elements
-    const untranslated = findUntranslatedElements();
-
-    // If we have no untranslated elements, we're done
-    if (untranslated.count === 0) {
-      console.log("[i18n] Все элементы переведены успешно!");
-      retryCount = 0;
-      return;
-    }
-
-    // Detailed logging of untranslated elements
-    console.log("[i18n] Непереведенные элементы:");
-    console.log("Стандартные:", untranslated.elements.standard.map(e => e.key));
-    console.log("Атрибуты:", untranslated.elements.attributes.map(e => `${e.attribute}=${e.key}`));
-    console.log("HTML:", untranslated.elements.html.map(e => e.key));
-
-    // Get delay for this retry
-    const delay = RETRY_INTERVALS[retryCount];
-
-    console.log(`[i18n] Планирование повторной попытки #${retryCount + 1} через ${delay}мс для ${untranslated.count} непереведенных элементов`);
-
-    // Schedule retry
-    retryTimerId = setTimeout(() => {
-      console.log(`[i18n] Выполнение повторной попытки #${retryCount + 1}`);
-      // Reload translations and update page
-      preloadCommonNamespaces(true)
-        .then(() => {
-          // Force update translations
-          updatePageTranslations();
-
-          // Increment retry count for next attempt
-          retryCount++;
-
-          // Check again for any remaining untranslated elements
-          checkAndScheduleRetry();
-        })
-        .catch(error => {
-          console.error("[i18n] Ошибка во время повторной попытки перевода:", error);
-          // Even on error, continue with retry schedule
-          retryCount++;
-          checkAndScheduleRetry();
-        });
-    }, delay);
+ // In html/js/i18n.js - Fix the recursive checking function
+function checkAndScheduleRetry() {
+  // Cancel any existing retry timer
+  if (retryTimerId) {
+    clearTimeout(retryTimerId);
+    retryTimerId = null;
   }
+  
+  // Find untranslated elements
+  const untranslated = findUntranslatedElements();
+  
+  // If we have no untranslated elements, or we've reached max retries, we're done
+  if (untranslated.count === 0 || retryCount >= MAX_RETRY_ATTEMPTS) {
+    console.log(`[i18n] Translation check complete - ${untranslated.count} untranslated items remain after ${retryCount} attempts`);
+    retryCount = 0;
+    return;
+  }
+  
+  // Get delay for this retry
+  const delay = RETRY_INTERVALS[retryCount];
+  
+  console.log(`[i18n] Scheduling retry attempt #${retryCount + 1} in ${delay}ms for ${untranslated.count} untranslated elements`);
+  
+  // Schedule retry with exponential backoff
+  retryTimerId = setTimeout(() => {
+    // Reload translations and update page
+    preloadCommonNamespaces(true)
+      .then(() => {
+        // Increment retry count for next attempt
+        retryCount++;
+        
+        // Force update translations
+        updatePageTranslations();
+        
+        // Only continue if we have remaining untranslated elements and haven't hit max attempts
+        if (retryCount < MAX_RETRY_ATTEMPTS) {
+          checkAndScheduleRetry();
+        }
+      });
+  }, delay);
+}
 
   /**
    * Flattens a nested translation object into a flat structure with dot notation
