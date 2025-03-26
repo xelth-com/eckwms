@@ -23,16 +23,6 @@
     "products": "Produkte",
     "status": "Status"
   },
-  "welcome": {
-    "title": "Willkommen auf unserer Webseite!",
-    "message": "Wir bei M3 Mobile GmbH wurden von unserem Mutterunternehmen mit der Aufgabe betraut, den Wert von M3 Mobile-Geräten zu erhalten. Unser Ziel ist es, sicherzustellen, dass jedes Gerät unabhängig von Umständen oder Beschädigungen zuverlässig nutzbar bleibt. Wir bieten umfassenden Service sowohl während als auch nach der Garantiezeit, um die Langlebigkeit Ihrer Geräte zu gewährleisten.",
-    "process": "Der Prozess ist einfach: Senden Sie Ihr M3 Mobile-Gerät an die folgende Adresse:",
-    "contract_info": "Durch das Senden des Pakets wird ein Reparaturvertrag zwischen Ihnen (dem Absender) und uns (dem Empfänger) geschlossen. Sie übernehmen die Versandkosten zu uns, und wir übernehmen die Rücksendungskosten. Inspektion und Kostenschätzung sind kostenlos.",
-    "error_description": "Bitte geben Sie eine detaillierte Fehlerbeschreibung an, da dies die Chancen einer erfolgreichen Reparatur deutlich erhöht.",
-    "important_note": "Wichtiger Hinweis:",
-    "warranty_info": "Wenn Sie einen Garantieanspruch oder einen Service-Pack-Vertrag haben, geben Sie bitte den Namen des Händlers an.",
-    "note": "P.S. Sie können das Formular verwenden, um ein PDF zu drucken, falls die Hauptwebsite ausfällt."
-  },
   "address": {
     "recipient": "Empfänger",
     "sender": "Absender",

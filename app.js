@@ -151,12 +151,42 @@ app.use('/locales', (req, res, next) => {
   next();
 }, express.static(path.join(__dirname, 'html', 'locales')));
 
-/// Initialize i18n AFTER static files
+// Initialize i18n AFTER static files
 app.use(initI18n());
 
 // Create HTML translator with access to i18next - AFTER static files
 const htmlTranslator = htmlInterceptor(i18next);
 app.use(htmlTranslator);
+
+// Add global middleware to set language in response headers
+app.use((req, res, next) => {
+  // If language was determined by i18n middleware, add it to response headers
+  if (req.language) {
+    res.setHeader('Content-Language', req.language);
+    
+    // Also add a meta tag for client-side detection
+    const originalSend = res.send;
+    res.send = function(body) {
+      if (typeof body === 'string' && 
+          (res.get('Content-Type')?.includes('text/html') || 
+           body.includes('<head>') || 
+           body.includes('<!DOCTYPE html>'))) {
+        
+        // Only modify HTML responses
+        const languageMeta = `<meta name="app-language" content="${req.language}">`;
+        
+        // Add the meta tag inside the head if possible
+        if (body.includes('<head>')) {
+          body = body.replace('<head>', `<head>\n    ${languageMeta}`);
+        }
+      }
+      
+      return originalSend.call(this, body);
+    };
+  }
+  
+  next();
+});
 
 // Routes
 app.use('/api', apiRoutes);

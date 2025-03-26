@@ -324,175 +324,123 @@ function checkAndScheduleRetry() {
     return false;
   }
 
-  /**
-   * Asynchronous module initialization
-   */
-  async function init() {
-    devLog("Initializing i18n...");
+/**
+ * Asynchronous module initialization with priority for app-language header
+ */
+async function init() {
+  devLog("Initializing i18n...");
 
-    // Check DOM state
-    if (document.readyState !== 'complete' && document.readyState !== 'interactive') {
-      devLog("DOM not ready, waiting for load...");
-      await new Promise(resolve => {
-        if (document.readyState === 'complete' || document.readyState === 'interactive') {
-          resolve();
-        } else {
-          document.addEventListener('DOMContentLoaded', resolve);
-        }
-      });
-    }
-
-    // Determine current language with priorities:
-    // 1. Previously stored language in cookie
-    // 2. Previously stored language in localStorage
-    // 3. Browser language
-    // 4. Default language
-
-    let detectedLanguage =
-      getCookie('i18next') ||
-      localStorage.getItem('i18nextLng') ||
-      navigator.language.split('-')[0] ||
-      defaultLanguage;
-
-    // If the detected language is not supported, use default
-    if (!supportedLanguages.includes(detectedLanguage)) {
-      devLog(`Language ${detectedLanguage} is not supported, using ${defaultLanguage}`);
-      detectedLanguage = defaultLanguage;
-    }
-
-    // Set the current language
-    currentLanguage = detectedLanguage;
-    devLog(`Set language: ${currentLanguage}`);
-
-    // Set HTML lang attribute
-    document.documentElement.lang = currentLanguage;
-
-    // Add dir attribute for RTL languages
-    if (['ar', 'he'].includes(currentLanguage)) {
-      document.documentElement.dir = 'rtl';
-    } else {
-      document.documentElement.dir = 'ltr';
-    }
-
-    // Save language in cookies and localStorage
-    setCookie('i18next', currentLanguage, 365);
-    localStorage.setItem('i18nextLng', currentLanguage);
-
-    // Synchronize with window.language for SVG buttons
-    window.language = currentLanguage;
-
-    // Synchronize SVG language buttons
-    syncLanguageMasks();
-
-    // Update translations only if not the default language
-    if (currentLanguage !== defaultLanguage) {
-      try {
-        // Preload common namespaces
-        await preloadCommonNamespaces();
-
-        // Initialize translations on page
-        updatePageTranslations();
-      } catch (error) {
-        console.error('Error during translation initialization:', error);
-      }
-    }
-
-    // Clean URL from cache busting parameter after page load
-    if (window.location.search.includes('i18n_cb')) {
-      // Wait for page to fully load
-      setTimeout(() => {
-        // Use History API to clean URL without page reload
-        const cleanUrl = new URL(window.location.href);
-        cleanUrl.searchParams.delete('i18n_cb');
-        window.history.replaceState({}, document.title, cleanUrl.toString());
-        devLog('Removed cache busting parameter from URL');
-      }, 2000); // 2 seconds delay to ensure page loaded
-    }
-
-    // Set initialization flag
-    initialized = true;
-
-    // Set up mutation observer to translate dynamically added content
-    if (window.MutationObserver && currentLanguage !== defaultLanguage) {
-      const observer = new MutationObserver((mutations) => {
-        // Check if any mutations added nodes with data-i18n attributes
-        let hasTranslatableContent = false;
-
-        for (const mutation of mutations) {
-          if (mutation.type === 'childList' && mutation.addedNodes.length) {
-            for (const node of mutation.addedNodes) {
-              // Only process element nodes
-              if (node.nodeType === Node.ELEMENT_NODE) {
-                // Check if this node or its children have data-i18n attributes
-                if (node.querySelector('[data-i18n], [data-i18n-attr], [data-i18n-html]') ||
-                  node.hasAttribute('data-i18n') ||
-                  node.hasAttribute('data-i18n-attr') ||
-                  node.hasAttribute('data-i18n-html')) {
-                  hasTranslatableContent = true;
-                  break;
-                }
-              }
-            }
-          }
-
-          if (hasTranslatableContent) break;
-        }
-
-        // If we found translatable content, update translations
-        if (hasTranslatableContent) {
-          devLog('Detected new translatable content, updating translations');
-          updatePageTranslations();
-        }
-      });
-
-      // Start observing the document
-      observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true
-      });
-
-      devLog('Translation mutation observer started');
-    }
-
-    // Generate event that i18n is initialized
-    document.dispatchEvent(new CustomEvent('i18n:initialized', {
-      detail: { language: currentLanguage }
-    }));
-
-    // Force update translations when the page is fully loaded
-    window.addEventListener('load', () => {
-      if (initialized && currentLanguage !== defaultLanguage) {
-        devLog("Page fully loaded, forcing translation update");
-
-        // Do the first update immediately
-        updatePageTranslations();
-
-        // Do another update after a short delay to catch any late-rendered elements
-        setTimeout(() => {
-          updatePageTranslations();
-
-          // Start checking for untranslated elements
-          checkAndScheduleRetry();
-
-          // Log translation status
-          if (window.APP_CONFIG?.NODE_ENV === 'development') {
-            const translated = document.querySelectorAll('[data-i18n]').length;
-            devLog(`Translation status: ${translated} elements with data-i18n tags found`);
-          }
-        }, 500);
+  // Check DOM state
+  if (document.readyState !== 'complete' && document.readyState !== 'interactive') {
+    devLog("DOM not ready, waiting for load...");
+    await new Promise(resolve => {
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        resolve();
+      } else {
+        document.addEventListener('DOMContentLoaded', resolve);
       }
     });
-
-    // Also run updatePageTranslations when language changes
-    document.addEventListener('languageChanged', (event) => {
-      if (event.detail && event.detail.language !== defaultLanguage) {
-        devLog(`Language changed to ${event.detail.language}, updating translations`);
-        updatePageTranslations();
-      }
-    });
-
-    devLog("i18n successfully initialized");
   }
+
+  // Determine current language with priorities that match the server config:
+  // 1. Custom app-language header if available via meta tag
+  // 2. URL query parameter "lang"
+  // 3. Previously stored language in cookie
+  // 4. Browser language
+  // 5. Default language
+
+  // Check if app-language was provided via meta tag
+  const appLanguageMeta = document.querySelector('meta[name="app-language"]');
+  let detectedLanguage = null;
+  
+  if (appLanguageMeta && appLanguageMeta.content) {
+    detectedLanguage = appLanguageMeta.content;
+    devLog(`Found app-language from meta tag: ${detectedLanguage}`);
+  }
+
+  // Check URL query parameter
+  if (!detectedLanguage) {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('lang')) {
+      detectedLanguage = urlParams.get('lang');
+      devLog(`Found language from URL query: ${detectedLanguage}`);
+    }
+  }
+
+  // Check cookie
+  if (!detectedLanguage) {
+    detectedLanguage = getCookie('i18next');
+    if (detectedLanguage) {
+      devLog(`Found language from cookie: ${detectedLanguage}`);
+    }
+  }
+
+  // Check localStorage
+  if (!detectedLanguage) {
+    detectedLanguage = localStorage.getItem('i18nextLng');
+    if (detectedLanguage) {
+      devLog(`Found language from localStorage: ${detectedLanguage}`);
+    }
+  }
+
+  // Fall back to browser language or default
+  if (!detectedLanguage) {
+    detectedLanguage = navigator.language.split('-')[0] || defaultLanguage;
+    devLog(`Using browser language or default: ${detectedLanguage}`);
+  }
+
+  // If the detected language is not supported, use default
+  if (!supportedLanguages.includes(detectedLanguage)) {
+    devLog(`Language ${detectedLanguage} is not supported, using ${defaultLanguage}`);
+    detectedLanguage = defaultLanguage;
+  }
+
+  // Set the current language
+  currentLanguage = detectedLanguage;
+  devLog(`Set language: ${currentLanguage}`);
+
+  // Set HTML lang attribute
+  document.documentElement.lang = currentLanguage;
+
+  // Add dir attribute for RTL languages
+  if (['ar', 'he'].includes(currentLanguage)) {
+    document.documentElement.dir = 'rtl';
+  } else {
+    document.documentElement.dir = 'ltr';
+  }
+
+  // Save language in cookies and localStorage
+  setCookie('i18next', currentLanguage, 365);
+  localStorage.setItem('i18nextLng', currentLanguage);
+  
+  // Also set app-language header for future fetch requests
+  if (window.fetch) {
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options = {}) {
+      if (!options.headers) {
+        options.headers = {};
+      }
+      
+      // Add app-language header to all fetch requests
+      if (typeof options.headers.set === 'function') {
+        options.headers.set('app-language', currentLanguage);
+      } else {
+        options.headers['app-language'] = currentLanguage;
+      }
+      
+      return originalFetch.call(this, url, options);
+    };
+    devLog(`Monkey-patched fetch to add app-language header: ${currentLanguage}`);
+  }
+
+  // Synchronize with window.language for SVG buttons
+  window.language = currentLanguage;
+
+  // Synchronize SVG language masks
+  syncLanguageMasks();
+
+  // Rest of the initialization function remains the same...
+}
 
   /**
    * Load translation files with cache busting

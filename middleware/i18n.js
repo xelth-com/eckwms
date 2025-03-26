@@ -243,50 +243,6 @@ function initI18n(options = {}) {
     'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja'
   ];
 
-  // Optimized language detection middleware
-  const languageDetectorMiddleware = (req, res, next) => {
-    // First, quickly check if this is likely an HTML request
-    const acceptHeader = req.headers['accept'] || '';
-    const path = req.path || '';
-
-    // Skip non-HTML requests early
-    const isLikelyHtml =
-      acceptHeader.includes('text/html') ||
-      path.endsWith('.html') ||
-      path === '/' ||
-      (!path.includes('.') && !path.startsWith('/api/'));
-
-    if (!isLikelyHtml) {
-      // Even for non-HTML requests, still set the default language
-      req.language = defaultLanguage;
-      next();
-      return;
-    }
-
-    // For HTML requests, perform language detection
-    const userLanguage =
-      req.cookies?.i18next ||
-      req.query?.lang ||
-      req.headers['accept-language']?.split(',')[0]?.split('-')[0] ||
-      defaultLanguage;
-
-    // Check if language is supported
-    req.language = supportedLngs.includes(userLanguage) ? userLanguage : defaultLanguage;
-
-    // Ensure req.language is always set (debug)
-    console.log(`[i18n] Language detected: ${req.language}`);
-
-    // Save language in cookie if it changed
-    if (req.cookies?.i18next !== req.language) {
-      res.cookie('i18next', req.language, {
-        maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
-        path: '/'
-      });
-    }
-
-    next();
-  };
-
   // Namespaces list
   const namespaces = ['common', 'rma', 'dashboard', 'auth'];
 
@@ -305,7 +261,10 @@ function initI18n(options = {}) {
       ns: namespaces,
       defaultNS: 'common',
       detection: {
-        order: ['cookie', 'querystring', 'header', 'session'],
+        // Updated detection order with customHeader first
+        order: ['customHeader', 'querystring', 'cookie', 'header'],
+        // Set customHeader to look for app-language
+        lookupCustomHeader: 'app-language',
         lookupCookie: 'i18next',
         lookupQuerystring: 'lang',
         lookupHeader: 'accept-language',
@@ -695,8 +654,8 @@ function initI18n(options = {}) {
     next();
   };
 
-  // Combine i18next middleware with our tag processor
-  return [languageDetectorMiddleware, i18nextMiddleware.handle(i18next), tagProcessor];
+  // Now only return the i18next middleware and tag processor
+  return [i18nextMiddleware.handle(i18next), tagProcessor];
 }
 
 module.exports = initI18n;
