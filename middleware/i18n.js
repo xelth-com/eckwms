@@ -91,7 +91,7 @@ function processTranslationQueue() {
     }
 
     const batchKey = `${item.targetLang}:${item.namespace || 'common'}`;
-    
+
     if (!batches[batchKey]) {
       batches[batchKey] = {
         targetLang: item.targetLang,
@@ -99,7 +99,7 @@ function processTranslationQueue() {
         items: []
       };
     }
-    
+
     batches[batchKey].items.push(item);
     processedItems.push(item);
   }
@@ -108,10 +108,10 @@ function processTranslationQueue() {
   const batchPromises = Object.values(batches).map(async (batch) => {
     try {
       console.log(`[i18n] Processing batch for [${batch.targetLang}] ${batch.namespace} with ${batch.items.length} items`);
-      
+
       // Extract texts and save item mapping
       const texts = batch.items.map(item => item.text);
-      
+
       // Use batchTranslate function to translate all texts at once
       const translatedTexts = await batchTranslate(
         texts,
@@ -122,22 +122,22 @@ function processTranslationQueue() {
 
       // Prepare translations for saving to file
       const fileUpdates = {};
-      
+
       // Make sure we have the same number of translations as source texts
       if (translatedTexts.length === batch.items.length) {
         translatedTexts.forEach((translatedText, index) => {
           const item = batch.items[index];
           const namespaceFile = item.namespace || 'common';
-          
+
           if (!fileUpdates[namespaceFile]) {
             fileUpdates[namespaceFile] = [];
           }
-          
+
           fileUpdates[namespaceFile].push({
             key: item.key,
             value: translatedText
           });
-          
+
           console.log(`[i18n] Translated [${batch.targetLang}] ${item.key}: "${translatedText.substring(0, 30)}..."`);
         });
       } else {
@@ -148,7 +148,7 @@ function processTranslationQueue() {
       for (const [namespace, updates] of Object.entries(fileUpdates)) {
         // Path to translation file
         const filePath = path.join(process.cwd(), 'html', 'locales', batch.targetLang, `${namespace}.json`);
-        
+
         // Read existing translations
         let translations = {};
         try {
@@ -160,13 +160,13 @@ function processTranslationQueue() {
           console.error(`[i18n] Error reading translation file: ${error.message}`);
           // Continue with empty translations if file can't be read
         }
-        
+
         // Apply all updates to the translation object
         let updateCount = 0;
         updates.forEach(update => {
           const keyPath = update.key.split('.');
           let current = translations;
-          
+
           // Create nested objects for the key path
           for (let i = 0; i < keyPath.length - 1; i++) {
             const segment = keyPath[i];
@@ -175,21 +175,21 @@ function processTranslationQueue() {
             }
             current = current[segment];
           }
-          
+
           // Set the translation
           current[keyPath[keyPath.length - 1]] = update.value;
           updateCount++;
         });
-        
+
         // Ensure directory exists
         const dir = path.dirname(filePath);
         if (!fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
         }
-        
+
         // Write updated translations to file
         fs.writeFileSync(filePath, JSON.stringify(translations, null, 2), 'utf8');
-        
+
         console.log(`[i18n] Saved: [${batch.targetLang}] ${namespace} (${updateCount} items)`);
       }
 
@@ -199,7 +199,7 @@ function processTranslationQueue() {
       });
     } catch (error) {
       console.error(`[i18n] Batch processing error for [${batch.targetLang}]: ${error.message}`);
-      
+
       // Mark all items as failed
       batch.items.forEach(item => {
         translationQueue.markProcessed(item, false);
@@ -271,7 +271,16 @@ function initI18n(options = {}) {
         lookupSession: 'lang',
         caches: ['cookie'],
         cookieExpirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
-        cookieDomain: options.cookieDomain || undefined
+        cookieDomain: options.cookieDomain || undefined,
+        // Add a callback to log the detected language in dev mode
+        lookupFromRequest: (req) => {
+          // This will run after language detection
+          const detectedLanguage = req.language;
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[i18n] Language detected: ${detectedLanguage} (request path: ${req.path})`);
+          }
+          return detectedLanguage;
+        }
       },
       load: 'languageOnly',
       saveMissing: true,

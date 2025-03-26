@@ -7,7 +7,6 @@ const { resolve } = require('path');
 const app = express();
 const bodyParser = require('body-parser');
 const helmet = require('helmet');
-const morgan = require('morgan');
 const { createSecretJwtKey } = require('./utils/encryption');
 const { appendFile } = require('fs/promises');
 const session = require('express-session');
@@ -82,78 +81,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.text({ type: 'text/html' }));
 
-// Logging middleware - applied early but after compression
-app.use(morgan('[:date[clf]] :method :url :status :response-time ms - :res[content-length]'));
 app.use(requestLogger);
 
-// Specific routes for heavily accessed static assets to apply strong caching
-app.get('/favicon*.png', (req, res) => {
-  res.set({
-    'Cache-Control': `public, max-age=${60 * 60 * 24 * 30}`, // 30 days
-    'Expires': new Date(Date.now() + 60 * 60 * 24 * 30 * 1000).toUTCString()
-  });
-  res.sendFile(path.join(__dirname, 'html', req.path));
-});
 
-app.get('/android-chrome-*.png', (req, res) => {
-  res.set({
-    'Cache-Control': `public, max-age=${60 * 60 * 24 * 30}`, // 30 days
-    'Expires': new Date(Date.now() + 60 * 60 * 24 * 30 * 1000).toUTCString()
-  });
-  res.sendFile(path.join(__dirname, 'html', req.path));
-});
-
-app.get('/apple-touch-icon*.png', (req, res) => {
-  res.set({
-    'Cache-Control': `public, max-age=${60 * 60 * 24 * 30}`, // 30 days
-    'Expires': new Date(Date.now() + 60 * 60 * 24 * 30 * 1000).toUTCString()
-  });
-  res.sendFile(path.join(__dirname, 'html', req.path));
-});
-
-app.get('/mstile-*.png', (req, res) => {
-  res.set({
-    'Cache-Control': `public, max-age=${60 * 60 * 24 * 30}`, // 30 days
-    'Expires': new Date(Date.now() + 60 * 60 * 24 * 30 * 1000).toUTCString()
-  });
-  res.sendFile(path.join(__dirname, 'html', req.path));
-});
-
-// Static file middleware - BEFORE i18n and HTML processing
-// Serve static files with different cache settings for different file types
-app.use(express.static(path.join(__dirname, 'html'), {
-  setHeaders: (res, filePath) => {
-    const ext = path.extname(filePath).toLowerCase();
-    
-    // Apply appropriate caching based on file type
-    if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico'].includes(ext)) {
-      // Images
-      res.set('Cache-Control', `public, max-age=${60 * 60 * 24 * 7}`); // 7 days
-    } else if (['.css', '.js'].includes(ext)) {
-      // CSS/JS files with medium caching
-      res.set('Cache-Control', `public, max-age=${60 * 60 * 24 * 3}`); // 3 days
-    } else if (['.woff', '.woff2', '.ttf', '.eot', '.otf'].includes(ext)) {
-      // Font files with long caching
-      res.set('Cache-Control', `public, max-age=${60 * 60 * 24 * 30}`); // 30 days
-    } else {
-      // Other static files with shorter caching
-      res.set('Cache-Control', `public, max-age=${60 * 60 * 24}`); // 1 day
-    }
-  }
-}));
-
-// Special handling for locale files
-app.use('/locales', (req, res, next) => {
-  // Different cache strategy for locale files
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  next();
-}, express.static(path.join(__dirname, 'html', 'locales')));
 
 // Initialize i18n AFTER static files
 app.use(initI18n());
-
 // Create HTML translator with access to i18next - AFTER static files
 const htmlTranslator = htmlInterceptor(i18next);
 app.use(htmlTranslator);

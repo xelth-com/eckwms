@@ -73,10 +73,11 @@ const errorHandler = (err, req, res, next) => {
  * @param {Function} next - Express next function
  */
 const requestLogger = (req, res, next) => {
-    const start = Date.now();
+    const start = Date.now(); // Сохраняем время начала запроса
     res.on('finish', () => {
-        const ms = Date.now() - start;
-        console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms`);
+        const ms = Date.now() - start; // Вычисляем разницу времени
+        const language = req.i18n ? req.i18n.language : 'unknown';
+        console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms ${language}`);
     });
     next();
 };
