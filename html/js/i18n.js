@@ -65,7 +65,6 @@ function findUntranslatedElements() {
   };
 
   console.log(`[i18n] Checking for untranslated elements (current language: ${currentLanguage})`);
-  console.log(`[i18n] Translation cache has ${Object.keys(translationCache).length} entries`);
 
   // Check standard text elements
   document.querySelectorAll('[data-i18n]').forEach(el => {
@@ -76,56 +75,27 @@ function findUntranslatedElements() {
     const content = el.textContent.trim();
     
     // A better check for untranslated content:
-    // 1. If content is empty or exactly matches the key, it's definitely untranslated
-    // 2. If we have a cached translation and it doesn't match the content, it needs updating
+    // 1. If content is empty, it's definitely untranslated
+    // 2. If content exactly matches the key or the last part of the key, it's untranslated
+    const keyParts = key.split(':');
+    const shortKey = keyParts[keyParts.length - 1];
+    const keyLastPart = shortKey.split('.').pop(); // Get last part after the dot
+    
     let needsTranslation = false;
-    let translatedText = null;
     
-    // Try to find the translation in any namespace
-    const parts = key.split(':');
-    const explicitNamespace = parts.length > 1;
-    const primaryNamespace = explicitNamespace ? parts[0] : 'common';
-    const actualKey = explicitNamespace ? parts.slice(1).join(':') : key;
-    
-    // Check primary namespace
-    const primaryCacheKey = `${currentLanguage}:${primaryNamespace}:${actualKey}`;
-    if (translationCache[primaryCacheKey]) {
-      translatedText = translationCache[primaryCacheKey];
-    } 
-    // If no explicit namespace, also check alternative namespaces
-    else if (!explicitNamespace) {
-      const namespacesToCheck = ['rma', 'dashboard', 'auth'];
-      for (const ns of namespacesToCheck) {
-        const altCacheKey = `${currentLanguage}:${ns}:${actualKey}`;
-        if (translationCache[altCacheKey]) {
-          translatedText = translationCache[altCacheKey];
-          break;
-        }
-      }
-    }
-    
-    // Determine if translation is needed
-    if (content === '' || content === key) {
+    if (content === '' || content === key || content === shortKey || content === keyLastPart) {
       // Empty or showing the key - definitely needs translation
       needsTranslation = true;
-    } 
-    else if (translatedText && content !== translatedText) {
-      // We have a cached translation that doesn't match the content
-      needsTranslation = true;
-    }
-    else if (!translatedText) {
-      // No translation found in any namespace
-      needsTranslation = true;
     }
 
-    console.log(`[i18n] Checking element: key=${key}, content="${content.substring(0, 30)}...", needs translation=${needsTranslation}`);
-
+    // Don't mark already translated content as needing translation
+    // This is the key fix - only add untranslated elements
     if (needsTranslation) {
       untranslatedElements.standard.push({
         element: el,
         key: key
       });
-      console.log(`[i18n] Added element to untranslated list: ${key}`);
+      console.log(`[i18n] Found untranslated element: ${key}, content="${content}"`);
     }
   });
 
@@ -145,14 +115,12 @@ function findUntranslatedElements() {
 
       for (const [attr, key] of Object.entries(attrsMap)) {
         // Similar logic to above, for attribute translations
-        // For brevity, I'm skipping detailed namespace checks here
-        const parts = key.split(':');
-        const namespace = parts.length > 1 ? parts[0] : 'common';
-        const actualKey = parts.length > 1 ? parts.slice(1).join(':') : key;
+        const keyParts = key.split(':');
+        const shortKey = keyParts[keyParts.length - 1];
+        const attrValue = el.getAttribute(attr) || '';
         
-        const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
-        
-        if (!translationCache[cacheKey]) {
+        // Only mark as untranslated if showing empty value or the key itself
+        if (attrValue === '' || attrValue === key || attrValue === shortKey) {
           untranslatedElements.attributes.push({
             element: el,
             attribute: attr,
@@ -162,26 +130,6 @@ function findUntranslatedElements() {
       }
     } catch (error) {
       console.error('Error checking attribute translation:', error);
-    }
-  });
-
-  // Check HTML content translations
-  document.querySelectorAll('[data-i18n-html]').forEach(el => {
-    const key = el.getAttribute('data-i18n-html');
-    if (!key) return;
-
-    // Similar logic to standard elements
-    const parts = key.split(':');
-    const namespace = parts.length > 1 ? parts[0] : 'common';
-    const actualKey = parts.length > 1 ? parts.slice(1).join(':') : key;
-    
-    const cacheKey = `${currentLanguage}:${namespace}:${actualKey}`;
-    
-    if (!translationCache[cacheKey]) {
-      untranslatedElements.html.push({
-        element: el,
-        key: key
-      });
     }
   });
 

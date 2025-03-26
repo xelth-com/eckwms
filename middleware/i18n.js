@@ -25,38 +25,38 @@ const processingKeys = new Set();
 async function loadNamespace(language, namespace, version = '') {
   const cacheKey = `${language}:${namespace}`;
   const currentVersion = namespaceVersions.get(cacheKey) || '';
-  
+
   // Skip if already loaded with current version
   if (loadedNamespaces && loadedNamespaces[cacheKey] && currentVersion === version && !version) {
     return Promise.resolve();
   }
-  
+
   try {
     // Use version parameter or timestamp to prevent caching
     const versionParam = version ? `?v=${version}` : `?t=${Date.now()}`;
     const filePath = path.join(process.cwd(), 'html', 'locales', language, `${namespace}.json`);
-    
+
     // Check if file exists and get modification time
     const fileStats = await fs.promises.stat(filePath).catch(() => null);
     const fileModTime = fileStats ? fileStats.mtime.getTime() : 0;
-    
+
     // If we have current version and file hasn't changed, skip loading
     if (currentVersion && fileModTime <= parseInt(currentVersion)) {
       if (loadedNamespaces) loadedNamespaces[cacheKey] = true;
       return Promise.resolve();
     }
-    
+
     // Load and parse the file with BOM handling
     const content = await fs.promises.readFile(filePath, 'utf8');
     const translations = parseJSONWithBOM(content);
-    
+
     // Update i18next resources
     i18next.addResourceBundle(language, namespace, translations, true, true);
-    
+
     // Mark namespace as loaded and update version
     if (loadedNamespaces) loadedNamespaces[cacheKey] = true;
     namespaceVersions.set(cacheKey, fileModTime.toString());
-    
+
     console.log(`[i18n] Loaded namespace: ${language}:${namespace} (version: ${fileModTime})`);
     return Promise.resolve();
   } catch (error) {
@@ -65,10 +65,7 @@ async function loadNamespace(language, namespace, version = '') {
   }
 }
 
-// Improved processTranslationQueue function with batch support
-// Replace this function in middleware/i18n.js
-
-// Process translation queue with batch processing
+// Improved processTranslationQueue function with better logging and error handling
 function processTranslationQueue() {
   if (translationQueue.isEmpty()) {
     setTimeout(processTranslationQueue, 5000);
@@ -87,6 +84,12 @@ function processTranslationQueue() {
     const item = translationQueue.dequeue();
     if (!item) continue;
 
+    // Ensure we have a valid target language that's not the default
+    if (!item.targetLang || item.targetLang === defaultLanguage) {
+      console.log(`[i18n] Skipping item with invalid target language: ${item.targetLang}`);
+      continue;
+    }
+
     const batchKey = `${item.targetLang}:${item.namespace || 'common'}`;
     
     if (!batches[batchKey]) {
@@ -104,6 +107,8 @@ function processTranslationQueue() {
   // Process each batch
   const batchPromises = Object.values(batches).map(async (batch) => {
     try {
+      console.log(`[i18n] Processing batch for [${batch.targetLang}] ${batch.namespace} with ${batch.items.length} items`);
+      
       // Extract texts and save item mapping
       const texts = batch.items.map(item => item.text);
       
@@ -112,7 +117,7 @@ function processTranslationQueue() {
         texts,
         batch.targetLang,
         batch.namespace, // Use namespace as context
-        'en' // Assuming English is the source language
+        'en' // Source language is English
       );
 
       // Prepare translations for saving to file
@@ -133,7 +138,7 @@ function processTranslationQueue() {
             value: translatedText
           });
           
-          console.log(`[i18n] Translated: [${batch.targetLang}] ${item.namespace}:${item.key}`);
+          console.log(`[i18n] Translated [${batch.targetLang}] ${item.key}: "${translatedText.substring(0, 30)}..."`);
         });
       } else {
         throw new Error(`Translation count mismatch: expected ${batch.items.length}, got ${translatedTexts.length}`);
@@ -185,7 +190,7 @@ function processTranslationQueue() {
         // Write updated translations to file
         fs.writeFileSync(filePath, JSON.stringify(translations, null, 2), 'utf8');
         
-        console.log(`[i18n] Batch saved: [${batch.targetLang}] ${namespace} (${updateCount} items)`);
+        console.log(`[i18n] Saved: [${batch.targetLang}] ${namespace} (${updateCount} items)`);
       }
 
       // Mark all items as processed
@@ -193,7 +198,7 @@ function processTranslationQueue() {
         translationQueue.markProcessed(item, true);
       });
     } catch (error) {
-      console.error(`[i18n] Batch processing error: ${error.message}`);
+      console.error(`[i18n] Batch processing error for [${batch.targetLang}]: ${error.message}`);
       
       // Mark all items as failed
       batch.items.forEach(item => {
@@ -223,7 +228,7 @@ function processTranslationQueue() {
 function initI18n(options = {}) {
   // Initialize loaded namespaces tracking
   global.loadedNamespaces = {};
-  
+
   // FIXED PATH: Using html/locales instead of just locales
   const localesPath = path.join(process.cwd(), 'html', 'locales');
   const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
@@ -237,40 +242,40 @@ function initI18n(options = {}) {
     // Additional languages
     'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja'
   ];
-  
+
   // Optimized language detection middleware
   const languageDetectorMiddleware = (req, res, next) => {
     // First, quickly check if this is likely an HTML request
     const acceptHeader = req.headers['accept'] || '';
     const path = req.path || '';
-    
+
     // Skip non-HTML requests early
-    const isLikelyHtml = 
-      acceptHeader.includes('text/html') || 
-      path.endsWith('.html') || 
-      path === '/' || 
+    const isLikelyHtml =
+      acceptHeader.includes('text/html') ||
+      path.endsWith('.html') ||
+      path === '/' ||
       (!path.includes('.') && !path.startsWith('/api/'));
-    
+
     if (!isLikelyHtml) {
       // Even for non-HTML requests, still set the default language
       req.language = defaultLanguage;
       next();
       return;
     }
-    
+
     // For HTML requests, perform language detection
     const userLanguage =
       req.cookies?.i18next ||
       req.query?.lang ||
       req.headers['accept-language']?.split(',')[0]?.split('-')[0] ||
       defaultLanguage;
-  
+
     // Check if language is supported
     req.language = supportedLngs.includes(userLanguage) ? userLanguage : defaultLanguage;
-  
+
     // Ensure req.language is always set (debug)
     console.log(`[i18n] Language detected: ${req.language}`);
-  
+
     // Save language in cookie if it changed
     if (req.cookies?.i18next !== req.language) {
       res.cookie('i18next', req.language, {
@@ -278,10 +283,10 @@ function initI18n(options = {}) {
         path: '/'
       });
     }
-  
+
     next();
   };
-  
+
   // Namespaces list
   const namespaces = ['common', 'rma', 'dashboard', 'auth'];
 
@@ -315,19 +320,22 @@ function initI18n(options = {}) {
       parseMissingKeyHandler: (key, defaultValue) => {
         return key;
       },
+      // Find this function in middleware/i18n.js and replace it with this version
       missingKeyHandler: (lng, ns, key, fallbackValue, options, req) => {
         // Get the primary language from the array or use the language if it's already a string
-        const primaryLang = Array.isArray(lng) ? lng[0] : lng;
-        
-        const targetLanguage = primaryLang || defaultLanguage;
+        const targetLanguage = Array.isArray(lng) ? lng[0] : lng;
 
-console.log(`Using language for translation queue: ${targetLanguage}`);
-        
+        // Make sure we have a valid target language that's not the default
+        if (!targetLanguage || targetLanguage === defaultLanguage) {
+          return;  // Skip processing for default language
+        }
+
+        console.log(`Missing translation detected: [${targetLanguage}] ${ns}:${key}`);
+
         // Create a unique key to track this missing key
         const uniqueKey = `${targetLanguage}:${ns}:${key}`;
-        
-        // First check if the translation already exists in the files
-        // This is the key fix - check if translation exists before queueing
+
+        // Check if the translation already exists in the files
         try {
           // Check if the key exists in the target language
           if (i18next.exists(key, { ns, lng: targetLanguage })) {
@@ -339,27 +347,27 @@ console.log(`Using language for translation queue: ${targetLanguage}`);
         } catch (err) {
           console.error(`[i18n] Error checking if translation exists: ${err.message}`);
         }
-        console.log(`Using language for translation queue222222222222222222: ${[...processingKeys]}`);
-        // // Prevent recursive calls - skip if we're already processing this key
-        // if (processingKeys.has(uniqueKey)) {
-        //   return;
-        // }
-        console.log(`Using language for translation queue333333333333: ${targetLanguage}`);
+
+        // Prevent recursive calls - skip if we're already processing this key
+        if (processingKeys.has(uniqueKey)) {
+          return;
+        }
+
         try {
           // Mark that we're processing this key
           processingKeys.add(uniqueKey);
-          
+
           // Get text from default language WITHOUT triggering missing key handler
           let defaultText = key;
           let foundInDefaultLang = false;
           let sourceType = 'key'; // Track where we found the source text
-          
+
           // 1. Check if the key exists in the default language
           if (i18next.exists(key, { ns, lng: defaultLanguage })) {
             defaultText = i18next.t(key, { ns, lng: defaultLanguage });
             foundInDefaultLang = true;
             sourceType = 'defaultLang';
-          } 
+          }
           // 2. Check if the content was saved in elementContents map
           else if (global.elementContents && global.elementContents.has(key)) {
             defaultText = global.elementContents.get(key);
@@ -372,7 +380,7 @@ console.log(`Using language for translation queue: ${targetLanguage}`);
               // Look for HTML element with this data-i18n key
               const regex = new RegExp(`<[^>]+data-i18n=["']${key}["'][^>]*>([^<]+)<\/[^>]+>`, 'g');
               const match = regex.exec(global.currentProcessingHtml);
-              
+
               if (match && match[1]) {
                 defaultText = match[1].trim();
                 sourceType = 'htmlContent';
@@ -382,16 +390,17 @@ console.log(`Using language for translation queue: ${targetLanguage}`);
               console.error(`Error extracting HTML content for ${key}:`, error);
             }
           }
-          console.log('////////////////////////////////////////////////////////')
+
           // Important fix: Use the correct target language for the queue
+          console.log(`Adding to translation queue: [${targetLanguage}] ${ns}:${key} (source: ${sourceType})`);
           translationQueue.enqueue({
             text: defaultText,
-            targetLang: targetLanguage, // Ensure the target language is correctly set
+            targetLang: targetLanguage, // Use the request's target language, not defaultLanguage
             namespace: ns,
             key: key,
             sourceType: sourceType
           });
-      
+
           if (process.env.NODE_ENV === 'development') {
             console.log(`[i18n] Added to translation queue: [${targetLanguage}] ${ns}:${key} (source: ${sourceType})`);
           }
@@ -410,7 +419,7 @@ console.log(`Using language for translation queue: ${targetLanguage}`);
       },
       ...options
     });
-    
+
   // Promise-based translation function
   i18next.getTranslationAsync = async (key, options, lng) => {
     return new Promise((resolve) => {
@@ -470,14 +479,14 @@ console.log(`Using language for translation queue: ${targetLanguage}`);
         }
 
         console.log(`Translating: ${translationKey} in namespace ${namespace}`);
-        
+
         try {
           // Add safeguard against infinite recursion
           const uniqueKey = `${language}:${namespace}:${translationKey}`;
           if (processingKeys.has(uniqueKey)) {
             return match; // Skip if already processing this key
           }
-          
+
           processingKeys.add(uniqueKey);
           const translation = req.i18n.t(translationKey, { ns: namespace });
           processingKeys.delete(uniqueKey);
@@ -522,7 +531,7 @@ console.log(`Using language for translation queue: ${targetLanguage}`);
               allTranslated = false;
               continue; // Skip if already processing this key
             }
-            
+
             try {
               processingKeys.add(uniqueKey);
               const translation = req.i18n.t(translationKey, { ns: namespace });
@@ -580,14 +589,14 @@ console.log(`Using language for translation queue: ${targetLanguage}`);
         }
 
         console.log(`Translating HTML: ${translationKey} in namespace ${namespace}`);
-        
+
         try {
           // Add safeguard against infinite recursion
           const uniqueKey = `${language}:${namespace}:${translationKey}`;
           if (processingKeys.has(uniqueKey)) {
             return match; // Skip if already processing this key
           }
-          
+
           processingKeys.add(uniqueKey);
           const translation = req.i18n.t(translationKey, {
             ns: namespace,
