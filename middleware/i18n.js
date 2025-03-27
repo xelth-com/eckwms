@@ -1,4 +1,4 @@
-// middleware/i18n.js [UPDATED VERSION]
+// middleware/i18n.js
 const i18next = require('i18next');
 const i18nextMiddleware = require('i18next-http-middleware');
 const Backend = require('i18next-fs-backend');
@@ -220,6 +220,9 @@ function processTranslationQueue() {
     });
 }
 
+// Initialize global variable for default language
+const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
+
 /**
  * Initialize i18next for Express
  * @param {Object} options - Additional settings
@@ -231,7 +234,6 @@ function initI18n(options = {}) {
 
   // FIXED PATH: Using html/locales instead of just locales
   const localesPath = path.join(process.cwd(), 'html', 'locales');
-  const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
 
   // List of all supported languages
   const supportedLngs = [
@@ -288,7 +290,7 @@ function initI18n(options = {}) {
       parseMissingKeyHandler: (key, defaultValue) => {
         return key;
       },
-      // Find this function in middleware/i18n.js and replace it with this version
+      // FIXED: missingKeyHandler now uses request context instead of global variables
       missingKeyHandler: (lng, ns, key, fallbackValue, options, req) => {
         // Get the primary language from the array or use the language if it's already a string
         const targetLanguage = Array.isArray(lng) ? lng[0] : lng;
@@ -337,17 +339,17 @@ function initI18n(options = {}) {
             sourceType = 'defaultLang';
           }
           // 2. Check if the content was saved in elementContents map
-          else if (global.elementContents && global.elementContents.has(key)) {
-            defaultText = global.elementContents.get(key);
+          else if (req && req.elementContents && req.elementContents.has(key)) {
+            defaultText = req.elementContents.get(key);
             sourceType = 'elementMap';
             console.log(`Found content in elementContents map for key ${key}: "${defaultText}"`);
           }
           // 3. Try to extract from HTML as a last resort
-          else if (global.currentProcessingHtml) {
+          else if (req && req.currentProcessingHtml) {
             try {
               // Look for HTML element with this data-i18n key
               const regex = new RegExp(`<[^>]+data-i18n=["']${key}["'][^>]*>([^<]+)<\/[^>]+>`, 'g');
-              const match = regex.exec(global.currentProcessingHtml);
+              const match = regex.exec(req.currentProcessingHtml);
 
               if (match && match[1]) {
                 defaultText = match[1].trim();
@@ -465,8 +467,8 @@ function initI18n(options = {}) {
           }
 
           console.log(`Translated: ${translationKey} → ${translation}`);
-          // Return element with translation but REMOVE the data-i18n attribute
-          return `<${tag1}${attrs}>${translation}</${tag2}>`;
+          // Return element with translation but KEEP the data-i18n attribute for client-side processing
+          return `<${tag1} data-i18n="${key}"${attrs}>${translation}</${tag2}>`;
         } catch (error) {
           console.error(`Error translating ${translationKey}:`, error);
           return match; // Return original on error
@@ -531,13 +533,8 @@ function initI18n(options = {}) {
             }
           }
 
-          // Keep data-i18n-attr for frontend retries if not all translated
-          if (!allTranslated) {
-            return newTag + '>';
-          }
-
-          // Otherwise remove data-i18n-attr but keep the tag
-          return newTag.replace(/\s+data-i18n-attr=['"][^'"]+['"]/, '') + '>';
+          // Always keep data-i18n-attr for frontend processing
+          return newTag + '>';
         } catch (e) {
           console.error('Error parsing data-i18n-attr:', e);
           return match;
@@ -578,8 +575,8 @@ function initI18n(options = {}) {
           }
 
           console.log(`Translated HTML: ${translationKey}`);
-          // Return element with HTML translation and REMOVE the data-i18n-html attribute
-          return `<${tag1}${attrs}>${translation}</${tag2}>`;
+          // Return element with HTML translation and KEEP the data-i18n-html attribute
+          return `<${tag1} data-i18n-html="${key}"${attrs}>${translation}</${tag2}>`;
         } catch (error) {
           console.error(`Error translating HTML ${translationKey}:`, error);
           return match; // Return original on error
@@ -670,3 +667,5 @@ function initI18n(options = {}) {
 module.exports = initI18n;
 module.exports.i18next = i18next;
 module.exports.translationQueue = translationQueue;
+
+
