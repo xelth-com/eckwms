@@ -108,7 +108,27 @@ app.use((req, res, next) => {
     try {
         // Добавим try-catch на случай, если заголовки уже отправлены (хотя это маловероятно для setHeader)
         if (!res.headersSent) {
-            res.setHeader('Content-Language', language);
+            res.setHeader('app-language', language);
+
+            // Also add a meta tag for client-side detection
+    const originalSend = res.send;
+    res.send = function(body) {
+      if (typeof body === 'string' && 
+          (res.get('Content-Type')?.includes('text/html') || 
+           body.includes('<head>') || 
+           body.includes('<!DOCTYPE html>'))) {
+        
+        // Only modify HTML responses
+        const languageMeta = `<meta name="app-language" content="${language}">`;
+        
+        // Add the meta tag inside the head if possible
+        if (body.includes('<head>')) {
+          body = body.replace('<head>', `<head>\n    ${languageMeta}`);
+        }
+      }
+      
+      return originalSend.call(this, body);
+    };
         }
     } catch (error) {
         console.error("Failed to set Content-Language header:", error);

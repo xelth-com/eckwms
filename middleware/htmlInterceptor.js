@@ -24,6 +24,10 @@ module.exports = function createHtmlInterceptor(i18next) {
       intercept: (body, send) => {
         console.log('Intercepted HTML response!');
 
+        // Initialize request-specific data storage instead of globals
+        req.elementContents = new Map();
+        req.currentProcessingHtml = body;
+
         // Modify HTML to inject app configuration
         let modifiedBody = body;
         if (modifiedBody.includes('<head>')) {
@@ -61,12 +65,8 @@ console.log("App config loaded:", window.APP_CONFIG);
           console.log(`Found translation tags: ${i18nTagCount} standard, ${i18nAttrCount} attribute, ${i18nHtmlCount} HTML`);
 
           if (i18nTagCount + i18nAttrCount + i18nHtmlCount > 0) {
-            // Make current HTML available for the missingKeyHandler
-            global.currentProcessingHtml = modifiedBody;
-            
-            // Create a map to store HTML content for each i18n key
-            // This is used by missingKeyHandler when default translation is missing
-            global.elementContents = new Map();
+            // Make current HTML available for the missingKeyHandler via request
+            req.currentProcessingHtml = modifiedBody;
             
             // First step: Extract all content from elements with data-i18n attributes
             // This pre-processing step makes content available for missingKeyHandler
@@ -74,7 +74,7 @@ console.log("App config loaded:", window.APP_CONFIG);
               (match, tag1, key, attrs, content, tag2) => {
                 if (content && content.trim()) {
                   // Store the content by key for the missingKeyHandler to use
-                  global.elementContents.set(key, content.trim());
+                  req.elementContents.set(key, content.trim());
                   if (process.env.NODE_ENV === 'development') {
                     console.log(`Stored content for key ${key}: "${content.trim()}"`);
                   }
@@ -100,19 +100,19 @@ console.log("App config loaded:", window.APP_CONFIG);
               try {
                 // Add safeguard against infinite recursion
                 const uniqueKey = `${language}:${namespace}:${translationKey}`;
-                const processingKeys = global.processingKeys || new Set();
+                const processingKeys = req.processingKeys || new Set();
                 
                 if (processingKeys.has(uniqueKey)) {
                   return match; // Skip if already processing this key
                 }
                 
                 processingKeys.add(uniqueKey);
-                global.processingKeys = processingKeys;
+                req.processingKeys = processingKeys;
                 
                 const translation = i18next.t(translationKey, { ns: namespace });
                 
                 processingKeys.delete(uniqueKey);
-                global.processingKeys = processingKeys;
+                req.processingKeys = processingKeys;
 
                 // IMPORTANT: We ALWAYS keep the data-i18n attribute
                 // so frontend can update it later when translation becomes available
@@ -153,7 +153,7 @@ console.log("App config loaded:", window.APP_CONFIG);
 
                   // Add safeguard against infinite recursion
                   const uniqueKey = `${language}:${namespace}:${translationKey}`;
-                  const processingKeys = global.processingKeys || new Set();
+                  const processingKeys = req.processingKeys || new Set();
                   
                   if (processingKeys.has(uniqueKey)) {
                     allTranslated = false;
@@ -162,12 +162,12 @@ console.log("App config loaded:", window.APP_CONFIG);
                   
                   try {
                     processingKeys.add(uniqueKey);
-                    global.processingKeys = processingKeys;
+                    req.processingKeys = processingKeys;
                     
                     const translation = i18next.t(translationKey, { ns: namespace });
                     
                     processingKeys.delete(uniqueKey);
-                    global.processingKeys = processingKeys;
+                    req.processingKeys = processingKeys;
 
                     // Get current attribute value if present
                     const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
@@ -220,14 +220,14 @@ console.log("App config loaded:", window.APP_CONFIG);
               try {
                 // Add safeguard against infinite recursion
                 const uniqueKey = `${language}:${namespace}:${translationKey}`;
-                const processingKeys = global.processingKeys || new Set();
+                const processingKeys = req.processingKeys || new Set();
                 
                 if (processingKeys.has(uniqueKey)) {
                   return match; // Skip if already processing this key
                 }
                 
                 processingKeys.add(uniqueKey);
-                global.processingKeys = processingKeys;
+                req.processingKeys = processingKeys;
                 
                 const translation = i18next.t(translationKey, {
                   ns: namespace,
@@ -235,11 +235,11 @@ console.log("App config loaded:", window.APP_CONFIG);
                 });
                 
                 processingKeys.delete(uniqueKey);
-                global.processingKeys = processingKeys;
+                req.processingKeys = processingKeys;
 
                 // Store the HTML content for potential translation
                 if (content && content.trim()) {
-                  global.elementContents.set(key, content.trim());
+                  req.elementContents.set(key, content.trim());
                 }
 
                 // ALWAYS keep the data-i18n-html attribute for frontend to update later
@@ -256,11 +256,7 @@ console.log("App config loaded:", window.APP_CONFIG);
               }
             });
 
-            // Clean up global variables after processing
-            setTimeout(() => {
-              global.currentProcessingHtml = null;
-              global.elementContents = null;
-            }, 1000);
+            // No need to clean up request-specific variables
           } else {
             console.log('No translation tags found in HTML');
           }
