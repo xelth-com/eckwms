@@ -65,6 +65,12 @@ global.serialP = 1;
 // Create JWT secret
 global.secretJwt = createSecretJwtKey(process.env.JWT_SECRET);
 
+
+app.use((req, res, next) => {
+    console.log('============================= Request Start Point =========================================');
+    next();
+});
+
 // Security middleware
 app.use(helmet({
     contentSecurityPolicy: false, // Disable CSP to avoid issues with inline scripts
@@ -75,6 +81,9 @@ app.use(helmet({
 const configPassport = require('./config/passport');
 const passportInstance = configPassport(global.secretJwt);
 app.use(passport.initialize());
+
+
+app.use(express.static(path.join(__dirname, 'html'))); 
 
 // Core middleware
 app.use(express.json());
