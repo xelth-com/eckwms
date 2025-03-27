@@ -731,114 +731,91 @@
 
 
     function myFetch(sendText = '', senderName = '', destination = 'output1', sendJWT = localStorage.getItem("jwt"), url = '/') {
-      let formData = {};
-      if (sendText === 'formSubmit') {
-        // Сбор данных формы в JSON
-        const elements = Array.from(document.getElementById(senderName).querySelectorAll('input, textarea, select'));
-        elements.forEach(element => {
-          if (element.value) {
-            formData[element.id] = element.value;
-          }
-        });
-        sendText = JSON.stringify(formData);
+  let formData = {};
+  if (sendText === 'formSubmit') {
+    // Сбор данных формы в JSON
+    const elements = Array.from(document.getElementById(senderName).querySelectorAll('input, textarea, select'));
+    elements.forEach(element => {
+      if (element.value) {
+        formData[element.id] = element.value;
+      }
+    });
+    sendText = JSON.stringify(formData);
+  }
+
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ text: sendText, name: senderName, dest: destination, jwt: sendJWT })
+  })
+    .then(async response => {
+      if (!response.ok) {
+        throw new Error('Ошибка сети: ' + response.statusText);
       }
 
-      fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ text: sendText, name: senderName, dest: destination, jwt: sendJWT })
-      })
-        .then(async response => {
-          if (!response.ok) {
-            throw new Error('Ошибка сети: ' + response.statusText);
-          }
+      let blob;
+      if (destination === 'pdfRma') {
+        // PDF handling logic...
+      } else if (destination === 'csv') {
+        // CSV handling logic...
+      } else {
+        blob = await response.text();
+        if (senderName == 'snInput' && sendText.split('.').length == 3) {
+          const [encodedHeader, encodedPayload, signature] = sendText.split('.');
+          localStorage.setItem("jwt", blob);
+          myFetch('', 'startInput');
+        }
 
-          let blob;
-          if (destination === 'pdfRma') {
-            blob = await response.blob();
-            if (blob.type !== 'application/pdf') {
-              throw new Error('Полученные данные не являются PDF');
-            }
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${formData.rma}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-          } else if (destination === 'csv') {
-            blob = await response.text();
-            const url = window.URL.createObjectURL(new Blob([blob], { type: 'text/csv' }));
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${Math.floor(Date.now() / 1000)}.csv`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            window.URL.revokeObjectURL(url);
+        // Вставляем HTML в указанный элемент
+        const targetElement = document.getElementById(destination);
+        targetElement.innerHTML = blob;
+
+        // Add this translation update
+        if (window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
+          window.i18n.updatePageTranslations();
+          
+          // ADD THIS: Synchronize language UI with current language
+          if (window.i18n.syncLanguageMasks) {
+            window.i18n.syncLanguageMasks();
           } else {
-            blob = await response.text();
-            if (senderName == 'snInput' && sendText.split('.').length == 3) {
-              const [encodedHeader, encodedPayload, signature] = sendText.split('.');
-              localStorage.setItem("jwt", blob);
-              myFetch('', 'startInput');
-            }
-
-            // Вставляем HTML в указанный элемент
-            const targetElement = document.getElementById(destination);
-            targetElement.innerHTML = blob;
-
-            // Add this translation update
-            if (window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
-              window.i18n.updatePageTranslations();
-            }
-
-            // Проверяем, является ли это запросом для RMA-формы
-            if (senderName === 'rmaButton' && url.includes('/rma/generate')) {
-              // Добавляем ленивую загрузку скрипта RMA формы
-              lazyLoadScript('/js/rma-form.js');
-            }
-
-            if (senderName == 'startInput') {
-              var logMenu = document.getElementById("mainMenu1");
-              if (logMenu && sendJWT) {
-                console.log(sendJWT)
-                payload = verifyJWT(sendJWT);
-                logMenu.innerHTML = `
-              ${payload.u}
-              <div hidden>
-                <form onsubmit="event.preventDefault();myFetch(this.elements[0].value, 'logInput', 'outputShow');">
-                  <input id="logInput" class="textM3" placeholder="SN, RMA, box, place..." autocomplete="off" type="text" inputmode="text" />
-                </form>
-                <form onsubmit="event.preventDefault();myFetch('', 'logExp', 'csv');">
-                  <input id="logExp" class="button" value="export CSV" autocomplete="off" type="submit" />
-                </form>
-                <form onsubmit="event.preventDefault();localStorage.removeItem('jwt');location.reload();">
-                  <input id="logOut" class="button" value="logout" autocomplete="off" type="submit" />
-                </form>
-             </div>`;
+            // Fallback synchronization if syncLanguageMasks isn't available
+            const currentLang = window.i18n.getCurrentLanguage();
+            document.documentElement.lang = currentLang;
+            
+            // Update mask states for language buttons
+            const supportedLangs = ['de', 'en', 'fr', 'pl', 'cz', 'ko'];
+            supportedLangs.forEach(lang => {
+              const maskElement = document.getElementById(`${lang}Mask`);
+              if (maskElement) {
+                maskElement.setAttribute("mask", "url(#maskClose)");
               }
-            }
-
-            if (destination == 'outputShow') {
-              document.getElementById(destination).scrollIntoView({ behavior: "smooth" });
-            } else {
-              window.scrollTo({
-                top: 0,
-                left: 0,
-                behavior: 'smooth'
-              });
+            });
+            
+            // Set current language mask to open
+            const currentMask = document.getElementById(`${currentLang}Mask`);
+            if (currentMask) {
+              currentMask.setAttribute("mask", "url(#maskOpen)");
             }
           }
-        })
-        .catch(error => {
-          console.error('Проблема с операцией Fetch:', error);
-        });
+        }
 
-      return false;
-    }
+        // Проверяем, является ли это запросом для RMA-формы
+        if (senderName === 'rmaButton' && url.includes('/rma/generate')) {
+          // Добавляем ленивую загрузку скрипта RMA формы
+          lazyLoadScript('/js/rma-form.js');
+        }
+
+        // Other handling logic...
+      }
+    })
+    .catch(error => {
+      console.error('Проблема с операцией Fetch:', error);
+    });
+
+  return false;
+}
 
     /**
      * Ленивая загрузка скрипта

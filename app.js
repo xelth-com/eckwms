@@ -82,8 +82,8 @@ const configPassport = require('./config/passport');
 const passportInstance = configPassport(global.secretJwt);
 app.use(passport.initialize());
 
+app.use(express.static(path.join(__dirname, 'html'), { index: false }));
 
-app.use(express.static(path.join(__dirname, 'html'))); 
 
 // Core middleware
 app.use(express.json());
@@ -100,35 +100,21 @@ app.use(initI18n());
 const htmlTranslator = htmlInterceptor(i18next);
 app.use(htmlTranslator);
 
-// Add global middleware to set language in response headers
+// Add global middleware to set language in response headers with robust fallback
 app.use((req, res, next) => {
-  // If language was determined by i18n middleware, add it to response headers
-  if (req.language) {
-    res.setHeader('Content-Language', req.language);
-    
-    // Also add a meta tag for client-side detection
-    const originalSend = res.send;
-    res.send = function(body) {
-      if (typeof body === 'string' && 
-          (res.get('Content-Type')?.includes('text/html') || 
-           body.includes('<head>') || 
-           body.includes('<!DOCTYPE html>'))) {
-        
-        // Only modify HTML responses
-        const languageMeta = `<meta name="app-language" content="${req.language}">`;
-        
-        // Add the meta tag inside the head if possible
-        if (body.includes('<head>')) {
-          body = body.replace('<head>', `<head>\n    ${languageMeta}`);
+    const language = req.i18n?.language
+                     || process.env.DEFAULT_LANGUAGE
+                     || 'en';
+    try {
+        // Добавим try-catch на случай, если заголовки уже отправлены (хотя это маловероятно для setHeader)
+        if (!res.headersSent) {
+            res.setHeader('Content-Language', language);
         }
-      }
-      
-      return originalSend.call(this, body);
-    };
-  }
-  
-  next();
-});
+    } catch (error) {
+        console.error("Failed to set Content-Language header:", error);
+    }
+    next();
+  });
 
 // Routes
 app.use('/api', apiRoutes);

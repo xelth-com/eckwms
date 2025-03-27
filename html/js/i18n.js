@@ -358,14 +358,6 @@ async function init() {
     devLog(`Found app-language from meta tag: ${detectedLanguage}`);
   }
 
-  // Check URL query parameter
-  if (!detectedLanguage) {
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has('lang')) {
-      detectedLanguage = urlParams.get('lang');
-      devLog(`Found language from URL query: ${detectedLanguage}`);
-    }
-  }
 
   // Check cookie
   if (!detectedLanguage) {
@@ -439,8 +431,116 @@ async function init() {
   // Synchronize SVG language masks
   syncLanguageMasks();
 
-  // Rest of the initialization function remains the same...
+  // Update translations only if not the default language
+  if (currentLanguage !== defaultLanguage) {
+    try {
+      // Preload common namespaces
+      await preloadCommonNamespaces();
+
+      // Initialize translations on page
+      updatePageTranslations();
+    } catch (error) {
+      console.error('Error during translation initialization:', error);
+    }
+  }
+
+  // Clean URL from cache busting parameter after page load
+  if (window.location.search.includes('i18n_cb')) {
+    // Wait for page to fully load
+    setTimeout(() => {
+      // Use History API to clean URL without page reload
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('i18n_cb');
+      window.history.replaceState({}, document.title, cleanUrl.toString());
+      devLog('Removed cache busting parameter from URL');
+    }, 2000); // 2 seconds delay to ensure page loaded
+  }
+
+  // Set initialization flag
+  initialized = true;
+
+  // Set up mutation observer to translate dynamically added content
+  if (window.MutationObserver && currentLanguage !== defaultLanguage) {
+    const observer = new MutationObserver((mutations) => {
+      // Check if any mutations added nodes with data-i18n attributes
+      let hasTranslatableContent = false;
+
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList' && mutation.addedNodes.length) {
+          for (const node of mutation.addedNodes) {
+            // Only process element nodes
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              // Check if this node or its children have data-i18n attributes
+              if (node.querySelector('[data-i18n], [data-i18n-attr], [data-i18n-html]') ||
+                node.hasAttribute('data-i18n') ||
+                node.hasAttribute('data-i18n-attr') ||
+                node.hasAttribute('data-i18n-html')) {
+                hasTranslatableContent = true;
+                break;
+              }
+            }
+          }
+        }
+
+        if (hasTranslatableContent) break;
+      }
+
+      // If we found translatable content, update translations
+      if (hasTranslatableContent) {
+        devLog('Detected new translatable content, updating translations');
+        updatePageTranslations();
+      }
+    });
+
+    // Start observing the document
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+
+    devLog('Translation mutation observer started');
+  }
+
+  // Generate event that i18n is initialized
+  document.dispatchEvent(new CustomEvent('i18n:initialized', {
+    detail: { language: currentLanguage }
+  }));
+
+  // Force update translations when the page is fully loaded
+  window.addEventListener('load', () => {
+    if (initialized && currentLanguage !== defaultLanguage) {
+      devLog("Page fully loaded, forcing translation update");
+
+      // Do the first update immediately
+      updatePageTranslations();
+
+      // Do another update after a short delay to catch any late-rendered elements
+      setTimeout(() => {
+        updatePageTranslations();
+
+        // Start checking for untranslated elements
+        checkAndScheduleRetry();
+
+        // Log translation status
+        if (window.APP_CONFIG?.NODE_ENV === 'development') {
+          const translated = document.querySelectorAll('[data-i18n]').length;
+          devLog(`Translation status: ${translated} elements with data-i18n tags found`);
+        }
+      }, 500);
+    }
+  });
+
+  // Also run updatePageTranslations when language changes
+  document.addEventListener('languageChanged', (event) => {
+    if (event.detail && event.detail.language !== defaultLanguage) {
+      devLog(`Language changed to ${event.detail.language}, updating translations`);
+      updatePageTranslations();
+    }
+  });
+
+  devLog("i18n successfully initialized");
 }
+
 
   /**
    * Load translation files with cache busting
