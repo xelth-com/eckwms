@@ -289,8 +289,13 @@ Ensure the translation sounds natural in the target language.`;
 }
 
 /**
- * Optimize the batch translation by checking the cache first
- * and only sending uncached items to the API
+ * Optimize the batch translation by checking the cache first,
+ * fetching actual text from default language, and only sending uncached items to the API
+ * @param {string[]} texts - Array of texts or keys to translate
+ * @param {string|string[]} targetLang - Target language
+ * @param {string} context - Translation context
+ * @param {string|string[]} sourceLang - Source language (default: env.DEFAULT_LANGUAGE or 'en')
+ * @returns {Promise<string[]>} - Array of translated texts
  */
 async function batchTranslate(texts, targetLang, context = '', sourceLang = process.env.DEFAULT_LANGUAGE || 'en') {
   // Ensure language parameters are strings
@@ -301,7 +306,14 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = proc
     return [];
   }
   
-  console.log(`Batch translating ${texts.length} texts to ${targetLanguage}`);
+  // Reference to i18next if available (for getting actual texts)
+  const i18n = global.i18next || require('i18next');
+  const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
+  
+  // Detect if this is a grammar correction (same language) or translation
+  const isGrammarCorrection = sourceLanguage === targetLanguage;
+  
+  console.log(`Batch ${isGrammarCorrection ? 'grammar correction' : 'translation'} for ${texts.length} texts in ${targetLanguage}`);
   
   // Record start time for performance tracking
   const startTime = Date.now();
@@ -311,7 +323,10 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = proc
   const results = new Array(texts.length);
   const missingTexts = [];
   const missingIndexes = [];
+  const actualSourceTexts = [];
+  const originalKeys = []; // Store original keys for reference
   
+  // First pass: Get actual texts from default language and check cache
   for (let i = 0; i < texts.length; i++) {
     const text = texts[i]?.trim();
     
@@ -321,12 +336,49 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = proc
       continue;
     }
     
-    // Check if it's in the cache
-    const cachedText = await checkCache(text, targetLanguage, context);
+    // Store original key
+    originalKeys[i] = text;
+    
+    // Check if this appears to be a translation key rather than actual text
+    const isKey = text.includes('.') && !text.includes(' ') && text.length < 100;
+    
+    // Get actual text from default language if it's a key
+    let actualText = text;
+    if (isKey && i18n && i18n.exists) {
+      try {
+        // Split namespace and key if present (format: "namespace:key")
+        let namespace = 'common';
+        let translationKey = text;
+        
+        if (text.includes(':')) {
+          const parts = text.split(':');
+          namespace = parts[0];
+          translationKey = parts.slice(1).join(':');
+        }
+        
+        // Check if key exists in default language
+        if (i18n.exists(translationKey, { ns: namespace, lng: defaultLanguage })) {
+          // Get the actual text from default language
+          const defaultText = i18n.t(translationKey, { ns: namespace, lng: defaultLanguage });
+          if (defaultText && defaultText !== translationKey) {
+            actualText = defaultText;
+            console.log(`Found actual text for key ${text}: "${actualText.substring(0, 30)}${actualText.length > 30 ? '...' : ''}"`);
+          }
+        } else {
+          console.log(`Key not found in default language: ${text}`);
+        }
+      } catch (error) {
+        console.error(`Error getting default text for key ${text}:`, error);
+      }
+    }
+    
+    // Use actual text for cache lookup and translation
+    const cachedText = await checkCache(actualText, targetLanguage, context);
     if (cachedText) {
       results[i] = cachedText;
     } else {
-      missingTexts.push(text);
+      missingTexts.push(actualText);
+      actualSourceTexts.push(actualText);
       missingIndexes.push(i);
     }
   }
@@ -343,6 +395,7 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = proc
   
   for (let i = 0; i < missingTexts.length; i += BATCH_SIZE) {
     const batch = missingTexts.slice(i, i + BATCH_SIZE);
+    const batchActualTexts = actualSourceTexts.slice(i, i + BATCH_SIZE);
     const batchIndexes = missingIndexes.slice(i, i + BATCH_SIZE);
     
     // Join with specific separator for reliable splitting
@@ -351,9 +404,14 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = proc
     // Get language names for better translation quality
     const languageNames = {
       'de': 'German', 'en': 'English', 'fr': 'French', 'it': 'Italian',
-      'es': 'Spanish', 'pt': 'Portuguese', 'nl': 'Dutch', 'ru': 'Russian',
-      'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean', 'ar': 'Arabic',
-      'pl': 'Polish', 'cs': 'Czech', 'fi': 'Finnish', 'sv': 'Swedish'
+      'es': 'Spanish', 'pt': 'Portuguese', 'nl': 'Dutch', 'da': 'Danish',
+      'sv': 'Swedish', 'fi': 'Finnish', 'el': 'Greek', 'cs': 'Czech',
+      'pl': 'Polish', 'hu': 'Hungarian', 'sk': 'Slovak', 'sl': 'Slovenian',
+      'et': 'Estonian', 'lv': 'Latvian', 'lt': 'Lithuanian', 'ro': 'Romanian',
+      'bg': 'Bulgarian', 'hr': 'Croatian', 'ga': 'Irish', 'mt': 'Maltese',
+      'ru': 'Russian', 'tr': 'Turkish', 'ar': 'Arabic', 'zh': 'Chinese',
+      'uk': 'Ukrainian', 'sr': 'Serbian', 'he': 'Hebrew', 'ko': 'Korean', 
+      'ja': 'Japanese'
     };
     
     const targetLanguageName = languageNames[targetLanguage] || targetLanguage;
@@ -362,8 +420,24 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = proc
     // Domain context from environment
     const domainDescription = process.env.TRANSLATION_DOMAIN || 'for a warehouse management system';
     
-    // Create a specialized prompt for batch translation
-    const systemPrompt = `You are a professional translator ${domainDescription}.
+    // Create a specialized prompt based on whether this is grammar correction or translation
+    let systemPrompt;
+    
+    if (isGrammarCorrection) {
+      // Grammar correction prompt when languages are the same
+      systemPrompt = `You are a professional editor and proofreader ${domainDescription}.
+Review and correct the following texts in ${targetLanguageName}.
+Each text is separated by "---TRANSLATION_SEPARATOR---".
+Fix any grammatical errors, improve clarity and consistency, and ensure proper terminology.
+Maintain the same overall meaning and style for each text.
+Return ONLY the corrected texts, with each separated by "---TRANSLATION_SEPARATOR---".
+Keep the exact same order of texts.
+
+IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in the original text.
+IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated by "---TRANSLATION_SEPARATOR---".`;
+    } else {
+      // Translation prompt when languages are different
+      systemPrompt = `You are a professional translator ${domainDescription}.
 Translate the following texts from ${sourceLanguageName} to ${targetLanguageName}.
 Each text is separated by "---TRANSLATION_SEPARATOR---".
 Maintain the same tone, formatting, and technical terminology.
@@ -373,10 +447,25 @@ Keep the exact same order of texts.
 
 IMPORTANT: If a text contains HTML tags, preserve them exactly as they appear in the original text.
 IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated by "---TRANSLATION_SEPARATOR---".`;
+    }
+    
+    // Add context if provided
+    if (context) {
+      systemPrompt += `\nContext: These texts appear in the "${context}" section of the application.`;
+    }
+    
+    // Special instructions for specific languages
+    if (targetLanguage === 'ar' || targetLanguage === 'he') {
+      systemPrompt += '\nNote: This language is read from right to left.';
+    } else if (targetLanguage === 'zh') {
+      systemPrompt += '\nUse Simplified Chinese characters.';
+    } else if (targetLanguage === 'ja' || targetLanguage === 'ko') {
+      systemPrompt += '\nPreserve technical terms in their standard form for this language.';
+    }
     
     apiCalls.push(async () => {
       try {
-        console.log(`Calling OpenAI API for batch of ${batch.length} texts (${targetLanguage})`);
+        console.log(`Calling OpenAI API for batch ${isGrammarCorrection ? 'grammar correction' : 'translation'} of ${batch.length} texts (${targetLanguage})`);
         
         const response = await openai.chat.completions.create({
           model: "gpt-4o-mini",
@@ -384,7 +473,7 @@ IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated b
             { role: "system", content: systemPrompt },
             { role: "user", content: combinedText }
           ],
-          temperature: 0.3
+          temperature: 0.3 // Low temperature for more accurate translations/corrections
         });
         
         // Parse response and handle the translated texts
@@ -393,7 +482,7 @@ IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated b
         
         // Validate that we got the right number of translations
         if (translatedTexts.length !== batch.length) {
-          console.error(`Translation count mismatch! Expected ${batch.length}, got ${translatedTexts.length}`);
+          console.error(`${isGrammarCorrection ? 'Correction' : 'Translation'} count mismatch! Expected ${batch.length}, got ${translatedTexts.length}`);
           // If count doesn't match, translate individually as fallback
           for (let j = 0; j < batch.length; j++) {
             const singleText = await translateText(batch[j], targetLanguage, context, sourceLanguage);
@@ -402,7 +491,7 @@ IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated b
         } else {
           // Save each translation to cache and results array
           for (let j = 0; j < translatedTexts.length; j++) {
-            const originalText = batch[j];
+            const originalText = batchActualTexts[j]; // Use actual source text
             const translatedText = translatedTexts[j];
             
             // Save to cache
@@ -410,10 +499,12 @@ IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated b
             
             // Store in results array
             results[batchIndexes[j]] = translatedText;
+            
+            console.log(`[i18n] Translated [${targetLanguage}] ${originalKeys[batchIndexes[j]]}: "${translatedText.substring(0, 30)}${translatedText.length > 30 ? '...' : ''}"`);
           }
         }
       } catch (error) {
-        console.error("Batch API error:", error);
+        console.error(`Batch API error (${isGrammarCorrection ? 'grammar correction' : 'translation'}):`, error);
         
         // Fall back to individual translations
         for (let j = 0; j < batch.length; j++) {
@@ -434,7 +525,7 @@ IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated b
   // Log performance metrics
   const totalTime = Date.now() - startTime;
   const timePerText = totalTime / texts.length;
-  console.log(`Batch translation complete: ${texts.length} texts in ${totalTime}ms (avg ${timePerText.toFixed(2)}ms per text)`);
+  console.log(`Batch ${isGrammarCorrection ? 'grammar correction' : 'translation'} complete: ${texts.length} texts in ${totalTime}ms (avg ${timePerText.toFixed(2)}ms per text)`);
   
   return results;
 }

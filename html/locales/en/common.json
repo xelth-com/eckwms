@@ -129,14 +129,5 @@
     "sender": "Sender",
     "reseller_note": "[Name of the Reseller]",
     "recipient": "Recipient"
-  },
-  "welcome": {
-    "important_note": "Important Note:",
-    "warranty_info": "If you have a warranty claim or a service pack agreement, please provide the name of the reseller.",
-    "error_description": "Please provide a detailed error description, as this greatly increases the likelihood of a successful repair.",
-    "contract_info": "By sending the package, a repair contract is established between you (the sender) and us (the recipient). You are responsible for the shipping costs to us, while we will cover the return shipping costs. Inspection and cost estimation are provided free of charge.",
-    "message": "The website is currently closed. Please use",
-    "title": "⚠️ Important Notice ⚠️",
-    "process": "The process is simple: send your M3 Mobile device to the address below:"
   }
 }

@@ -318,39 +318,37 @@ function initI18n(options = {}) {
           console.error(`[i18n] Error checking if translation exists: ${err.message}`);
         }
 
-        // Prevent recursive calls - skip if we're already processing this key
-        // if (processingKeys.has(uniqueKey)) {
-        //   return;
-        // }
+
        
         try {
           // Mark that we're processing this key
           processingKeys.add(uniqueKey);
-          
+
           // Get text from default language WITHOUT triggering missing key handler
           let defaultText = key;
           let foundInDefaultLang = false;
           let sourceType = 'key'; // Track where we found the source text
-          
+          console.log(3)
           // 1. Check if the key exists in the default language
           if (i18next.exists(key, { ns, lng: defaultLanguage })) {
             defaultText = i18next.t(key, { ns, lng: defaultLanguage });
             foundInDefaultLang = true;
             sourceType = 'defaultLang';
-          } 
+          }
+          
           // 2. Check if the content was saved in elementContents map
-          else if (global.elementContents && global.elementContents.has(key)) {
-            defaultText = global.elementContents.get(key);
+          else if (req && req.elementContents && req.elementContents.has(key)) {
+            defaultText = req.elementContents.get(key);
             sourceType = 'elementMap';
             console.log(`Found content in elementContents map for key ${key}: "${defaultText}"`);
           }
           // 3. Try to extract from HTML as a last resort
-          else if (global.currentProcessingHtml) {
+          else if (req && req.currentProcessingHtml) {
             try {
               // Look for HTML element with this data-i18n key
               const regex = new RegExp(`<[^>]+data-i18n=["']${key}["'][^>]*>([^<]+)<\/[^>]+>`, 'g');
-              const match = regex.exec(global.currentProcessingHtml);
-              
+              const match = regex.exec(req.currentProcessingHtml);
+
               if (match && match[1]) {
                 defaultText = match[1].trim();
                 sourceType = 'htmlContent';
