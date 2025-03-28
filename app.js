@@ -82,6 +82,13 @@ const configPassport = require('./config/passport');
 const passportInstance = configPassport(global.secretJwt);
 app.use(passport.initialize());
 
+
+// Add this new import:
+const contentTypeDebug = require('./middleware/contentTypeDebug');
+
+// Apply the content type debug middleware BEFORE static files
+app.use(contentTypeDebug());
+
 app.use(express.static(path.join(__dirname, 'html'), { index: false }));
 
 
@@ -97,8 +104,8 @@ app.use(requestLogger);
 // Initialize i18n AFTER static files
 app.use(initI18n());
 // Create HTML translator with access to i18next - AFTER static files
-const htmlTranslator = htmlInterceptor(i18next);
-app.use(htmlTranslator);
+//const htmlTranslator = htmlInterceptor(i18next);
+//app.use(htmlTranslator);
 
 // Add global middleware to set language in response headers with robust fallback
 app.use((req, res, next) => {

@@ -129,15 +129,5 @@
     "day_ago": "Vor einem Tag",
     "in_days": "In {{count}} Tagen",
     "in_day": "In einem Tag"
-  },
-  "welcome": {
-    "warranty_info": "welcome.garantie_info",
-    "important_note": "welcome.wichtiger_hinweis",
-    "error_description": "welcome.fehlermeldung",
-    "contract_info": "welcome.vertrags_info",
-    "process": "welcome.prozess",
-    "note": "welcome.hinweis",
-    "message": "welcome.nachricht",
-    "title": "welcome.titel"
   }
 }

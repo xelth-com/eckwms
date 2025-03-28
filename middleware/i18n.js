@@ -296,7 +296,6 @@ function initI18n(options = {}) {
         const targetLanguage = Array.isArray(lng) ? lng[0] : lng;
         const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
 
-        console.log(lng,ns,key,'i18nextMiddleware.missingKeyHandler', targetLanguage,defaultLanguage)
         // Make sure we have a valid target language that's not the default
         if (!targetLanguage || targetLanguage === defaultLanguage) {
           return;  // Skip processing for default language
@@ -306,8 +305,6 @@ function initI18n(options = {}) {
 
         // Create a unique key to track this missing key
         const uniqueKey = `${targetLanguage}:${ns}:${key}`;
-
-
 
         try {
           // Mark that we're processing this key
@@ -328,13 +325,13 @@ function initI18n(options = {}) {
               console.error(`Error getting default text from i18n: ${error.message}`);
             }
           }
-console.log(defaultText)
+
           // 2. Check if the content was saved in elementContents map
           if (sourceType === 'key' && req && req.elementContents && req.elementContents.has(key)) {
             defaultText = req.elementContents.get(key);
             sourceType = 'elementMap';
           }
-          console.log(defaultText)
+
           // 3. Try to extract from HTML as a last resort
           if (sourceType === 'key' && req && req.currentProcessingHtml) {
             try {
@@ -348,7 +345,7 @@ console.log(defaultText)
               console.error(`Error extracting HTML content: ${error.message}`);
             }
           }
-          console.log(defaultText)
+
           // Добавляем в очередь только необходимые данные, не полагаясь на req
           translationQueue.enqueue({
             text: defaultText,
@@ -388,42 +385,137 @@ console.log(defaultText)
   // Start queue processor
   processTranslationQueue();
 
-  // Middleware for HTML response processing and i18n tag replacement
+  // Enhanced tagProcessor middleware for HTML response processing 
+  // Combines functionality from htmlInterceptor.js
   const tagProcessor = (req, res, next) => {
-    console.log('tagProcessor middleware called');
+    console.log('[i18n] tagProcessor middleware called for path:', req.path);
+    console.log(`[i18n] Current language: ${req.language || defaultLanguage}`);
 
     // Store original methods
     const originalSend = res.send;
     const originalRender = res.render;
     const originalJson = res.json;
     const originalEnd = res.end;
+    
+    // Initialize request-specific data storage
+    req.elementContents = new Map();
 
-    // Helper function to process HTML content
+    // Define a new function to detect HTML content
+    const isHtmlContent = (content) => {
+      if (!content || typeof content !== 'string') return false;
+      
+      // Content-Type based detection
+      const contentType = res.get('Content-Type');
+      const contentTypeIsHtml = contentType?.includes('text/html') || contentType?.includes('text/plain');
+      
+      // Structure-based detection
+      const hasHtmlStructure = 
+        content.includes('<!DOCTYPE html>') ||
+        content.includes('<html') ||
+        content.includes('<head') ||
+        content.includes('<body');
+        
+      // Translation tag detection (this is the most important for our use case)
+      const hasTranslationTags = 
+        content.includes('data-i18n=') ||
+        content.includes('data-i18n-attr=') ||
+        content.includes('data-i18n-html=');
+        
+      // Special case for fragments that have translation tags but aren't full HTML documents
+      const isTranslatableFragment = hasTranslationTags;
+      
+      // Special case for known content
+      const containsKnownAppContent = 
+        content.includes('M3mobile') || 
+        content.includes('RMA') || 
+        content.includes('class="text3"');
+        
+      const result = contentTypeIsHtml || hasHtmlStructure || isTranslatableFragment || containsKnownAppContent;
+      
+      console.log(`[i18n] HTML detection: ContentType=${contentTypeIsHtml}, Structure=${hasHtmlStructure}, Tags=${hasTranslationTags}, Fragment=${isTranslatableFragment}, AppContent=${containsKnownAppContent} => Result=${result}`);
+      
+      return result;
+    };
+
+    // Helper function to process HTML content with enhanced debugging
     const processHtmlContent = (body) => {
+      // Store the current HTML for potential extraction of missing translations
+      req.currentProcessingHtml = body;
+
       // Get language from request (set by i18next-http-middleware)
       const language = req.language || defaultLanguage;
+      console.log(`[i18n] Processing HTML content for language: ${language}`);
 
-      if (language === defaultLanguage || typeof body !== 'string') {
+      if (language === defaultLanguage) {
+        console.log(`[i18n] Using default language (${defaultLanguage}), skipping translation processing`);
         return body;
+      }
+      
+      if (typeof body !== 'string') {
+        console.log(`[i18n] Body is not a string (type: ${typeof body}), skipping translation processing`);
+        return body;
+      }
+
+      // Build application configuration - moved from htmlInterceptor.js
+      let modifiedBody = body;
+      if (modifiedBody.includes('<head>')) {
+        // Build application configuration object
+        const appConfig = {
+          DEFAULT_LANGUAGE: process.env.DEFAULT_LANGUAGE || 'en',
+          NODE_ENV: process.env.NODE_ENV || 'development',
+          // Add any other configuration you need
+          API_BASE_URL: process.env.API_BASE_URL || '',
+          APP_VERSION: process.env.npm_package_version || '1.0.0'
+        };
+        
+        const configScript = `<head>
+<script>
+// Global app configuration
+window.APP_CONFIG = ${JSON.stringify(appConfig)};
+console.log("App config loaded:", window.APP_CONFIG);
+</script>`;
+        
+        modifiedBody = modifiedBody.replace('<head>', configScript);
       }
 
       console.log(`Processing HTML content for language: ${language}`);
 
       // Count translation tags to see if any exist
-      const i18nTagCount = (body.match(/data-i18n=/g) || []).length;
-      const i18nAttrCount = (body.match(/data-i18n-attr=/g) || []).length;
-      const i18nHtmlCount = (body.match(/data-i18n-html=/g) || []).length;
+      const i18nTagCount = (modifiedBody.match(/data-i18n=/g) || []).length;
+      const i18nAttrCount = (modifiedBody.match(/data-i18n-attr=/g) || []).length;
+      const i18nHtmlCount = (modifiedBody.match(/data-i18n-html=/g) || []).length;
 
-      console.log(`Found translation tags: ${i18nTagCount} standard, ${i18nAttrCount} attribute, ${i18nHtmlCount} HTML`);
+      console.log(`[i18n] Found translation tags: ${i18nTagCount} standard, ${i18nAttrCount} attribute, ${i18nHtmlCount} HTML`);
+      
+      // Log a sample of the content to help with debugging
+      if (process.env.NODE_ENV === 'development') {
+        const bodyPreview = modifiedBody.substring(0, 200).replace(/\n/g, '\\n') + '...';
+        console.log(`[i18n] Content preview: ${bodyPreview}`);
+      }
 
       if (i18nTagCount + i18nAttrCount + i18nHtmlCount === 0) {
-        console.log('No translation tags found in HTML');
-        return body;
+        console.log('[i18n] No translation tags found in HTML, returning unmodified content');
+        return modifiedBody;
       }
+
+      // First step: Extract all content from elements with data-i18n attributes
+      // This pre-processing step makes content available for missingKeyHandler
+      modifiedBody.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, 
+        (match, tag1, key, attrs, content, tag2) => {
+          if (content && content.trim()) {
+            // Store the content by key for the missingKeyHandler to use
+            req.elementContents.set(key, content.trim());
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`Stored content for key ${key}: "${content.trim()}"`);
+            }
+          }
+          return match; // Return unchanged, this is just for extraction
+        }
+      );
 
       // Process tags with multiple pattern support for different element types
       // 1. Simple elements with text content
-      body = body.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
+      modifiedBody = modifiedBody.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
         // Try to get translation - namespace may be included in the key
         let namespace = 'common';
         let translationKey = key;
@@ -439,13 +531,20 @@ console.log(defaultText)
         try {
           // Add safeguard against infinite recursion
           const uniqueKey = `${language}:${namespace}:${translationKey}`;
+          
+          const processingKeys = req.processingKeys || new Set();
+          
           if (processingKeys.has(uniqueKey)) {
             return match; // Skip if already processing this key
           }
-
+          
           processingKeys.add(uniqueKey);
+          req.processingKeys = processingKeys;
+          
           const translation = req.i18n.t(translationKey, { ns: namespace });
+          
           processingKeys.delete(uniqueKey);
+          req.processingKeys = processingKeys;
 
           // If translation equals key (not found), leave as is for frontend to handle
           if (translation === translationKey) {
@@ -462,7 +561,7 @@ console.log(defaultText)
       });
 
       // 2. Process data-i18n-attr attributes
-      body = body.replace(/<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g, (match, tag, attrsJson, restAttrs) => {
+      modifiedBody = modifiedBody.replace(/<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g, (match, tag, attrsJson, restAttrs) => {
         try {
           // Parse with BOM handling
           const attrsMap = parseJSONWithBOM(attrsJson);
@@ -483,15 +582,21 @@ console.log(defaultText)
 
             // Add safeguard against infinite recursion
             const uniqueKey = `${language}:${namespace}:${translationKey}`;
+            const processingKeys = req.processingKeys || new Set();
+            
             if (processingKeys.has(uniqueKey)) {
               allTranslated = false;
               continue; // Skip if already processing this key
             }
-
+            
             try {
               processingKeys.add(uniqueKey);
+              req.processingKeys = processingKeys;
+              
               const translation = req.i18n.t(translationKey, { ns: namespace });
+              
               processingKeys.delete(uniqueKey);
+              req.processingKeys = processingKeys;
 
               // Get current attribute value if present
               const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
@@ -528,7 +633,7 @@ console.log(defaultText)
       });
 
       // 3. Process elements with HTML content
-      body = body.replace(/<([^>]+)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
+      modifiedBody = modifiedBody.replace(/<([^>]+)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/([^>]+)>/g, (match, tag1, key, attrs, content, tag2) => {
         // Apply the same namespace extraction logic for HTML content
         let namespace = 'common';
         let translationKey = key;
@@ -544,16 +649,27 @@ console.log(defaultText)
         try {
           // Add safeguard against infinite recursion
           const uniqueKey = `${language}:${namespace}:${translationKey}`;
+          const processingKeys = req.processingKeys || new Set();
+          
           if (processingKeys.has(uniqueKey)) {
             return match; // Skip if already processing this key
           }
-
+          
           processingKeys.add(uniqueKey);
+          req.processingKeys = processingKeys;
+          
           const translation = req.i18n.t(translationKey, {
             ns: namespace,
             interpolation: { escapeValue: false }
           });
+          
           processingKeys.delete(uniqueKey);
+          req.processingKeys = processingKeys;
+
+          // Store the HTML content for potential translation
+          if (content && content.trim()) {
+            req.elementContents.set(key, content.trim());
+          }
 
           // If translation equals key (not found), leave as is for frontend to handle
           if (translation === translationKey) {
@@ -569,19 +685,23 @@ console.log(defaultText)
         }
       });
 
-      return body;
+      return modifiedBody;
     };
 
-    // Override res.send
+    // Override res.send with improved content type detection and logging
     res.send = function (body) {
-      // Check if response is likely HTML
-      if (typeof body === 'string' &&
-        (res.get('Content-Type')?.includes('text/html') ||
-          body.includes('<!DOCTYPE html>') ||
-          body.includes('<html>'))) {
-
+      console.log(`[i18n] res.send called with content type: ${res.get('Content-Type')}`);
+      
+      // Use the shared isHtmlContent function for detection
+      if (typeof body === 'string' && isHtmlContent(body)) {
+        console.log(`[i18n] Processing HTML content in res.send, body length: ${body?.length || 0}`);
+        
         // Process HTML content
         body = processHtmlContent(body);
+      } else if (typeof body === 'string') {
+        console.log(`[i18n] Skipping non-HTML string content (first 50 chars): ${body.substring(0, 50)}...`);
+      } else {
+        console.log(`[i18n] Skipping non-string content of type: ${typeof body}`);
       }
 
       // Call original method
@@ -628,30 +748,28 @@ console.log(defaultText)
       return originalRender.call(this, view, options, callback);
     };
 
-    // We should also consider intercepting res.end for direct responses
+    // Override res.end with the same HTML processing logic
     res.end = function (chunk, encoding) {
-      console.log('res.end called');
-
-      if (chunk && typeof chunk === 'string' &&
-        (res.get('Content-Type')?.includes('text/html') ||
-          chunk.includes('<!DOCTYPE html>') ||
-          chunk.includes('<html>'))) {
-
-        chunk = processHtmlContent(chunk);
+      console.log('[i18n] res.end called');
+      
+      if (chunk && typeof chunk === 'string') {
+        // Use the shared isHtmlContent function
+        if (isHtmlContent(chunk)) {
+          console.log(`[i18n] Processing HTML content in res.end, length: ${chunk.length}`);
+          chunk = processHtmlContent(chunk);
+        }
       }
-
+      
       return originalEnd.call(this, chunk, encoding);
     };
 
     next();
   };
 
-  // Now only return the i18next middleware and tag processor
+  // Now only return the i18next middleware and enhanced tag processor
   return [i18nextMiddleware.handle(i18next), tagProcessor];
 }
 
 module.exports = initI18n;
 module.exports.i18next = i18next;
 module.exports.translationQueue = translationQueue;
-
-
