@@ -20,9 +20,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
       intercept: (body, send) => {
         console.log('[i18n] Intercepted HTML response!');
         
-        // Initialize request-specific data storage
-        req.elementContents = new Map();
-        req.currentProcessingHtml = body;
+
         
         // Get language from request (set by i18next-http-middleware)
         const language = req.language || (process.env.DEFAULT_LANGUAGE || 'en');
@@ -52,17 +50,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
         }
         
         try {
-          // First extract content from elements with data-i18n for missingKeyHandler
-          body.replace(/<([^>]+)\s+data-i18n="([^"]+)"([^>]*)>([^<]*)<\/([^>]+)>/g, 
-            (match, tag1, key, attrs, content, tag2) => {
-              if (content && content.trim()) {
-                // Store the content by key for missingKeyHandler to use
-                req.elementContents.set(key, content.trim());
-                console.log(`[i18n] Stored content for key ${key}: "${content.trim().substring(0, 30)}..."`);
-              }
-              return match; // Return unchanged, this is just for extraction
-            }
-          );
+          
           
           // Process regular translations with data-i18n attribute
           let modifiedBody = body.replace(
@@ -90,7 +78,11 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                 processingKeys.add(uniqueKey);
                 req.processingKeys = processingKeys;
                 
-                const translation = i18next.t(translationKey, { ns: namespace, lng: language });
+                const translation = i18next.t(translationKey, { 
+                  ns: namespace, 
+                  lng: language,
+                  defaultValue: content.trim() // This ensures the original text is used if no translation is found
+                });
                 
                 processingKeys.delete(uniqueKey);
                 
@@ -111,64 +103,54 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
           
           // Process attribute translations with data-i18n-attr
           modifiedBody = modifiedBody.replace(
-            /<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g,
+            /<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g, 
             (match, tag, attrsJson, restAttrs) => {
               try {
-                // Use BOM-aware JSON parsing
                 const attrsMap = parseJSONWithBOM(attrsJson);
                 let newTag = `<${tag}${restAttrs}`;
-                
+                let allTranslated = true;
+          
                 for (const [attr, key] of Object.entries(attrsMap)) {
-                  // Extract namespace if present
+                  // Namespace extraction
                   let namespace = 'common';
                   let translationKey = key;
-                  
+          
                   if (key.includes(':')) {
                     const parts = key.split(':');
                     namespace = parts[0];
                     translationKey = parts.slice(1).join(':');
                   }
-                  
-                  // Safeguard against infinite recursion
-                  const uniqueKey = `${language}:${namespace}:${translationKey}`;
-                  const processingKeys = req.processingKeys || new Set();
-                  
-                  if (!processingKeys.has(uniqueKey)) {
-                    try {
-                      processingKeys.add(uniqueKey);
-                      req.processingKeys = processingKeys;
-                      
-                      const translation = i18next.t(translationKey, { ns: namespace, lng: language });
-                      
-                      processingKeys.delete(uniqueKey);
-                      
-                      // Get current attribute value if present
-                      const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
-                      const attrValueMatch = match.match(attrRegex);
-                      const currentValue = attrValueMatch ? attrValueMatch[1] : '';
-                      
-                      // If translation differs from key, replace attribute value
-                      if (translation !== translationKey) {
-                        if (attrValueMatch) {
-                          newTag = newTag.replace(
-                            `${attr}="${currentValue}"`,
-                            `${attr}="${translation}"`
-                          );
-                        } else {
-                          // Attribute not present, add it
-                          newTag = newTag + ` ${attr}="${translation}"`;
-                        }
-                      }
-                    } catch (error) {
-                      console.error(`[i18n] Error translating attribute ${key}:`, error);
+          
+                  // Current attribute value
+                  const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
+                  const attrValueMatch = match.match(attrRegex);
+                  const currentValue = attrValueMatch ? attrValueMatch[1] : '';
+          
+                  // Translation with default value
+                  const translation = req.i18n.t(translationKey, { 
+                    ns: namespace, 
+                    lng: language,
+                    defaultValue: currentValue // Original value as default
+                  });
+          
+                  // Replace or add attribute
+                  if (translation !== translationKey) {
+                    if (attrValueMatch) {
+                      newTag = newTag.replace(
+                        `${attr}="${currentValue}"`,
+                        `${attr}="${translation}"`
+                      );
+                    } else {
+                      newTag = newTag + ` ${attr}="${translation}"`;
                     }
+                  } else {
+                    allTranslated = false;
                   }
                 }
-                
-                // ALWAYS keep data-i18n-attr for frontend retries
+          
                 return newTag + '>';
               } catch (e) {
-                console.error('[i18n] Error parsing data-i18n-attr:', e);
+                console.error('Error parsing data-i18n-attr:', e);
                 return match;
               }
             }
@@ -176,53 +158,37 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
           
           // Process HTML content translations with data-i18n-html
           modifiedBody = modifiedBody.replace(
-            /<([^>]+)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/([^>]+)>/g,
+            /<([^>]+)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/([^>]+)>/g, 
             (match, tag1, key, attrs, content, tag2) => {
-              // Apply the same namespace extraction logic for HTML content
+              // Namespace extraction
               let namespace = 'common';
               let translationKey = key;
-              
+          
               if (key.includes(':')) {
                 const parts = key.split(':');
                 namespace = parts[0];
                 translationKey = parts.slice(1).join(':');
               }
-              
+          
               try {
-                // Safeguard against infinite recursion
-                const uniqueKey = `${language}:${namespace}:${translationKey}`;
-                const processingKeys = req.processingKeys || new Set();
-                
-                if (processingKeys.has(uniqueKey)) {
-                  return match; // Skip if already processing this key
-                }
-                
-                processingKeys.add(uniqueKey);
-                req.processingKeys = processingKeys;
-                
-                const translation = i18next.t(translationKey, {
-                  ns: namespace,
+                // Translation with default value
+                const translation = req.i18n.t(translationKey, { 
+                  ns: namespace, 
                   lng: language,
-                  interpolation: { escapeValue: false }
+                  defaultValue: content.trim(), // Original HTML content as default
+                  interpolation: { escapeValue: false } // Preserve HTML
                 });
-                
-                processingKeys.delete(uniqueKey);
-                
-                // Store the HTML content for potential translation
-                if (content && content.trim()) {
-                  req.elementContents.set(key, content.trim());
-                }
-                
-                // ALWAYS keep the data-i18n-html attribute for frontend
+          
+                // If translation is the key, return original
                 if (translation === translationKey) {
-                  return match; // Keep original with attribute for frontend
+                  return match;
                 }
-                
-                // Return element with HTML translation while KEEPING the attribute
+          
+                // Return translated HTML, keeping data-i18n-html attribute
                 return `<${tag1} data-i18n-html="${key}"${attrs}>${translation}</${tag2}>`;
               } catch (error) {
-                console.error(`[i18n] Error translating HTML ${key}:`, error);
-                return match; // Return original on error
+                console.error(`Error translating HTML ${translationKey}:`, error);
+                return match;
               }
             }
           );

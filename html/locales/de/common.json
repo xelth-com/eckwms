@@ -131,11 +131,13 @@
     "in_day": "In einem Tag"
   },
   "welcome": {
-    "warranty_info": "welcome.garantie_info",
-    "important_note": "willkommen.wichtiger_hinweis",
-    "error_description": "willkommen.fehlermeldung",
-    "contract_info": "willkommen.vertragsinformationen",
-    "process": "willkommen.prozess",
-    "note": "willkommen.hinweis"
+    "important_note": "Wichtiger Hinweis:",
+    "warranty_info": "Wenn Sie einen Garantieanspruch oder eine Servicepaketvereinbarung haben, geben Sie bitte den Namen des Wiederverkäufers an.",
+    "message": "Die Website ist geschlossen. Bitte verwenden Sie",
+    "error_description": "Bitte geben Sie eine detaillierte Fehlerbeschreibung an, da dies die Chancen auf eine erfolgreiche\n                Reparatur erheblich erhöht.",
+    "title": "⚠️ Wichtiger Hinweis ⚠️",
+    "contract_info": "Durch das Versenden des Pakets wird ein Reparaturvertrag zwischen Ihnen (dem Absender) und uns (dem Empfänger) abgeschlossen. Sie tragen die Versandkosten zu uns, und wir übernehmen die Rücksendekosten. Die Inspektion und Kostenschätzung sind kostenlos.",
+    "process": "Der Prozess ist einfach: Senden Sie Ihr M3 Mobile-Gerät an die folgende Adresse:",
+    "note": "P.S. Sie können das Formular verwenden, um ein PDF zu drucken, falls die Hauptwebsite ausfällt."
   }
 }

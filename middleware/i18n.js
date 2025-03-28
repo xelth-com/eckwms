@@ -287,7 +287,7 @@ function initI18n(options = {}) {
       saveMissing: true,
       // Return key as is for client-side handling
       parseMissingKeyHandler: (key, defaultValue) => {
-        return key;
+        return defaultValue;
       },
       missingKeyHandler: (lng, ns, key, fallbackValue, options, req) => {
         // Get the primary language from the array or use the language if it's already a string
@@ -308,49 +308,14 @@ function initI18n(options = {}) {
           // Mark that we're processing this key
           processingKeys.add(uniqueKey);
 
-          // Get text from default language or other sources
-          let defaultText = key;
-          let sourceType = 'key';
-
-          // 1. Try to get text from default language via req.i18n
-          if (req && req.i18n) {
-            try {
-              if (req.i18n.exists(key, { ns, lng: defaultLanguage })) {
-                defaultText = req.i18n.t(key, { ns, lng: defaultLanguage });
-                sourceType = 'defaultLang';
-              }
-            } catch (error) {
-              console.error(`Error getting default text from i18n: ${error.message}`);
-            }
-          }
-
-          // 2. Check if the content was saved in elementContents map
-          if (sourceType === 'key' && req && req.elementContents && req.elementContents.has(key)) {
-            defaultText = req.elementContents.get(key);
-            sourceType = 'elementMap';
-          }
-
-          // 3. Try to extract from HTML as a last resort
-          if (sourceType === 'key' && req && req.currentProcessingHtml) {
-            try {
-              const regex = new RegExp(`<[^>]+data-i18n=["']${key}["'][^>]*>([^<]+)<\/[^>]+>`, 'g');
-              const match = regex.exec(req.currentProcessingHtml);
-              if (match && match[1]) {
-                defaultText = match[1].trim();
-                sourceType = 'htmlContent';
-              }
-            } catch (error) {
-              console.error(`Error extracting HTML content: ${error.message}`);
-            }
-          }
+          
 
           // Add to queue only needed data, not relying on req
           translationQueue.enqueue({
-            text: defaultText,
+            text: fallbackValue,
             targetLang: targetLanguage,
             namespace: ns,
-            key: key,
-            sourceType: sourceType
+            key: key
           });
 
           console.log(`[i18n] Added to translation queue: [${targetLanguage}] ${ns}:${key} (source: ${sourceType})`);
