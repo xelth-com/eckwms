@@ -385,17 +385,35 @@ function initI18n(options = {}) {
   // Start queue processor
   processTranslationQueue();
 
-  // Enhanced tagProcessor middleware for HTML response processing 
-  // Combines functionality from htmlInterceptor.js
-  const tagProcessor = (req, res, next) => {
-    console.log('[i18n] tagProcessor middleware called for path:', req.path);
-    console.log(`[i18n] Current language: ${req.language || defaultLanguage}`);
 
+
+
+// Add this to your tagProcessor middleware
+const tagProcessor = (req, res, next) => {
+  console.log('[i18n] tagProcessor middleware called for path:', req.path);
+  console.log(`[i18n] Current language: ${req.language || defaultLanguage}`);
+  // Create a buffer to collect response data
+  let chunks = [];
+  
     // Store original methods
     const originalSend = res.send;
     const originalRender = res.render;
-    const originalJson = res.json;
+    const originalWrite = res.write;
+   
     const originalEnd = res.end;
+  
+  // Intercept write to collect chunks
+  res.write = function(chunk, encoding) {
+    if (chunk) {
+      chunks.push(Buffer.from(chunk, encoding));
+    }
+    return originalWrite.apply(this, arguments);
+  };
+
+
+
+
+
     
     // Initialize request-specific data storage
     req.elementContents = new Map();
@@ -748,22 +766,29 @@ console.log("App config loaded:", window.APP_CONFIG);
       return originalRender.call(this, view, options, callback);
     };
 
-    // Override res.end with the same HTML processing logic
-    res.end = function (chunk, encoding) {
-      console.log('[i18n] res.end called');
+  // Intercept end to process all collected data
+  res.end = function(chunk, encoding) {
+    // Add final chunk if provided
+    if (chunk) {
+      chunks.push(Buffer.from(chunk, encoding));
+    }
+    
+    // Process collected data if it exists and looks like HTML
+    if (chunks.length > 0) {
+      const body = Buffer.concat(chunks).toString('utf8');
       
-      if (chunk && typeof chunk === 'string') {
-        // Use the shared isHtmlContent function
-        if (isHtmlContent(chunk)) {
-          console.log(`[i18n] Processing HTML content in res.end, length: ${chunk.length}`);
-          chunk = processHtmlContent(chunk);
-        }
+      if (isHtmlContent(body)) {
+        const processedBody = processHtmlContent(body);
+        // Clear buffer and call original methods with processed content
+        return originalEnd.call(this, processedBody);
       }
-      
-      return originalEnd.call(this, chunk, encoding);
-    };
-
-    next();
+    }
+    
+    // Call original end with original arguments
+    return originalEnd.apply(this, arguments);
+  };
+  
+  next();
   };
 
   // Now only return the i18next middleware and enhanced tag processor
