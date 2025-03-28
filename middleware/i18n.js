@@ -296,6 +296,7 @@ function initI18n(options = {}) {
         const targetLanguage = Array.isArray(lng) ? lng[0] : lng;
         const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
 
+        console.log(lng,ns,key,'i18nextMiddleware.missingKeyHandler', targetLanguage,defaultLanguage)
         // Make sure we have a valid target language that's not the default
         if (!targetLanguage || targetLanguage === defaultLanguage) {
           return;  // Skip processing for default language
@@ -306,10 +307,7 @@ function initI18n(options = {}) {
         // Create a unique key to track this missing key
         const uniqueKey = `${targetLanguage}:${ns}:${key}`;
 
-        // Check if already being processed to avoid duplication
-        if (processingKeys.has(uniqueKey)) {
-          return;
-        }
+
 
         try {
           // Mark that we're processing this key
@@ -330,13 +328,13 @@ function initI18n(options = {}) {
               console.error(`Error getting default text from i18n: ${error.message}`);
             }
           }
-
+console.log(defaultText)
           // 2. Check if the content was saved in elementContents map
           if (sourceType === 'key' && req && req.elementContents && req.elementContents.has(key)) {
             defaultText = req.elementContents.get(key);
             sourceType = 'elementMap';
           }
-
+          console.log(defaultText)
           // 3. Try to extract from HTML as a last resort
           if (sourceType === 'key' && req && req.currentProcessingHtml) {
             try {
@@ -350,7 +348,7 @@ function initI18n(options = {}) {
               console.error(`Error extracting HTML content: ${error.message}`);
             }
           }
-
+          console.log(defaultText)
           // Добавляем в очередь только необходимые данные, не полагаясь на req
           translationQueue.enqueue({
             text: defaultText,
