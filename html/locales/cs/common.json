@@ -1,1 +1,44 @@
-﻿{}
+{
+  "footer": {
+    "copyright": "footer.autorská_práva"
+  },
+  "links": {
+    "homepage": "links.domovská_stránka",
+    "partner_portal": "links.portál_partnera",
+    "technical_support": "links.technická_podpora",
+    "release_notes": "links.informace_o_verzi",
+    "app_manual": "links.příručka_aplikace",
+    "title": "links.název"
+  },
+  "service": {
+    "title": "service.název"
+  },
+  "rma": {
+    "status_check": "rma.zkontrolovat_stav",
+    "request_button": "rma.tlačítko_požadavku",
+    "form_info": "rma.informace_o_formuláři",
+    "tracking_info": "rma.informace_o_sledování",
+    "process_info": "rma.informace_o_procesu"
+  },
+  "address": {
+    "example_email": "address.příklad_emailu",
+    "example_phone": "address.příklad_telefonu",
+    "example_city": "address.příklad_města",
+    "example_street": "address.příklad_ulice",
+    "example_person": "address.příklad_osoby",
+    "example_company": "address.příklad_firmy",
+    "sender": "address.odesílatel",
+    "reseller_note": "address.reseller_note",
+    "recipient": "address.recipient"
+  },
+  "welcome": {
+    "warranty_info": "welcome.warranty_info",
+    "important_note": "welcome.important_note",
+    "error_description": "welcome.error_description",
+    "contract_info": "welcome.contract_info",
+    "process": "welcome.process",
+    "note": "welcome.note",
+    "message": "welcome.message",
+    "title": "welcome.title"
+  }
+}

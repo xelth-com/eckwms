@@ -16,9 +16,9 @@ const initI18n = require('./middleware/i18n');
 const { translationQueue } = require('./middleware/i18n');
 // Import middleware/auth
 const { requireAdmin } = require('./middleware/auth');
-const htmlInterceptor = require('./middleware/htmlInterceptor');
+//const htmlInterceptor = require('./middleware/htmlInterceptor');
 const i18next = require('i18next');
-
+const createHtmlTranslationInterceptor = require('./middleware/htmlTranslationInterceptor');
 // Import routes
 const apiRoutes = require('./routes/api');
 const rmaRoutes = require('./routes/rma');
@@ -84,10 +84,10 @@ app.use(passport.initialize());
 
 
 // Add this new import:
-const contentTypeDebug = require('./middleware/contentTypeDebug');
+// const contentTypeDebug = require('./middleware/contentTypeDebug');
 
-// Apply the content type debug middleware BEFORE static files
-app.use(contentTypeDebug());
+// // Apply the content type debug middleware BEFORE static files
+// app.use(contentTypeDebug());
 
 app.use(express.static(path.join(__dirname, 'html'), { index: false }));
 
@@ -103,10 +103,7 @@ app.use(requestLogger);
 
 // Initialize i18n AFTER static files
 app.use(initI18n());
-// Create HTML translator with access to i18next - AFTER static files
-//const htmlTranslator = htmlInterceptor(i18next);
-//app.use(htmlTranslator);
-
+app.use(createHtmlTranslationInterceptor(i18next));
 // Add global middleware to set language in response headers with robust fallback
 app.use((req, res, next) => {
     const language = req.i18n?.language
@@ -142,6 +139,9 @@ app.use((req, res, next) => {
     }
     next();
   });
+
+
+
 
 // Routes
 app.use('/api', apiRoutes);
