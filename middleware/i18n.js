@@ -65,7 +65,6 @@ async function loadNamespace(language, namespace, version = '') {
   }
 }
 
-// Improved processTranslationQueue function with better logging and error handling
 function processTranslationQueue() {
   if (translationQueue.isEmpty()) {
     setTimeout(processTranslationQueue, 5000);
@@ -84,7 +83,8 @@ function processTranslationQueue() {
     const item = translationQueue.dequeue();
     if (!item) continue;
 
-    // Ensure we have a valid target language that's not the default
+    // Skip items with invalid target language
+    const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
     if (!item.targetLang || item.targetLang === defaultLanguage) {
       console.log(`[i18n] Skipping item with invalid target language: ${item.targetLang}`);
       continue;
@@ -109,40 +109,39 @@ function processTranslationQueue() {
     try {
       console.log(`[i18n] Processing batch for [${batch.targetLang}] ${batch.namespace} with ${batch.items.length} items`);
 
-      // Extract texts and save item mapping
+      // Extract texts to translate
       const texts = batch.items.map(item => item.text);
 
-      // Use batchTranslate function to translate all texts at once
+      // Directly call translateText or batchTranslate without using i18next
       const translatedTexts = await batchTranslate(
         texts,
         batch.targetLang,
-        batch.namespace, // Use namespace as context
-        'en' // Source language is English
+        batch.namespace // Use namespace as context
       );
+
+      // Make sure we have the same number of translations as source texts
+      if (translatedTexts.length !== batch.items.length) {
+        throw new Error(`Translation count mismatch: expected ${batch.items.length}, got ${translatedTexts.length}`);
+      }
 
       // Prepare translations for saving to file
       const fileUpdates = {};
 
-      // Make sure we have the same number of translations as source texts
-      if (translatedTexts.length === batch.items.length) {
-        translatedTexts.forEach((translatedText, index) => {
-          const item = batch.items[index];
-          const namespaceFile = item.namespace || 'common';
+      translatedTexts.forEach((translatedText, index) => {
+        const item = batch.items[index];
+        const namespaceFile = item.namespace || 'common';
 
-          if (!fileUpdates[namespaceFile]) {
-            fileUpdates[namespaceFile] = [];
-          }
+        if (!fileUpdates[namespaceFile]) {
+          fileUpdates[namespaceFile] = [];
+        }
 
-          fileUpdates[namespaceFile].push({
-            key: item.key,
-            value: translatedText
-          });
-
-          console.log(`[i18n] Translated [${batch.targetLang}] ${item.key}: "${translatedText.substring(0, 30)}..."`);
+        fileUpdates[namespaceFile].push({
+          key: item.key,
+          value: translatedText
         });
-      } else {
-        throw new Error(`Translation count mismatch: expected ${batch.items.length}, got ${translatedTexts.length}`);
-      }
+
+        console.log(`[i18n] Translated [${batch.targetLang}] ${item.key}: "${translatedText.substring(0, 30)}..."`);
+      });
 
       // Save translations to files (one file write per namespace)
       for (const [namespace, updates] of Object.entries(fileUpdates)) {
@@ -290,10 +289,12 @@ function initI18n(options = {}) {
       parseMissingKeyHandler: (key, defaultValue) => {
         return key;
       },
-      // FIXED: missingKeyHandler now uses request context instead of global variables
+      // Внутри инициализации i18next в middleware/i18n.js
+      // В конфигурации i18next
       missingKeyHandler: (lng, ns, key, fallbackValue, options, req) => {
         // Get the primary language from the array or use the language if it's already a string
         const targetLanguage = Array.isArray(lng) ? lng[0] : lng;
+        const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
 
         // Make sure we have a valid target language that's not the default
         if (!targetLanguage || targetLanguage === defaultLanguage) {
@@ -305,73 +306,62 @@ function initI18n(options = {}) {
         // Create a unique key to track this missing key
         const uniqueKey = `${targetLanguage}:${ns}:${key}`;
 
-        // Check if the translation already exists in the files
-        try {
-          // Check if the key exists in the target language
-          if (i18next.exists(key, { ns, lng: targetLanguage })) {
-            if (process.env.NODE_ENV === 'development') {
-              console.log(`[i18n] Translation already exists for ${targetLanguage}:${ns}:${key}, skipping queue`);
-            }
-            return; // Translation exists, skip queueing
-          }
-        } catch (err) {
-          console.error(`[i18n] Error checking if translation exists: ${err.message}`);
+        // Check if already being processed to avoid duplication
+        if (processingKeys.has(uniqueKey)) {
+          return;
         }
 
-
-       
         try {
           // Mark that we're processing this key
           processingKeys.add(uniqueKey);
 
-          // Get text from default language WITHOUT triggering missing key handler
+          // Get text from default language or other sources
           let defaultText = key;
-          let foundInDefaultLang = false;
-          let sourceType = 'key'; // Track where we found the source text
-          console.log(3)
-          // 1. Check if the key exists in the default language
-          if (i18next.exists(key, { ns, lng: defaultLanguage })) {
-            defaultText = i18next.t(key, { ns, lng: defaultLanguage });
-            foundInDefaultLang = true;
-            sourceType = 'defaultLang';
+          let sourceType = 'key';
+
+          // 1. Try to get text from default language via req.i18n
+          if (req && req.i18n) {
+            try {
+              if (req.i18n.exists(key, { ns, lng: defaultLanguage })) {
+                defaultText = req.i18n.t(key, { ns, lng: defaultLanguage });
+                sourceType = 'defaultLang';
+              }
+            } catch (error) {
+              console.error(`Error getting default text from i18n: ${error.message}`);
+            }
           }
-          
+
           // 2. Check if the content was saved in elementContents map
-          else if (req && req.elementContents && req.elementContents.has(key)) {
+          if (sourceType === 'key' && req && req.elementContents && req.elementContents.has(key)) {
             defaultText = req.elementContents.get(key);
             sourceType = 'elementMap';
-            console.log(`Found content in elementContents map for key ${key}: "${defaultText}"`);
           }
+
           // 3. Try to extract from HTML as a last resort
-          else if (req && req.currentProcessingHtml) {
+          if (sourceType === 'key' && req && req.currentProcessingHtml) {
             try {
-              // Look for HTML element with this data-i18n key
               const regex = new RegExp(`<[^>]+data-i18n=["']${key}["'][^>]*>([^<]+)<\/[^>]+>`, 'g');
               const match = regex.exec(req.currentProcessingHtml);
-
               if (match && match[1]) {
                 defaultText = match[1].trim();
                 sourceType = 'htmlContent';
-                console.log(`Found content in HTML for key ${key}: "${defaultText}"`);
               }
             } catch (error) {
-              console.error(`Error extracting HTML content for ${key}:`, error);
+              console.error(`Error extracting HTML content: ${error.message}`);
             }
           }
-          console.log(targetLanguage)
-          // Important fix: Use the correct target language for the queue
-          console.log(`Adding to translation queue: [${targetLanguage}] ${ns}:${key} (source: ${sourceType})`);
+
+          // Добавляем в очередь только необходимые данные, не полагаясь на req
           translationQueue.enqueue({
             text: defaultText,
-            targetLang: targetLanguage, // Use the request's target language, not defaultLanguage
+            targetLang: targetLanguage,
             namespace: ns,
             key: key,
             sourceType: sourceType
+            // Не сохраняем req, так как он нам больше не нужен
           });
 
-          if (process.env.NODE_ENV === 'development') {
-            console.log(`[i18n] Added to translation queue: [${targetLanguage}] ${ns}:${key} (source: ${sourceType})`);
-          }
+          console.log(`[i18n] Added to translation queue: [${targetLanguage}] ${ns}:${key} (source: ${sourceType})`);
         } finally {
           // Always remove from processing list when done
           processingKeys.delete(uniqueKey);
