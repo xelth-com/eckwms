@@ -136,7 +136,7 @@
     "message": "Die Website ist geschlossen. Bitte verwenden Sie",
     "error_description": "Bitte geben Sie eine detaillierte Fehlerbeschreibung an, da dies die Chancen auf eine erfolgreiche\n                Reparatur erheblich erhöht.",
     "title": "⚠️ Wichtiger Hinweis ⚠️",
-    "contract_info": "Durch das Versenden des Pakets wird ein Reparaturvertrag zwischen Ihnen (dem Absender) und uns (dem Empfänger) abgeschlossen. Sie übernehmen die Versandkosten zu uns, und wir übernehmen die Rücksendekosten. Die Inspektion und Kostenschätzung sind kostenlos.",
+    "contract_info": "Durch das Versenden des Pakets wird ein Reparaturvertrag zwischen Ihnen (dem Absender) und uns (dem Empfänger) abgeschlossen. Sie tragen die Versandkosten zu uns, und wir übernehmen die Rücksendekosten. Die Inspektion und Kostenschätzung sind kostenlos.",
     "process": "Der Prozess ist einfach: Senden Sie Ihr M3 Mobile-Gerät an die folgende Adresse:",
     "note": "P.S. Sie können das Formular verwenden, um ein PDF zu drucken, falls die Hauptwebsite nicht erreichbar ist."
   }

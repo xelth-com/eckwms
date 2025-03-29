@@ -1,4 +1,4 @@
-// routes/translation-api.js - Updated for i18next compatibility
+// routes/translation-api.js - Optimized for i18next compatibility and multi-user concurrency
 
 const express = require('express');
 const router = express.Router();
@@ -21,6 +21,28 @@ try {
 const backgroundQueue = new Queue();
 let isProcessing = false;
 
+// Thread-safe map of in-progress translations to prevent duplicate requests
+const translationProcessingMap = new Map();
+
+// Periodically clean up stale entries (translations that started but never completed)
+setInterval(() => {
+  const now = Date.now();
+  const STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+  
+  let cleanedCount = 0;
+  translationProcessingMap.forEach((entry, key) => {
+    if (now - entry.startTime > STALE_THRESHOLD) {
+      console.log(`[i18n] Removing stale translation task: ${key}`);
+      translationProcessingMap.delete(key);
+      cleanedCount++;
+    }
+  });
+  
+  if (cleanedCount > 0) {
+    console.log(`[i18n] Cleaned up ${cleanedCount} stale translation tasks`);
+  }
+}, 60 * 1000); // Check every minute
+
 // Translation retry tracking
 const translationRetryCounter = {};
 const MAX_RETRIES = 3;
@@ -29,7 +51,7 @@ const MAX_RETRIES = 3;
 router.use(optionalAuth);
 
 /**
- * Process background translation queue
+ * Process background translation queue with enhanced tracking
  */
 function processBackgroundQueue() {
   if (isProcessing || backgroundQueue.isEmpty()) {
@@ -42,11 +64,17 @@ function processBackgroundQueue() {
   
   // Get next item
   const item = backgroundQueue.dequeue();
-  const queueKey = `${item.targetLang}:${item.context}:${item.text.substring(0, 20)}`;
+  const queueKey = item.queueKey || `${item.targetLang}:${item.context || 'common'}:${item.text.substring(0, 20)}`;
   
   // Skip if too many retries
   if (translationRetryCounter[queueKey] && translationRetryCounter[queueKey] >= MAX_RETRIES) {
-    console.warn(`Skipping translation after ${MAX_RETRIES} failed attempts: ${queueKey}`);
+    console.warn(`[i18n] Skipping translation after ${MAX_RETRIES} failed attempts: ${queueKey}`);
+    
+    // Clean up tracking entries
+    if (translationProcessingMap.has(queueKey)) {
+      translationProcessingMap.delete(queueKey);
+    }
+    
     isProcessing = false;
     
     // Process next item or wait
@@ -58,21 +86,44 @@ function processBackgroundQueue() {
     return;
   }
   
-  // Process translation
-  translateText(item.text, item.targetLang, item.context || '', item.sourceLang || 'en')
-    .then(translation => {
-      // Log success in development
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`Background translation complete: [${item.targetLang}] ${item.text.substring(0, 30)}...`);
+  // Check cache one more time before translation
+  checkCache(item.text, item.targetLang, item.context || '')
+    .then(cachedResult => {
+      if (cachedResult) {
+        console.log(`[i18n] Found in cache during queue processing: [${item.targetLang}] ${item.text.substring(0, 30)}...`);
+        
+        // Clean up tracking entries since we don't need to translate
+        if (translationProcessingMap.has(queueKey)) {
+          translationProcessingMap.delete(queueKey);
+        }
+        
+        return null; // Skip translation
       }
+      
+      // Process translation
+      return translateText(item.text, item.targetLang, item.context || '', item.sourceLang || 'en');
+    })
+    .then(translation => {
+      if (translation === null) {
+        // Cached result was found, nothing more to do
+        return;
+      }
+      
+      // Log success in development
+      console.log(`[i18n] Background translation complete: [${item.targetLang}] ${item.text.substring(0, 30)}...`);
       
       // Reset retry counter on success
       if (translationRetryCounter[queueKey]) {
         delete translationRetryCounter[queueKey];
       }
+      
+      // Remove from processing map when done
+      if (translationProcessingMap.has(queueKey)) {
+        translationProcessingMap.delete(queueKey);
+      }
     })
     .catch(error => {
-      console.error('Background translation error:', error);
+      console.error('[i18n] Background translation error:', error);
       
       // Increment retry counter
       translationRetryCounter[queueKey] = (translationRetryCounter[queueKey] || 0) + 1;
@@ -80,9 +131,17 @@ function processBackgroundQueue() {
       // Save error information for diagnostics
       saveTranslationError(item.text, item.targetLang, error.message, item.context);
       
-      // Don't retry if network is offline
-      if (!navigator?.onLine) {
-        translationRetryCounter[queueKey] = MAX_RETRIES;
+      // Handle error case for processing map
+      if (translationProcessingMap.has(queueKey)) {
+        // Only remove after MAX_RETRIES
+        const entry = translationProcessingMap.get(queueKey);
+        if ((entry.retryCount || 0) >= MAX_RETRIES - 1) {
+          translationProcessingMap.delete(queueKey);
+        } else {
+          // Update retry count
+          entry.retryCount = (entry.retryCount || 0) + 1;
+          translationProcessingMap.set(queueKey, entry);
+        }
       }
     })
     .finally(() => {
@@ -121,10 +180,10 @@ async function saveTranslationError(text, lang, errorMsg, context = '') {
       });
     } else {
       // Log to console if database not available
-      console.error(`Translation Error [${lang}] ${context}: ${errorMsg} for text "${text.substring(0, 50)}..."`);
+      console.error(`[i18n] Translation Error [${lang}] ${context}: ${errorMsg} for text "${text.substring(0, 50)}..."`);
     }
   } catch (e) {
-    console.error('Error saving translation error data:', e);
+    console.error('[i18n] Error saving translation error data:', e);
   }
 }
 
@@ -168,7 +227,8 @@ router.post('/translate', async (req, res) => {
         original: text,
         translated: text,
         language: targetLang,
-        fromSource: true
+        fromSource: true,
+        status: 'complete'
       });
     }
     
@@ -182,15 +242,15 @@ router.post('/translate', async (req, res) => {
     };
     
     if (process.env.NODE_ENV === 'development') {
-      console.log('Translation request:', requestInfo);
+      console.log('[i18n] Translation request:', requestInfo);
     }
     
-    // Check if this translation is in the cache
+    // Always check cache first, with comprehensive logging
     const cachedTranslation = await checkCache(text, targetLang, context || '');
     if (cachedTranslation) {
       // Add debug info in development
       if (process.env.NODE_ENV === 'development') {
-        console.log(`Cache hit for [${targetLang}] "${text.substring(0, 30)}..."`);
+        console.log(`[i18n] Cache hit for [${targetLang}] "${text.substring(0, 30)}..."`);
       }
       
       return res.json({
@@ -198,35 +258,75 @@ router.post('/translate', async (req, res) => {
         translated: cachedTranslation,
         language: targetLang,
         fromCache: true,
+        status: 'complete',
+        requestInfo: process.env.NODE_ENV === 'development' ? requestInfo : undefined
+      });
+    }
+    
+    // Generate queueKey for tracking
+    const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}`;
+    
+    // Check if this translation is already being processed
+    if (translationProcessingMap.has(queueKey)) {
+      console.log(`[i18n] Translation already in progress: ${queueKey}`);
+      
+      // Return a "pending" response with retry-after header
+      res.setHeader('Retry-After', '3');
+      return res.status(202).json({
+        original: text,
+        translated: text, // Return original as placeholder
+        language: targetLang,
+        status: 'pending',
+        retryAfter: 3,
         requestInfo: process.env.NODE_ENV === 'development' ? requestInfo : undefined
       });
     }
     
     // If background flag is set, add to background queue and return immediately
     if (background) {
+      // Add entry to processing map
+      translationProcessingMap.set(queueKey, {
+        startTime: Date.now(),
+        text: text.substring(0, 30) + '...',
+        retryCount: 0
+      });
+      
       backgroundQueue.enqueue({
         text,
         targetLang,
         context: context || '',
-        sourceLang: sourceLang || 'en'
+        sourceLang: sourceLang || 'en',
+        queueKey: queueKey  // Add reference to track completion
       });
       
-      return res.json({
+      res.setHeader('Retry-After', '3');
+      return res.status(202).json({
         original: text,
         translated: text, // Return original as placeholder
         language: targetLang,
-        background: true,
+        status: 'pending',
+        retryAfter: 3,
         requestInfo: process.env.NODE_ENV === 'development' ? requestInfo : undefined
       });
     }
     
     // Otherwise, translate immediately
+    // Add entry to processing map during translation
+    translationProcessingMap.set(queueKey, {
+      startTime: Date.now(),
+      text: text.substring(0, 30) + '...',
+      retryCount: 0
+    });
+    
     const translatedText = await translateText(
       text, 
       targetLang, 
       context || '', 
       sourceLang || 'en'
     );
+    
+    // Remove from processing map when done
+    translationProcessingMap.delete(queueKey);
     
     // Add usage statistics
     if (translatedText !== text) {
@@ -242,7 +342,7 @@ router.post('/translate', async (req, res) => {
         global.translationMetrics.byLanguage[targetLang] = 
           (global.translationMetrics.byLanguage[targetLang] || 0) + 1;
       } catch (metricError) {
-        console.error('Error updating metrics:', metricError);
+        console.error('[i18n] Error updating metrics:', metricError);
       }
     }
     
@@ -251,6 +351,7 @@ router.post('/translate', async (req, res) => {
       original: text, 
       translated: translatedText, 
       language: targetLang,
+      status: 'complete',
       requestInfo: process.env.NODE_ENV === 'development' ? requestInfo : undefined
     };
     
@@ -261,7 +362,7 @@ router.post('/translate', async (req, res) => {
     
     res.json(response);
   } catch (error) {
-    console.error("Translation error:", error);
+    console.error("[i18n] Translation error:", error);
     
     // Log the error for diagnostic purposes
     saveTranslationError(req.body.text || '', req.body.targetLang || 'unknown', error.message, req.body.context || '');
@@ -321,7 +422,8 @@ router.post('/translate-batch', async (req, res) => {
       return res.json({
         translations: texts,
         language: targetLang,
-        fromSource: true
+        fromSource: true,
+        status: 'complete'
       });
     }
     
@@ -329,9 +431,10 @@ router.post('/translate-batch', async (req, res) => {
     const results = [];
     const missingTexts = [];
     const missingIndices = [];
+    const queuedItems = [];
     
     // Log cache hits/misses in development
-    const cacheStats = { hits: 0, misses: 0, empty: 0 };
+    const cacheStats = { hits: 0, misses: 0, empty: 0, inProgress: 0 };
     
     for (let i = 0; i < texts.length; i++) {
       const text = texts[i];
@@ -349,18 +452,55 @@ router.post('/translate-batch', async (req, res) => {
         results[i] = cachedTranslation;
         cacheStats.hits++;
       } else {
-        // Note missing translations
-        missingTexts.push(text);
-        missingIndices.push(i);
-        // Set placeholder
-        results[i] = text;
-        cacheStats.misses++;
+        // Generate queue key for tracking
+        const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}`;
+        
+        // Check if already in progress
+        if (translationProcessingMap.has(queueKey)) {
+          // Already in progress, mark as pending
+          results[i] = text; // Use original as placeholder
+          cacheStats.inProgress++;
+          
+          // Track for response
+          queuedItems.push({
+            index: i,
+            queueKey: queueKey
+          });
+        } else {
+          // Note missing translations
+          missingTexts.push(text);
+          missingIndices.push(i);
+          // Set placeholder
+          results[i] = text;
+          cacheStats.misses++;
+        }
       }
     }
     
     // Log cache statistics in development
     if (process.env.NODE_ENV === 'development') {
-      console.log(`Batch translation cache stats: ${JSON.stringify(cacheStats)}`);
+      console.log(`[i18n] Batch translation cache stats: ${JSON.stringify(cacheStats)}`);
+    }
+    
+    // If we have items in progress but not missing, return with pending status
+    if (missingTexts.length === 0 && queuedItems.length > 0) {
+      res.setHeader('Retry-After', '3');
+      
+      const response = {
+        translations: results,
+        pendingIndices: queuedItems.map(item => item.index),
+        status: 'partial',
+        retryAfter: 3,
+        cacheStats: process.env.NODE_ENV === 'development' ? cacheStats : undefined
+      };
+      
+      // For i18next compatibility
+      if (req.body.keys) {
+        response.keys = req.body.keys;
+        response.ns = req.body.ns || 'common';
+      }
+      
+      return res.status(202).json(response);
     }
     
     // If all texts were in cache, return immediately
@@ -368,6 +508,7 @@ router.post('/translate-batch', async (req, res) => {
       const response = {
         translations: results,
         fromCache: true,
+        status: 'complete',
         cacheStats: process.env.NODE_ENV === 'development' ? cacheStats : undefined
       };
       
@@ -382,19 +523,40 @@ router.post('/translate-batch', async (req, res) => {
     
     // If background mode enabled, queue missing translations and return partial results
     if (background) {
+      // Add all missing texts to queue and processing map
       missingTexts.forEach((text, idx) => {
+        const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}`;
+        
+        // Add to processing map
+        translationProcessingMap.set(queueKey, {
+          startTime: Date.now(),
+          text: text.substring(0, 30) + '...',
+          retryCount: 0
+        });
+        
+        // Add to queue
         backgroundQueue.enqueue({
           text,
           targetLang,
           context: context || '',
-          sourceLang: sourceLang || 'en'
+          sourceLang: sourceLang || 'en',
+          queueKey: queueKey
+        });
+        
+        // Track for response
+        queuedItems.push({
+          index: missingIndices[idx],
+          queueKey: queueKey
         });
       });
       
+      res.setHeader('Retry-After', '3');
+      
       const response = {
         translations: results,
-        background: true,
-        missingCount: missingTexts.length,
+        status: 'partial',
+        pendingIndices: queuedItems.map(item => item.index),
+        retryAfter: 3,
         cacheStats: process.env.NODE_ENV === 'development' ? cacheStats : undefined
       };
       
@@ -404,36 +566,66 @@ router.post('/translate-batch', async (req, res) => {
         response.ns = req.body.ns || 'common';
       }
       
-      return res.json(response);
+      return res.status(202).json(response);
     }
     
     // Otherwise, translate missing texts now
-    const translations = await batchTranslate(
-      missingTexts, 
-      targetLang, 
-      context || '', 
-      sourceLang || 'en'
-    );
+    const queueKeys = [];
     
-    // Merge into results
-    for (let i = 0; i < translations.length; i++) {
-      results[missingIndices[i]] = translations[i];
+    // Add all texts to processing map first
+    missingTexts.forEach((text, idx) => {
+      const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}`;
+      queueKeys.push(queueKey);
+      
+      // Add to processing map
+      translationProcessingMap.set(queueKey, {
+        startTime: Date.now(),
+        text: text.substring(0, 30) + '...',
+        retryCount: 0
+      });
+    });
+    
+    try {
+      const translations = await batchTranslate(
+        missingTexts, 
+        targetLang, 
+        context || '', 
+        sourceLang || 'en'
+      );
+      
+      // Remove from processing map when done
+      queueKeys.forEach(key => {
+        translationProcessingMap.delete(key);
+      });
+      
+      // Merge into results
+      for (let i = 0; i < translations.length; i++) {
+        results[missingIndices[i]] = translations[i];
+      }
+      
+      const response = { 
+        translations: results,
+        status: 'complete',
+        cacheStats: process.env.NODE_ENV === 'development' ? cacheStats : undefined
+      };
+      
+      // For i18next compatibility
+      if (req.body.keys) {
+        response.keys = req.body.keys;
+        response.ns = req.body.ns || 'common';
+      }
+      
+      res.json(response);
+    } catch (error) {
+      // Clean up processing map on error
+      queueKeys.forEach(key => {
+        translationProcessingMap.delete(key);
+      });
+      
+      throw error; // Re-throw to be caught by outer catch
     }
-    
-    const response = { 
-      translations: results,
-      cacheStats: process.env.NODE_ENV === 'development' ? cacheStats : undefined
-    };
-    
-    // For i18next compatibility
-    if (req.body.keys) {
-      response.keys = req.body.keys;
-      response.ns = req.body.ns || 'common';
-    }
-    
-    res.json(response);
   } catch (error) {
-    console.error("Batch translation error:", error);
+    console.error("[i18n] Batch translation error:", error);
     
     // Log detailed error for diagnostics
     const errorDetails = {
@@ -445,7 +637,7 @@ router.post('/translate-batch', async (req, res) => {
       textsCount: req.body.texts?.length || req.body.keys?.length
     };
     
-    console.error("Batch translation error details:", errorDetails);
+    console.error("[i18n] Batch translation error details:", errorDetails);
     
     // Save at most 3 sample texts for error analysis
     const textsToAnalyze = req.body.texts || req.body.defaultValues || req.body.keys || [];
@@ -467,6 +659,37 @@ router.post('/translate-batch', async (req, res) => {
       failedCount: textsToAnalyze.length || 0,
       retryRecommended: !(error.message.includes('quota') || error.message.includes('limit'))
     });
+  }
+});
+
+// API endpoint to check translation status
+router.get('/translation-status', (req, res) => {
+  try {
+    const queueSize = backgroundQueue.size();
+    const processingCount = translationProcessingMap.size;
+    
+    // Get queue and processing statistics
+    const queueStats = backgroundQueue.getStats();
+    
+    // Get languages being processed
+    const languages = new Set();
+    translationProcessingMap.forEach((info, key) => {
+      const parts = key.split(':');
+      if (parts.length > 0) {
+        languages.add(parts[0]);
+      }
+    });
+    
+    // Return status information
+    res.json({
+      queueSize,
+      processingCount,
+      activeLanguages: Array.from(languages),
+      queueStats: queueStats,
+      health: queueSize < 100 && processingCount < 20 ? 'good' : 'busy'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
