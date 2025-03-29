@@ -9,11 +9,161 @@ const { Queue } = require('../utils/queue');
 const fs = require('fs');
 const { stripBOM, parseJSONWithBOM } = require('../utils/bomUtils');
 
-// Create translation queue for deferred translations
-const translationQueue = new Queue();
+
 const namespaceVersions = new Map();
+
+
+
+// middleware/i18n.js - Optimized missing key handler
+
+// Initialize translation queue for handling missing keys
+const translationQueue = new Queue();
 // Track keys currently being processed to prevent recursion
 const processingKeys = new Set();
+// Cache of already requested translations to avoid duplicates
+const requestedTranslations = new Map();
+// Cleanup interval for requested translations (5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+  
+  requestedTranslations.forEach((timestamp, key) => {
+    if (now - timestamp > 300000) { // 5 minutes
+      requestedTranslations.delete(key);
+      cleaned++;
+    }
+  });
+  
+  if (cleaned > 0) {
+    console.log(`[i18n] Cleaned up ${cleaned} stale translation requests`);
+  }
+}, 300000);
+
+/**
+ * Generate consistent key for tracking translation requests
+ * @param {string} text - Source text
+ * @param {string} targetLang - Target language
+ * @param {string} namespace - Translation namespace
+ * @returns {string} - Unique key
+ */
+function generateTrackingKey(text, targetLang, namespace) {
+  // Using MD5 would be better, but for tracking we can use a simpler approach
+  // This is just for in-memory tracking, not for database storage
+  return `${targetLang}:${namespace}:${text.substring(0, 50)}`;
+}
+
+/**
+ * Check if a translation has already been requested recently
+ * @param {string} text - Source text 
+ * @param {string} targetLang - Target language
+ * @param {string} namespace - Translation namespace
+ * @returns {boolean} - True if already requested
+ */
+function isAlreadyRequested(text, targetLang, namespace) {
+  const key = generateTrackingKey(text, targetLang, namespace);
+  return requestedTranslations.has(key);
+}
+
+/**
+ * Mark a translation as requested
+ * @param {string} text - Source text
+ * @param {string} targetLang - Target language
+ * @param {string} namespace - Translation namespace
+ */
+function markAsRequested(text, targetLang, namespace) {
+  const key = generateTrackingKey(text, targetLang, namespace);
+  requestedTranslations.set(key, Date.now());
+}
+
+/**
+ * Optimized missing key handler for i18next
+ * @param {string|string[]} lng - Target language(s)
+ * @param {string} ns - Namespace
+ * @param {string} key - Translation key
+ * @param {string} fallbackValue - Default value if missing
+ * @param {object} options - i18next options
+ * @param {object} req - Express request object (optional)
+ */
+function optimizedMissingKeyHandler(lng, ns, key, fallbackValue, options, req) {
+  // Get the primary language from the array or use the language if it's already a string
+  const targetLanguage = Array.isArray(lng) ? lng[0] : lng;
+  const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
+  
+  // Make sure we have a valid target language that's not the default
+  if (!targetLanguage || targetLanguage === defaultLanguage) {
+    return;  // Skip processing for default language
+  }
+  
+  // If no fallback value provided, just use the key
+  const textToTranslate = fallbackValue || key;
+  
+  // Skip if already being processed or empty
+  if (!textToTranslate || textToTranslate.trim() === '') {
+    return;
+  }
+  
+  // Create a unique key to check for duplicates
+  const uniqueKey = `${targetLanguage}:${ns}:${key}`;
+  
+  // Skip if this key is already being processed
+  if (processingKeys.has(uniqueKey)) {
+    return;
+  }
+  
+  // Skip if this translation was already requested recently
+  if (isAlreadyRequested(textToTranslate, targetLanguage, ns)) {
+    return;
+  }
+  
+  try {
+    // Mark that we're processing this key
+    processingKeys.add(uniqueKey);
+    
+    // Mark this translation as requested to prevent duplicates
+    markAsRequested(textToTranslate, targetLanguage, ns);
+    
+    // First check if it already exists in the cache
+    // This avoids adding duplicates to the queue
+    checkCache(textToTranslate, targetLanguage, ns)
+      .then(cachedResult => {
+        if (cachedResult) {
+          // Already in cache, no need to queue translation
+          console.log(`[i18n] Missing key ${uniqueKey} found in cache, skipping translation`);
+          return;
+        }
+        
+        // Log only if not in cache
+        console.log(`[i18n] Missing translation: [${targetLanguage}] ${ns}:${key}`);
+        
+        // Add to queue with relevant info
+        translationQueue.enqueue({
+          text: textToTranslate,
+          targetLang: targetLanguage,
+          namespace: ns,
+          key: key,
+          priority: 100 // High priority for missing keys
+        });
+      })
+      .catch(error => {
+        console.error(`[i18n] Error checking cache for missing key:`, error);
+        // On error, add to queue anyway
+        translationQueue.enqueue({
+          text: textToTranslate,
+          targetLang: targetLanguage,
+          namespace: ns,
+          key: key
+        });
+      })
+      .finally(() => {
+        // Always remove from processing list when done
+        processingKeys.delete(uniqueKey);
+      });
+  } catch (error) {
+    // Handle any synchronous errors
+    console.error(`[i18n] Error in missing key handler:`, error);
+    processingKeys.delete(uniqueKey);
+  }
+}
 
 /**
  * Load namespace with version tracking

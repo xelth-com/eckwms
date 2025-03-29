@@ -86,8 +86,14 @@ function processBackgroundQueue() {
     return;
   }
   
+  // Create extended cache key with options if present
+  let optionsCacheKey = '';
+  if (item.options && item.options.count !== undefined) {
+    optionsCacheKey = `:count=${item.options.count}`;
+  }
+  
   // Check cache one more time before translation
-  checkCache(item.text, item.targetLang, item.context || '')
+  checkCache(item.text + optionsCacheKey, item.targetLang, item.context || '')
     .then(cachedResult => {
       if (cachedResult) {
         console.log(`[i18n] Found in cache during queue processing: [${item.targetLang}] ${item.text.substring(0, 30)}...`);
@@ -100,8 +106,14 @@ function processBackgroundQueue() {
         return null; // Skip translation
       }
       
-      // Process translation
-      return translateText(item.text, item.targetLang, item.context || '', item.sourceLang || 'en');
+      // Process translation with options
+      return translateText(
+        item.text, 
+        item.targetLang, 
+        item.context || '', 
+        item.sourceLang || 'en',
+        item.options || {}  // Передаем options
+      );
     })
     .then(translation => {
       if (translation === null) {
@@ -191,13 +203,13 @@ async function saveTranslationError(text, lang, errorMsg, context = '') {
  * Handle single text translation - i18next compatible endpoint
  * POST /api/translate
  * Body formats supported:
- * 1. i18next format: { lng: "de", ns: "common", key: "welcome", defaultValue: "Welcome" }
- * 2. Legacy format: { text: "Welcome", targetLang: "de", context: "common", background: false }
+ * 1. i18next format: { lng: "de", ns: "common", key: "welcome", defaultValue: "Welcome", options: { count: 2 } }
+ * 2. Legacy format: { text: "Welcome", targetLang: "de", context: "common", background: false, options: { count: 2 } }
  */
 router.post('/translate', async (req, res) => {
   try {
     // Support both i18next format and legacy format
-    let text, targetLang, context, background, sourceLang;
+    let text, targetLang, context, background, sourceLang, options = {};
     
     // Check for i18next format
     if (req.body.lng && req.body.key !== undefined) {
@@ -207,6 +219,14 @@ router.post('/translate', async (req, res) => {
       context = req.body.ns || 'common';
       background = req.body.background || false;
       sourceLang = process.env.DEFAULT_LANGUAGE || 'en';
+      
+      // НОВОЕ: извлекаем опции из формата i18next
+      options = req.body.options || {};
+      
+      // Особый случай: если передан count напрямую в запросе (не в options)
+      if (req.body.count !== undefined) {
+        options.count = req.body.count;
+      }
     } else {
       // Legacy format
       text = req.body.text;
@@ -214,6 +234,9 @@ router.post('/translate', async (req, res) => {
       context = req.body.context;
       background = req.body.background || false;
       sourceLang = req.body.sourceLang || process.env.DEFAULT_LANGUAGE || 'en';
+      
+      // НОВОЕ: извлекаем опции из запроса
+      options = req.body.options || {};
     }
     
     // Ensure required parameters are present
@@ -238,15 +261,22 @@ router.post('/translate', async (req, res) => {
       ip: req.ip,
       userAgent: req.get('User-Agent'),
       textLength: text.length,
-      language: targetLang
+      language: targetLang,
+      options: options // НОВОЕ: добавляем опции в логи
     };
     
     if (process.env.NODE_ENV === 'development') {
       console.log('[i18n] Translation request:', requestInfo);
     }
     
+    // Create extended cache key with options
+    let optionsCacheKey = '';
+    if (options.count !== undefined) {
+      optionsCacheKey = `:count=${options.count}`;
+    }
+    
     // Always check cache first, with comprehensive logging
-    const cachedTranslation = await checkCache(text, targetLang, context || '');
+    const cachedTranslation = await checkCache(text + optionsCacheKey, targetLang, context || '');
     if (cachedTranslation) {
       // Add debug info in development
       if (process.env.NODE_ENV === 'development') {
@@ -264,7 +294,7 @@ router.post('/translate', async (req, res) => {
     }
     
     // Generate queueKey for tracking
-    const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}`;
+    const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}${optionsCacheKey}`;
     
     // Check if this translation is already being processed
     if (translationProcessingMap.has(queueKey)) {
@@ -288,7 +318,8 @@ router.post('/translate', async (req, res) => {
       translationProcessingMap.set(queueKey, {
         startTime: Date.now(),
         text: text.substring(0, 30) + '...',
-        retryCount: 0
+        retryCount: 0,
+        options: options // НОВОЕ: сохраняем опции
       });
       
       backgroundQueue.enqueue({
@@ -296,7 +327,8 @@ router.post('/translate', async (req, res) => {
         targetLang,
         context: context || '',
         sourceLang: sourceLang || 'en',
-        queueKey: queueKey  // Add reference to track completion
+        options: options, // НОВОЕ: передаем опции
+        queueKey: queueKey
       });
       
       res.setHeader('Retry-After', '3');
@@ -315,14 +347,17 @@ router.post('/translate', async (req, res) => {
     translationProcessingMap.set(queueKey, {
       startTime: Date.now(),
       text: text.substring(0, 30) + '...',
-      retryCount: 0
+      retryCount: 0,
+      options: options // НОВОЕ: сохраняем опции
     });
     
+    // НОВОЕ: передаем options в функцию translateText
     const translatedText = await translateText(
       text, 
       targetLang, 
       context || '', 
-      sourceLang || 'en'
+      sourceLang || 'en',
+      options // Передаем опции
     );
     
     // Remove from processing map when done
@@ -331,8 +366,7 @@ router.post('/translate', async (req, res) => {
     // Add usage statistics
     if (translatedText !== text) {
       try {
-        // Track successful translations for metrics if needed
-        // This could be extended to save to database
+        // Track successful translations for metrics
         global.translationMetrics = global.translationMetrics || {
           totalTranslations: 0,
           byLanguage: {}
@@ -365,7 +399,7 @@ router.post('/translate', async (req, res) => {
     console.error("[i18n] Translation error:", error);
     
     // Log the error for diagnostic purposes
-    saveTranslationError(req.body.text || '', req.body.targetLang || 'unknown', error.message, req.body.context || '');
+    saveTranslationError(req.body.text || '', req.body.targetLang || req.body.lng || 'unknown', error.message, req.body.context || req.body.ns || '');
     
     // Provide detailed error response
     res.status(500).json({ 
@@ -381,13 +415,25 @@ router.post('/translate', async (req, res) => {
  * Batch translate multiple texts - i18next compatible
  * POST /api/translate-batch
  * Body formats supported:
- * 1. i18next format: { lng: "de", ns: "common", keys: ["welcome", "hello"], defaultValues: ["Welcome", "Hello"] }
- * 2. Legacy format: { texts: ["Welcome", "Hello"], targetLang: "de", context: "common", background: false }
+ * 1. i18next format: { 
+ *    lng: "de", 
+ *    ns: "common", 
+ *    keys: ["welcome", "hello"], 
+ *    defaultValues: ["Welcome", "Hello"],
+ *    options: [{ count: 1 }, { count: 2 }]
+ * }
+ * 2. Legacy format: { 
+ *    texts: ["Welcome", "Hello"], 
+ *    targetLang: "de", 
+ *    context: "common", 
+ *    background: false,
+ *    options: [{ count: 1 }, { count: 2 }]
+ * }
  */
 router.post('/translate-batch', async (req, res) => {
   try {
     // Support both i18next format and legacy format
-    let texts, targetLang, context, background, sourceLang;
+    let texts, targetLang, context, background, sourceLang, options = [];
     
     // Check for i18next format
     if (req.body.lng && req.body.keys) {
@@ -404,6 +450,25 @@ router.post('/translate-batch', async (req, res) => {
       context = req.body.ns || 'common';
       background = req.body.background || false;
       sourceLang = process.env.DEFAULT_LANGUAGE || 'en';
+      
+      // НОВОЕ: i18next может передавать опции для каждого ключа отдельно или общие опции
+      if (Array.isArray(req.body.options)) {
+        options = req.body.options;
+      } else if (req.body.options) {
+        // Для единой опции - создаем массив с одинаковыми опциями
+        options = Array(texts.length).fill(req.body.options);
+      }
+      
+      // Особый случай: если передан count напрямую в запросе (не в options)
+      if (req.body.count !== undefined) {
+        // Создаем массив опций с одинаковым count, если опций еще нет
+        if (!options.length) {
+          options = Array(texts.length).fill({ count: req.body.count });
+        } else {
+          // Добавляем count в каждую опцию, если она уже существует
+          options = options.map(opt => ({ ...opt, count: req.body.count }));
+        }
+      }
     } else {
       // Legacy format
       texts = req.body.texts;
@@ -411,10 +476,26 @@ router.post('/translate-batch', async (req, res) => {
       context = req.body.context;
       background = req.body.background || false;
       sourceLang = req.body.sourceLang || process.env.DEFAULT_LANGUAGE || 'en';
+      
+      // НОВОЕ: получаем опции
+      if (Array.isArray(req.body.options)) {
+        options = req.body.options;
+      } else if (req.body.options) {
+        options = Array(texts.length).fill(req.body.options);
+      }
     }
     
     if (!texts || !Array.isArray(texts) || !targetLang) {
       return res.status(400).json({ error: 'Array of texts and target language required' });
+    }
+    
+    // Нормализуем опции, чтобы их было столько же, сколько текстов
+    if (options.length < texts.length) {
+      // Если опций меньше, чем текстов, дополняем пустыми объектами
+      options = [...options, ...Array(texts.length - options.length).fill({})];
+    } else if (options.length > texts.length) {
+      // Если опций больше, обрезаем до числа текстов
+      options = options.slice(0, texts.length);
     }
     
     // Skip translation for default language (just return originals)
@@ -430,6 +511,7 @@ router.post('/translate-batch', async (req, res) => {
     // First check cache for all texts
     const results = [];
     const missingTexts = [];
+    const missingOptions = [];
     const missingIndices = [];
     const queuedItems = [];
     
@@ -438,6 +520,7 @@ router.post('/translate-batch', async (req, res) => {
     
     for (let i = 0; i < texts.length; i++) {
       const text = texts[i];
+      const textOptions = options[i] || {};
       
       // Skip empty texts
       if (!text || text.trim() === '') {
@@ -446,14 +529,20 @@ router.post('/translate-batch', async (req, res) => {
         continue;
       }
       
+      // Create extended cache key with options
+      let optionsCacheKey = '';
+      if (textOptions.count !== undefined) {
+        optionsCacheKey = `:count=${textOptions.count}`;
+      }
+      
       // Check cache
-      const cachedTranslation = await checkCache(text, targetLang, context || '');
+      const cachedTranslation = await checkCache(text + optionsCacheKey, targetLang, context || '');
       if (cachedTranslation) {
         results[i] = cachedTranslation;
         cacheStats.hits++;
       } else {
         // Generate queue key for tracking
-        const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}`;
+        const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}${optionsCacheKey}`;
         
         // Check if already in progress
         if (translationProcessingMap.has(queueKey)) {
@@ -469,6 +558,7 @@ router.post('/translate-batch', async (req, res) => {
         } else {
           // Note missing translations
           missingTexts.push(text);
+          missingOptions.push(textOptions);
           missingIndices.push(i);
           // Set placeholder
           results[i] = text;
@@ -525,13 +615,22 @@ router.post('/translate-batch', async (req, res) => {
     if (background) {
       // Add all missing texts to queue and processing map
       missingTexts.forEach((text, idx) => {
-        const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}`;
+        const textOptions = missingOptions[idx] || {};
+        
+        // Create extended cache key with options
+        let optionsCacheKey = '';
+        if (textOptions.count !== undefined) {
+          optionsCacheKey = `:count=${textOptions.count}`;
+        }
+        
+        const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}${optionsCacheKey}`;
         
         // Add to processing map
         translationProcessingMap.set(queueKey, {
           startTime: Date.now(),
           text: text.substring(0, 30) + '...',
-          retryCount: 0
+          retryCount: 0,
+          options: textOptions
         });
         
         // Add to queue
@@ -540,6 +639,7 @@ router.post('/translate-batch', async (req, res) => {
           targetLang,
           context: context || '',
           sourceLang: sourceLang || 'en',
+          options: textOptions,
           queueKey: queueKey
         });
         
@@ -574,23 +674,34 @@ router.post('/translate-batch', async (req, res) => {
     
     // Add all texts to processing map first
     missingTexts.forEach((text, idx) => {
-      const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}`;
+      const textOptions = missingOptions[idx] || {};
+      
+      // Create extended cache key with options
+      let optionsCacheKey = '';
+      if (textOptions.count !== undefined) {
+        optionsCacheKey = `:count=${textOptions.count}`;
+      }
+      
+      const queueKey = `${targetLang}:${context || 'common'}:${text.substring(0, 20)}${optionsCacheKey}`;
       queueKeys.push(queueKey);
       
       // Add to processing map
       translationProcessingMap.set(queueKey, {
         startTime: Date.now(),
         text: text.substring(0, 30) + '...',
-        retryCount: 0
+        retryCount: 0,
+        options: textOptions
       });
     });
     
     try {
+      // НОВОЕ: передаем массив options в функцию batchTranslate
       const translations = await batchTranslate(
         missingTexts, 
         targetLang, 
         context || '', 
-        sourceLang || 'en'
+        sourceLang || 'en',
+        missingOptions
       );
       
       // Remove from processing map when done

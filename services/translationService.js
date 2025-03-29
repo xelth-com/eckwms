@@ -27,7 +27,7 @@ const memoryCache = new Map();
 const MEMORY_CACHE_MAX_SIZE = 1000; // Limit memory cache size
 
 /**
- * Generate unique key for text
+ * Generate consistent key for caching
  * @param {string} text - Source text
  * @param {string} context - Translation context
  * @returns {string} - MD5 hash
@@ -49,44 +49,69 @@ function generateKey(text, context = '') {
  * @returns {Promise<string|null>} - Translation or null if not found
  */
 async function checkCache(text, targetLang, context = '') {
-  // Strip BOM before generating key
-  text = stripBOM(text);
-  const key = generateKey(text, context);
-  const cacheKey = `${targetLang}:${key}`;
-  
-  // Check memory cache first for fastest access
-  if (memoryCache.has(cacheKey)) {
-    return memoryCache.get(cacheKey);
-  }
-  
-  // Then check database cache if available
-  if (TranslationCache) {
-    try {
-      const cachedTranslation = await TranslationCache.findOne({
-        where: {
-          key,
-          language: targetLang
-        }
-      });
-      
-      if (cachedTranslation) {
-        // Update usage metrics
-        await cachedTranslation.update({
-          lastUsed: new Date(),
-          useCount: cachedTranslation.useCount + 1
+  try {
+    // Strip BOM before generating key
+    text = stripBOM(text);
+    
+    // Generate consistent key
+    const key = generateKey(text, context);
+    const cacheKey = `${targetLang}:${key}`;
+    
+    // Add detailed logging in development
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[i18n] Checking cache for: ${cacheKey.substring(0, 20)}... (text: "${text.substring(0, 30)}...")`);
+    }
+    
+    // Check memory cache first for fastest access
+    if (memoryCache.has(cacheKey)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[i18n] Memory cache hit for: ${cacheKey.substring(0, 20)}...`);
+      }
+      return memoryCache.get(cacheKey);
+    }
+    
+    // Then check database cache if available
+    if (TranslationCache) {
+      try {
+        const cachedTranslation = await TranslationCache.findOne({
+          where: {
+            key,
+            language: targetLang
+          }
         });
         
-        // Add to memory cache for faster future access
-        addToMemoryCache(cacheKey, cachedTranslation.translatedText);
-        
-        return cachedTranslation.translatedText;
+        if (cachedTranslation) {
+          // Update usage metrics asynchronously (don't wait for this)
+          cachedTranslation.update({
+            lastUsed: new Date(),
+            useCount: cachedTranslation.useCount + 1
+          }).catch(err => {
+            console.error('Error updating cache metrics:', err);
+          });
+          
+          // Add to memory cache for faster future access
+          addToMemoryCache(cacheKey, cachedTranslation.translatedText);
+          
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[i18n] Database cache hit for: ${cacheKey.substring(0, 20)}...`);
+          }
+          
+          return cachedTranslation.translatedText;
+        }
+      } catch (error) {
+        console.error('Error checking database cache:', error);
       }
-    } catch (error) {
-      console.error('Error checking database cache:', error);
     }
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[i18n] Cache miss for: ${cacheKey.substring(0, 20)}...`);
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Cache check error:', error);
+    return null; // On error, return null to indicate cache miss
   }
-  
-  return null;
 }
 
 /**
@@ -114,53 +139,73 @@ function addToMemoryCache(key, value) {
  * @param {string} context - Translation context
  */
 async function saveToCache(text, targetLang, translatedText, context = '') {
-  // Make sure targetLang is a string
-  if (Array.isArray(targetLang)) {
-    console.warn("targetLang was an array, converting to string");
-    targetLang = targetLang[0];
-  }
-  
-  // Strip BOM before generating key
-  text = stripBOM(text);
-  const key = generateKey(text, context);
-  const cacheKey = `${targetLang}:${key}`;
-  const startTime = global.translationStartTime || Date.now();
-  
-  // Add to memory cache
-  addToMemoryCache(cacheKey, translatedText);
-  
-  // Save to database if available
-  if (TranslationCache) {
-    try {
-      console.log(`Saving translation to cache for language: ${targetLang}`);
-      const [record, created] = await TranslationCache.findOrCreate({
-        where: {
-          key,
-          language: targetLang
-        },
-        defaults: {
-          originalText: text.substring(0, 500), // Limit text size
-          translatedText,
-          context: context || null,
-          source: 'openai',
-          charCount: text.length,
-          // Add metrics for analysis
-          processingTime: Date.now() - startTime,
-          apiVersion: 'gpt-4o-mini'
-        }
-      });
-      
-      if (!created) {
-        // Update existing record
-        await record.update({
-          translatedText,
-          lastUsed: new Date(),
-          useCount: record.useCount + 1
-        });
-      }
-    } catch (error) {
-      console.error('Error saving to database cache:', error);
+  try {
+    // Make sure targetLang is a string
+    if (Array.isArray(targetLang)) {
+      console.warn("targetLang was an array, converting to string");
+      targetLang = targetLang[0];
     }
+    
+    // Skip saving if text and translation are identical
+    if (text === translatedText) {
+      return;
+    }
+    
+    // Strip BOM before generating key
+    text = stripBOM(text);
+    const key = generateKey(text, context);
+    const cacheKey = `${targetLang}:${key}`;
+    const startTime = global.translationStartTime || Date.now();
+    
+    // Add to memory cache
+    addToMemoryCache(cacheKey, translatedText);
+    
+    // Save to database if available
+    if (TranslationCache) {
+      try {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[i18n] Saving translation to cache: ${cacheKey.substring(0, 20)}...`);
+        }
+        
+        const [record, created] = await TranslationCache.findOrCreate({
+          where: {
+            key,
+            language: targetLang
+          },
+          defaults: {
+            originalText: text.substring(0, 500), // Limit text size
+            translatedText,
+            context: context || null,
+            source: 'openai',
+            charCount: text.length,
+            // Add metrics for analysis
+            processingTime: Date.now() - startTime,
+            apiVersion: 'gpt-4o-mini'
+          }
+        });
+        
+        if (!created) {
+          // Update existing record if translation has changed
+          if (record.translatedText !== translatedText) {
+            await record.update({
+              translatedText,
+              lastUsed: new Date(),
+              useCount: record.useCount + 1
+            });
+          } else {
+            // Just update usage metrics if translation is the same
+            await record.update({
+              lastUsed: new Date(),
+              useCount: record.useCount + 1
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error saving to database cache:', error);
+      }
+    }
+  } catch (error) {
+    console.error('Error in saveToCache:', error);
   }
 }
 
@@ -179,9 +224,10 @@ function containsHtmlTags(text) {
  * @param {string} targetLang - Target language
  * @param {string} context - Translation context
  * @param {string} sourceLang - Source language (default: en)
+ * @param {object} options - Additional options like count for placeholders
  * @returns {Promise<string>} - Translated text
  */
-async function translateText(text, targetLang, context = '', sourceLang = process.env.DEFAULT_LANGUAGE || 'en') {
+async function translateText(text, targetLang, context = '', sourceLang = process.env.DEFAULT_LANGUAGE || 'en', options = {}) {
   try {
     // Track performance
     global.translationStartTime = Date.now();
@@ -200,8 +246,14 @@ async function translateText(text, targetLang, context = '', sourceLang = proces
     
     console.log(`Translating: "${text.substring(0, 30)}..." to ${targetLanguage}`);
     
-    // Check cache before API call
-    const cachedTranslation = await checkCache(text, targetLanguage, context);
+    // Create a unique cache key that includes relevant options (like count)
+    let optionsCacheKey = '';
+    if (options.count !== undefined) {
+      optionsCacheKey = `:count=${options.count}`;
+    }
+    
+    // Check cache before API call with extended cache key
+    const cachedTranslation = await checkCache(text + optionsCacheKey, targetLanguage, context);
     if (cachedTranslation) return cachedTranslation;
     
     // Get full language name for more accurate translation
@@ -250,6 +302,11 @@ Ensure the translation sounds natural in the target language.`;
       systemPrompt += `\nContext: This text appears in the "${context}" section of the application.`;
     }
     
+    // НОВОЕ: Добавление инструкций по обработке счетчиков и других опций
+    if (options.count !== undefined) {
+      systemPrompt += `\nIMPORTANT: The text may contain the placeholder {{count}} which should be replaced with the number ${options.count} while translating.`;
+    }
+    
     // Special instructions for specific languages
     if (targetLanguage === 'ar' || targetLanguage === 'he') {
       systemPrompt += '\nNote: This language is read from right to left.';
@@ -275,8 +332,13 @@ Ensure the translation sounds natural in the target language.`;
     // Strip BOM from translated text if present
     translatedText = stripBOM(translatedText);
     
-    // Save to cache
-    await saveToCache(text, targetLanguage, translatedText, context);
+    // НОВОЕ: Заменяем {{count}} на options.count напрямую для более надежной работы
+    if (options.count !== undefined && translatedText.includes('{{count}}')) {
+      translatedText = translatedText.replace(/\{\{count\}\}/g, options.count);
+    }
+    
+    // Save to cache with extended key
+    await saveToCache(text + optionsCacheKey, targetLanguage, translatedText, context);
     
     return translatedText;
   } catch (error) {
@@ -292,12 +354,16 @@ Ensure the translation sounds natural in the target language.`;
  * @param {string} targetLang - Target language
  * @param {string} context - Translation context (usually namespace)
  * @param {string} sourceLang - Source language (default: en)
+ * @param {object|object[]} options - Options for each text (single object or array of objects)
  * @returns {Promise<string[]>} - Array of translated texts
  */
-async function batchTranslate(texts, targetLang, context = '', sourceLang = process.env.DEFAULT_LANGUAGE || 'en') {
+async function batchTranslate(texts, targetLang, context = '', sourceLang = process.env.DEFAULT_LANGUAGE || 'en', options = []) {
   // Ensure language parameters are strings
   const targetLanguage = Array.isArray(targetLang) ? targetLang[0] : targetLang;
   const sourceLanguage = Array.isArray(sourceLang) ? sourceLang[0] : sourceLang;
+  
+  // Normalize options to array
+  const optionsArray = Array.isArray(options) ? options : Array(texts.length).fill(options);
   
   if (!texts || !texts.length) {
     return [];
@@ -314,11 +380,13 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = proc
   // First check what's already in cache
   const results = new Array(texts.length);
   const missingTexts = [];
+  const missingOptions = [];
   const missingIndexes = [];
   
   // First pass: Check cache for each text
   for (let i = 0; i < texts.length; i++) {
     const text = texts[i]?.trim();
+    const textOptions = optionsArray[i] || {};
     
     // Skip empty texts
     if (!text) {
@@ -326,12 +394,19 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = proc
       continue;
     }
     
-    // Try cache first
-    const cachedText = await checkCache(text, targetLanguage, context);
+    // Create extended cache key with options
+    let optionsCacheKey = '';
+    if (textOptions.count !== undefined) {
+      optionsCacheKey = `:count=${textOptions.count}`;
+    }
+    
+    // Try cache first with extended key
+    const cachedText = await checkCache(text + optionsCacheKey, targetLanguage, context);
     if (cachedText) {
       results[i] = cachedText;
     } else {
       missingTexts.push(text);
+      missingOptions.push(textOptions);
       missingIndexes.push(i);
     }
   }
@@ -348,6 +423,7 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = proc
   
   for (let i = 0; i < missingTexts.length; i += BATCH_SIZE) {
     const batch = missingTexts.slice(i, i + BATCH_SIZE);
+    const batchOptions = missingOptions.slice(i, i + BATCH_SIZE);
     const batchIndexes = missingIndexes.slice(i, i + BATCH_SIZE);
     
     // Join with specific separator for reliable splitting
@@ -406,6 +482,22 @@ IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated b
       systemPrompt += `\nContext: These texts appear in the "${context}" section of the application.`;
     }
     
+    // НОВОЕ: Информация о placeholder'ах с учетом того, что разные тексты могут иметь разные count
+    let hasCountPlaceholders = false;
+    const countsInfo = [];
+    
+    batchOptions.forEach((textOptions, idx) => {
+      if (textOptions.count !== undefined) {
+        hasCountPlaceholders = true;
+        countsInfo.push(`Text ${idx+1}: replace {{count}} with ${textOptions.count}`);
+      }
+    });
+    
+    if (hasCountPlaceholders) {
+      systemPrompt += `\nIMPORTANT: Some texts contain the placeholder {{count}} which should be replaced with specific numbers:
+${countsInfo.join('\n')}`;
+    }
+    
     // Special instructions for specific languages
     if (targetLanguage === 'ar' || targetLanguage === 'he') {
       systemPrompt += '\nNote: This language is read from right to left.';
@@ -437,17 +529,35 @@ IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated b
           console.error(`${isGrammarCorrection ? 'Correction' : 'Translation'} count mismatch! Expected ${batch.length}, got ${translatedTexts.length}`);
           // If count doesn't match, translate individually as fallback
           for (let j = 0; j < batch.length; j++) {
-            const singleText = await translateText(batch[j], targetLanguage, context, sourceLanguage);
+            const singleText = await translateText(
+              batch[j], 
+              targetLanguage, 
+              context, 
+              sourceLanguage, 
+              batchOptions[j] || {}
+            );
             results[batchIndexes[j]] = singleText;
           }
         } else {
           // Save each translation to cache and results array
           for (let j = 0; j < translatedTexts.length; j++) {
             const originalText = batch[j];
-            const translatedText = translatedTexts[j];
+            let translatedText = translatedTexts[j];
+            const textOptions = batchOptions[j] || {};
             
-            // Save to cache
-            await saveToCache(originalText, targetLanguage, translatedText, context);
+            // Дополнительная обработка для {{count}}
+            if (textOptions.count !== undefined && translatedText.includes('{{count}}')) {
+              translatedText = translatedText.replace(/\{\{count\}\}/g, textOptions.count);
+            }
+            
+            // Create extended cache key with options
+            let optionsCacheKey = '';
+            if (textOptions.count !== undefined) {
+              optionsCacheKey = `:count=${textOptions.count}`;
+            }
+            
+            // Save to cache with extended key
+            await saveToCache(originalText + optionsCacheKey, targetLanguage, translatedText, context);
             
             // Store in results array
             results[batchIndexes[j]] = translatedText;
@@ -458,8 +568,14 @@ IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated b
         
         // Fall back to individual translations
         for (let j = 0; j < batch.length; j++) {
-          // Use direct translateText call
-          const singleText = await translateText(batch[j], targetLanguage, context, sourceLanguage);
+          // Use direct translateText call with options
+          const singleText = await translateText(
+            batch[j], 
+            targetLanguage, 
+            context, 
+            sourceLanguage,
+            batchOptions[j] || {}
+          );
           results[batchIndexes[j]] = singleText;
         }
       }

@@ -209,23 +209,84 @@
     }
   }
   
-  /**
-   * Process element text content translation
-   * @param {HTMLElement} element - Element to translate
-   */
-  function processElementTranslation(element) {
-    const key = element.getAttribute('data-i18n');
-    if (!key) return;
-    
-    const originalText = element.textContent.trim();
-    
-    // Use API translation for this key/text
-    fetchTranslation(key, originalText).then(translation => {
-      if (translation && translation !== originalText) {
-        element.textContent = translation;
-      }
-    });
+ // Исправленная функция processElementTranslation
+function processElementTranslation(element) {
+  const key = element.getAttribute('data-i18n');
+  if (!key) return;
+  
+  const originalText = element.textContent.trim();
+  
+  // Добавляем обработку дополнительных опций (включая count)
+  let options = {};
+  try {
+    const optionsAttr = element.getAttribute('data-i18n-options');
+    if (optionsAttr) {
+      options = JSON.parse(optionsAttr);
+    }
+  } catch (error) {
+    console.error('Error parsing data-i18n-options:', error);
   }
+  
+  // Добавляем defaultValue в опции
+  options.defaultValue = originalText;
+  
+  // Используем API перевода с ключом, текстом и опциями
+  fetchTranslation(key, originalText, options).then(translation => {
+    if (translation && translation !== originalText) {
+      element.textContent = translation;
+    }
+  });
+}
+
+// Также обновите функцию fetchTranslation, чтобы она принимала опции
+async function fetchTranslation(key, defaultText, options = {}) {
+  const language = getCurrentLanguage();
+  
+  // Skip translation for default language
+  if (language === defaultLanguage) {
+    return Promise.resolve(defaultText);
+  }
+  
+  const cacheKey = `${language}:${key}:${JSON.stringify(options)}`;
+  
+  // Check client cache first
+  if (translationsCache[cacheKey]) {
+    return Promise.resolve(translationsCache[cacheKey]);
+  }
+  
+  try {
+    const response = await fetch(`/api/translate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'app-language': language
+      },
+      body: JSON.stringify({
+        text: defaultText,
+        targetLang: language,
+        context: key.includes(':') ? key.split(':')[0] : 'common',
+        background: true,  // Always use background mode for client requests
+        options: options   // Добавляем опции в запрос
+      })
+    });
+    
+    const data = await response.json();
+    
+    // Остальная часть функции без изменений...
+    // ...
+
+    // Обработка случая, когда перевод выполнен
+    if (data.translated && data.translated !== defaultText) {
+      translationsCache[cacheKey] = data.translated;
+      return data.translated;
+    }
+    
+    return defaultText;
+  } catch (error) {
+    console.error('Translation error:', error);
+    return defaultText;
+  }
+}
   
   /**
    * Process element attribute translations
