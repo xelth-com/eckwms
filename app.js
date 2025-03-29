@@ -14,7 +14,7 @@ const pgSession = require('connect-pg-simple')(session);
 const passport = require('passport');
 const initI18n = require('./middleware/i18n');
 const { translationQueue } = require('./middleware/i18n');
-// Import middleware/auth
+const createLanguageMiddleware = require('./middleware/languageMiddleware');
 const { requireAdmin } = require('./middleware/auth');
 //const htmlInterceptor = require('./middleware/htmlInterceptor');
 const i18next = require('i18next');
@@ -99,49 +99,11 @@ app.use(bodyParser.text({ type: 'text/html' }));
 
 app.use(requestLogger);
 
-
-
 // Initialize i18n AFTER static files
 app.use(initI18n());
 app.use(createHtmlTranslationInterceptor(i18next));
 // Add global middleware to set language in response headers with robust fallback
-app.use((req, res, next) => {
-    const language = req.i18n?.language
-                     || process.env.DEFAULT_LANGUAGE
-                     || 'en';
-    try {
-        // Добавим try-catch на случай, если заголовки уже отправлены (хотя это маловероятно для setHeader)
-        if (!res.headersSent) {
-            res.setHeader('app-language', language);
-
-            // Also add a meta tag for client-side detection
-    const originalSend = res.send;
-    res.send = function(body) {
-      if (typeof body === 'string' && 
-          (res.get('Content-Type')?.includes('text/html') || 
-           body.includes('<head>') || 
-           body.includes('<!DOCTYPE html>'))) {
-        
-        // Only modify HTML responses
-        const languageMeta = `<meta name="app-language" content="${language}">`;
-        
-        // Add the meta tag inside the head if possible
-        if (body.includes('<head>')) {
-          body = body.replace('<head>', `<head>\n    ${languageMeta}`);
-        }
-      }
-      
-      return originalSend.call(this, body);
-    };
-        }
-    } catch (error) {
-        console.error("Failed to set Content-Language header:", error);
-    }
-    next();
-  });
-
-
-
+app.use(createLanguageMiddleware());
 
 // Routes
 app.use('/api', apiRoutes);

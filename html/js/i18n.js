@@ -706,95 +706,86 @@ async function preloadCommonNamespaces(force = false) {
    * Change current language
    * @param {string} lang - Language code
    */
-  function changeLanguage(lang) {
-    if (lang === currentLanguage) return;
+  // The key part of html/js/i18n.js that needs to be updated
+// Function to change the current language
 
-    devLog(`i18n.changeLanguage: switching to ${lang}`);
+function changeLanguage(lang) {
+  if (lang === currentLanguage) return;
 
-    // Save previous language
-    const previousLanguage = currentLanguage;
+  devLog(`i18n.changeLanguage: switching to ${lang}`);
 
-    // Update current language
-    currentLanguage = lang;
-    document.documentElement.lang = lang;
+  // Save previous language
+  const previousLanguage = currentLanguage;
 
-    // For RTL languages
-    if (['ar', 'he'].includes(lang)) {
-      document.documentElement.dir = 'rtl';
-    } else {
-      document.documentElement.dir = 'ltr';
-    }
+  // Update current language
+  currentLanguage = lang;
+  document.documentElement.lang = lang;
 
-    // Update cookie and localStorage
-    setCookie('i18next', lang, 365);
-    localStorage.setItem('i18nextLng', lang);
-
-    // Force reload with cache busting for translations
-    if (this._preventReload !== true) {
-      const cacheBuster = Date.now();
-      const url = new URL(window.location.href);
-      url.searchParams.set('i18n_cb', cacheBuster);
-
-      window.location.href = url.toString();
-      return;
-    }
-
-    // Clear retry counters on language change
-    translationRetryCount = {};
-    pendingTranslations.clear();
-    loadedNamespaces = {};
-    translationCache = {};
-    retryCount = 0;
-
-    if (retryTimerId) {
-      clearTimeout(retryTimerId);
-      retryTimerId = null;
-    }
-
-    // Update global window.language for SVG sync
-    window.language = lang;
-
-    // Synchronize SVG buttons
-    syncLanguageMasks();
-
-    // Check translation files for new language
-    checkTranslationFiles();
-
-    // Only update translations if not default language
-    if (lang !== defaultLanguage) {
-      // Preload common namespaces for new language
-      preloadCommonNamespaces().then(() => {
-        // Update translations on page
-        updatePageTranslations();
-      });
-    } else {
-      // If switching to default language
-      if (this._reloadOnDefault !== false) {
-        // By default reload page
-        window.location.reload();
-        return;
-      } else {
-        // Force update content without reload if flag set
-        updatePageTranslations();
-        devLog("Switching to default language without page reload");
-      }
-    }
-
-    // Update active class on language options
-    const options = document.querySelectorAll('.language-option, .language-item');
-    options.forEach(option => {
-      if (option.dataset.lang === lang) {
-        option.classList.add('active');
-      } else {
-        option.classList.remove('active');
-      }
-    });
-
-    // Generate language change event
-    document.dispatchEvent(new CustomEvent('languageChanged', {
-      detail: { language: lang }
-    }));
+  // For RTL languages
+  if (['ar', 'he'].includes(lang)) {
+    document.documentElement.dir = 'rtl';
+  } else {
+    document.documentElement.dir = 'ltr';
   }
+
+  // Update cookie and localStorage
+  setCookie('i18next', lang, 365);
+  localStorage.setItem('i18nextLng', lang);
+
+  // MODIFIED: Use consistent reload approach for ALL languages including default language
+  if (this._preventReload !== true) {
+    const cacheBuster = Date.now();
+    const url = new URL(window.location.href);
+    url.searchParams.set('i18n_cb', cacheBuster);
+    url.searchParams.set('lang', lang); // Explicitly set language parameter
+
+    window.location.href = url.toString();
+    return;
+  }
+
+  // Clear retry counters on language change
+  translationRetryCount = {};
+  pendingTranslations.clear();
+  loadedNamespaces = {};
+  translationCache = {};
+  retryCount = 0;
+
+  if (retryTimerId) {
+    clearTimeout(retryTimerId);
+    retryTimerId = null;
+  }
+
+  // Update global window.language for SVG sync
+  window.language = lang;
+
+  // Synchronize SVG buttons
+  syncLanguageMasks();
+
+  // Check translation files for new language
+  checkTranslationFiles();
+
+  // MODIFIED: Simply update translations for all languages
+  // Even when switching to default language
+  preloadCommonNamespaces().then(() => {
+    // Update translations on page
+    updatePageTranslations();
+  });
+
+  // Update active class on language options
+  const options = document.querySelectorAll('.language-option, .language-item');
+  options.forEach(option => {
+    if (option.dataset.lang === lang) {
+      option.classList.add('active');
+    } else {
+      option.classList.remove('active');
+    }
+  });
+
+  // Generate language change event
+  document.dispatchEvent(new CustomEvent('languageChanged', {
+    detail: { language: lang }
+  }));
+}
 
   /**
    * Check if translation files exist for the current language

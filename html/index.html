@@ -785,7 +785,7 @@
             document.documentElement.lang = currentLang;
             
             // Update mask states for language buttons
-            const supportedLangs = ['de', 'en', 'fr', 'pl', 'cz', 'ko'];
+            const supportedLangs = ['de', 'en', 'fr', 'pl', 'cs', 'ko'];
             supportedLangs.forEach(lang => {
               const maskElement = document.getElementById(`${lang}Mask`);
               if (maskElement) {
@@ -1612,7 +1612,7 @@
       </div>
       <div id="langMain4" onclick="setLanguage('lang4')" class="button">
         <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-          <use id="lang4" href="#cz" />
+          <use id="lang4" href="#cs" />
         </svg>
       </div>
       <div onclick="setLanguage('lang3')" class="button">
@@ -1948,7 +1948,7 @@
             </div>
             <div id="langSide4" onclick="setLanguage('lang4')" class="button sideMenu" style="padding: 0;">
               <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-                <use id="lang4" href="#cz" />
+                <use id="lang4" href="#cs" />
               </svg>
             </div>
           </td>
@@ -2665,8 +2665,8 @@
             <rect fill="#b0b000" height="15" stroke-width="0" width="40" x="9" y="25" />
           </g>
         </g>
-        <g id="cz">
-          <g id="czMask" mask="url(#maskClose)">
+        <g id="cs">
+          <g id="csMask" mask="url(#maskClose)">
             <rect fill="hsl(0, 0%, 75%)" height="15" stroke-width="0" width="40" x="9" y="10" />
             <rect fill="hsl(358, 83%, 38%)" height="15" stroke-width="0" width="40" x="9" y="25" />
             <path d="m9,10l20,15l-20,15l0,-30z" fill="hsl(211, 76%, 30%)" stroke-width="0" />
