@@ -1,4 +1,4 @@
-// middleware/i18n.js - Modified version
+// middleware/i18n.js - Fix for sourceType reference error
 const i18next = require('i18next');
 const i18nextMiddleware = require('i18next-http-middleware');
 const Backend = require('i18next-fs-backend');
@@ -308,8 +308,6 @@ function initI18n(options = {}) {
           // Mark that we're processing this key
           processingKeys.add(uniqueKey);
 
-          
-
           // Add to queue only needed data, not relying on req
           translationQueue.enqueue({
             text: fallbackValue,
@@ -318,7 +316,8 @@ function initI18n(options = {}) {
             key: key
           });
 
-          console.log(`[i18n] Added to translation queue: [${targetLanguage}] ${ns}:${key} (source: ${sourceType})`);
+          // FIX: Remove reference to undefined sourceType variable
+          console.log(`[i18n] Added to translation queue: [${targetLanguage}] ${ns}:${key}`);
         } finally {
           // Always remove from processing list when done
           processingKeys.delete(uniqueKey);

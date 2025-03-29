@@ -297,29 +297,7 @@ async function logOut(mainDirectory) {
     }
 }
 
-// Add this to app.js or a maintenance service file
-// Around initialization code
 
-async function runTranslationMaintenance() {
-    try {
-      if (translationQueue) {
-        const stats = translationQueue.getStats();
-        console.log(`Translation maintenance: Queue contains ${stats.queuedItems} items, processing ${stats.processingItems} items`);
-        
-        const cleanedCount = translationQueue.cleanupStalled();
-        if (cleanedCount > 0) {
-          console.log(`Translation maintenance: Cleaned up ${cleanedCount} stalled jobs`);
-        }
-      }
-      setTimeout(runTranslationMaintenance, 5 * 60 * 1000);
-    } catch (error) {
-      console.error('Error in translation maintenance:', error);
-      setTimeout(runTranslationMaintenance, 5 * 60 * 1000);
-    }
-}
-
-// Start maintenance after app initialization
-setTimeout(runTranslationMaintenance, 2 * 60 * 1000); // Start after 2 minutes
 
 // Start the app initialization
 initialize();
