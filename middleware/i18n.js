@@ -278,7 +278,19 @@ function initI18n(options = {}) {
           // This will run after language detection
           const detectedLanguage = req.language;
           if (process.env.NODE_ENV === 'development') {
-            console.log(`[i18n] Language detected: ${detectedLanguage} (request path: ${req.path})`);
+            let source = 'unknown';
+            if (req.headers['app-language']) {
+              source = `customHeader (app-language: ${req.headers['app-language']})`;
+            } else if (req.query.lang) {
+              source = `querystring (lang: ${req.query.lang})`;
+            } else if (req.cookies.i18next) {
+              source = `cookie (i18next: ${req.cookies.i18next})`;
+            } else if (req.headers['accept-language']) {
+              source = `header (accept-language: ${req.headers['accept-language']})`;
+            }
+
+            console.log(`[i18n] Language detected: ${detectedLanguage} from ${source} (path: ${req.path})`);
+
           }
           return detectedLanguage;
         }

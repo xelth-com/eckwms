@@ -1,453 +1,354 @@
-// html/js/new-i18n.js - New i18next-based implementation
-import i18next from 'i18next';
-import LanguageDetector from 'i18next-browser-languagedetector';
-
-/**
- * Helper function to get language from meta tag
- * @returns {string} The detected language code or null if not found
- */
-function getLangFromMeta() {
-  const metaTag = document.querySelector('meta[name="app-language"]');
-  return metaTag ? metaTag.content : null;
-}
-
-/**
- * Asynchronously fetch translation from API when key is missing
- * @param {string} lang - Target language
- * @param {string} ns - Namespace
- * @param {string} key - Translation key
- * @param {string} fallbackValue - Original text to translate
- * @returns {Promise<string>} - Translated text
- */
-async function fetchTranslation(lang, ns, key, fallbackValue) {
-  if (!fallbackValue || lang === (process.env.DEFAULT_LANGUAGE || 'en')) {
-    return fallbackValue;
+// html/js/i18n.js - Updated implementation preserving original language switching behavior
+(function() {
+  // Default language fallback
+  const defaultLanguage = 'en';
+  
+  // Store translations cache
+  const translationsCache = {};
+  
+  // Track initialization state
+  let isInitialized = false;
+  
+  /**
+   * Helper function to get language from meta tag (server-provided)
+   * @returns {string} The detected language code or null if not found
+   */
+  function getLangFromMeta() {
+    const metaTag = document.querySelector('meta[name="app-language"]');
+    return metaTag ? metaTag.content : null;
   }
   
-  try {
-    const response = await fetch('/api/translate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'app-language': lang
-      },
-      body: JSON.stringify({
-        text: fallbackValue,
-        targetLang: lang,
-        context: ns,
-        background: true // Use background processing for smoother UX
-      })
-    });
+  /**
+   * Helper function to get current language from various sources
+   * with meta tag having highest priority
+   */
+  function getCurrentLanguage() {
+    // Meta tag has highest priority (server-provided)
+    const metaLang = getLangFromMeta();
+    if (metaLang) return metaLang;
     
-    if (!response.ok) {
-      console.warn(`Translation request failed: ${response.status}`);
-      return fallbackValue;
-    }
+    // Check HTML lang attribute
+    const htmlLang = document.documentElement.lang;
+    if (htmlLang) return htmlLang;
     
-    const data = await response.json();
-    return data.translated || fallbackValue;
-  } catch (error) {
-    console.error('Translation fetch error:', error);
-    return fallbackValue;
-  }
-}
-
-/**
- * Process untranslated elements in the DOM after page load
- */
-async function processUntranslatedElements() {
-  const lang = i18next.language;
-  if (lang === (process.env.DEFAULT_LANGUAGE || 'en')) {
-    return; // Skip for default language
+    // Check cookie
+    const cookieMatch = document.cookie.match(/i18next=([^;]+)/);
+    if (cookieMatch) return cookieMatch[1];
+    
+    // Default language fallback
+    return defaultLanguage;
   }
   
-  // Find elements with i18n attributes
-  const elementsToTranslate = [];
-  
-  // 1. Standard data-i18n attributes
-  document.querySelectorAll('[data-i18n]').forEach(el => {
-    const key = el.getAttribute('data-i18n');
-    const content = el.textContent.trim();
+  /**
+   * Change the current language - uses original approach with page reload
+   * @param {string} langPos - Language position or code
+   */
+  function setLanguage(langPos) {
+    // Current language
+    const previousLanguage = getCurrentLanguage();
     
-    // Check if content looks untranslated (matches key or its last part)
-    const keyParts = key.split(':');
-    const shortKey = keyParts[keyParts.length - 1];
-    const keyLastPart = shortKey.split('.').pop();
-    
-    if (content === '' || content === key || content === shortKey || content === keyLastPart) {
-      elementsToTranslate.push({
-        element: el,
-        text: content || key,
-        key: key,
-        type: 'standard'
-      });
-    }
-  });
-  
-  // 2. Attribute translations
-  document.querySelectorAll('[data-i18n-attr]').forEach(el => {
-    try {
-      const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
-      
-      for (const [attr, key] of Object.entries(attrsMap)) {
-        const attrValue = el.getAttribute(attr) || '';
-        const keyParts = key.split(':');
-        const shortKey = keyParts[keyParts.length - 1];
-        
-        if (attrValue === '' || attrValue === key || attrValue === shortKey) {
-          elementsToTranslate.push({
-            element: el,
-            text: attrValue || key,
-            key: key,
-            type: 'attr',
-            attrName: attr
-          });
-        }
-      }
-    } catch (e) {
-      console.error('Error parsing data-i18n-attr:', e);
-    }
-  });
-  
-  // 3. HTML content translations
-  document.querySelectorAll('[data-i18n-html]').forEach(el => {
-    const key = el.getAttribute('data-i18n-html');
-    const content = el.innerHTML.trim();
-    
-    const keyParts = key.split(':');
-    const shortKey = keyParts[keyParts.length - 1];
-    const keyLastPart = shortKey.split('.').pop();
-    
-    if (content === '' || content === key || content === shortKey || content === keyLastPart) {
-      elementsToTranslate.push({
-        element: el,
-        text: content || key,
-        key: key,
-        type: 'html'
-      });
-    }
-  });
-  
-  // Process elements in batches if there are many
-  if (elementsToTranslate.length > 0) {
-    console.log(`Found ${elementsToTranslate.length} untranslated elements to process`);
-    
-    // Group by type for more efficient API calls
-    const textsByKey = {};
-    
-    // Group texts by their keys
-    elementsToTranslate.forEach(item => {
-      if (!textsByKey[item.key]) {
-        textsByKey[item.key] = {
-          text: item.text,
-          elements: []
-        };
-      }
-      textsByKey[item.key].elements.push(item);
-    });
-    
-    // Process in smaller batches to avoid overloading API
-    const batchSize = 20;
-    const keys = Object.keys(textsByKey);
-    
-    for (let i = 0; i < keys.length; i += batchSize) {
-      const batchKeys = keys.slice(i, i + batchSize);
-      const batchTexts = batchKeys.map(key => textsByKey[key].text);
-      
-      try {
-        // Use batch translation API
-        const response = await fetch('/api/translate-batch', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'app-language': lang
-          },
-          body: JSON.stringify({
-            texts: batchTexts,
-            targetLang: lang,
-            background: false // We want immediate results for DOM updates
-          })
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          if (data.translations && data.translations.length === batchTexts.length) {
-            // Update DOM with translations
-            batchKeys.forEach((key, index) => {
-              const translated = data.translations[index];
-              const originalText = textsByKey[key].text;
-              
-              if (translated && translated !== originalText) {
-                textsByKey[key].elements.forEach(item => {
-                  if (item.type === 'standard') {
-                    item.element.textContent = translated;
-                  } else if (item.type === 'attr') {
-                    item.element.setAttribute(item.attrName, translated);
-                  } else if (item.type === 'html') {
-                    item.element.innerHTML = translated;
-                  }
-                });
-              }
-            });
-          }
-        } else {
-          console.warn('Batch translation request failed:', response.status);
-        }
-      } catch (error) {
-        console.error('Batch translation error:', error);
-      }
-    }
-  }
-}
-
-/**
- * Initialize i18next
- */
-async function initI18next() {
-  // Get initial language from meta tag if available
-  const initialLang = getLangFromMeta() || 
-    (document.documentElement.lang || (window.APP_CONFIG?.DEFAULT_LANGUAGE || 'en'));
-  
-  // Configure i18next
-  await i18next
-    .use(LanguageDetector)
-    .init({
-      lng: initialLang,
-      fallbackLng: false, // Don't use fallback to show missing keys
-      debug: window.APP_CONFIG?.NODE_ENV === 'development',
-      
-      // Empty resources - we'll use API for missing translations
-      resources: {},
-      
-      // Language detection configuration
-      detection: {
-        order: ['htmlTag', 'querystring', 'cookie', 'navigator'],
-        lookupQuerystring: 'lang',
-        lookupCookie: 'i18next',
-        lookupFromPathIndex: 0,
-        lookupFromSubdomainIndex: 0,
-        caches: ['cookie'],
-        cookieExpirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
-        htmlTag: document.documentElement
-      },
-      
-      // Missing key handling
-      saveMissing: true,
-      missingKeyHandler: async (lngs, ns, key, fallbackValue) => {
-        console.log(`Missing translation: [${lngs}] ${ns}:${key}`);
-        
-        // Skip for default language
-        if (Array.isArray(lngs) && lngs[0] === (process.env.DEFAULT_LANGUAGE || 'en')) return;
-        
-        const lang = Array.isArray(lngs) ? lngs[0] : lngs;
-        const translation = await fetchTranslation(lang, ns, key, fallbackValue);
-        
-        // Add translation to i18next store
-        if (translation && translation !== fallbackValue) {
-          const resources = {};
-          if (!resources[lang]) resources[lang] = {};
-          if (!resources[lang][ns]) resources[lang][ns] = {};
-          resources[lang][ns][key] = translation;
-          
-          i18next.addResourceBundle(lang, ns, { [key]: translation }, true, true);
-        }
-      },
-      
-      // Interpolation settings
-      interpolation: {
-        escapeValue: false, // React already does escaping
-        format: function(value, format, lng) {
-          if (format === 'uppercase') return value.toUpperCase();
-          return value;
-        }
-      }
-    });
-  
-  // Set HTML attributes based on language
-  document.documentElement.lang = i18next.language;
-  
-  // Set RTL direction for RTL languages
-  if (['ar', 'he'].includes(i18next.language)) {
-    document.documentElement.dir = 'rtl';
-  } else {
-    document.documentElement.dir = 'ltr';
-  }
-  
-  // Process untranslated elements after initialization
-  await processUntranslatedElements();
-  
-  // Set window.language for backward compatibility
-  window.language = i18next.language;
-  
-  // Also set app-language header for future fetch requests (backward compatibility)
-  const originalFetch = window.fetch;
-  window.fetch = function(url, options = {}) {
-    if (!options.headers) {
-      options.headers = {};
-    }
-    
-    // Add app-language header
-    if (typeof options.headers.set === 'function') {
-      options.headers.set('app-language', i18next.language);
+    // Parse language from button or direct string
+    let newLanguage;
+    if (langPos.slice(0, 4) === "lang") {
+      newLanguage = document.getElementById(langPos).getAttribute("href").slice(1);
     } else {
-      options.headers['app-language'] = i18next.language;
+      newLanguage = langPos;
     }
     
-    return originalFetch.call(this, url, options);
-  };
-  
-  // Backward compatibility - fire event
-  document.dispatchEvent(new CustomEvent('i18n:initialized', {
-    detail: { language: i18next.language }
-  }));
-  
-  return i18next;
-}
-
-/**
- * Change the current language
- * @param {string} lang - Language code to switch to
- */
-function changeLanguage(lang) {
-  if (lang === i18next.language) return;
-  
-  // Set cookie for language persistence
-  document.cookie = `i18next=${lang}; path=/; max-age=${60 * 60 * 24 * 365}`;
-  try {
-    localStorage.setItem('i18nextLng', lang);
-  } catch (e) {
-    console.warn("Failed to save language to localStorage", e);
-  }
-  
-  // Reload page with language parameter
-  const url = new URL(window.location.href);
-  url.searchParams.set('lang', lang);
-  url.searchParams.set('i18n_cb', Date.now()); // Cache busting
-  window.location.href = url.toString();
-}
-
-/**
- * Update translations for dynamically added elements
- * @param {HTMLElement} element - Root element to translate
- */
-function updateDynamicElement(element) {
-  if (!element || i18next.language === (process.env.DEFAULT_LANGUAGE || 'en')) {
-    return Promise.resolve();
-  }
-  
-  // Process all data-i18n elements
-  element.querySelectorAll('[data-i18n]').forEach(el => {
-    const key = el.getAttribute('data-i18n');
-    const defaultValue = el.textContent;
+    if (newLanguage === previousLanguage) return;
     
-    // Use the defaultValue as fallback and for missing key handling
-    const translation = i18next.t(key, { defaultValue });
-    
-    if (translation !== key) {
-      el.textContent = translation;
-    }
-  });
-  
-  // Process data-i18n-attr attributes
-  element.querySelectorAll('[data-i18n-attr]').forEach(el => {
+    // Visual updates for SVG masks
     try {
-      const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
-      
-      for (const [attr, key] of Object.entries(attrsMap)) {
-        const defaultValue = el.getAttribute(attr) || '';
-        
-        // Use defaultValue for missing key handling
-        const translation = i18next.t(key, { defaultValue });
-        
-        if (translation !== key) {
-          el.setAttribute(attr, translation);
-        }
+      document.getElementById(`${previousLanguage}Mask`).setAttribute("mask", "url(#maskClose)");
+    } catch (e) { /* Silent catch */ }
+    
+    // Store language preference in cookie and localStorage
+    document.cookie = `i18next=${newLanguage}; path=/; max-age=${60 * 60 * 24 * 365}`;
+    try {
+      localStorage.setItem('i18nextLng', newLanguage);
+    } catch (e) { /* Silent catch */ }
+    
+    // Reload the page to get new language from server
+    window.location.reload();
+  }
+  
+  /**
+   * Initialize i18n with meta tag prioritization
+   */
+  function init() {
+    if (isInitialized) return Promise.resolve();
+    
+    // Get language from meta tag (server-provided)
+    const language = getCurrentLanguage();
+    
+    console.log(`[i18n] Initializing with language: ${language}`);
+    
+    // Set language attributes
+    document.documentElement.lang = language;
+    
+    // Set RTL direction for RTL languages
+    if (['ar', 'he'].includes(language)) {
+      document.documentElement.dir = 'rtl';
+    } else {
+      document.documentElement.dir = 'ltr';
+    }
+    
+    // Set global language
+    window.language = language;
+    
+    // Update language masks in SVG
+    syncLanguageMasks();
+    
+    // Setup fetch interception for language headers
+    setupFetchInterception();
+    
+    // Translate existing elements
+    if (language !== defaultLanguage) {
+      translatePageElements();
+    }
+    
+    // Setup mutation observer for dynamic content
+    setupMutationObserver();
+    
+    // Mark as initialized
+    isInitialized = true;
+    
+    // Fire initialized event for other scripts
+    document.dispatchEvent(new CustomEvent('i18n:initialized', {
+      detail: { language }
+    }));
+    
+    return Promise.resolve(language);
+  }
+  
+  /**
+   * Setup fetch interception to add language headers to all requests
+   */
+  function setupFetchInterception() {
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options = {}) {
+      if (!options.headers) {
+        options.headers = {};
       }
-    } catch (e) {
-      console.error('Error parsing data-i18n-attr:', e);
-    }
-  });
+      
+      // Add app-language header to all requests
+      if (typeof options.headers.set === 'function') {
+        options.headers.set('app-language', getCurrentLanguage());
+      } else {
+        options.headers['app-language'] = getCurrentLanguage();
+      }
+      
+      return originalFetch.call(this, url, options);
+    };
+  }
   
-  // Process data-i18n-html attributes
-  element.querySelectorAll('[data-i18n-html]').forEach(el => {
-    const key = el.getAttribute('data-i18n-html');
-    const defaultValue = el.innerHTML;
+  /**
+   * Setup mutation observer to translate dynamically added elements
+   */
+  function setupMutationObserver() {
+    if (!window.MutationObserver) return;
     
-    // Use defaultValue for missing key handling with HTML interpolation
-    const translation = i18next.t(key, { 
-      defaultValue,
-      interpolation: { escapeValue: false }
-    });
-    
-    if (translation !== key) {
-      el.innerHTML = translation;
-    }
-  });
-  
-  return Promise.resolve();
-}
-
-// Initialize i18next when the DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initI18next);
-} else {
-  initI18next();
-}
-
-// Set up a mutation observer to translate dynamically added elements
-if (window.MutationObserver) {
-  const observer = new MutationObserver(mutations => {
-    for (const mutation of mutations) {
-      if (mutation.type === 'childList' && mutation.addedNodes.length) {
-        for (const node of mutation.addedNodes) {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            updateDynamicElement(node);
+    const observer = new MutationObserver(mutations => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList' && mutation.addedNodes.length) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              translateDynamicElement(node);
+            }
           }
         }
       }
-    }
-  });
-  
-  // Start observing once DOM is loaded
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true
-      });
     });
-  } else {
+    
+    // Start observing
     observer.observe(document.body, {
       childList: true,
       subtree: true
     });
   }
-}
-
-// Backward compatibility API
-window.i18n = {
-  // Main API
-  init: initI18next,
-  t: (key, options) => i18next.t(key, options),
-  changeLanguage,
-  getCurrentLanguage: () => i18next.language,
-  updatePageTranslations: processUntranslatedElements,
   
-  // Legacy compatibility methods
-  translateDynamicElement: updateDynamicElement,
-  isInitialized: () => !!i18next.isInitialized,
-  syncLanguageMasks: () => {
-    // Update SVG language masks for backward compatibility
+  /**
+   * Translate an element and its children
+   * @param {HTMLElement} element - Element to translate
+   */
+  function translateDynamicElement(element) {
+    if (getCurrentLanguage() === defaultLanguage) return;
+    
+    // Process standard translations
+    element.querySelectorAll('[data-i18n]').forEach(processElementTranslation);
+    if (element.hasAttribute('data-i18n')) {
+      processElementTranslation(element);
+    }
+    
+    // Process attribute translations
+    element.querySelectorAll('[data-i18n-attr]').forEach(processAttrTranslation);
+    if (element.hasAttribute('data-i18n-attr')) {
+      processAttrTranslation(element);
+    }
+    
+    // Process HTML translations
+    element.querySelectorAll('[data-i18n-html]').forEach(processHtmlTranslation);
+    if (element.hasAttribute('data-i18n-html')) {
+      processHtmlTranslation(element);
+    }
+  }
+  
+  /**
+   * Process element text content translation
+   * @param {HTMLElement} element - Element to translate
+   */
+  function processElementTranslation(element) {
+    const key = element.getAttribute('data-i18n');
+    if (!key) return;
+    
+    const originalText = element.textContent.trim();
+    
+    // Use API translation for this key/text
+    fetchTranslation(key, originalText).then(translation => {
+      if (translation && translation !== originalText) {
+        element.textContent = translation;
+      }
+    });
+  }
+  
+  /**
+   * Process element attribute translations
+   * @param {HTMLElement} element - Element with attribute translations
+   */
+  function processAttrTranslation(element) {
     try {
-      // Close all language masks
-      const supportedLanguages = [
-        'de', 'en', 'fr', 'it', 'es', 'pt', 'nl', 'da', 'sv', 'fi',
-        'el', 'cs', 'pl', 'hu', 'sk', 'sl', 'et', 'lv', 'lt', 'ro',
-        'bg', 'hr', 'ga', 'mt', 'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 
-        'he', 'ko', 'ja'
-      ];
+      const attrsJson = element.getAttribute('data-i18n-attr');
+      if (!attrsJson) return;
       
-      supportedLanguages.forEach(lang => {
+      const attrs = JSON.parse(attrsJson);
+      
+      for (const [attr, key] of Object.entries(attrs)) {
+        const originalValue = element.getAttribute(attr) || '';
+        
+        // Use API translation for this key/value
+        fetchTranslation(key, originalValue).then(translation => {
+          if (translation && translation !== originalValue) {
+            element.setAttribute(attr, translation);
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error processing attribute translation:', error);
+    }
+  }
+  
+  /**
+   * Process HTML content translations
+   * @param {HTMLElement} element - Element with HTML content to translate
+   */
+  function processHtmlTranslation(element) {
+    const key = element.getAttribute('data-i18n-html');
+    if (!key) return;
+    
+    const originalHtml = element.innerHTML.trim();
+    
+    // Use API translation for this key/html
+    fetchTranslation(key, originalHtml).then(translation => {
+      if (translation && translation !== originalHtml) {
+        element.innerHTML = translation;
+      }
+    });
+  }
+  
+  /**
+   * Translate all page elements
+   */
+  function translatePageElements() {
+    // Process standard translations
+    document.querySelectorAll('[data-i18n]').forEach(processElementTranslation);
+    
+    // Process attribute translations
+    document.querySelectorAll('[data-i18n-attr]').forEach(processAttrTranslation);
+    
+    // Process HTML translations
+    document.querySelectorAll('[data-i18n-html]').forEach(processHtmlTranslation);
+  }
+  
+  /**
+   * Fetch translation from server or cache
+   * @param {string} key - Translation key
+   * @param {string} defaultText - Default text if no translation found
+   * @returns {Promise<string>} - Translation or default text
+   */
+  async function fetchTranslation(key, defaultText) {
+    const language = getCurrentLanguage();
+    
+    // Skip translation for default language
+    if (language === defaultLanguage) {
+      return Promise.resolve(defaultText);
+    }
+    
+    const cacheKey = `${language}:${key}`;
+    
+    // Check cache first
+    if (translationsCache[cacheKey]) {
+      return Promise.resolve(translationsCache[cacheKey]);
+    }
+    
+    try {
+      // Extract namespace from key (format: namespace:key)
+      let namespace = 'common';
+      let translationKey = key;
+      
+      if (key.includes(':')) {
+        const parts = key.split(':');
+        namespace = parts[0];
+        translationKey = parts.slice(1).join(':');
+      }
+      
+      // Call translation API
+      const response = await fetch('/api/translate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'app-language': language
+        },
+        body: JSON.stringify({
+          text: defaultText,
+          targetLang: language,
+          context: namespace,
+          key: translationKey
+        })
+      });
+      
+      if (!response.ok) {
+        return defaultText;
+      }
+      
+      const data = await response.json();
+      
+      // Cache the result
+      if (data.translated && data.translated !== defaultText) {
+        translationsCache[cacheKey] = data.translated;
+        return data.translated;
+      }
+      
+      return defaultText;
+    } catch (error) {
+      console.error('Translation error:', error);
+      return defaultText;
+    }
+  }
+  
+  /**
+   * Update SVG language masks to show active language
+   */
+  function syncLanguageMasks() {
+    try {
+      const currentLang = getCurrentLanguage();
+      
+      // Close all masks
+      const supportedLangs = ['de', 'en', 'fr', 'it', 'es', 'pt', 'nl', 'da', 'sv', 'fi', 
+                             'el', 'cs', 'pl', 'hu', 'sk', 'sl', 'et', 'lv', 'lt', 'ro',
+                             'bg', 'hr', 'ga', 'mt', 'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 
+                             'he', 'ko', 'ja'];
+      
+      supportedLangs.forEach(lang => {
         const maskElement = document.getElementById(`${lang}Mask`);
         if (maskElement) {
           maskElement.setAttribute("mask", "url(#maskClose)");
@@ -455,21 +356,62 @@ window.i18n = {
       });
       
       // Open current language mask
-      const currentMask = document.getElementById(`${i18next.language}Mask`);
+      const currentMask = document.getElementById(`${currentLang}Mask`);
       if (currentMask) {
         currentMask.setAttribute("mask", "url(#maskOpen)");
       }
     } catch (e) {
-      console.warn("Failed to synchronize SVG language masks:", e);
+      console.warn("Error synchronizing language masks:", e);
     }
   }
-};
-
-// Export i18next and helper functions
-export {
-  i18next,
-  initI18next,
-  changeLanguage,
-  processUntranslatedElements,
-  updateDynamicElement
-};
+  
+  /**
+   * Simple translation function - will use cache or default text
+   * @param {string} key - Translation key
+   * @param {object} options - Options including defaultValue
+   * @returns {string} - Translated text or default
+   */
+  function t(key, options = {}) {
+    const defaultValue = options.defaultValue || key;
+    const language = getCurrentLanguage();
+    
+    // Skip translation for default language
+    if (language === defaultLanguage) {
+      return defaultValue;
+    }
+    
+    const cacheKey = `${language}:${key}`;
+    
+    // Check cache and return immediately if found
+    if (translationsCache[cacheKey]) {
+      return translationsCache[cacheKey];
+    }
+    
+    // Schedule async fetch for future use
+    fetchTranslation(key, defaultValue).then(translation => {
+      translationsCache[cacheKey] = translation;
+    });
+    
+    // Return default for now
+    return defaultValue;
+  }
+  
+  // Initialize when DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+  
+  // Export public API
+  window.i18n = {
+    init,
+    t,
+    getCurrentLanguage,
+    changeLanguage: setLanguage,
+    translateDynamicElement,
+    updatePageTranslations: translatePageElements,
+    syncLanguageMasks,
+    isInitialized: () => isInitialized
+  };
+})();
