@@ -1,11 +1,12 @@
-// routes/translation-api.js
+// routes/translation-api.js - Updated for i18next compatibility
+
 const express = require('express');
 const router = express.Router();
 const { translateText, batchTranslate, checkCache, saveToCache } = require('../services/translationService');
 const { optionalAuth } = require('../middleware/auth');
 const { Queue } = require('../utils/queue');
 
-// PostgreSQL model for translation error logging
+// PostgreSQL model for translation caching
 let TranslationCache;
 try {
   const { sequelize } = require('../models/postgresql');
@@ -80,7 +81,7 @@ function processBackgroundQueue() {
       saveTranslationError(item.text, item.targetLang, error.message, item.context);
       
       // Don't retry if network is offline
-      if (!navigator.onLine) {
+      if (!navigator?.onLine) {
         translationRetryCounter[queueKey] = MAX_RETRIES;
       }
     })
@@ -128,16 +129,47 @@ async function saveTranslationError(text, lang, errorMsg, context = '') {
 }
 
 /**
- * Translate a single text
+ * Handle single text translation - i18next compatible endpoint
  * POST /api/translate
- * Body: { text: string, targetLang: string, context: string, background: boolean }
+ * Body formats supported:
+ * 1. i18next format: { lng: "de", ns: "common", key: "welcome", defaultValue: "Welcome" }
+ * 2. Legacy format: { text: "Welcome", targetLang: "de", context: "common", background: false }
  */
 router.post('/translate', async (req, res) => {
   try {
-    const { text, targetLang, context, background, htmlContent, sourceLang } = req.body;
+    // Support both i18next format and legacy format
+    let text, targetLang, context, background, sourceLang;
     
+    // Check for i18next format
+    if (req.body.lng && req.body.key !== undefined) {
+      // i18next format
+      targetLang = Array.isArray(req.body.lng) ? req.body.lng[0] : req.body.lng;
+      text = req.body.defaultValue || req.body.key;
+      context = req.body.ns || 'common';
+      background = req.body.background || false;
+      sourceLang = process.env.DEFAULT_LANGUAGE || 'en';
+    } else {
+      // Legacy format
+      text = req.body.text;
+      targetLang = req.body.targetLang;
+      context = req.body.context;
+      background = req.body.background || false;
+      sourceLang = req.body.sourceLang || process.env.DEFAULT_LANGUAGE || 'en';
+    }
+    
+    // Ensure required parameters are present
     if (!text || !targetLang) {
       return res.status(400).json({ error: 'Text and target language required' });
+    }
+    
+    // Skip translation for default language (just return original)
+    if (targetLang === (process.env.DEFAULT_LANGUAGE || 'en')) {
+      return res.json({
+        original: text,
+        translated: text,
+        language: targetLang,
+        fromSource: true
+      });
     }
     
     // Add request information for debugging
@@ -214,12 +246,20 @@ router.post('/translate', async (req, res) => {
       }
     }
     
-    res.json({ 
+    // For i18next compatibility, include key in response if provided
+    const response = { 
       original: text, 
       translated: translatedText, 
       language: targetLang,
       requestInfo: process.env.NODE_ENV === 'development' ? requestInfo : undefined
-    });
+    };
+    
+    if (req.body.key !== undefined) {
+      response.key = req.body.key;
+      response.ns = req.body.ns || 'common';
+    }
+    
+    res.json(response);
   } catch (error) {
     console.error("Translation error:", error);
     
@@ -237,16 +277,52 @@ router.post('/translate', async (req, res) => {
 });
 
 /**
- * Batch translate multiple texts
+ * Batch translate multiple texts - i18next compatible
  * POST /api/translate-batch
- * Body: { texts: string[], targetLang: string, context: string, background: boolean }
+ * Body formats supported:
+ * 1. i18next format: { lng: "de", ns: "common", keys: ["welcome", "hello"], defaultValues: ["Welcome", "Hello"] }
+ * 2. Legacy format: { texts: ["Welcome", "Hello"], targetLang: "de", context: "common", background: false }
  */
 router.post('/translate-batch', async (req, res) => {
   try {
-    const { texts, targetLang, context, background, htmlContent, sourceLang } = req.body;
+    // Support both i18next format and legacy format
+    let texts, targetLang, context, background, sourceLang;
+    
+    // Check for i18next format
+    if (req.body.lng && req.body.keys) {
+      // i18next format
+      targetLang = Array.isArray(req.body.lng) ? req.body.lng[0] : req.body.lng;
+      
+      // Prefer defaultValues if provided, otherwise use keys as texts
+      if (req.body.defaultValues && Array.isArray(req.body.defaultValues)) {
+        texts = req.body.defaultValues;
+      } else {
+        texts = req.body.keys;
+      }
+      
+      context = req.body.ns || 'common';
+      background = req.body.background || false;
+      sourceLang = process.env.DEFAULT_LANGUAGE || 'en';
+    } else {
+      // Legacy format
+      texts = req.body.texts;
+      targetLang = req.body.targetLang;
+      context = req.body.context;
+      background = req.body.background || false;
+      sourceLang = req.body.sourceLang || process.env.DEFAULT_LANGUAGE || 'en';
+    }
     
     if (!texts || !Array.isArray(texts) || !targetLang) {
       return res.status(400).json({ error: 'Array of texts and target language required' });
+    }
+    
+    // Skip translation for default language (just return originals)
+    if (targetLang === (process.env.DEFAULT_LANGUAGE || 'en')) {
+      return res.json({
+        translations: texts,
+        language: targetLang,
+        fromSource: true
+      });
     }
     
     // First check cache for all texts
@@ -289,11 +365,19 @@ router.post('/translate-batch', async (req, res) => {
     
     // If all texts were in cache, return immediately
     if (missingTexts.length === 0) {
-      return res.json({
+      const response = {
         translations: results,
         fromCache: true,
         cacheStats: process.env.NODE_ENV === 'development' ? cacheStats : undefined
-      });
+      };
+      
+      // For i18next compatibility
+      if (req.body.keys) {
+        response.keys = req.body.keys;
+        response.ns = req.body.ns || 'common';
+      }
+      
+      return res.json(response);
     }
     
     // If background mode enabled, queue missing translations and return partial results
@@ -307,12 +391,20 @@ router.post('/translate-batch', async (req, res) => {
         });
       });
       
-      return res.json({
+      const response = {
         translations: results,
         background: true,
         missingCount: missingTexts.length,
         cacheStats: process.env.NODE_ENV === 'development' ? cacheStats : undefined
-      });
+      };
+      
+      // For i18next compatibility
+      if (req.body.keys) {
+        response.keys = req.body.keys;
+        response.ns = req.body.ns || 'common';
+      }
+      
+      return res.json(response);
     }
     
     // Otherwise, translate missing texts now
@@ -328,10 +420,18 @@ router.post('/translate-batch', async (req, res) => {
       results[missingIndices[i]] = translations[i];
     }
     
-    res.json({ 
+    const response = { 
       translations: results,
       cacheStats: process.env.NODE_ENV === 'development' ? cacheStats : undefined
-    });
+    };
+    
+    // For i18next compatibility
+    if (req.body.keys) {
+      response.keys = req.body.keys;
+      response.ns = req.body.ns || 'common';
+    }
+    
+    res.json(response);
   } catch (error) {
     console.error("Batch translation error:", error);
     
@@ -340,22 +440,23 @@ router.post('/translate-batch', async (req, res) => {
       message: error.message,
       type: error.name,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-      targetLang: req.body.targetLang,
-      context: req.body.context,
-      textsCount: req.body.texts?.length
+      targetLang: req.body.targetLang || req.body.lng,
+      context: req.body.context || req.body.ns,
+      textsCount: req.body.texts?.length || req.body.keys?.length
     };
     
     console.error("Batch translation error details:", errorDetails);
     
     // Save at most 3 sample texts for error analysis
-    if (req.body.texts && req.body.texts.length > 0) {
-      const sampleCount = Math.min(3, req.body.texts.length);
+    const textsToAnalyze = req.body.texts || req.body.defaultValues || req.body.keys || [];
+    if (textsToAnalyze.length > 0) {
+      const sampleCount = Math.min(3, textsToAnalyze.length);
       for (let i = 0; i < sampleCount; i++) {
         saveTranslationError(
-          req.body.texts[i], 
-          req.body.targetLang || 'unknown', 
+          textsToAnalyze[i], 
+          req.body.targetLang || req.body.lng || 'unknown', 
           `Batch error: ${error.message}`, 
-          req.body.context || 'batch'
+          req.body.context || req.body.ns || 'batch'
         );
       }
     }
@@ -363,112 +464,11 @@ router.post('/translate-batch', async (req, res) => {
     res.status(500).json({ 
       error: "Batch translation failed", 
       details: error.message,
-      failedCount: req.body.texts?.length || 0,
+      failedCount: textsToAnalyze.length || 0,
       retryRecommended: !(error.message.includes('quota') || error.message.includes('limit'))
     });
   }
 });
 
-/**
- * Language detection endpoint for future use
- * POST /api/detect-language
- * Body: { text: string }
- */
-router.post('/detect-language', async (req, res) => {
-  try {
-    const { text } = req.body;
-    
-    if (!text) {
-      return res.status(400).json({ error: 'Text required' });
-    }
-    
-    // Add some basic heuristics for language detection
-    const languagePatterns = {
-      ru: /[а-яА-ЯёЁ]{3,}/,
-      de: /[äöüÄÖÜß]/,
-      fr: /[àâçéèêëîïôùûüÿœæ]/i,
-      zh: /[\u4e00-\u9fa5]/,
-      ja: /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/,
-      ko: /[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\ud7b0-\ud7ff]/,
-      ar: /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufefc]/
-    };
-    
-    // Simple detection by character patterns
-    let detectedLanguage = 'en'; // Default
-    let maxMatches = 0;
-    
-    for (const [lang, pattern] of Object.entries(languagePatterns)) {
-      const matches = (text.match(pattern) || []).length;
-      if (matches > maxMatches) {
-        maxMatches = matches;
-        detectedLanguage = lang;
-      }
-    }
-    
-    res.json({
-      text: text,
-      detectedLanguage: maxMatches > 0 ? detectedLanguage : 'auto',
-      confidence: maxMatches > 0 ? Math.min(maxMatches / 5, 0.9) : 0,
-      message: 'Basic language detection based on character patterns'
-    });
-  } catch (error) {
-    console.error("Language detection error:", error);
-    res.status(500).json({ error: "Language detection failed", details: error.message });
-  }
-});
-
-/**
- * Translation statistics endpoint (admin only)
- * GET /api/translation-stats
- */
-router.get('/translation-stats', optionalAuth, async (req, res) => {
-  // Check if user is admin
-  if (!req.user || req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-  
-  try {
-    // Get global metrics
-    const metrics = global.translationMetrics || {
-      totalTranslations: 0,
-      byLanguage: {}
-    };
-    
-    // Get cache stats if TranslationCache is available
-    let dbStats = null;
-    if (TranslationCache) {
-      const totalCount = await TranslationCache.count();
-      const languageCounts = await TranslationCache.findAll({
-        attributes: ['language', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
-        group: ['language']
-      });
-      
-      dbStats = {
-        totalCached: totalCount,
-        byLanguage: languageCounts.reduce((acc, item) => {
-          acc[item.language] = parseInt(item.dataValues.count);
-          return acc;
-        }, {})
-      };
-    }
-    
-    // Get queue info
-    const queueInfo = {
-      pendingTranslations: backgroundQueue.size(),
-      isProcessing: isProcessing,
-      failedAttempts: Object.keys(translationRetryCounter).length
-    };
-    
-    res.json({
-      metrics,
-      cacheStats: dbStats,
-      queueInfo,
-      memoryUsage: process.memoryUsage()
-    });
-  } catch (error) {
-    console.error("Error getting translation stats:", error);
-    res.status(500).json({ error: "Failed to get translation statistics", details: error.message });
-  }
-});
-
+// Export the router
 module.exports = router;

@@ -1,4 +1,5 @@
-// services/translationService.js [UPDATED VERSION]
+// services/translationService.js - Updated for i18next compatibility
+
 const { OpenAI } = require('openai');
 const crypto = require('crypto');
 const path = require('path');
@@ -18,7 +19,7 @@ try {
     TranslationCache = require('../models/postgresql').TranslationCache;
   }
 } catch (error) {
-  console.warn('PostgreSQL not configured for translation cache. Using file-based cache only.');
+  console.warn('PostgreSQL not configured for translation cache. Using memory cache only.');
 }
 
 // In-memory cache for faster lookup of recent translations
@@ -173,7 +174,7 @@ function containsHtmlTags(text) {
 }
 
 /**
- * Translate text using OpenAI - independent from i18next, for background translation
+ * Translate text using OpenAI - primary translation function
  * @param {string} text - Source text
  * @param {string} targetLang - Target language
  * @param {string} context - Translation context
@@ -182,6 +183,9 @@ function containsHtmlTags(text) {
  */
 async function translateText(text, targetLang, context = '', sourceLang = process.env.DEFAULT_LANGUAGE || 'en') {
   try {
+    // Track performance
+    global.translationStartTime = Date.now();
+    
     // Ensure language parameters are strings
     const targetLanguage = Array.isArray(targetLang) ? targetLang[0] : targetLang;
     const sourceLanguage = Array.isArray(sourceLang) ? sourceLang[0] : sourceLang;
@@ -283,13 +287,12 @@ Ensure the translation sounds natural in the target language.`;
 }
 
 /**
- * Оптимизированная функция для пакетного перевода текстов
- * Не использует i18next, так как переводы не найдены и сразу идут в OpenAI
- * @param {string[]} texts - Массив текстов для перевода
- * @param {string} targetLang - Целевой язык
- * @param {string} context - Контекст перевода (обычно имя namespace)
- * @param {string} sourceLang - Исходный язык перевода (по умолчанию: en)
- * @returns {Promise<string[]>} - Массив переведенных текстов
+ * Batch translate multiple texts
+ * @param {string[]} texts - Array of texts to translate
+ * @param {string} targetLang - Target language
+ * @param {string} context - Translation context (usually namespace)
+ * @param {string} sourceLang - Source language (default: en)
+ * @returns {Promise<string[]>} - Array of translated texts
  */
 async function batchTranslate(texts, targetLang, context = '', sourceLang = process.env.DEFAULT_LANGUAGE || 'en') {
   // Ensure language parameters are strings
@@ -305,7 +308,7 @@ async function batchTranslate(texts, targetLang, context = '', sourceLang = proc
   
   console.log(`Batch ${isGrammarCorrection ? 'grammar correction' : 'translation'} for ${texts.length} texts in ${targetLanguage}`);
   
-  // Record start time for performance tracking - use local variable
+  // Record start time for performance tracking
   const startTime = Date.now();
   
   // First check what's already in cache
@@ -455,7 +458,7 @@ IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated b
         
         // Fall back to individual translations
         for (let j = 0; j < batch.length; j++) {
-          // Use direct translateText call that doesn't rely on i18n
+          // Use direct translateText call
           const singleText = await translateText(batch[j], targetLanguage, context, sourceLanguage);
           results[batchIndexes[j]] = singleText;
         }
@@ -480,7 +483,7 @@ IMPORTANT: Provide EXACTLY the same number of texts as in the input, separated b
 
 module.exports = {
   translateText,
-  batchTranslate,  // This should be here
+  batchTranslate,
   checkCache,
   saveToCache
 };
