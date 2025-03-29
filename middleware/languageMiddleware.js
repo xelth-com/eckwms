@@ -11,8 +11,7 @@
 function createLanguageMiddleware() {
   return (req, res, next) => {
     // Получаем язык из разных источников с приоритетом
-    const language = req.query.lang ||               // URL параметр имеет высший приоритет
-                    req.i18n?.language ||           // Затем язык, определенный i18n
+    const language =  req.i18n?.language ||           // Затем язык, определенный i18n
                     process.env.DEFAULT_LANGUAGE || // Затем язык из переменных окружения
                     'en';                           // Дефолтный язык как последний вариант
 

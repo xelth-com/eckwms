@@ -1,4 +1,4 @@
-// html/js/i18n.js - Updated implementation preserving original language switching behavior
+// html/js/i18n.js - Updated implementation with cache busting
 (function() {
   // Default language fallback
   const defaultLanguage = 'en';
@@ -40,7 +40,7 @@
   }
   
   /**
-   * Change the current language - uses original approach with page reload
+   * Change the current language - with cache busting URL parameter
    * @param {string} langPos - Language position or code
    */
   function setLanguage(langPos) {
@@ -68,8 +68,12 @@
       localStorage.setItem('i18nextLng', newLanguage);
     } catch (e) { /* Silent catch */ }
     
-    // Reload the page to get new language from server
-    window.location.reload();
+    // Add cache busting parameter to URL and reload
+    const cacheBuster = Date.now();
+    const url = new URL(window.location.href);
+    url.searchParams.set('i18n_cb', cacheBuster);
+    url.searchParams.set('lang', newLanguage); // Explicitly set language parameter
+    window.location.href = url.toString();
   }
   
   /**
@@ -110,6 +114,18 @@
     // Setup mutation observer for dynamic content
     setupMutationObserver();
     
+    // Clean URL from cache busting parameter after page load
+    if (window.location.search.includes('i18n_cb')) {
+      // Wait for page to fully load
+      setTimeout(() => {
+        // Use History API to clean URL without page reload
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('i18n_cb');
+        window.history.replaceState({}, document.title, cleanUrl.toString());
+        console.log('[i18n] Removed cache busting parameter from URL');
+      }, 2000); // 2 seconds delay to ensure page loaded
+    }
+    
     // Mark as initialized
     isInitialized = true;
     
@@ -131,7 +147,7 @@
         options.headers = {};
       }
       
-      // Add app-language header to all requests
+      // Add app-language header to all fetch requests
       if (typeof options.headers.set === 'function') {
         options.headers.set('app-language', getCurrentLanguage());
       } else {
@@ -270,7 +286,7 @@
   }
   
   /**
-   * Fetch translation from server or cache
+   * Fetch translation from server or cache with cache busting
    * @param {string} key - Translation key
    * @param {string} defaultText - Default text if no translation found
    * @returns {Promise<string>} - Translation or default text
@@ -301,8 +317,11 @@
         translationKey = parts.slice(1).join(':');
       }
       
+      // Add cache busting to API call
+      const cacheBuster = Date.now();
+      
       // Call translation API
-      const response = await fetch('/api/translate', {
+      const response = await fetch(`/api/translate?_=${cacheBuster}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -366,6 +385,31 @@
   }
   
   /**
+   * Load namespace with cache busting
+   * @param {string} language - Language code
+   * @param {string} namespace - Namespace to load
+   * @returns {Promise<object>} - Translation data
+   */
+  async function loadNamespace(language, namespace) {
+    // Add cache busting timestamp
+    const timestamp = Date.now();
+    const url = `/locales/${language}/${namespace}.json?v=${timestamp}`;
+    
+    try {
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to load namespace ${namespace} for ${language}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error(`Translation namespace loading error:`, error);
+      return null;
+    }
+  }
+  
+  /**
    * Simple translation function - will use cache or default text
    * @param {string} key - Translation key
    * @param {object} options - Options including defaultValue
@@ -412,6 +456,7 @@
     translateDynamicElement,
     updatePageTranslations: translatePageElements,
     syncLanguageMasks,
-    isInitialized: () => isInitialized
+    isInitialized: () => isInitialized,
+    loadNamespace
   };
 })();
