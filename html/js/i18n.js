@@ -445,7 +445,7 @@ if (document.readyState === 'loading') {
     
     log('Page translation initiated, waiting for API responses');
   }
-  
+   
 /**
  * Fetch translation with improved cache key generation
  * @param {string} key - Translation key
