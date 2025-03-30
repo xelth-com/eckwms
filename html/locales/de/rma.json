@@ -24,7 +24,7 @@
     "back": "Zurück"
   },
   "device": {
-    "title": "Gerät #{{count}}",
+    "title": "Gerät",
     "serial_number": "Seriennummer:",
     "serial_placeholder": "Seriennummer eingeben",
     "issue_description": "Problembeschreibung:",

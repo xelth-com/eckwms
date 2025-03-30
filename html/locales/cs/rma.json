@@ -1,1 +1,26 @@
-﻿{}
+{
+  "form": {
+    "submit": "Odeslat formulář",
+    "back": "Zpět",
+    "add_device": "Přidat další zařízení",
+    "device_info": "Informace o zařízení",
+    "phone": "Telefon:",
+    "invoice_email": "E-mail pro e-fakturu:",
+    "contact_email": "Kontaktní e-mail:",
+    "contact_info": "Kontaktní informace",
+    "reseller_name": "V případě záruky prosím uveďte jméno prodejce:",
+    "country": "Země:",
+    "city": "Město:",
+    "postal_code": "PSČ:",
+    "additional_address": "Další řádek adresy:",
+    "house_number": "Číslo domu:",
+    "street": "Ulice:",
+    "contact_person": "Kontaktní osoba:",
+    "vat_number": "DIČ:",
+    "company_name": "Název společnosti:",
+    "billing_info": "Fakturační informace"
+  },
+  "device": {
+    "info_text": "Přidejte zařízení, která je třeba opravit. Každé zařízení může být odesláno na jinou adresu, pokud je to potřeba."
+  }
+}
