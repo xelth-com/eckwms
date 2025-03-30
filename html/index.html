@@ -731,91 +731,91 @@
 
 
     function myFetch(sendText = '', senderName = '', destination = 'output1', sendJWT = localStorage.getItem("jwt"), url = '/') {
-  let formData = {};
-  if (sendText === 'formSubmit') {
-    // Сбор данных формы в JSON
-    const elements = Array.from(document.getElementById(senderName).querySelectorAll('input, textarea, select'));
-    elements.forEach(element => {
-      if (element.value) {
-        formData[element.id] = element.value;
-      }
-    });
-    sendText = JSON.stringify(formData);
-  }
-
-  fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ text: sendText, name: senderName, dest: destination, jwt: sendJWT })
-  })
-    .then(async response => {
-      if (!response.ok) {
-        throw new Error('Ошибка сети: ' + response.statusText);
-      }
-
-      let blob;
-      if (destination === 'pdfRma') {
-        // PDF handling logic...
-      } else if (destination === 'csv') {
-        // CSV handling logic...
-      } else {
-        blob = await response.text();
-        if (senderName == 'snInput' && sendText.split('.').length == 3) {
-          const [encodedHeader, encodedPayload, signature] = sendText.split('.');
-          localStorage.setItem("jwt", blob);
-          myFetch('', 'startInput');
-        }
-
-        // Вставляем HTML в указанный элемент
-        const targetElement = document.getElementById(destination);
-        targetElement.innerHTML = blob;
-
-        // Add this translation update
-        if (window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
-          window.i18n.updatePageTranslations();
-          
-          // ADD THIS: Synchronize language UI with current language
-          if (window.i18n.syncLanguageMasks) {
-            window.i18n.syncLanguageMasks();
-          } else {
-            // Fallback synchronization if syncLanguageMasks isn't available
-            const currentLang = window.i18n.getCurrentLanguage();
-            document.documentElement.lang = currentLang;
-            
-            // Update mask states for language buttons
-            const supportedLangs = ['de', 'en', 'fr', 'pl', 'cs', 'ko'];
-            supportedLangs.forEach(lang => {
-              const maskElement = document.getElementById(`${lang}Mask`);
-              if (maskElement) {
-                maskElement.setAttribute("mask", "url(#maskClose)");
-              }
-            });
-            
-            // Set current language mask to open
-            const currentMask = document.getElementById(`${currentLang}Mask`);
-            if (currentMask) {
-              currentMask.setAttribute("mask", "url(#maskOpen)");
-            }
+      let formData = {};
+      if (sendText === 'formSubmit') {
+        // Сбор данных формы в JSON
+        const elements = Array.from(document.getElementById(senderName).querySelectorAll('input, textarea, select'));
+        elements.forEach(element => {
+          if (element.value) {
+            formData[element.id] = element.value;
           }
-        }
-
-        // Проверяем, является ли это запросом для RMA-формы
-        if (senderName === 'rmaButton' && url.includes('/rma/generate')) {
-          // Добавляем ленивую загрузку скрипта RMA формы
-          lazyLoadScript('/js/rma-form.js');
-        }
-
-        // Other handling logic...
+        });
+        sendText = JSON.stringify(formData);
       }
-    })
-    .catch(error => {
-      console.error('Проблема с операцией Fetch:', error);
-    });
 
-  return false;
-}
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ text: sendText, name: senderName, dest: destination, jwt: sendJWT })
+      })
+        .then(async response => {
+          if (!response.ok) {
+            throw new Error('Ошибка сети: ' + response.statusText);
+          }
+
+          let blob;
+          if (destination === 'pdfRma') {
+            // PDF handling logic...
+          } else if (destination === 'csv') {
+            // CSV handling logic...
+          } else {
+            blob = await response.text();
+            if (senderName == 'snInput' && sendText.split('.').length == 3) {
+              const [encodedHeader, encodedPayload, signature] = sendText.split('.');
+              localStorage.setItem("jwt", blob);
+              myFetch('', 'startInput');
+            }
+
+            // Вставляем HTML в указанный элемент
+            const targetElement = document.getElementById(destination);
+            targetElement.innerHTML = blob;
+
+            // Add this translation update
+            if (window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
+              window.i18n.updatePageTranslations();
+
+              // ADD THIS: Synchronize language UI with current language
+              if (window.i18n.syncLanguageMasks) {
+                window.i18n.syncLanguageMasks();
+              } else {
+                // Fallback synchronization if syncLanguageMasks isn't available
+                const currentLang = window.i18n.getCurrentLanguage();
+                document.documentElement.lang = currentLang;
+
+                // Update mask states for language buttons
+                const supportedLangs = ['de', 'en', 'fr', 'pl', 'cs', 'ko'];
+                supportedLangs.forEach(lang => {
+                  const maskElement = document.getElementById(`${lang}Mask`);
+                  if (maskElement) {
+                    maskElement.setAttribute("mask", "url(#maskClose)");
+                  }
+                });
+
+                // Set current language mask to open
+                const currentMask = document.getElementById(`${currentLang}Mask`);
+                if (currentMask) {
+                  currentMask.setAttribute("mask", "url(#maskOpen)");
+                }
+              }
+            }
+
+            // Проверяем, является ли это запросом для RMA-формы
+            if (senderName === 'rmaButton' && url.includes('/rma/generate')) {
+              // Добавляем ленивую загрузку скрипта RMA формы
+              lazyLoadScript('/js/rma-form.js');
+            }
+
+            // Other handling logic...
+          }
+        })
+        .catch(error => {
+          console.error('Проблема с операцией Fetch:', error);
+        });
+
+      return false;
+    }
 
     /**
      * Ленивая загрузка скрипта
@@ -1360,6 +1360,34 @@
       }
       if (localStorage.getItem("jwt")) myFetch('', 'startInput');
 
+     // Обновленный код для обработчика DOMContentLoaded в index.html
+
+// Проверка загрузки translationUtils перед инициализацией i18n
+function checkTranslationUtils() {
+  // Проверяем доступность translationUtils
+  if (!window.translationUtils) {
+    console.log('[i18n] Waiting for translationUtils to load...');
+    
+    // Ждем загрузки utils перед инициализацией i18n
+    const checkInterval = setInterval(function() {
+      if (window.translationUtils) {
+        console.log('[i18n] translationUtils loaded');
+        clearInterval(checkInterval);
+        
+        // Если i18n уже загружен и есть функция инициализации - вызываем ее
+        if (window.i18n && typeof window.i18n.init === 'function') {
+          console.log('[i18n] Initializing i18n from checkTranslationUtils');
+          window.i18n.init();
+        }
+      }
+    }, 50); // Проверяем каждые 50мс
+  }
+}
+
+// Вызываем проверку, после всей инициализации страницы
+setTimeout(checkTranslationUtils, 0);
+
+
 
       //document.body.style.display = "inline";
       //testSvg = document.getElementById('testSvg');
@@ -1582,6 +1610,7 @@
 
 
   </script>
+  <script src="/js/translationUtils.js" defer></script>
   <script src="/js/i18n.js" defer></script>
 </head>
 
@@ -2761,7 +2790,7 @@
       })();
     </script>
     <!-- Add i18n script right before the closing body tag  -->
-    
+
 </body>
 
 </html>

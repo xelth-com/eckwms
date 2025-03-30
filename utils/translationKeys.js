@@ -17,7 +17,7 @@ function generateTranslationKey(text, language, namespace = '', options = {}) {
   
   // Create base key string
   let keyString = `${cleanText}_${namespace}_${language}`;
-  
+  console.log('//////////////////////////////////////////////////////////////', keyString)
   // Add options to key if they affect the translation
   if (options.count !== undefined) {
     keyString += `_count=${options.count}`;

@@ -1,4 +1,5 @@
 // html/js/i18n.js - Enhanced with improved logging and retry mechanisms
+const VERBOSE_LOGGING = true; // Включаем подробное логирование
 (function() {
   // Default language fallback
   const defaultLanguage = 'en';
@@ -105,73 +106,89 @@
     window.location.href = url.toString();
   }
   
-  /**
-   * Initialize i18n with meta tag prioritization
-   */
-  function init() {
-    if (isInitialized) {
-      log('Already initialized, skipping');
-      return Promise.resolve();
-    }
-    
-    // Get language from meta tag (server-provided)
-    const language = getCurrentLanguage();
-    
-    log(`Initializing with language: ${language}`);
-    
-    // Set language attributes
-    document.documentElement.lang = language;
-    
-    // Set RTL direction for RTL languages
-    if (['ar', 'he'].includes(language)) {
-      document.documentElement.dir = 'rtl';
-    } else {
-      document.documentElement.dir = 'ltr';
-    }
-    
-    // Set global language
-    window.language = language;
-    
-    // Update language masks in SVG
-    syncLanguageMasks();
-    
-    // Setup fetch interception for language headers
-    setupFetchInterception();
-    
-    // Translate existing elements
-    if (language !== defaultLanguage) {
-      log(`Language is not default (${defaultLanguage}), translating page elements`);
-      translatePageElements();
-    } else {
-      log(`Language is default (${defaultLanguage}), skipping translation`);
-    }
-    
-    // Setup mutation observer for dynamic content
-    setupMutationObserver();
-    
-    // Clean URL from cache busting parameter after page load
-    if (window.location.search.includes('i18n_cb')) {
-      // Wait for page to fully load
-      setTimeout(() => {
-        // Use History API to clean URL without page reload
-        const cleanUrl = new URL(window.location.href);
-        cleanUrl.searchParams.delete('i18n_cb');
-        window.history.replaceState({}, document.title, cleanUrl.toString());
-        log('Removed cache busting parameter from URL');
-      }, 2000); // 2 seconds delay to ensure page loaded
-    }
-    
-    // Mark as initialized
-    isInitialized = true;
-    
-    // Fire initialized event for other scripts
-    document.dispatchEvent(new CustomEvent('i18n:initialized', {
-      detail: { language }
-    }));
-    
-    log('Initialization complete');
-    return Promise.resolve(language);
+/**
+ * Initialize i18n with meta tag prioritization
+ */
+function init() {
+  // Проверяем наличие translationUtils
+  if (!window.translationUtils) {
+    console.error('[i18n] Error: translationUtils not loaded, postponing initialization');
+    return; // Выходим, инициализация будет выполнена позже
   }
+  
+  if (isInitialized) {
+    log('Already initialized, skipping');
+    return Promise.resolve();
+  }
+  
+  // Помечаем, что инициализация выполнена
+  isInitialized = true;
+  // УДАЛЕНО: window.i18n._initialized = true; -- Эта строка вызывала ошибку
+  
+  // Get language from meta tag (server-provided)
+  const language = getCurrentLanguage();
+  
+  log(`Initializing with language: ${language}`);
+  
+  // Set language attributes
+  document.documentElement.lang = language;
+  
+  // Set RTL direction for RTL languages
+  if (['ar', 'he'].includes(language)) {
+    document.documentElement.dir = 'rtl';
+  } else {
+    document.documentElement.dir = 'ltr';
+  }
+  
+  // Set global language
+  window.language = language;
+  
+  // Update language masks in SVG
+  syncLanguageMasks();
+  
+  // Setup fetch interception for language headers
+  setupFetchInterception();
+  
+  // Translate existing elements
+  if (language !== defaultLanguage) {
+    log(`Language is not default (${defaultLanguage}), translating page elements`);
+    translatePageElements();
+  } else {
+    log(`Language is default (${defaultLanguage}), skipping translation`);
+  }
+  
+  // Setup mutation observer for dynamic content
+  setupMutationObserver();
+  
+  // Fire initialized event for other scripts
+  document.dispatchEvent(new CustomEvent('i18n:initialized', {
+    detail: { language }
+  }));
+  
+  log('Initialization complete');
+  return Promise.resolve(language);
+}
+
+// Инициализация при готовности DOM
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', function() {
+    // Проверяем наличие translationUtils перед инициализацией
+    if (window.translationUtils) {
+      init();
+    } else {
+      log('translationUtils not available yet, will initialize later');
+      // Проверка будет выполнена через скрипт в HTML
+    }
+  });
+} else {
+  // DOM уже загружен
+  if (window.translationUtils) {
+    init();
+  } else {
+    log('translationUtils not available yet, will initialize later');
+    // Проверка будет выполнена через скрипт в HTML
+  }
+}
   
   /**
    * Setup fetch interception to add language headers to all requests
@@ -327,7 +344,9 @@
     
     // Use API translation with key, text and options
     fetchTranslation(key, originalText, options).then(translation => {
-      if (translation && translation !== originalText) {
+      console.log(`[i18n Debug] Client cache key for "${key}": ${fullCacheKey}`);
+console.log(`[i18n Debug] Server format should match: ${language}:${cacheKey}`);
+      if (translation) {
         log(`Applied translation for "${key}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
         element.textContent = translation;
       } else {
@@ -428,130 +447,130 @@
     log('Page translation initiated, waiting for API responses');
   }
   
-  /**
-   * Fetch translation with improved pending handling and logging
-   * @param {string} key - Translation key
-   * @param {string} defaultText - Default text if no translation found
-   * @param {object} options - Translation options (count, etc.)
-   * @returns {Promise<string>} - Translation or default text
-   */
-  async function fetchTranslation(key, defaultText, options = {}) {
-    const language = getCurrentLanguage();
-    
-    // Skip translation for default language
-    if (language === defaultLanguage) {
-      log(`Using default language (${defaultLanguage}), skipping translation fetch for "${key}"`);
-      return Promise.resolve(defaultText);
-    }
-    
-    // Extract namespace from key if present
-    let namespace = 'common';
-    let translationKey = key;
-    
-    if (key.includes(':')) {
-      const parts = key.split(':');
-      namespace = parts[0];
-      translationKey = parts.slice(1).join(':');
-    }
-    
-    // Create unique key for cache
-    const optionsKey = Object.keys(options).length > 0 ? 
-      `:${JSON.stringify(options)}` : '';
-    
-    const cacheKey = `${language}:${namespace}:${translationKey}${optionsKey}`;
-    
-    // Debugging info about translation request
-    log(`Translation request for key: "${key}" (${cacheKey})`);
-    
-    // Check client cache first
-    if (translationsCache[cacheKey]) {
-      log(`Found in client cache: "${cacheKey}"`);
-      return Promise.resolve(translationsCache[cacheKey]);
-    }
-    
-    // Check if this translation is already pending
-    if (pendingTranslations[cacheKey]) {
-      log(`Translation already pending for "${cacheKey}", using original text for now`);
-      return defaultText;
-    }
-    
-    // Mark as pending to prevent duplicate requests
-    pendingTranslations[cacheKey] = true;
-    
-    try {
-      log(`Making API request for translation: "${key}" in language: ${language}`);
-      
-      const response = await fetch(`/api/translate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'app-language': language
-        },
-        body: JSON.stringify({
-          text: defaultText,
-          targetLang: language,
-          context: namespace,
-          key: translationKey,
-          defaultValue: defaultText,
-          background: false, // We want immediate response if possible
-          options: options  // Add options to request
-        })
-      });
-      
-      const data = await response.json();
-      
-      log(`API response for "${key}": status=${response.status}, fromCache=${data.fromCache}, translated length=${data.translated?.length}`);
-      
-      // Handle "pending" status with retry
-      if (response.status === 202 && data.status === 'pending') {
-        const retryAfter = parseInt(response.headers.get('Retry-After') || '3', 10);
-        
-        log(`Translation pending for "${key}", will retry after ${retryAfter} seconds`);
-        
-        // Schedule retry with the server's suggested delay
-        setTimeout(() => {
-          log(`Retrying translation for "${key}" after delay`);
-          
-          // Remove from pending to allow new request
-          delete pendingTranslations[cacheKey];
-          
-          // Re-request the translation
-          fetchTranslation(key, defaultText, options).then(translation => {
-            // Update elements with this key when translation arrives
-            log(`Retry successful for "${key}", updating elements`);
-            updateTranslatedElements(key, translation);
-          }).catch(err => {
-            logError(`Retry failed for "${key}":`, err);
-          });
-        }, retryAfter * 1000);
-        
-        // Return default text for now
-        return defaultText;
-      }
-      
-      // Handle completed translation
-      if (data.translated) {
-        log(`Received translation for "${key}": "${data.translated.substring(0, 30)}${data.translated.length > 30 ? '...' : ''}"`);
-        
-        // Cache the translation
-        translationsCache[cacheKey] = data.translated;
-        
-        // Clear pending status
-        delete pendingTranslations[cacheKey];
-        
-        return data.translated;
-      }
-      
-      // If we got here, no usable translation
-      log(`No usable translation for "${key}", using original text`);
-      delete pendingTranslations[cacheKey];
-      return defaultText;
-    } catch (error) {
-      logError(`API error when translating "${key}":`, error);
-      delete pendingTranslations[cacheKey];
-      return defaultText;
-    }
+/**
+ * Fetch translation with improved cache key generation
+ * @param {string} key - Translation key
+ * @param {string} defaultText - Default text if no translation found
+ * @param {object} options - Translation options (count, etc.)
+ * @returns {Promise<string>} - Translation or default text
+ */
+async function fetchTranslation(key, defaultText, options = {}) {
+  const language = getCurrentLanguage();
+  
+  // Skip translation for default language
+  if (language === defaultLanguage) {
+    log(`Using default language (${defaultLanguage}), skipping translation fetch for "${key}"`);
+    return Promise.resolve(defaultText);
   }
+  
+  // Extract namespace from key if present
+  let namespace = 'common';
+  let translationKey = key;
+  
+  if (key.includes(':')) {
+    const parts = key.split(':');
+    namespace = parts[0];
+    translationKey = parts.slice(1).join(':');
+  }
+  
+  // Используем тот же алгоритм генерации ключа, что и на сервере
+  const cacheKey = window.translationUtils.generateTranslationKey(defaultText, language, namespace, options);
+  
+  // Добавляем префикс языка для кеша на стороне клиента
+  const fullCacheKey = `${language}:${cacheKey}`;
+  
+  // Debugging для отслеживания ключей
+  log(`Translation request for key: "${key}" with cache key: "${fullCacheKey}"`);
+  
+  // Check client cache first
+  if (translationsCache[fullCacheKey]) {
+    log(`Found in client cache: "${fullCacheKey}"`);
+    return Promise.resolve(translationsCache[fullCacheKey]);
+  }
+  
+  // Check if this translation is already pending
+  if (pendingTranslations[fullCacheKey]) {
+    log(`Translation already pending for "${fullCacheKey}", using original text for now`);
+    return defaultText;
+  }
+  
+  // Mark as pending to prevent duplicate requests
+  pendingTranslations[fullCacheKey] = true;
+  
+  try {
+    log(`Making API request for translation: "${key}" in language: ${language}`);
+    
+    const response = await fetch(`/api/translate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'app-language': language
+      },
+      body: JSON.stringify({
+        text: defaultText,
+        targetLang: language,
+        context: namespace,
+        key: translationKey,
+        defaultValue: defaultText,
+        background: false, // We want immediate response if possible
+        options: options  // Add options to request
+      })
+    });
+    
+    const data = await response.json();
+    
+    log(`API response for "${key}": status=${response.status}, fromCache=${data.fromCache}, translated length=${data.translated?.length}`);
+    
+    // Handle "pending" status with retry
+    if (response.status === 202 && data.status === 'pending') {
+      const retryAfter = parseInt(response.headers.get('Retry-After') || '3', 10);
+      
+      log(`Translation pending for "${key}", will retry after ${retryAfter} seconds`);
+      
+      // Schedule retry with the server's suggested delay
+      setTimeout(() => {
+        log(`Retrying translation for "${key}" after delay`);
+        
+        // Remove from pending to allow new request
+        delete pendingTranslations[fullCacheKey];
+        
+        // Re-request the translation
+        fetchTranslation(key, defaultText, options).then(translation => {
+          // Update elements with this key when translation arrives
+          log(`Retry successful for "${key}", updating elements`);
+          updateTranslatedElements(key, translation);
+        }).catch(err => {
+          logError(`Retry failed for "${key}":`, err);
+        });
+      }, retryAfter * 1000);
+      
+      // Return default text for now
+      return defaultText;
+    }
+    
+    // Handle completed translation
+    if (data.translated) {
+      log(`Received translation for "${key}": "${data.translated.substring(0, 30)}${data.translated.length > 30 ? '...' : ''}"`);
+      
+      // Cache the translation using the same key format as backend
+      translationsCache[fullCacheKey] = data.translated;
+      
+      // Clear pending status
+      delete pendingTranslations[fullCacheKey];
+      
+      return data.translated;
+    }
+    
+    // If we got here, no usable translation
+    log(`No usable translation for "${key}", using original text`);
+    delete pendingTranslations[fullCacheKey];
+    return defaultText;
+  } catch (error) {
+    logError(`API error when translating "${key}":`, error);
+    delete pendingTranslations[fullCacheKey];
+    return defaultText;
+  }
+}
   
   /**
    * Update all elements with a specific translation key
@@ -627,66 +646,64 @@
     }
   }
   
-  /**
-   * Simple translation function - will use cache or default text
-   * @param {string} key - Translation key
-   * @param {object} options - Options including defaultValue
-   * @returns {string} - Translated text or default
-   */
-  function t(key, options = {}) {
-    const defaultValue = options.defaultValue || key;
-    const language = getCurrentLanguage();
-    
-    // Skip translation for default language
-    if (language === defaultLanguage) {
-      return defaultValue;
-    }
-    
-    // Extract namespace
-    let namespace = 'common';
-    let translationKey = key;
-    
-    if (key.includes(':')) {
-      const parts = key.split(':');
-      namespace = parts[0];
-      translationKey = parts.slice(1).join(':');
-    }
-    
-    // Create cache key
-    const optionsKey = Object.keys(options).length > 0 ? 
-      `:${JSON.stringify(options)}` : '';
-    
-    const cacheKey = `${language}:${namespace}:${translationKey}${optionsKey}`;
-    
-    // Check cache and return immediately if found
-    if (translationsCache[cacheKey]) {
-      return translationsCache[cacheKey];
-    }
-    
-    // Not in cache, schedule async fetch for future use
-    if (!pendingTranslations[cacheKey]) {
-      log(`Scheduling async fetch for "${key}"`);
-      
-      pendingTranslations[cacheKey] = true;
-      
-      fetchTranslation(key, defaultValue, options)
-        .then(translation => {
-          translationsCache[cacheKey] = translation;
-          delete pendingTranslations[cacheKey];
-          
-          // If the translation is different, update DOM elements
-          if (translation !== defaultValue) {
-            updateTranslatedElements(key, translation);
-          }
-        })
-        .catch(() => {
-          delete pendingTranslations[cacheKey];
-        });
-    }
-    
-    // Return default for now
+/**
+ * Simple translation function - will use cache or default text
+ * @param {string} key - Translation key
+ * @param {object} options - Options including defaultValue
+ * @returns {string} - Translated text or default
+ */
+function t(key, options = {}) {
+  const defaultValue = options.defaultValue || key;
+  const language = getCurrentLanguage();
+  
+  // Skip translation for default language
+  if (language === defaultLanguage) {
     return defaultValue;
   }
+  
+  // Extract namespace
+  let namespace = 'common';
+  let translationKey = key;
+  
+  if (key.includes(':')) {
+    const parts = key.split(':');
+    namespace = parts[0];
+    translationKey = parts.slice(1).join(':');
+  }
+  
+  // Используем тот же алгоритм генерации ключа, что и на сервере
+  const cacheKey = window.translationUtils.generateTranslationKey(defaultValue, language, namespace, options);
+  const fullCacheKey = `${language}:${cacheKey}`;
+  
+  // Check cache and return immediately if found
+  if (translationsCache[fullCacheKey]) {
+    return translationsCache[fullCacheKey];
+  }
+  
+  // Not in cache, schedule async fetch for future use
+  if (!pendingTranslations[fullCacheKey]) {
+    log(`Scheduling async fetch for "${key}"`);
+    
+    pendingTranslations[fullCacheKey] = true;
+    
+    fetchTranslation(key, defaultValue, options)
+      .then(translation => {
+        translationsCache[fullCacheKey] = translation;
+        delete pendingTranslations[fullCacheKey];
+        
+        // If the translation is different, update DOM elements
+        if (translation !== defaultValue) {
+          updateTranslatedElements(key, translation);
+        }
+      })
+      .catch(() => {
+        delete pendingTranslations[fullCacheKey];
+      });
+  }
+  
+  // Return default for now
+  return defaultValue;
+}
   
   // Initialize when DOM is ready
   if (document.readyState === 'loading') {
