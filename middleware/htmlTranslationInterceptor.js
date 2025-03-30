@@ -4,8 +4,10 @@ const { stripBOM } = require('../utils/bomUtils');
 const { checkCache, saveToCache } = require('../services/translationService');
 const { generateTranslationKey } = require('../utils/translationKeys');
 
+// middleware/htmlTranslationInterceptor.js - Improved version
+
 /**
- * Creates an HTML interceptor for i18n translation
+ * Creates an HTML interceptor for i18n translation with proper untranslated content handling
  * @param {Object} i18next - i18next instance
  * @returns {Function} Express middleware
  */
@@ -122,9 +124,10 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
         }
 
         // Helper function to handle text translation with proper caching
+        // Returns [translated_text, is_untranslated]
         async function translateText(originalText, key, namespace, options = {}) {
           if (!originalText || !originalText.trim()) {
-            return originalText;
+            return [originalText, true]; // Untranslated
           }
 
           // Create unique key for tracking this translation
@@ -132,7 +135,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
 
           // Skip if already processed in this request (prevents recursion)
           if (processedKeys.has(uniqueKey)) {
-            return originalText;
+            return [originalText, true]; // Untranslated
           }
           processedKeys.add(uniqueKey);
 
@@ -153,7 +156,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                 const cachedResult = await checkCache(originalText, language, namespace, options);
                 if (cachedResult) {
                   console.log(`[i18n] Cache hit after waiting for: ${cacheKey}`);
-                  return cachedResult;
+                  return [cachedResult, false]; // Translated from cache
                 }
               } catch (error) {
                 console.warn(`[i18n] Error waiting for in-progress translation:`, error);
@@ -169,7 +172,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
             const cachedTranslation = await checkCache(originalText, language, namespace, options);
             if (cachedTranslation) {
               console.log(`[i18n] Cache hit for: ${cacheKey}`);
-              return cachedTranslation;
+              return [cachedTranslation, false]; // Translated from cache
             }
           } catch (cacheError) {
             console.error(`[i18n] Cache check error for ${cacheKey}:`, cacheError);
@@ -195,19 +198,22 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                   ...options // Pass through options like count
                 });
 
-                // If translation exists and differs from original, save to cache
+                // If translation exists in resources, consider it translated
+                // regardless of whether it matches the original text
                 if (exists) {
                   try {
+                    // Always save to cache if it exists in resources
                     await saveToCache(originalText, language, translation, namespace, options);
                     console.log(`[i18n] Saved to cache: ${cacheKey}`);
                   } catch (saveError) {
                     console.error(`[i18n] Error saving to cache for ${cacheKey}:`, saveError);
                   }
 
-                  resolve(translation);
+                  // Mark as translated because it exists in resources
+                  resolve([translation, false]); // Translated
                 } else {
-                  // No translation found, return original
-                  resolve(originalText);
+                  // No translation found in resources, return original as untranslated
+                  resolve([originalText, true]); // Untranslated
                 }
               } catch (error) {
                 console.error(`[i18n] Translation error for ${cacheKey}:`, error);
@@ -232,7 +238,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
             // Clean up processing map on error
             translationProcessingMap.delete(cacheKey);
             console.error(`[i18n] Translation error for ${uniqueKey}:`, error);
-            return originalText; // Return original text on error
+            return [originalText, true]; // Return original text as untranslated on error
           }
         }
 
@@ -275,14 +281,20 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
               // Add a promise to translate this text
               textTranslationPromises.push(
                 translateText(originalContent, translationKey, namespace, options)
-                  .then(translatedText => {
-
-                    // Translation successful, return without data-i18n
-                    return {
-                      id: placeholderId,
-                      html: `<${tag1}${attrs}>${translatedText}</${tag2}>`
-                    };
-
+                  .then(([translatedText, untranslated]) => {
+                    if (untranslated) {
+                      // Keep the original tag with data-i18n attribute
+                      return {
+                        id: placeholderId,
+                        html: match // Keep original with data-i18n attribute
+                      };
+                    } else {
+                      // Remove data-i18n attribute since we have a translation
+                      return {
+                        id: placeholderId,
+                        html: `<${tag1}${attrs.replace(/\s+data-i18n="[^"]*"/, '')}>${translatedText}</${tag2}>`
+                      };
+                    }
                   })
                   .catch(error => {
                     console.error(`[i18n] Error translating ${translationKey}:`, error);
@@ -332,22 +344,34 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                         translationKey = parts.slice(1).join(':');
                       }
 
-                      // Translate attribute value - we trust the translator service
-                      // to properly handle any content that should remain the same
+                      // Translate attribute value
                       const currentValue = currentAttrs[attr] || '';
-                      const translation = await translateText(currentValue, translationKey, namespace);
+                      const [translation, untranslated] = await translateText(currentValue, translationKey, namespace);
 
                       return {
                         attr,
                         original: currentValue,
-                        translated: translation
+                        translated: translation,
+                        untranslated
                       };
                     })
                   )
                     .then(translations => {
-                      let newTag = `<${tag}${restAttrs}`;
+                      // Check if any attribute is untranslated
+                      const anyUntranslated = translations.some(t => t.untranslated);
+                      
+                      if (anyUntranslated) {
+                        // If any attribute was untranslated, keep the original tag
+                        return {
+                          id: placeholderId,
+                          html: match
+                        };
+                      }
 
-                      // Apply translations to tag regardless of whether they changed the text
+                      // All attributes translated, build new tag without data-i18n-attr
+                      let newTag = `<${tag}${restAttrs.replace(/\s+data-i18n-attr=['"][^'"]+['"]/, '')}`;
+
+                      // Apply translations to tag
                       translations.forEach(({ attr, original, translated }) => {
                         // Current attribute value
                         const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
@@ -364,8 +388,6 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                         }
                       });
 
-                      // Always consider translation successful if no error occurred
-                      // Remove data-i18n-attr attribute since translation was attempted
                       return {
                         id: placeholderId,
                         html: newTag + '>'
@@ -388,6 +410,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
               }
             }
           );
+
           // 3. Process HTML content translations with data-i18n-html
           const htmlTranslationPromises = [];
           modifiedBody = modifiedBody.replace(
@@ -423,20 +446,26 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
               // Add promise to translate HTML content
               htmlTranslationPromises.push(
                 translateText(originalContent, translationKey, namespace, options)
-                  .then(translatedHtml => {
-
-                    // Translation succeeded, remove data-i18n-html
-                    return {
-                      id: placeholderId,
-                      html: `<${tag1}${attrs}>${translatedHtml}</${tag2}>`
-                    };
-
+                  .then(([translatedHtml, untranslated]) => {
+                    if (untranslated) {
+                      // Keep original with data-i18n-html for untranslated content
+                      return {
+                        id: placeholderId,
+                        html: match
+                      };
+                    } else {
+                      // Remove data-i18n-html for translated content
+                      return {
+                        id: placeholderId,
+                        html: `<${tag1}${attrs.replace(/\s+data-i18n-html="[^"]*"/, '')}>${translatedHtml}</${tag2}>`
+                      };
+                    }
                   })
                   .catch(error => {
                     console.error(`[i18n] Error translating HTML for ${translationKey}:`, error);
                     return {
                       id: placeholderId,
-                      html: match
+                      html: match // Keep original on error
                     };
                   })
               );
