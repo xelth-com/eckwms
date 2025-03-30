@@ -131,11 +131,7 @@ async function saveToCache(text, targetLang, translatedText, context = '', optio
       console.warn("targetLang was an array, converting to string");
       targetLang = targetLang[0];
     }
-    
-    // Skip saving if text and translation are identical
-    if (text === translatedText) {
-      return;
-    }
+  
     
     // Strip BOM before generating key
     text = stripBOM(text);

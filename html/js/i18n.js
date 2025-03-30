@@ -232,7 +232,7 @@ function processElementTranslation(element) {
   
   // Используем API перевода с ключом, текстом и опциями
   fetchTranslation(key, originalText, options).then(translation => {
-    if (translation && translation !== originalText) {
+    if (translation) {
       element.textContent = translation;
     }
   });
@@ -304,7 +304,7 @@ async function fetchTranslation(key, defaultText, options = {}) {
         
         // Use API translation for this key/value
         fetchTranslation(key, originalValue).then(translation => {
-          if (translation && translation !== originalValue) {
+          if (translation) {
             element.setAttribute(attr, translation);
           }
         });
@@ -326,7 +326,7 @@ async function fetchTranslation(key, defaultText, options = {}) {
     
     // Use API translation for this key/html
     fetchTranslation(key, originalHtml).then(translation => {
-      if (translation && translation !== originalHtml) {
+      if (translation) {
         element.innerHTML = translation;
       }
     });
