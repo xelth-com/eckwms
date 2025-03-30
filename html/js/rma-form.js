@@ -1,4 +1,4 @@
-// html/js/rma-form.js - Updated to use i18next
+// html/js/rma-form.js - Улучшенная версия с явной инициализацией
 
 (function() {
   // Use global config for default language instead of hardcoded value
@@ -10,7 +10,42 @@
   function devLog(...args) {
     if (window.APP_CONFIG?.NODE_ENV === 'development') {
       console.log(...args);
+    } else {
+      console.log(...args); // временно включим логи для отладки
     }
+  }
+
+  /**
+   * Получение перевода без i18n (для аварийных случаев)
+   * @param {string} key - ключ перевода
+   * @param {string} defaultText - текст по умолчанию
+   * @returns {string} - переведенный текст или текст по умолчанию
+   */
+  function getTranslation(key, defaultText) {
+    // Базовые переводы для немецкого языка
+    const basicTranslations = {
+      'rma:device.title': 'Gerät #${count}',
+      'rma:device.address_button': 'Andere Rücksendeadresse angeben',
+      'rma:device.serial_number': 'Seriennummer:',
+      'rma:device.serial_placeholder': 'Seriennummer eingeben',
+      'rma:device.issue_description': 'Problembeschreibung:',
+      'rma:device.description_placeholder': 'Beschreiben Sie das Problem mit dem Gerät',
+      'rma:device.using_billing': 'Rechnungsadresse wird verwendet'
+    };
+
+    // Если i18n доступен, используем его
+    if (window.i18n && window.i18n.t) {
+      return window.i18n.t(key, { defaultValue: defaultText });
+    }
+    
+    // Проверка языка страницы
+    const lang = document.documentElement.lang || 'en';
+    if (lang === 'de' && basicTranslations[key]) {
+      return basicTranslations[key].replace('${count}', 
+        key === 'rma:device.title' ? deviceCount : '');
+    }
+    
+    return defaultText;
   }
 
   /**
@@ -23,6 +58,8 @@
       document.addEventListener('DOMContentLoaded', init);
       return;
     }
+    
+    devLog("RMA Form: начало инициализации");
     
     // Set up add device button
     const addButton = document.getElementById('add-device-btn');
@@ -38,16 +75,34 @@
     // Add address logic explanation
     addAddressLogicExplanation();
     
-    // Add first device entry if i18n is loaded
-    if (window.i18n && (window.i18n.isInitialized() || window.i18n.getCurrentLanguage() === defaultLanguage)) {
-      addDeviceEntry();
-    } else {
-      // Wait for i18n to initialize
-      document.addEventListener('i18n:initialized', function() {
-        if (deviceCount === 0) {
-          addDeviceEntry();
-        }
-      });
+    // Add first device entry
+    devLog("RMA Form: добавляем первый элемент устройства");
+    addDeviceEntry();
+    
+    // Установим обработчик для явного обновления переводов
+    if (window.i18n && typeof window.i18n.updatePageTranslations === 'function') {
+      devLog("RMA Form: устанавливаем таймер для повторного обновления переводов");
+      // Запустим вторую волну переводов через короткое время после загрузки
+      setTimeout(function() {
+        window.i18n.updatePageTranslations();
+        
+        // Попробуем также обновить атрибуты placeholder, которые могли не обновиться
+        document.querySelectorAll('input[placeholder="null"], textarea[placeholder="null"]').forEach(elem => {
+          const attr = elem.getAttribute('data-i18n-attr');
+          if (attr) {
+            try {
+              const attrMap = JSON.parse(attr);
+              if (attrMap.placeholder) {
+                const key = attrMap.placeholder;
+                elem.placeholder = getTranslation(key, 
+                  elem.tagName === 'TEXTAREA' ? 'Describe the problem' : 'Enter value');
+              }
+            } catch (e) {
+              console.error('Ошибка парсинга data-i18n-attr:', e);
+            }
+          }
+        });
+      }, 300);
     }
 
     // Use MutationObserver to detect and translate dynamically added content
@@ -74,6 +129,7 @@
         
         if (needsTranslation && window.i18n) {
           window.i18n.updatePageTranslations();
+          devLog("RMA Form: MutationObserver обнаружил новое содержимое для перевода");
         }
       });
       
@@ -82,6 +138,8 @@
         subtree: true
       });
     }
+    
+    devLog("RMA Form: инициализация завершена");
   }
 
   /**
@@ -110,8 +168,11 @@
       devicesContainer.parentNode.insertBefore(addressInfo, devicesContainer);
       
       // Apply translations using i18next if available
-      if (window.i18n && window.i18n.getCurrentLanguage() !== defaultLanguage) {
+      if (window.i18n && window.i18n.translateDynamicElement) {
         window.i18n.translateDynamicElement(addressInfo);
+        devLog("RMA Form: объяснение логики адресов добавлено и переведено");
+      } else {
+        devLog("RMA Form: объяснение логики адресов добавлено, но i18n не доступен для перевода");
       }
     }
   }
@@ -123,6 +184,8 @@
   function addDeviceEntry() {
     deviceCount++;
     const deviceIndex = deviceCount;
+    
+    devLog(`RMA Form: добавление устройства №${deviceIndex}`);
 
     const deviceEntry = document.createElement('div');
     deviceEntry.className = 'device-entry';
@@ -146,29 +209,16 @@
     deviceTitle.style.margin = '0';
     deviceTitle.style.color = '#1e2071';
     
-    // Use i18next directly if available
-    if (window.i18n) {
-      deviceTitle.textContent = window.i18n.t('rma:device.title', {
-        defaultValue: `Device #${deviceIndex}`,
-        count: deviceIndex
-      });
-    } else {
-      deviceTitle.textContent = `Device #${deviceIndex}`;
-    }
+    // ВАЖНОЕ ИСПРАВЛЕНИЕ: Явно устанавливаем текст перед любыми атрибутами
+    deviceTitle.textContent = getTranslation('rma:device.title', `Device #${deviceIndex}`).replace('${count}', deviceIndex);
 
     // Toggle button for alternate shipping address
     const toggleButton = document.createElement('button');
     toggleButton.type = 'button';
     toggleButton.setAttribute('data-i18n', 'rma:device.address_button');
     
-    // Use i18next directly if available
-    if (window.i18n) {
-      toggleButton.textContent = window.i18n.t('rma:device.address_button', {
-        defaultValue: 'Specify Different Return Address'
-      });
-    } else {
-      toggleButton.textContent = 'Specify Different Return Address';
-    }
+    // ВАЖНОЕ ИСПРАВЛЕНИЕ: Явно устанавливаем текст перед любыми атрибутами
+    toggleButton.textContent = getTranslation('rma:device.address_button', 'Specify Different Return Address');
     
     toggleButton.style.backgroundColor = '#eee';
     toggleButton.style.border = '1px solid #ccc';
@@ -195,8 +245,11 @@
       devicesContainer.appendChild(deviceEntry);
 
       // Translate the new element
-      if (window.i18n && window.i18n.getCurrentLanguage() !== defaultLanguage) {
+      if (window.i18n && window.i18n.translateDynamicElement) {
         window.i18n.translateDynamicElement(deviceEntry);
+        devLog(`RMA Form: устройство №${deviceIndex} добавлено и переведено`);
+      } else {
+        devLog(`RMA Form: устройство №${deviceIndex} добавлено, но i18n не доступен для перевода`);
       }
     }
 
@@ -276,31 +329,22 @@
     serialLabel.style.marginTop = '10px';
     serialLabel.style.fontWeight = 'bold';
     
-    // Use i18next for translation if available
-    if (window.i18n) {
-      serialLabel.textContent = window.i18n.t('rma:device.serial_number', {
-        defaultValue: 'Serial Number:'
-      });
-    } else {
-      serialLabel.textContent = 'Serial Number:';
-    }
+    // ВАЖНОЕ ИСПРАВЛЕНИЕ: Явно устанавливаем текст перед любыми атрибутами
+    serialLabel.textContent = getTranslation('rma:device.serial_number', 'Serial Number:');
 
     const serialInput = document.createElement('input');
     serialInput.type = 'text';
     serialInput.id = `serial${deviceIndex}`;
     serialInput.name = `serial${deviceIndex}`;
+    
+    // ВАЖНОЕ ИСПРАВЛЕНИЕ: Устанавливаем явно placeholder перед атрибутом data-i18n-attr
+    const serialPlaceholder = getTranslation('rma:device.serial_placeholder', 'Enter the serial number');
+    serialInput.placeholder = serialPlaceholder;
+    
+    // Затем добавляем data-i18n-attr для системы перевода
     serialInput.setAttribute('data-i18n-attr', JSON.stringify({
       "placeholder": "rma:device.serial_placeholder"
     }));
-    
-    // Set placeholder using i18next if available
-    if (window.i18n) {
-      serialInput.placeholder = window.i18n.t('rma:device.serial_placeholder', {
-        defaultValue: 'Enter the serial number'
-      });
-    } else {
-      serialInput.placeholder = 'Enter the serial number';
-    }
     
     serialInput.style.width = '95%';
     serialInput.style.padding = '5px';
@@ -316,30 +360,21 @@
     descLabel.style.marginTop = '10px';
     descLabel.style.fontWeight = 'bold';
     
-    // Use i18next for translation if available
-    if (window.i18n) {
-      descLabel.textContent = window.i18n.t('rma:device.issue_description', {
-        defaultValue: 'Issue Description:'
-      });
-    } else {
-      descLabel.textContent = 'Issue Description:';
-    }
+    // ВАЖНОЕ ИСПРАВЛЕНИЕ: Явно устанавливаем текст перед любыми атрибутами
+    descLabel.textContent = getTranslation('rma:device.issue_description', 'Issue Description:');
 
     const descTextarea = document.createElement('textarea');
     descTextarea.id = `description${deviceIndex}`;
     descTextarea.name = `description${deviceIndex}`;
+    
+    // ВАЖНОЕ ИСПРАВЛЕНИЕ: Устанавливаем явно placeholder перед атрибутом data-i18n-attr
+    const descPlaceholder = getTranslation('rma:device.description_placeholder', 'Describe the problem with the device');
+    descTextarea.placeholder = descPlaceholder;
+    
+    // Затем добавляем data-i18n-attr для системы перевода
     descTextarea.setAttribute('data-i18n-attr', JSON.stringify({
       "placeholder": "rma:device.description_placeholder"
     }));
-    
-    // Set placeholder using i18next if available
-    if (window.i18n) {
-      descTextarea.placeholder = window.i18n.t('rma:device.description_placeholder', {
-        defaultValue: 'Describe the problem with the device'
-      });
-    } else {
-      descTextarea.placeholder = 'Describe the problem with the device';
-    }
     
     descTextarea.rows = 3;
     descTextarea.style.width = '95%';
@@ -361,16 +396,8 @@
    * @param {number} deviceIndex - The device index
    */
   function updateAddressSourceInfo(deviceIndex) {
-    // Skip if i18n not ready and not default language
-    const skipTranslation = !window.i18n || 
-                         !window.i18n.isInitialized() && 
-                         window.i18n.getCurrentLanguage() !== defaultLanguage;
-    
-    if (skipTranslation) {
-      return;
-    }
-    
     const deviceEntries = document.querySelectorAll('.device-entry');
+    if (!deviceEntries.length) return;
 
     // Loop through all devices
     deviceEntries.forEach(entry => {
@@ -389,24 +416,19 @@
       const altAddressSection = document.getElementById(`alternate-address-${entryIndex}`);
       const hasAltAddress = altAddressSection && altAddressSection.style.display !== 'none';
 
+      // ВАЖНО: Обновляем текст в зависимости от состояния
       if (hasAltAddress) {
         // Device has its own address
-        toggleBtn.textContent = window.i18n.t('rma:device.hide_address', {
-          defaultValue: 'Hide Return Address'
-        });
+        toggleBtn.textContent = getTranslation('rma:device.hide_address', 'Hide Return Address');
         toggleBtn.style.backgroundColor = '#e6f7ff';
       } else if (addressSource === 0) {
         // Using billing address
-        toggleBtn.textContent = window.i18n.t('rma:device.using_billing', {
-          defaultValue: 'Using Billing Address'
-        });
+        toggleBtn.textContent = getTranslation('rma:device.using_billing', 'Using Billing Address');
         toggleBtn.style.backgroundColor = '#f0f0f0';
       } else {
         // Using another device's address
-        toggleBtn.textContent = window.i18n.t('rma:device.using_address', {
-          defaultValue: `Using Address from Device #${addressSource}`,
-          count: addressSource
-        });
+        const text = getTranslation('rma:device.using_address', `Using Address from Device #${addressSource}`);
+        toggleBtn.textContent = text.replace('${count}', addressSource);
         toggleBtn.style.backgroundColor = '#f0f0f0';
       }
     });
@@ -449,34 +471,16 @@
         if (addressSection) {
           if (addressSection.style.display === 'none') {
             addressSection.style.display = 'block';
-            
-            // Update button text using i18next
-            if (window.i18n) {
-              toggleButton.textContent = window.i18n.t('rma:device.hide_address', {
-                defaultValue: 'Hide Return Address'
-              });
-            } else {
-              toggleButton.textContent = 'Hide Return Address';
-            }
-            
+            toggleButton.textContent = getTranslation('rma:device.hide_address', 'Hide Return Address');
             toggleButton.style.backgroundColor = '#e6f7ff';
 
             // Translate the address section if it was just opened
-            if (window.i18n && window.i18n.getCurrentLanguage() !== defaultLanguage) {
+            if (window.i18n && window.i18n.translateDynamicElement) {
               window.i18n.translateDynamicElement(addressSection);
             }
           } else {
             addressSection.style.display = 'none';
-            
-            // Update button text using i18next
-            if (window.i18n) {
-              toggleButton.textContent = window.i18n.t('rma:device.address_button', {
-                defaultValue: 'Specify Different Return Address'
-              });
-            } else {
-              toggleButton.textContent = 'Specify Different Return Address';
-            }
-            
+            toggleButton.textContent = getTranslation('rma:device.address_button', 'Specify Different Return Address');
             toggleButton.style.backgroundColor = '#eee';
           }
 
@@ -562,8 +566,10 @@
   // Run initialization when DOM is fully loaded
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
+    devLog("RMA Form: ожидание загрузки DOM");
   } else {
     // Set a short timeout to ensure this runs after other scripts
     setTimeout(init, 0);
+    devLog("RMA Form: DOM уже загружен, запускаем init через setTimeout");
   }
 })();
