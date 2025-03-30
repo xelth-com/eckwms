@@ -1,13 +1,11 @@
-// middleware/htmlTranslationInterceptor.js
+// middleware/htmlTranslationInterceptor.js - Modified version with placeholder fix
 const interceptor = require('express-interceptor');
 const { stripBOM } = require('../utils/bomUtils');
 const { checkCache, saveToCache } = require('../services/translationService');
 const { generateTranslationKey } = require('../utils/translationKeys');
 
-// middleware/htmlTranslationInterceptor.js - Improved version
-
 /**
- * Creates an HTML interceptor for i18n translation with proper untranslated content handling
+ * Creates an HTML interceptor for i18n translation with improved placeholder handling
  * @param {Object} i18next - i18next instance
  * @returns {Function} Express middleware
  */
@@ -310,7 +308,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
             }
           );
 
-          // 2. Process attribute translations with data-i18n-attr
+          // 2. Process attribute translations with data-i18n-attr with better placeholder handling
           const attrTranslationPromises = [];
           modifiedBody = modifiedBody.replace(
             /<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g,
@@ -322,12 +320,42 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                 // Parse attributes JSON
                 const attrsMap = JSON.parse(attrsJson);
 
-                // Get current attribute values
+                // Get current attribute values - IMPORTANT FIX: Add default fallback
                 const currentAttrs = {};
+                const elementTags = ['input', 'textarea'];
+                const defaultPlaceholders = {
+                  'placeholder': {
+                    'input': 'Enter value',
+                    'textarea': 'Enter text here'
+                  }
+                };
+
                 for (const attr of Object.keys(attrsMap)) {
+                  // Extract current attribute value from element
                   const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
                   const attrMatch = match.match(attrRegex);
-                  currentAttrs[attr] = attrMatch ? attrMatch[1] : '';
+                  
+                  // Check if we need to handle special default case for placeholder
+                  let defaultValue = '';
+                  
+                  // IMPORTANT FIX: If attribute value is "null", try to use a reasonable default
+                  if (!attrMatch || attrMatch[1] === 'null') {
+                    // For placeholder attributes, use appropriate defaults based on element type
+                    if (attr === 'placeholder') {
+                      // Try to determine element type
+                      const tagLower = tag.toLowerCase();
+                      for (const elemTag of elementTags) {
+                        if (tagLower.startsWith(elemTag)) {
+                          defaultValue = defaultPlaceholders.placeholder[elemTag];
+                          break;
+                        }
+                      }
+                    }
+                  } else {
+                    defaultValue = attrMatch[1];
+                  }
+                  
+                  currentAttrs[attr] = defaultValue;
                 }
 
                 // Create promise to translate all attributes
@@ -344,9 +372,27 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                         translationKey = parts.slice(1).join(':');
                       }
 
-                      // Translate attribute value
-                      const currentValue = currentAttrs[attr] || '';
-                      const [translation, untranslated] = await translateText(currentValue, translationKey, namespace);
+                      // Use the default value or "null" string itself as fallback
+                      const currentValue = currentAttrs[attr];
+                      
+                      // IMPORTANT FIX: Get default fallback value from i18next if possible
+                      let defaultValue = currentValue;
+                      if (currentValue === 'null' || !currentValue) {
+                        if (i18next && typeof i18next.t === 'function') {
+                          defaultValue = i18next.t(key, {
+                            ns: namespace,
+                            lng: language,
+                            defaultValue: key.split('.').pop() // Use last part of key as default
+                          });
+                        }
+                      }
+                      
+                      // Use appropriate value for translation
+                      const valueToTranslate = (currentValue && currentValue !== 'null') 
+                                               ? currentValue 
+                                               : defaultValue;
+                                               
+                      const [translation, untranslated] = await translateText(valueToTranslate, translationKey, namespace);
 
                       return {
                         attr,
