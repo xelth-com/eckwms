@@ -117,8 +117,14 @@
       }
     }
   }
+
+  
+
+// RMA Form Script Modified Section
+// Replace the existing loadRmaTranslations function
+
 /**
- * Loads and caches translations for the 'rma' namespace with improved error handling
+ * Loads and caches translations for the 'rma' namespace without 404 errors
  * @returns {Promise<Object>} - Translation object or empty object if unavailable
  */
 async function loadRmaTranslations() {
@@ -138,55 +144,52 @@ async function loadRmaTranslations() {
       return translations;
     }
     
-    // Check if we've already tried and failed to load this language
-    if (failedLanguages && failedLanguages.includes(lang)) {
-      console.log(`Skipping previously failed language: ${lang}`);
-      translations = {};
-      translationsReady = true;
-      return translations;
+    // Track missing files to avoid repeated requests
+    if (!window.missingTranslationFiles) {
+      window.missingTranslationFiles = new Set();
     }
     
-    // Try to fetch from locale file
-    try {
-      // URL for loading the localization
-      const localeUrl = `/locales/${lang}/rma.json`;
-      console.log(`Fetching translations from: ${localeUrl}`);
-      
-      const response = await fetch(localeUrl);
-      
-      if (!response.ok) {
-        // Track failed language to avoid repeated attempts
-        if (!failedLanguages) failedLanguages = [];
-        failedLanguages.push(lang);
+    const fileKey = `${lang}:rma`;
+    
+    // Skip file check if we already know it's missing
+    if (!window.missingTranslationFiles.has(fileKey)) {
+      // First use HEAD request to check if file exists without triggering 404 in console
+      try {
+        // This won't show 404 errors in console
+        const checkResponse = await fetch(`/locales/${lang}/rma.json`, {
+          method: 'HEAD',
+          cache: 'no-cache'
+        });
         
-        console.error(`Failed to load translations: ${response.status} ${response.statusText}`);
-        
-        // Set empty translations to prevent further attempts
-        translations = {};
-        translationsReady = true;
-        return translations;
+        if (checkResponse.ok) {
+          // File exists, load it
+          const response = await fetch(`/locales/${lang}/rma.json`);
+          const data = await response.json();
+          console.log(`RMA translations loaded for ${lang}`);
+          
+          // Flatten and cache translations
+          translations = flattenTranslations(data);
+          translationsReady = true;
+          return translations;
+        } else {
+          // File doesn't exist - silently mark it as missing
+          window.missingTranslationFiles.add(fileKey);
+          console.log(`No translation file for ${lang}, will use API translation`);
+        }
+      } catch (error) {
+        // Error checking file - mark as missing
+        window.missingTranslationFiles.add(fileKey);
+        console.log(`Error checking for translation file: ${error.message}`);
       }
-      
-      const data = await response.json();
-      console.log(`RMA translations loaded for ${lang}`);
-      
-      // Flatten the translation structure for direct access by keys
-      translations = flattenTranslations(data);
-      translationsReady = true;
-      
-      return translations;
-    } catch (error) {
-      // Track failed language to avoid repeated attempts
-      if (!failedLanguages) failedLanguages = [];
-      failedLanguages.push(lang);
-      
-      console.error("Error loading RMA translations:", error);
-      
-      // Set empty translations to prevent further attempts
-      translations = {};
-      translationsReady = true;
-      return translations;
+    } else {
+      console.log(`Skipping known missing file for ${lang}`);
     }
+    
+    // If we get here, we'll use API translations
+    // Set empty translations object
+    translations = {};
+    translationsReady = true;
+    return translations;
   } catch (error) {
     console.error("Error in loadRmaTranslations:", error);
     
@@ -196,7 +199,461 @@ async function loadRmaTranslations() {
     return translations;
   }
 }
+
+/**
+ * Gets translation with appropriate fallback to API without errors
+ * @param {string} key - Translation key
+ * @param {Object} options - Options (count, etc.)
+ * @param {string} fallback - Fallback text
+ * @returns {string} - Translated text or fallback
+ */
+function getTranslation(key, options = {}, fallback = '') {
+  // Use default English if:
+  // 1. i18n not initialized
+  // 2. Translations not loaded (after attempts)
+  // 3. Current language is English
+  if (!window.i18n || !translationsReady || window.i18n.getCurrentLanguage() === 'en') {
+    // For device references, format the fallback with the device number
+    if (key === 'device.using_address' && options.count !== undefined) {
+      return fallback || `Using Address from Device #${options.count}`;
+    }
+    
+    // Use provided fallback or extract from key (e.g., "device.title" -> "title")
+    return fallback || key.split('.').pop(); 
+  }
   
+  try {
+    // Remove 'rma:' prefix if it exists
+    const cleanKey = key.includes(':') ? key.split(':')[1] : key;
+    
+    // Find translation in our cache
+    if (translations[cleanKey]) {
+      let result = translations[cleanKey];
+      
+      // Special case for device titles
+      if (cleanKey === 'device.title') {
+        // For device title, just return the word "Gerät" (or equivalent)
+        return result;
+      }
+      else if (cleanKey === 'device.using_address' && options.count !== undefined) {
+        // For "Using address from Device #X" messages
+        return result.replace(/\{\{count\}\}/g, options.count);
+      }
+      // Normal placeholder substitution for other cases
+      else if (options.count !== undefined && result.includes('{{count}}')) {
+        result = result.replace(/\{\{count\}\}/g, options.count);
+      }
+      
+      return result;
+    }
+    
+    // Translation not found in local cache
+    // Request via API in the background if needed
+    requestApiTranslation(key, cleanKey, options);
+    
+    // In the meantime, return fallback
+    if (key === 'device.using_address' && options.count !== undefined) {
+      return fallback || `Using Address from Device #${options.count}`;
+    }
+    
+    return fallback || key.split('.').pop();
+  } catch (e) {
+    console.error(`Error getting translation for ${key}:`, e);
+    
+    // Safety fallback for device references even if error occurs
+    if (key === 'device.using_address' && options.count !== undefined) {
+      return `Using Address from Device #${options.count}`;
+    }
+    
+    return fallback || key.split('.').pop();
+  }
+}
+
+/**
+ * Request translation from API in background
+ * @param {string} key - Full translation key
+ * @param {string} cleanKey - Key without namespace prefix
+ * @param {Object} options - Translation options
+ */
+function requestApiTranslation(key, cleanKey, options) {
+  // Skip if this translation was already requested
+  if (!window.apiRequestCache) {
+    window.apiRequestCache = new Set();
+  }
+  
+  const requestKey = `${window.i18n.getCurrentLanguage()}:${key}:${JSON.stringify(options)}`;
+  if (window.apiRequestCache.has(requestKey)) {
+    return;
+  }
+  
+  // Mark as requested
+  window.apiRequestCache.add(requestKey);
+  
+  // Don't block execution - request in background
+  setTimeout(async () => {
+    try {
+      // Extract namespace and fallback from key
+      let namespace = 'common';
+      if (key.includes(':')) {
+        namespace = key.split(':')[0];
+      }
+      
+      // Get fallback text
+      const fallback = key.split('.').pop();
+      
+      // Request translation via API
+      const response = await fetch('/api/translate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'app-language': window.i18n.getCurrentLanguage()
+        },
+        body: JSON.stringify({
+          text: fallback,
+          targetLang: window.i18n.getCurrentLanguage(),
+          context: namespace,
+          key: cleanKey,
+          defaultValue: fallback,
+          background: true,
+          options: options
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.translated) {
+          // Cache the translation for future use
+          translations[cleanKey] = data.translated;
+          
+          // Try to update UI with new translation
+          if (typeof updateAllElementsWithKey === 'function') {
+            updateAllElementsWithKey(key, data.translated);
+          }
+        }
+      }
+    } catch (error) {
+      // Silent fail - this is background processing
+      console.log(`Background translation request failed for ${key}`);
+    }
+  }, 100);
+}
+  
+/**
+ * Silently attempt to load a translation file with no 404 errors if missing
+ * @param {string} language - Language code to load
+ * @param {string} namespace - Translation namespace (e.g., 'rma')
+ * @returns {Promise<Object|null>} - Translation object or null if not found
+ */
+async function loadTranslationFileSilently(language, namespace) {
+  // Skip if we already know this file doesn't exist
+  if (!window.missingTranslationFiles) {
+    window.missingTranslationFiles = new Set();
+  }
+  
+  const fileKey = `${language}:${namespace}`;
+  if (window.missingTranslationFiles.has(fileKey)) {
+    return null;
+  }
+  
+  try {
+    // Use HEAD request first to check if file exists WITHOUT triggering 404 in console
+    const checkResponse = await fetch(`/locales/${language}/${namespace}.json`, {
+      method: 'HEAD',
+      cache: 'no-cache' // Don't cache HEAD requests
+    });
+    
+    // If file doesn't exist, remember that
+    if (!checkResponse.ok) {
+      window.missingTranslationFiles.add(fileKey);
+      return null;
+    }
+    
+    // File exists, now actually load it
+    const response = await fetch(`/locales/${language}/${namespace}.json`);
+    if (!response.ok) {
+      window.missingTranslationFiles.add(fileKey);
+      return null;
+    }
+    
+    // Parse and return the translation data
+    return await response.json();
+  } catch (error) {
+    // Silently mark this file as missing
+    window.missingTranslationFiles.add(fileKey);
+    return null;
+  }
+}
+
+/**
+ * Создаем кэш с временными метками для отслеживания отсутствующих файлов
+ * Это улучшенная версия, которая позволяет обнаружить появление новых файлов
+ */
+if (!window.translationFileCache) {
+  window.translationFileCache = {
+    // Отсутствующие файлы с временными метками
+    missingFiles: {},
+    
+    // Время истечения кэша (в миллисекундах)
+    // По умолчанию - 5 минут
+    cacheExpiry: 5 * 60 * 1000,
+    
+    // Проверяет, отсутствует ли файл (с учетом истечения срока кэша)
+    isFileMissing: function(fileKey) {
+      if (!this.missingFiles[fileKey]) {
+        return false;
+      }
+      
+      // Проверяем, не истек ли срок кэша
+      const timestamp = this.missingFiles[fileKey];
+      const now = Date.now();
+      
+      if (now - timestamp > this.cacheExpiry) {
+        // Срок кэша истек, удаляем запись и возвращаем false,
+        // чтобы проверить файл снова
+        delete this.missingFiles[fileKey];
+        return false;
+      }
+      
+      // Файл отсутствует и срок кэша не истек
+      return true;
+    },
+    
+    // Отмечает файл как отсутствующий
+    markAsMissing: function(fileKey) {
+      this.missingFiles[fileKey] = Date.now();
+    },
+    
+    // Принудительный сброс кэша для конкретного файла
+    resetFile: function(fileKey) {
+      delete this.missingFiles[fileKey];
+    },
+    
+    // Сбрасывает весь кэш
+    resetAll: function() {
+      this.missingFiles = {};
+    }
+  };
+}
+
+/**
+ * Загружает переводы для RMA без ошибок 404 и с периодической 
+ * проверкой новых файлов локализации
+ * @returns {Promise<Object>} - Объект переводов или пустой объект
+ */
+async function loadRmaTranslations() {
+  try {
+    // Если переводы уже загружены, просто возвращаем их
+    if (translationsReady) {
+      return translations;
+    }
+    
+    const lang = window.i18n.getCurrentLanguage();
+    console.log(`Загрузка переводов RMA для языка: ${lang}...`);
+    
+    // Пропускаем загрузку для языка по умолчанию (английский)
+    if (lang === 'en') {
+      translations = {};
+      translationsReady = true;
+      return translations;
+    }
+    
+    const fileKey = `${lang}:rma`;
+    
+    // Проверяем кэш - не отмечен ли файл как отсутствующий
+    if (!window.translationFileCache.isFileMissing(fileKey)) {
+      // Сначала используем HEAD запрос для проверки существования файла
+      try {
+        // Этот запрос не вызовет ошибок 404 в консоли
+        const checkResponse = await fetch(`/locales/${lang}/rma.json`, {
+          method: 'HEAD',
+          cache: 'no-cache'
+        });
+        
+        if (checkResponse.ok) {
+          // Файл существует, загружаем его
+          console.log(`Файл локализации найден для ${lang}, загружаем...`);
+          const response = await fetch(`/locales/${lang}/rma.json`);
+          const data = await response.json();
+          
+          // Преобразуем и кэшируем переводы
+          translations = flattenTranslations(data);
+          translationsReady = true;
+          return translations;
+        } else {
+          // Файл не существует - отмечаем в кэше как отсутствующий
+          console.log(`Файл локализации не найден для ${lang}, будем использовать API перевода`);
+          window.translationFileCache.markAsMissing(fileKey);
+        }
+      } catch (error) {
+        // Ошибка при проверке файла - отмечаем в кэше
+        window.translationFileCache.markAsMissing(fileKey);
+        console.log(`Ошибка при проверке файла локализации: ${error.message}`);
+      }
+    } else {
+      console.log(`Используем кэшированное состояние: файл для ${lang} отсутствует`);
+    }
+    
+    // Если мы дошли до этой точки, будем использовать API-переводы
+    // Устанавливаем пустой объект переводов
+    translations = {};
+    translationsReady = true;
+    return translations;
+  } catch (error) {
+    console.error("Ошибка в loadRmaTranslations:", error);
+    
+    // Устанавливаем пустые переводы в случае ошибки
+    translations = {};
+    translationsReady = true;
+    return translations;
+  }
+}
+
+/**
+ * Периодически сбрасываем кэш отсутствующих файлов,
+ * чтобы проверить, не появились ли они на сервере
+ */
+function setupCacheRefresh() {
+  // Запускаем проверку каждые 5 минут (или другой интервал)
+  const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 минут
+  
+  setInterval(() => {
+    // Сброс всего кэша - при следующем запросе файлы будут проверены заново
+    if (window.translationFileCache) {
+      console.log("Сброс кэша отсутствующих файлов локализации для проверки обновлений");
+      window.translationFileCache.resetAll();
+    }
+  }, REFRESH_INTERVAL);
+}
+
+// Запускаем механизм обновления кэша
+setupCacheRefresh();
+
+/**
+ * Fetches a translation with no file errors, preferring API if files missing
+ * @param {string} key - Translation key
+ * @param {string} defaultText - Default text
+ * @param {Object} options - Translation options
+ * @returns {Promise<string>} - Translated text
+ */
+async function silentFetchTranslation(key, defaultText, options = {}) {
+  const language = getCurrentLanguage();
+  
+  // Skip translation for default language
+  if (language === defaultLanguage) {
+    return defaultText;
+  }
+  
+  // Extract namespace from key
+  let namespace = 'common';
+  let translationKey = key;
+  
+  if (key.includes(':')) {
+    const parts = key.split(':');
+    namespace = parts[0];
+    translationKey = parts.slice(1).join(':');
+  }
+  
+  // Try cached translations first
+  const cacheKey = `${language}:${namespace}:${translationKey}`;
+  if (translationCache[cacheKey]) {
+    return translationCache[cacheKey];
+  }
+  
+  // Check if we already know this translation file is missing
+  if (window.missingTranslationFiles && 
+      window.missingTranslationFiles.has(`${language}:${namespace}`)) {
+    // Skip file fetch, go straight to API
+    return fetchFromApi();
+  }
+  
+  // Try to silently get from file
+  try {
+    const data = await loadTranslationFileSilently(language, namespace);
+    if (data) {
+      // File exists, extract translation
+      const translation = navigateToNestedKey(data, translationKey);
+      
+      if (translation) {
+        // Process placeholders
+        let result = translation;
+        if (options.count !== undefined && typeof result === 'string') {
+          result = result.replace(/\{\{count\}\}/g, options.count);
+        }
+        
+        // Cache and return
+        translationCache[cacheKey] = result;
+        return result;
+      }
+    }
+    
+    // If we get here, either the file doesn't exist or the key wasn't found
+    return fetchFromApi();
+  } catch (error) {
+    // Silently fall back to API
+    return fetchFromApi();
+  }
+  
+  // Helper to fetch from API
+  async function fetchFromApi() {
+    try {
+      const response = await fetch('/api/translate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'app-language': language
+        },
+        body: JSON.stringify({
+          text: defaultText,
+          targetLang: language,
+          context: namespace,
+          key: translationKey,
+          defaultValue: defaultText,
+          background: false,
+          options: options
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.translated) {
+          // Cache and return the translation
+          translationCache[cacheKey] = data.translated;
+          return data.translated;
+        }
+      }
+      
+      // If API fails, return default text
+      return defaultText;
+    } catch (error) {
+      // On any error, return default text
+      return defaultText;
+    }
+  }
+}
+
+/**
+ * Navigate nested object structure using dot notation
+ * @param {Object} obj - Object to navigate
+ * @param {string} path - Dot-separated path
+ * @returns {*} - Value at path or undefined
+ */
+function navigateToNestedKey(obj, path) {
+  const keys = path.split('.');
+  let current = obj;
+  
+  for (const key of keys) {
+    if (current === undefined || current === null) {
+      return undefined;
+    }
+    current = current[key];
+  }
+  
+  return current;
+}
+
+
   /**
    * Преобразует вложенную структуру переводов в плоскую с ключами через точку
    * Например: { form: { title: "Заголовок" } } => { "form.title": "Заголовок" }

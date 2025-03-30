@@ -476,109 +476,138 @@
     log('Page translation initiated, waiting for API responses');
   }
    
-  /**
-   * Fetch translation with improved cache key generation and pending request handling
-   * - Modified to better handle the RMA form translation approach
-   */
-  async function fetchTranslation(key, defaultText, options = {}, pendingInfo = null) {
-    const language = getCurrentLanguage();
+/**
+ * Замените эту функцию в вашем основном файле i18n.js
+ * 
+ * ВАЖНО: Это должно быть в основном файле i18n.js, а не только в форме RMA!
+ */
+async function fetchTranslation(key, defaultText, options = {}, pendingInfo = null) {
+  const language = getCurrentLanguage();
+  
+  // Skip translation for default language
+  if (language === defaultLanguage) {
+    log(`Using default language (${defaultLanguage}), skipping translation fetch for "${key}"`);
+    return Promise.resolve(defaultText);
+  }
+  
+  // Extract namespace from key if present
+  let namespace = 'common';
+  let translationKey = key;
+  
+  if (key.includes(':')) {
+    const parts = key.split(':');
+    namespace = parts[0];
+    translationKey = parts.slice(1).join(':');
+  }
+  
+  // Use the same algorithm as server to generate cache key
+  const cacheKey = window.translationUtils ? 
+      window.translationUtils.generateTranslationKey(defaultText, language, namespace, options) :
+      `${language}:${namespace}:${translationKey}`;
+  
+  // Add language prefix for client-side cache
+  const fullCacheKey = `${language}:${cacheKey}`;
+  
+  log(`Translation request for key: "${key}" with cache key: "${fullCacheKey}"`);
+  
+  // Check client cache first
+  if (translationsCache[fullCacheKey]) {
+    log(`Found in client cache: "${fullCacheKey}"`);
+    return Promise.resolve(translationsCache[fullCacheKey]);
+  }
+  
+  // Add request to an already waiting one, if it exists
+  if (pendingTranslations[fullCacheKey]) {
+    log(`Translation already pending for "${fullCacheKey}", registering element for later update`);
     
-    // Skip translation for default language
-    if (language === defaultLanguage) {
-      log(`Using default language (${defaultLanguage}), skipping translation fetch for "${key}"`);
-      return Promise.resolve(defaultText);
+    // If element info is provided, register it for updating later
+    if (pendingInfo) {
+      // Create elements array if it doesn't exist
+      if (!pendingTranslations[fullCacheKey].elements) {
+        pendingTranslations[fullCacheKey].elements = [];
+      }
+      pendingTranslations[fullCacheKey].elements.push(pendingInfo);
     }
     
-    // Extract namespace from key if present
-    let namespace = 'common';
-    let translationKey = key;
-    
-    if (key.includes(':')) {
-      const parts = key.split(':');
-      namespace = parts[0];
-      translationKey = parts.slice(1).join(':');
-    }
-    
-    // Use the same algorithm as server to generate cache key
-    const cacheKey = window.translationUtils ? 
-        window.translationUtils.generateTranslationKey(defaultText, language, namespace, options) :
-        `${language}:${namespace}:${translationKey}`;
-    
-    // Add language prefix for client-side cache
-    const fullCacheKey = `${language}:${cacheKey}`;
-    
-    log(`Translation request for key: "${key}" with cache key: "${fullCacheKey}"`);
-    
-    // Check client cache first
-    if (translationsCache[fullCacheKey]) {
-      log(`Found in client cache: "${fullCacheKey}"`);
-      return Promise.resolve(translationsCache[fullCacheKey]);
-    }
-    
-    // Add request to an already waiting one, if it exists
-    if (pendingTranslations[fullCacheKey]) {
-      log(`Translation already pending for "${fullCacheKey}", registering element for later update`);
+    // Return existing Promise to avoid creating duplicate requests
+    return pendingTranslations[fullCacheKey].request;
+  }
+  
+  // Create a new Promise for the request
+  const translationPromise = new Promise(async (resolve, reject) => {
+    try {
+      log(`Making API request for translation: "${key}" in language: ${language}`);
       
-      // If element info is provided, register it for updating later
-      if (pendingInfo) {
-        // Create elements array if it doesn't exist
-        if (!pendingTranslations[fullCacheKey].elements) {
-          pendingTranslations[fullCacheKey].elements = [];
-        }
-        pendingTranslations[fullCacheKey].elements.push(pendingInfo);
+      // Инициализируем хранилище отсутствующих файлов, если оно еще не создано
+      if (!window.missingTranslationFiles) {
+        window.missingTranslationFiles = new Set();
       }
       
-      // Return existing Promise to avoid creating duplicate requests
-      return pendingTranslations[fullCacheKey].request;
-    }
-    
-    // Create a new Promise for the request
-    const translationPromise = new Promise(async (resolve, reject) => {
-      try {
-        log(`Making API request for translation: "${key}" in language: ${language}`);
-        
-        // RMA compatibility: First try to fetch from locales file
+      // Проверяем, не известно ли нам уже, что файл отсутствует
+      const localeFileKey = `${language}:${namespace}`;
+      
+      // Если файл еще не отмечен как отсутствующий, проверяем его
+      if (!window.missingTranslationFiles.has(localeFileKey)) {
         try {
-          const localeUrl = `/locales/${language}/${namespace}.json`;
-          log(`Trying to fetch from locale file: ${localeUrl}`);
+          // КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Используем HEAD-запрос вместо GET
+          const checkResponse = await fetch(`/locales/${language}/${namespace}.json`, {
+            method: 'HEAD',
+            cache: 'no-cache'
+          });
           
-          const response = await fetch(localeUrl);
-          if (response.ok) {
-            const data = await response.json();
+          // Если файл существует, загружаем его
+          if (checkResponse.ok) {
+            log(`File exists: /locales/${language}/${namespace}.json - loading`);
             
-            // Find the translation in the nested structure
-            let translation = navigateToKey(data, translationKey);
-            
-            if (translation) {
-              log(`Found translation in locale file: "${translation}"`);
+            const response = await fetch(`/locales/${language}/${namespace}.json`);
+            if (response.ok) {
+              const data = await response.json();
               
-              // Apply parameter substitution
-              if (options.count !== undefined && typeof translation === 'string') {
-                translation = translation.replace(/\{\{count\}\}/g, options.count);
+              // Находим перевод в структуре данных
+              let translation = navigateToKey(data, translationKey);
+              
+              if (translation) {
+                log(`Found translation in locale file: "${translation}"`);
+                
+                // Apply parameter substitution
+                if (options.count !== undefined && typeof translation === 'string') {
+                  translation = translation.replace(/\{\{count\}\}/g, options.count);
+                }
+                
+                // Cache the translation
+                translationsCache[fullCacheKey] = translation;
+                
+                // Update all pending elements
+                if (pendingTranslations[fullCacheKey] && pendingTranslations[fullCacheKey].elements) {
+                  updateAllPendingElements(pendingTranslations[fullCacheKey].elements, translation);
+                }
+                
+                // Update all elements with this key
+                updateAllElementsWithKey(key, translation);
+                
+                // Resolve the Promise with the obtained translation
+                resolve(translation);
+                return translation;
               }
-              
-              // Cache the translation
-              translationsCache[fullCacheKey] = translation;
-              
-              // Update all pending elements
-              if (pendingTranslations[fullCacheKey] && pendingTranslations[fullCacheKey].elements) {
-                updateAllPendingElements(pendingTranslations[fullCacheKey].elements, translation);
-              }
-              
-              // Update all elements with this key
-              updateAllElementsWithKey(key, translation);
-              
-              // Resolve the Promise
-              resolve(translation);
-              return translation;
             }
+          } else {
+            // Если файл не существует, запоминаем это
+            window.missingTranslationFiles.add(localeFileKey);
+            log(`File does not exist: /locales/${language}/${namespace}.json - using API`);
           }
-        } catch (error) {
-          log(`Error fetching from locale file: ${error.message}`);
-          // Continue with API translation on error
+        } catch (fileError) {
+          // В случае ошибки запоминаем, что файл отсутствует
+          window.missingTranslationFiles.add(localeFileKey);
+          log(`Error checking locale file: ${fileError.message}`);
         }
-        
-        // If locale file translation failed, use API
+      } else {
+        log(`Already know that file is missing: /locales/${language}/${namespace}.json`);
+      }
+      
+      // Если мы дошли до этой точки, то файл не существует или не содержит нужного ключа
+      // Используем API-перевод
+      
+      try {
         const response = await fetch(`/api/translate`, {
           method: 'POST',
           headers: {
@@ -672,16 +701,43 @@
         resolve(defaultText);
         return defaultText;
       }
-    });
-    
-    // Save the Promise and element info in pending list
-    pendingTranslations[fullCacheKey] = {
-      request: translationPromise,
-      elements: pendingInfo ? [pendingInfo] : []
-    };
-    
-    return translationPromise;
+    } catch (error) {
+      logError(`Unexpected error for "${key}":`, error);
+      resolve(defaultText);
+      return defaultText;
+    }
+  });
+  
+  // Save the Promise and element info in pending list
+  pendingTranslations[fullCacheKey] = {
+    request: translationPromise,
+    elements: pendingInfo ? [pendingInfo] : []
+  };
+  
+  return translationPromise;
+}
+
+/**
+ * Helper function to navigate to a nested key in a json object
+ * @param {Object} obj - Object to navigate
+ * @param {string} key - Key with dot notation
+ * @returns {*} - Value at the key or undefined
+ */
+function navigateToKey(obj, key) {
+  if (!obj || !key) return undefined;
+  
+  const parts = key.split('.');
+  let current = obj;
+  
+  for (const part of parts) {
+    if (current[part] === undefined) {
+      return undefined;
+    }
+    current = current[part];
   }
+  
+  return current;
+}
   
   /**
    * Helper function to navigate a nested structure by a dot-separated key

@@ -1,44 +1,44 @@
 {
-  "welcome": {
-    "important_note": "Důležitá poznámka:",
-    "warranty_info": "Pokud máte reklamaci v rámci záruky nebo dohodu o servisním balíčku, prosím uveďte jméno prodejce.",
-    "error_description": "Prosím, poskytněte podrobný popis chyby, protože to výrazně zvyšuje šance na úspěšnou opravu.",
-    "contract_info": "Odesláním balíčku se mezi vámi (odesílatelem) a námi (příjemcem) uzavírá smlouva o opravě. Vy hradíte náklady na dopravu k nám a my hradíme náklady na zpětnou dopravu. Kontrola a odhad nákladů jsou zdarma.",
-    "message": "Webová stránka je uzavřena. Prosím, použijte",
-    "title": "⚠️ Důležité oznámení ⚠️",
-    "process": "Proces je jednoduchý: pošlete své zařízení M3 Mobile na následující adresu:",
-    "note": "P.S. Můžete použít formulář k tisku PDF, pokud hlavní webová stránka nefunguje."
-  },
   "links": {
-    "homepage": "M3 Mobilní domovská stránka",
-    "partner_portal": "Partnerský\n                  Portál",
-    "technical_support": "Technická podpora",
-    "release_notes": "Poznámky k vydání OS",
-    "app_manual": "Příručka aplikace M3",
-    "title": "Užitečné odkazy:"
+    "homepage": "M3 Mobilní Domovská Stránka",
+    "partner_portal": "Partnerský  \n                  Portál",
+    "technical_support": "Technická Podpora",
+    "release_notes": "Poznámky k Verzi OS",
+    "app_manual": "Příručka k Aplikaci M3",
+    "title": "Užitečné Odkazy:"
   },
   "footer": {
-    "copyright": "Copyright © 2024 M3 Mobile GmbH. Všechna práva vyhrazena.\n        Podmínky · Zásady ochrany osobních údajů · Právní oznámení"
+    "copyright": "Copyright © 2024 M3 Mobile GmbH. Všechna práva vyhrazena.  \n        Obchodní podmínky · Zásady ochrany osobních údajů · Právní oznámení"
   },
   "service": {
-    "title": "Naše servisní centra:"
+    "title": "Naše Servisní Centra:"
   },
   "rma": {
-    "request_button": "Žádost o opravu RMA",
-    "status_check": "Pro kontrolu stavu opravy prosím zadejte naše číslo RMA nebo sériové číslo zařízení.",
-    "form_info": "Abychom zajistili, že nic nebude zapomenuto, vytvořili jsme formulář RMA. Pokud tento formulář vyplníte a přiložíte\n                k vašemu balíčku, obdržíme všechny potřebné informace předem a můžeme zkrátit dobu zpracování\n                během\n                příjmu balíčku. Děkujeme za vaši spolupráci!",
-    "tracking_info": "Na této stránce můžete zkontrolovat obsah vaší zásilky, sledovat stav opravy a aktualizovat platební\n                údaje nebo řešit další problémy, pokud je to nutné. Přihlašovací údaje budou také zaslány na e-mailovou adresu, kterou\n                jste uvedli na balíčku.",
-    "process_info": "Jakmile obdržíme váš balíček, smlouva je uzavřena. Přiřadíme vašemu balíčku číslo RMA a vytvoříme\n                pro něj\n                dedikovanou stránku. K této stránce můžete přistupovat zadáním sledovacího čísla poskytnutého vaší\n                přepravní\n                službou na naší domovské stránce do odpovídajícího pole (žlutá etiketa)."
+    "request_button": "Žádost o Opravu RMA",
+    "status_check": "Pro kontrolu stavu opravy prosím zadejte naše RMA číslo nebo sériové číslo zařízení.",
+    "form_info": "Abychom se ujistili, že nic není zapomenuto, vytvořili jsme formulář RMA. Pokud tento formulář vyplníte a přiložíte ho  \n                k vašemu balíčku, obdržíme všechny potřebné informace předem a můžeme zkrátit dobu zpracování  \n                během  \n                příjmu balíčku. Děkujeme za vaši spolupráci!",
+    "tracking_info": "Na této stránce můžete zkontrolovat obsah vaší zásilky, sledovat stav opravy a aktualizovat platební  \n                údaje nebo řešit další problémy, pokud je to nutné. Přihlašovací údaje budou také zaslány na e-mailovou adresu, kterou  \n                jste uvedli na balíčku.",
+    "process_info": "Jakmile obdržíme váš balíček, smlouva je uzavřena. Přidělíme vašemu balíčku číslo RMA a vytvoříme  \n                pro něj  \n                dedikovanou stránku. K této stránce se můžete dostat zadáním sledovacího čísla poskytnutého vaším  \n                přepravním  \n                službou na naší domovské stránce do odpovídajícího pole (žlutý štítek)."
   },
   "address": {
     "example_email": "example@eck3.com",
     "example_phone": "[+49 00 000000]",
     "example_city": "08150 Příklad Město",
     "example_street": "Příklad Ulice 42",
-    "example_person": "[Pozn. Max Mustermann]",
-    "example_company": "Příkladová společnost",
+    "example_person": "[Pozornost. Max Mustermann]",
+    "example_company": "Příklad Společnost",
     "sender": "Odesílatel",
-    "reseller_note": "[Jméno prodejce]",
+    "reseller_note": "[Název prodejce]",
     "recipient": "Příjemce"
+  },
+  "welcome": {
+    "important_note": "Důležitá poznámka:",
+    "warranty_info": "Pokud máte reklamaci v rámci záruky nebo dohodu o servisním balíčku, prosím uveďte název prodejce.",
+    "error_description": "Prosím, poskytněte podrobný popis chyby, protože to výrazně zvyšuje šance na úspěšnou opravu.",
+    "contract_info": "Odesláním balíčku se uzavírá smlouva o opravě mezi vámi (odesílatelem) a námi (příjemcem).\n                Pokrýváte náklady na dopravu k nám a my pokrýváme náklady na zpětnou dopravu. Kontrola a odhad nákladů jsou\n                zdarma.",
+    "message": "Webová stránka je uzavřena. Prosím použijte",
+    "title": "⚠️ Důležité upozornění ⚠️",
+    "process": "Proces je jednoduchý: pošlete své zařízení M3 Mobile na následující adresu:",
+    "note": "P.S. Můžete použít formulář k tisku PDF, pokud hlavní webová stránka nefunguje."
   }
 }
