@@ -201,55 +201,163 @@
     }
   }
 
-  /**
-   * Применяет переводы к конкретному элементу
-   */
-  function manuallyTranslateElement(element) {
-    if (!window.i18n || window.i18n.getCurrentLanguage() === 'en' || !translationsReady) {
-      return; // Пропускаем, если язык по умолчанию или переводы не готовы
-    }
-    
-    // Обрабатываем атрибуты data-i18n
-    if (element.hasAttribute('data-i18n')) {
-      const key = element.getAttribute('data-i18n');
-      try {
-        const translation = getTranslation(key);
-        if (translation && translation !== key) {
-          element.textContent = translation;
+/**
+ * Применяет переводы к конкретному элементу с корректной обработкой параметров
+ * @param {HTMLElement} element - Контейнер с элементами для перевода
+ */
+function manuallyTranslateElement(element) {
+  // Пропускаем, если i18n не инициализирован, язык по умолчанию или переводы не готовы
+  if (!window.i18n || window.i18n.getCurrentLanguage() === 'en' || !translationsReady) {
+    return;
+  }
+  
+  // Обрабатываем атрибут data-i18n на самом элементе
+  if (element.hasAttribute('data-i18n')) {
+    const key = element.getAttribute('data-i18n');
+    try {
+      // Извлекаем options из атрибута data-i18n-options
+      let options = {};
+      const optionsAttr = element.getAttribute('data-i18n-options');
+      if (optionsAttr) {
+        try {
+          options = JSON.parse(optionsAttr);
+        } catch (parseError) {
+          console.error(`Error parsing data-i18n-options for ${key}:`, parseError);
         }
-      } catch (e) {
-        console.error(`Error translating ${key}:`, e);
       }
+      
+      const translation = getTranslation(key, options);
+      if (translation && translation !== key) {
+        element.textContent = translation;
+      }
+    } catch (e) {
+      console.error(`Error translating ${key}:`, e);
     }
-    
-    // Находим и переводим дочерние элементы
-    element.querySelectorAll('[data-i18n]').forEach(el => {
-      const key = el.getAttribute('data-i18n');
-      try {
-        const translation = getTranslation(key);
-        if (translation && translation !== key) {
-          el.textContent = translation;
+  }
+  
+  // Находим и переводим дочерние элементы с атрибутом data-i18n
+  element.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    try {
+      // Извлекаем options из атрибута data-i18n-options
+      let options = {};
+      const optionsAttr = el.getAttribute('data-i18n-options');
+      if (optionsAttr) {
+        try {
+          options = JSON.parse(optionsAttr);
+        } catch (parseError) {
+          console.error(`Error parsing data-i18n-options for ${key}:`, parseError);
         }
-      } catch (e) {
-        console.error(`Error translating ${key}:`, e);
       }
-    });
-    
-    // Обрабатываем атрибуты для перевода
-    element.querySelectorAll('[data-i18n-attr]').forEach(el => {
-      try {
-        const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
-        for (const [attr, key] of Object.entries(attrsMap)) {
-          const translation = getTranslation(key);
-          if (translation && translation !== key) {
-            el.setAttribute(attr, translation);
+      
+      const translation = getTranslation(key, options);
+      if (translation && translation !== key) {
+        el.textContent = translation;
+      }
+    } catch (e) {
+      console.error(`Error translating ${key}:`, e);
+    }
+  });
+  
+  // Обрабатываем атрибуты для перевода (data-i18n-attr)
+  element.querySelectorAll('[data-i18n-attr]').forEach(el => {
+    try {
+      const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
+      for (const [attr, key] of Object.entries(attrsMap)) {
+        // Извлекаем options для этого атрибута
+        let options = {};
+        const optionsAttr = el.getAttribute('data-i18n-options');
+        if (optionsAttr) {
+          try {
+            options = JSON.parse(optionsAttr);
+          } catch (parseError) {
+            console.error(`Error parsing data-i18n-options for attribute ${attr}:`, parseError);
           }
         }
-      } catch (e) {
-        console.error('Error parsing data-i18n-attr:', e);
+        
+        const translation = getTranslation(key, options);
+        if (translation && translation !== key) {
+          el.setAttribute(attr, translation);
+        }
       }
-    });
+    } catch (e) {
+      console.error('Error parsing data-i18n-attr:', e);
+    }
+  });
+  
+  // Проверка самого элемента на наличие data-i18n-attr
+  if (element.hasAttribute('data-i18n-attr')) {
+    try {
+      const attrsMap = JSON.parse(element.getAttribute('data-i18n-attr'));
+      for (const [attr, key] of Object.entries(attrsMap)) {
+        // Извлекаем options для этого атрибута
+        let options = {};
+        const optionsAttr = element.getAttribute('data-i18n-options');
+        if (optionsAttr) {
+          try {
+            options = JSON.parse(optionsAttr);
+          } catch (parseError) {
+            console.error(`Error parsing data-i18n-options for attribute ${attr}:`, parseError);
+          }
+        }
+        
+        const translation = getTranslation(key, options);
+        if (translation && translation !== key) {
+          element.setAttribute(attr, translation);
+        }
+      }
+    } catch (e) {
+      console.error('Error parsing data-i18n-attr:', e);
+    }
   }
+  
+  // Обработка HTML переводов (data-i18n-html)
+  element.querySelectorAll('[data-i18n-html]').forEach(el => {
+    const key = el.getAttribute('data-i18n-html');
+    try {
+      // Извлекаем options из атрибута data-i18n-options
+      let options = {};
+      const optionsAttr = el.getAttribute('data-i18n-options');
+      if (optionsAttr) {
+        try {
+          options = JSON.parse(optionsAttr);
+        } catch (parseError) {
+          console.error(`Error parsing data-i18n-options for HTML ${key}:`, parseError);
+        }
+      }
+      
+      const translation = getTranslation(key, options);
+      if (translation && translation !== key) {
+        el.innerHTML = translation;
+      }
+    } catch (e) {
+      console.error(`Error translating HTML ${key}:`, e);
+    }
+  });
+  
+  // Проверка самого элемента на наличие data-i18n-html
+  if (element.hasAttribute('data-i18n-html')) {
+    const key = element.getAttribute('data-i18n-html');
+    try {
+      let options = {};
+      const optionsAttr = element.getAttribute('data-i18n-options');
+      if (optionsAttr) {
+        try {
+          options = JSON.parse(optionsAttr);
+        } catch (parseError) {
+          console.error(`Error parsing data-i18n-options for HTML ${key}:`, parseError);
+        }
+      }
+      
+      const translation = getTranslation(key, options);
+      if (translation && translation !== key) {
+        element.innerHTML = translation;
+      }
+    } catch (e) {
+      console.error(`Error translating HTML ${key}:`, e);
+    }
+  }
+}
 
   /**
    * Улучшенная функция для получения перевода по ключу

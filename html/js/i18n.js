@@ -745,48 +745,98 @@
   }
   
   /**
-   * Update all elements with a specific translation key
-   */
-  function updateAllElementsWithKey(key, translation) {
-    log(`Updating all elements with key "${key}" to new translation`);
-    
-    // RMA compatibility: Handle both prefixed and non-prefixed keys
-    const keyWithoutPrefix = key.includes(':') ? key.split(':')[1] : key;
-    
-    let updateCount = 0;
-    
-    // Update text content translations
-    document.querySelectorAll(`[data-i18n="${key}"], [data-i18n="${keyWithoutPrefix}"]`).forEach(element => {
-      element.textContent = translation;
-      updateCount++;
-    });
-    
-    // Update HTML translations
-    document.querySelectorAll(`[data-i18n-html="${key}"], [data-i18n-html="${keyWithoutPrefix}"]`).forEach(element => {
-      element.innerHTML = translation;
-      updateCount++;
-    });
-    
-    // Update attribute translations
-    document.querySelectorAll('[data-i18n-attr]').forEach(element => {
-      try {
-        const attrsJson = element.getAttribute('data-i18n-attr');
-        if (!attrsJson) return;
-        
-        const attrs = JSON.parse(attrsJson);
-        for (const [attr, attrKey] of Object.entries(attrs)) {
-          if (attrKey === key || attrKey === keyWithoutPrefix) {
-            element.setAttribute(attr, translation);
-            updateCount++;
-          }
-        }
-      } catch (error) {
-        logError('Error processing attribute translation update:', error);
+ * Update all elements with a specific translation key
+ */
+function updateAllElementsWithKey(key, translation) {
+  log(`Updating all elements with key "${key}" to new translation`);
+  
+  // RMA compatibility: Handle both prefixed and non-prefixed keys
+  const keyWithoutPrefix = key.includes(':') ? key.split(':')[1] : key;
+  
+  let updateCount = 0;
+  
+  // Update text content translations - С УЧЕТОМ ИНДИВИДУАЛЬНЫХ OPTIONS
+  document.querySelectorAll(`[data-i18n="${key}"], [data-i18n="${keyWithoutPrefix}"]`).forEach(element => {
+    // Важное изменение: проверяем, есть ли у элемента индивидуальные options
+    let options = {};
+    try {
+      const optionsAttr = element.getAttribute('data-i18n-options');
+      if (optionsAttr) {
+        options = JSON.parse(optionsAttr);
       }
-    });
+    } catch (e) {
+      logError('Error parsing data-i18n-options:', e);
+    }
     
-    log(`Updated ${updateCount} elements with key "${key}"`);
-  }
+    // Если у элемента есть счетчик, применяем его индивидуально
+    if (options.count !== undefined && translation.includes('{{count}}')) {
+      // Создаем индивидуальную копию перевода с учетом счетчика
+      const individualTranslation = translation.replace(/\{\{count\}\}/g, options.count);
+      element.textContent = individualTranslation;
+    } else {
+      element.textContent = translation;
+    }
+    updateCount++;
+  });
+  
+  // Update HTML translations - аналогично с учетом options
+  document.querySelectorAll(`[data-i18n-html="${key}"], [data-i18n-html="${keyWithoutPrefix}"]`).forEach(element => {
+    // Проверяем индивидуальные options
+    let options = {};
+    try {
+      const optionsAttr = element.getAttribute('data-i18n-options');
+      if (optionsAttr) {
+        options = JSON.parse(optionsAttr);
+      }
+    } catch (e) {
+      logError('Error parsing data-i18n-options:', e);
+    }
+    
+    if (options.count !== undefined && translation.includes('{{count}}')) {
+      const individualTranslation = translation.replace(/\{\{count\}\}/g, options.count);
+      element.innerHTML = individualTranslation;
+    } else {
+      element.innerHTML = translation;
+    }
+    updateCount++;
+  });
+  
+  // Update attribute translations
+  document.querySelectorAll('[data-i18n-attr]').forEach(element => {
+    try {
+      const attrsJson = element.getAttribute('data-i18n-attr');
+      if (!attrsJson) return;
+      
+      // Проверяем индивидуальные options
+      let options = {};
+      try {
+        const optionsAttr = element.getAttribute('data-i18n-options');
+        if (optionsAttr) {
+          options = JSON.parse(optionsAttr);
+        }
+      } catch (e) {
+        logError('Error parsing data-i18n-options:', e);
+      }
+      
+      const attrs = JSON.parse(attrsJson);
+      for (const [attr, attrKey] of Object.entries(attrs)) {
+        if (attrKey === key || attrKey === keyWithoutPrefix) {
+          if (options.count !== undefined && translation.includes('{{count}}')) {
+            const individualTranslation = translation.replace(/\{\{count\}\}/g, options.count);
+            element.setAttribute(attr, individualTranslation);
+          } else {
+            element.setAttribute(attr, translation);
+          }
+          updateCount++;
+        }
+      }
+    } catch (error) {
+      logError('Error processing attribute translation update:', error);
+    }
+  });
+  
+  log(`Updated ${updateCount} elements with key "${key}"`);
+}
   
   /**
    * Update SVG language masks to show active language
