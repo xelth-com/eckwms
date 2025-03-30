@@ -1,22 +1,8 @@
 // middleware/htmlTranslationInterceptor.js
 const interceptor = require('express-interceptor');
-const { stripBOM, parseJSONWithBOM } = require('../utils/bomUtils');
+const { stripBOM } = require('../utils/bomUtils');
 const { checkCache, saveToCache } = require('../services/translationService');
-const crypto = require('crypto');
-
-/**
- * Generate consistent cache key using MD5 hash
- * @param {string} text - Original text
- * @param {string} language - Target language
- * @param {string} namespace - Translation namespace
- * @returns {string} - Consistent cache key
- */
-function generateCacheKey(text, language, namespace = '') {
-  return crypto
-    .createHash('md5')
-    .update(`${stripBOM(text)}_${namespace}_${language}`)
-    .digest('hex');
-}
+const { generateTranslationKey } = require('../utils/translationKeys');
 
 /**
  * Creates an HTML interceptor for i18n translation
@@ -136,7 +122,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
         }
         
         // Helper function to handle text translation with proper caching
-        async function translateText(originalText, key, namespace) {
+        async function translateText(originalText, key, namespace, options = {}) {
           if (!originalText || !originalText.trim()) {
             return originalText;
           }
@@ -150,8 +136,8 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
           }
           processedKeys.add(uniqueKey);
           
-          // Generate consistent cache key
-          const cacheKey = generateCacheKey(originalText, language, namespace);
+          // Generate consistent cache key using the standardized function
+          const cacheKey = generateTranslationKey(originalText, language, namespace, options);
           
           // Check if this translation is already in progress by another request
           if (translationProcessingMap.has(cacheKey)) {
@@ -164,7 +150,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                 await inProgress.promise;
                 
                 // Check cache again after waiting
-                const cachedResult = await checkCache(originalText, language, namespace);
+                const cachedResult = await checkCache(originalText, language, namespace, options);
                 if (cachedResult) {
                   console.log(`[i18n] Cache hit after waiting for: ${cacheKey}`);
                   return cachedResult;
@@ -180,7 +166,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
           
           // Check cache first
           try {
-            const cachedTranslation = await checkCache(originalText, language, namespace);
+            const cachedTranslation = await checkCache(originalText, language, namespace, options);
             if (cachedTranslation) {
               console.log(`[i18n] Cache hit for: ${cacheKey}`);
               return cachedTranslation;
@@ -205,13 +191,14 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                 const translation = i18next.t(key, { 
                   ns: namespace, 
                   lng: language,
-                  defaultValue: originalText // Use original content as default
+                  defaultValue: originalText, // Use original content as default
+                  ...options // Pass through options like count
                 });
                 
                 // If translation exists and differs from original, save to cache
                 if (exists && translation !== originalText) {
                   try {
-                    await saveToCache(originalText, language, translation, namespace);
+                    await saveToCache(originalText, language, translation, namespace, options);
                     console.log(`[i18n] Saved to cache: ${cacheKey}`);
                   } catch (saveError) {
                     console.error(`[i18n] Error saving to cache for ${cacheKey}:`, saveError);
@@ -268,6 +255,17 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                 translationKey = parts.slice(1).join(':');
               }
               
+              // Check for data-i18n-options attribute to handle count and other options
+              let options = {};
+              const optionsMatch = attrs.match(/data-i18n-options=['"]([^'"]+)['"]/);
+              if (optionsMatch) {
+                try {
+                  options = JSON.parse(optionsMatch[1]);
+                } catch (e) {
+                  console.error(`[i18n] Error parsing data-i18n-options: ${e.message}`);
+                }
+              }
+              
               // Store the match data for async processing
               const originalContent = content.trim();
               
@@ -276,7 +274,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
               
               // Add a promise to translate this text
               textTranslationPromises.push(
-                translateText(originalContent, translationKey, namespace)
+                translateText(originalContent, translationKey, namespace, options)
                   .then(translatedText => {
                     if (translatedText !== originalContent) {
                       // Translation successful, return without data-i18n
@@ -428,12 +426,23 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                 translationKey = parts.slice(1).join(':');
               }
               
+              // Check for options in attributes
+              let options = {};
+              const optionsMatch = attrs.match(/data-i18n-options=['"]([^'"]+)['"]/);
+              if (optionsMatch) {
+                try {
+                  options = JSON.parse(optionsMatch[1]);
+                } catch (e) {
+                  console.error(`[i18n] Error parsing data-i18n-options for HTML: ${e.message}`);
+                }
+              }
+              
               // Original content for comparison
               const originalContent = content.trim();
               
               // Add promise to translate HTML content
               htmlTranslationPromises.push(
-                translateText(originalContent, translationKey, namespace)
+                translateText(originalContent, translationKey, namespace, options)
                   .then(translatedHtml => {
                     if (translatedHtml !== originalContent) {
                       // Translation succeeded, remove data-i18n-html
