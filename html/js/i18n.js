@@ -1,4 +1,5 @@
-// html/js/i18n.js - Enhanced with improved translation handling for dynamic elements
+// Modified i18n.js with RMA form compatibility
+
 (function() {
   // Default language fallback
   const defaultLanguage = 'en';
@@ -7,7 +8,7 @@
   const translationsCache = {};
   
   // Enhanced tracking of pending translations
-  const pendingTranslations = {}; // Structure: { [cacheKey]: { request: Promise, elements: [{ element, type, attr, key }] } }
+  const pendingTranslations = {};
   
   // Types of pending elements
   const PENDING_TYPES = {
@@ -19,7 +20,10 @@
   // Track initialization state
   let isInitialized = false;
   
-  // Verbose logging control - enable in development
+  // RMA compatibility: Add event dispatching for initialization
+  let rmaCompatibilityMode = true;
+  
+  // Verbose logging control
   const VERBOSE_LOGGING = true;
   
   /**
@@ -40,7 +44,6 @@
   
   /**
    * Helper function to get language from meta tag (server-provided)
-   * @returns {string} The detected language code or null if not found
    */
   function getLangFromMeta() {
     const metaTag = document.querySelector('meta[name="app-language"]');
@@ -49,7 +52,6 @@
   
   /**
    * Helper function to get current language from various sources
-   * with meta tag having highest priority
    */
   function getCurrentLanguage() {
     // Meta tag has highest priority (server-provided)
@@ -69,8 +71,7 @@
   }
   
   /**
-   * Change the current language - with cache busting URL parameter
-   * @param {string} langPos - Language position or code
+   * Change the current language
    */
   function setLanguage(langPos) {
     // Current language
@@ -106,9 +107,8 @@
     const cacheBuster = Date.now();
     const url = new URL(window.location.href);
     url.searchParams.set('i18n_cb', cacheBuster);
-    url.searchParams.set('lang', newLanguage); // Explicitly set language parameter
+    url.searchParams.set('lang', newLanguage);
     
-    log(`Redirecting to ${url.toString()} with new language ${newLanguage}`);
     window.location.href = url.toString();
   }
   
@@ -116,12 +116,7 @@
    * Initialize i18n with meta tag prioritization
    */
   function init() {
-    // Check for translationUtils
-    if (!window.translationUtils) {
-      console.error('[i18n] Error: translationUtils not loaded, postponing initialization');
-      return; // Exit, initialization will be done later
-    }
-    
+    // If already initialized, skip
     if (isInitialized) {
       log('Already initialized, skipping');
       return Promise.resolve();
@@ -165,33 +160,31 @@
     // Setup mutation observer for dynamic content
     setupMutationObserver();
     
-    // Fire initialized event for other scripts
-    document.dispatchEvent(new CustomEvent('i18n:initialized', {
-      detail: { language }
-    }));
+    // RMA compatibility: Fire initialization event
+    if (rmaCompatibilityMode) {
+      log('Dispatching i18n:initialized event for RMA compatibility');
+      setTimeout(() => {
+        const initEvent = new CustomEvent('i18n:initialized', {
+          detail: { language }
+        });
+        document.dispatchEvent(initEvent);
+      }, 10);
+    }
     
     log('Initialization complete');
     return Promise.resolve(language);
   }
-
-  // Initialize when DOM is ready  
+  
+  // Initialize when DOM is ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function() {
-      // Check for translationUtils before initializing
       if (window.translationUtils) {
         init();
-      } else {
-        log('translationUtils not available yet, will initialize later');
-        // Check will be done through script in HTML
       }
     });
   } else {
-    // DOM already loaded
     if (window.translationUtils) {
       init();
-    } else {
-      log('translationUtils not available yet, will initialize later');
-      // Check will be done through script in HTML
     }
   }
   
@@ -213,11 +206,6 @@
         options.headers.set('app-language', currentLang);
       } else {
         options.headers['app-language'] = currentLang;
-      }
-      
-      // Log translation-related API calls
-      if (url.includes('/api/translate')) {
-        log(`Making translation API request to ${url} with language: ${currentLang}`);
       }
       
       return originalFetch.call(this, url, options);
@@ -264,8 +252,6 @@
   
   /**
    * Check if an element needs translation
-   * @param {HTMLElement} element - Element to check
-   * @returns {boolean} - True if element needs translation
    */
   function needsTranslation(element) {
     // Check if element itself has translation attributes
@@ -281,7 +267,6 @@
   
   /**
    * Translate an element and its children
-   * @param {HTMLElement} element - Element to translate
    */
   function translateDynamicElement(element) {
     if (getCurrentLanguage() === defaultLanguage) return;
@@ -322,15 +307,24 @@
   
   /**
    * Process element text translation
-   * @param {HTMLElement} element - Element to process
    */
   function processElementTranslation(element) {
     const key = element.getAttribute('data-i18n');
     if (!key) return;
     
+    // RMA compatibility: Add namespace prefix if needed
+    let fullKey = key;
+    if (!key.includes(':') && getCurrentLanguage() !== 'en') {
+      fullKey = 'rma:' + key;
+    }
+    
+    // Important: Get original text *before* emptying it for immediate display
     const originalText = element.textContent.trim();
     
-    // Add handling for additional options (including count)
+    // RMA compatibility: Set the same text immediately (don't empty it)
+    // This keeps the original text visible during translation
+    
+    // Add handling for additional options
     let options = {};
     try {
       const optionsAttr = element.getAttribute('data-i18n-options');
@@ -345,31 +339,30 @@
     // Add defaultValue to options
     options.defaultValue = originalText;
     
-    log(`Translating element with key: "${key}", text: "${originalText.substring(0, 30)}${originalText.length > 30 ? '...' : ''}"`);
+    log(`Translating element with key: "${fullKey}", text: "${originalText.substring(0, 30)}${originalText.length > 30 ? '...' : ''}"`);
     
     // Information about element for adding to waiting list
     const pendingInfo = {
       element: element,
       type: PENDING_TYPES.TEXT,
-      key: key
+      key: fullKey
     };
     
     // Use API translation with key, text and options
-    fetchTranslation(key, originalText, options, pendingInfo).then(translation => {
+    fetchTranslation(fullKey, originalText, options, pendingInfo).then(translation => {
       if (translation) {
-        log(`Applied translation for "${key}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
+        log(`Applied translation for "${fullKey}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
         element.textContent = translation;
       } else {
-        log(`No translation applied for "${key}", using original text`);
+        log(`No translation applied for "${fullKey}", using original text`);
       }
     }).catch(err => {
-      logError(`Failed to fetch translation for key "${key}":`, err);
+      logError(`Failed to fetch translation for key "${fullKey}":`, err);
     });
   }
   
   /**
    * Process element attribute translations
-   * @param {HTMLElement} element - Element with attribute translations
    */
   function processAttrTranslation(element) {
     try {
@@ -380,20 +373,26 @@
       log(`Processing attribute translations: ${attrsJson}`, element);
       
       for (const [attr, key] of Object.entries(attrs)) {
+        // RMA compatibility: Add namespace prefix if needed
+        let fullKey = key;
+        if (!key.includes(':') && getCurrentLanguage() !== 'en') {
+          fullKey = 'rma:' + key;
+        }
+        
         const originalValue = element.getAttribute(attr) || '';
         
-        log(`Translating attribute "${attr}" with key "${key}", value: "${originalValue}"`);
+        log(`Translating attribute "${attr}" with key "${fullKey}", value: "${originalValue}"`);
         
         // Information about element for adding to waiting list
         const pendingInfo = {
           element: element,
           type: PENDING_TYPES.ATTR,
           attr: attr,
-          key: key
+          key: fullKey
         };
         
         // Use API translation for this key/value
-        fetchTranslation(key, originalValue, {}, pendingInfo).then(translation => {
+        fetchTranslation(fullKey, originalValue, {}, pendingInfo).then(translation => {
           if (translation && translation !== originalValue) {
             log(`Applied translation for attribute "${attr}": "${translation}"`);
             element.setAttribute(attr, translation);
@@ -401,7 +400,7 @@
             log(`No translation applied for attribute "${attr}", using original value`);
           }
         }).catch(err => {
-          logError(`Failed to fetch translation for attribute "${attr}" with key "${key}":`, err);
+          logError(`Failed to fetch translation for attribute "${attr}" with key "${fullKey}":`, err);
         });
       }
     } catch (error) {
@@ -411,33 +410,38 @@
   
   /**
    * Process HTML content translations
-   * @param {HTMLElement} element - Element with HTML content to translate
    */
   function processHtmlTranslation(element) {
     const key = element.getAttribute('data-i18n-html');
     if (!key) return;
     
+    // RMA compatibility: Add namespace prefix if needed
+    let fullKey = key;
+    if (!key.includes(':') && getCurrentLanguage() !== 'en') {
+      fullKey = 'rma:' + key;
+    }
+    
     const originalHtml = element.innerHTML.trim();
     
-    log(`Translating HTML content with key: "${key}", length: ${originalHtml.length} chars`);
+    log(`Translating HTML content with key: "${fullKey}", length: ${originalHtml.length} chars`);
     
     // Information about element for adding to waiting list
     const pendingInfo = {
       element: element,
       type: PENDING_TYPES.HTML,
-      key: key
+      key: fullKey
     };
     
     // Use API translation for this key/html
-    fetchTranslation(key, originalHtml, {}, pendingInfo).then(translation => {
+    fetchTranslation(fullKey, originalHtml, {}, pendingInfo).then(translation => {
       if (translation && translation !== originalHtml) {
-        log(`Applied HTML translation for "${key}", length: ${translation.length} chars`);
+        log(`Applied HTML translation for "${fullKey}", length: ${translation.length} chars`);
         element.innerHTML = translation;
       } else {
-        log(`No HTML translation applied for "${key}", using original content`);
+        log(`No HTML translation applied for "${fullKey}", using original content`);
       }
     }).catch(err => {
-      logError(`Failed to fetch HTML translation for key "${key}":`, err);
+      logError(`Failed to fetch HTML translation for key "${fullKey}":`, err);
     });
   }
   
@@ -474,11 +478,7 @@
    
   /**
    * Fetch translation with improved cache key generation and pending request handling
-   * @param {string} key - Translation key
-   * @param {string} defaultText - Default text if no translation found
-   * @param {object} options - Translation options (count, etc.)
-   * @param {object} pendingInfo - Info about the pending element (optional)
-   * @returns {Promise<string>} - Translation or default text
+   * - Modified to better handle the RMA form translation approach
    */
   async function fetchTranslation(key, defaultText, options = {}, pendingInfo = null) {
     const language = getCurrentLanguage();
@@ -500,7 +500,9 @@
     }
     
     // Use the same algorithm as server to generate cache key
-    const cacheKey = window.translationUtils.generateTranslationKey(defaultText, language, namespace, options);
+    const cacheKey = window.translationUtils ? 
+        window.translationUtils.generateTranslationKey(defaultText, language, namespace, options) :
+        `${language}:${namespace}:${translationKey}`;
     
     // Add language prefix for client-side cache
     const fullCacheKey = `${language}:${cacheKey}`;
@@ -513,7 +515,7 @@
       return Promise.resolve(translationsCache[fullCacheKey]);
     }
     
-    // NEW CODE: Add request to an already waiting one, if it exists
+    // Add request to an already waiting one, if it exists
     if (pendingTranslations[fullCacheKey]) {
       log(`Translation already pending for "${fullCacheKey}", registering element for later update`);
       
@@ -535,6 +537,48 @@
       try {
         log(`Making API request for translation: "${key}" in language: ${language}`);
         
+        // RMA compatibility: First try to fetch from locales file
+        try {
+          const localeUrl = `/locales/${language}/${namespace}.json`;
+          log(`Trying to fetch from locale file: ${localeUrl}`);
+          
+          const response = await fetch(localeUrl);
+          if (response.ok) {
+            const data = await response.json();
+            
+            // Find the translation in the nested structure
+            let translation = navigateToKey(data, translationKey);
+            
+            if (translation) {
+              log(`Found translation in locale file: "${translation}"`);
+              
+              // Apply parameter substitution
+              if (options.count !== undefined && typeof translation === 'string') {
+                translation = translation.replace(/\{\{count\}\}/g, options.count);
+              }
+              
+              // Cache the translation
+              translationsCache[fullCacheKey] = translation;
+              
+              // Update all pending elements
+              if (pendingTranslations[fullCacheKey] && pendingTranslations[fullCacheKey].elements) {
+                updateAllPendingElements(pendingTranslations[fullCacheKey].elements, translation);
+              }
+              
+              // Update all elements with this key
+              updateAllElementsWithKey(key, translation);
+              
+              // Resolve the Promise
+              resolve(translation);
+              return translation;
+            }
+          }
+        } catch (error) {
+          log(`Error fetching from locale file: ${error.message}`);
+          // Continue with API translation on error
+        }
+        
+        // If locale file translation failed, use API
         const response = await fetch(`/api/translate`, {
           method: 'POST',
           headers: {
@@ -547,8 +591,8 @@
             context: namespace,
             key: translationKey,
             defaultValue: defaultText,
-            background: false, // We want immediate response if possible
-            options: options  // Add options to request
+            background: false,
+            options: options
           })
         });
         
@@ -623,7 +667,9 @@
       } catch (error) {
         logError(`API error when translating "${key}":`, error);
         delete pendingTranslations[fullCacheKey];
-        reject(error);
+        
+        // RMA compatibility: Don't reject, but return the default text to avoid breaking the UI
+        resolve(defaultText);
         return defaultText;
       }
     });
@@ -638,9 +684,27 @@
   }
   
   /**
+   * Helper function to navigate a nested structure by a dot-separated key
+   * E.g., "device.title" would navigate to obj.device.title
+   */
+  function navigateToKey(obj, key) {
+    if (!obj || !key) return null;
+    
+    const parts = key.split('.');
+    let current = obj;
+    
+    for (const part of parts) {
+      if (current[part] === undefined) {
+        return null;
+      }
+      current = current[part];
+    }
+    
+    return current;
+  }
+  
+  /**
    * Update all pending elements waiting for a translation
-   * @param {Array} pendingElements - Array of pending element info
-   * @param {string} translation - The received translation
    */
   function updateAllPendingElements(pendingElements, translation) {
     if (!pendingElements || !pendingElements.length) {
@@ -682,22 +746,23 @@
   
   /**
    * Update all elements with a specific translation key
-   * @param {string} key - Translation key that was updated
-   * @param {string} translation - New translation text
    */
   function updateAllElementsWithKey(key, translation) {
     log(`Updating all elements with key "${key}" to new translation`);
     
+    // RMA compatibility: Handle both prefixed and non-prefixed keys
+    const keyWithoutPrefix = key.includes(':') ? key.split(':')[1] : key;
+    
     let updateCount = 0;
     
     // Update text content translations
-    document.querySelectorAll(`[data-i18n="${key}"]`).forEach(element => {
+    document.querySelectorAll(`[data-i18n="${key}"], [data-i18n="${keyWithoutPrefix}"]`).forEach(element => {
       element.textContent = translation;
       updateCount++;
     });
     
     // Update HTML translations
-    document.querySelectorAll(`[data-i18n-html="${key}"]`).forEach(element => {
+    document.querySelectorAll(`[data-i18n-html="${key}"], [data-i18n-html="${keyWithoutPrefix}"]`).forEach(element => {
       element.innerHTML = translation;
       updateCount++;
     });
@@ -710,7 +775,7 @@
         
         const attrs = JSON.parse(attrsJson);
         for (const [attr, attrKey] of Object.entries(attrs)) {
-          if (attrKey === key) {
+          if (attrKey === key || attrKey === keyWithoutPrefix) {
             element.setAttribute(attr, translation);
             updateCount++;
           }
@@ -756,9 +821,7 @@
   
   /**
    * Simple translation function - will use cache or default text
-   * @param {string} key - Translation key
-   * @param {object} options - Options including defaultValue
-   * @returns {string} - Translated text or default
+   * RMA compatibility: Adjusted to handle RMA form's approach
    */
   function t(key, options = {}) {
     const defaultValue = options.defaultValue || key;
@@ -779,8 +842,13 @@
       translationKey = parts.slice(1).join(':');
     }
     
-    // Use the same key generation algorithm as the server
-    const cacheKey = window.translationUtils.generateTranslationKey(defaultValue, language, namespace, options);
+    // Support both prefixing styles
+    const fullKey = key.includes(':') ? key : `rma:${key}`;
+    
+    // Check cache and return immediately if found
+    const cacheKey = window.translationUtils ? 
+        window.translationUtils.generateTranslationKey(defaultValue, language, namespace, options) :
+        `${language}:${namespace}:${translationKey}`;
     const fullCacheKey = `${language}:${cacheKey}`;
     
     // Check cache and return immediately if found
@@ -790,7 +858,7 @@
     
     // Not in cache, schedule async fetch for future use
     if (!pendingTranslations[fullCacheKey]) {
-      log(`Scheduling async fetch for "${key}"`);
+      log(`Scheduling async fetch for "${fullKey}"`);
       
       // Initialize pending entry properly
       pendingTranslations[fullCacheKey] = {
@@ -798,14 +866,14 @@
         elements: []
       };
       
-      fetchTranslation(key, defaultValue, options)
+      fetchTranslation(fullKey, defaultValue, options)
         .then(translation => {
           translationsCache[fullCacheKey] = translation;
           delete pendingTranslations[fullCacheKey];
           
           // If the translation is different, update DOM elements
           if (translation !== defaultValue) {
-            updateAllElementsWithKey(key, translation);
+            updateAllElementsWithKey(fullKey, translation);
           }
         })
         .catch(() => {
@@ -817,7 +885,7 @@
     return defaultValue;
   }
   
-  // Export public API
+  // Export public API - RMA compatibility: Make sure all needed functions are exposed
   window.i18n = {
     init,
     t,
@@ -826,6 +894,15 @@
     translateDynamicElement,
     updatePageTranslations: translatePageElements,
     syncLanguageMasks,
-    isInitialized: () => isInitialized
+    isInitialized: () => isInitialized,
+    
+    // RMA compatibility: Export additional functions required by RMA form
+    setRmaCompatibilityMode: (mode) => { rmaCompatibilityMode = mode },
+    forceTriggerInitEvent: () => {
+      const event = new CustomEvent('i18n:initialized', {
+        detail: { language: getCurrentLanguage() }
+      });
+      document.dispatchEvent(event);
+    }
   };
 })();
