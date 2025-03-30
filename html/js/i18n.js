@@ -344,8 +344,7 @@ if (document.readyState === 'loading') {
     
     // Use API translation with key, text and options
     fetchTranslation(key, originalText, options).then(translation => {
-      console.log(`[i18n Debug] Client cache key for "${key}": ${fullCacheKey}`);
-console.log(`[i18n Debug] Server format should match: ${language}:${cacheKey}`);
+
       if (translation) {
         log(`Applied translation for "${key}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
         element.textContent = translation;
@@ -473,13 +472,13 @@ async function fetchTranslation(key, defaultText, options = {}) {
     translationKey = parts.slice(1).join(':');
   }
   
-  // Используем тот же алгоритм генерации ключа, что и на сервере
+  // Use the same algorithm as server to generate cache key
   const cacheKey = window.translationUtils.generateTranslationKey(defaultText, language, namespace, options);
   
-  // Добавляем префикс языка для кеша на стороне клиента
+  // Add language prefix for client-side cache - MUST define this BEFORE using it in logs
   const fullCacheKey = `${language}:${cacheKey}`;
   
-  // Debugging для отслеживания ключей
+  // NOW we can use fullCacheKey in logs
   log(`Translation request for key: "${key}" with cache key: "${fullCacheKey}"`);
   
   // Check client cache first
