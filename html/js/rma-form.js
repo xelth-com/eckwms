@@ -117,49 +117,85 @@
       }
     }
   }
-
-  /**
-   * Загружает и кэширует переводы для пространства имен 'rma'
-   */
-  async function loadRmaTranslations() {
-    try {
-      // Если переводы уже загружены, просто возвращаем их
-      if (translationsReady) {
-        return translations;
-      }
-      
-      const lang = window.i18n.getCurrentLanguage();
-      console.log(`Loading RMA translations for ${lang}...`);
-      
-      // Пробуем загрузить переводы через API fetch вместо loadTranslationFile
-      try {
-        // URL для загрузки локализации
-        const localeUrl = `/locales/${lang}/rma.json`;
-        console.log(`Fetching translations from: ${localeUrl}`);
-        
-        const response = await fetch(localeUrl);
-        
-        if (!response.ok) {
-          throw new Error(`Failed to load translations: ${response.status} ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        console.log("RMA translations loaded:", data);
-        
-        // Разворачиваем структуру переводов для прямого доступа по ключам
-        translations = flattenTranslations(data);
-        translationsReady = true;
-        
-        return translations;
-      } catch (error) {
-        console.error("Error loading RMA translations:", error);
-        return {};
-      }
-    } catch (error) {
-      console.error("Error in loadRmaTranslations:", error);
-      return {};
+/**
+ * Loads and caches translations for the 'rma' namespace with improved error handling
+ * @returns {Promise<Object>} - Translation object or empty object if unavailable
+ */
+async function loadRmaTranslations() {
+  try {
+    // If translations are already loaded, just return them
+    if (translationsReady) {
+      return translations;
     }
+    
+    const lang = window.i18n.getCurrentLanguage();
+    console.log(`Loading RMA translations for ${lang}...`);
+    
+    // Skip loading for default language (English)
+    if (lang === 'en') {
+      translations = {};
+      translationsReady = true;
+      return translations;
+    }
+    
+    // Check if we've already tried and failed to load this language
+    if (failedLanguages && failedLanguages.includes(lang)) {
+      console.log(`Skipping previously failed language: ${lang}`);
+      translations = {};
+      translationsReady = true;
+      return translations;
+    }
+    
+    // Try to fetch from locale file
+    try {
+      // URL for loading the localization
+      const localeUrl = `/locales/${lang}/rma.json`;
+      console.log(`Fetching translations from: ${localeUrl}`);
+      
+      const response = await fetch(localeUrl);
+      
+      if (!response.ok) {
+        // Track failed language to avoid repeated attempts
+        if (!failedLanguages) failedLanguages = [];
+        failedLanguages.push(lang);
+        
+        console.error(`Failed to load translations: ${response.status} ${response.statusText}`);
+        
+        // Set empty translations to prevent further attempts
+        translations = {};
+        translationsReady = true;
+        return translations;
+      }
+      
+      const data = await response.json();
+      console.log(`RMA translations loaded for ${lang}`);
+      
+      // Flatten the translation structure for direct access by keys
+      translations = flattenTranslations(data);
+      translationsReady = true;
+      
+      return translations;
+    } catch (error) {
+      // Track failed language to avoid repeated attempts
+      if (!failedLanguages) failedLanguages = [];
+      failedLanguages.push(lang);
+      
+      console.error("Error loading RMA translations:", error);
+      
+      // Set empty translations to prevent further attempts
+      translations = {};
+      translationsReady = true;
+      return translations;
+    }
+  } catch (error) {
+    console.error("Error in loadRmaTranslations:", error);
+    
+    // Set empty translations as fallback on any error
+    translations = {};
+    translationsReady = true;
+    return translations;
   }
+}
   
   /**
    * Преобразует вложенную структуру переводов в плоскую с ключами через точку
@@ -202,20 +238,20 @@
   }
 
 /**
- * Применяет переводы к конкретному элементу с корректной обработкой параметров
- * @param {HTMLElement} element - Контейнер с элементами для перевода
+ * Applies translations to a specific element and all its children with proper handling of device numbers
+ * @param {HTMLElement} element - Container with elements to translate
  */
 function manuallyTranslateElement(element) {
-  // Пропускаем, если i18n не инициализирован, язык по умолчанию или переводы не готовы
+  // Skip if i18n isn't initialized, default language, or translations aren't ready
   if (!window.i18n || window.i18n.getCurrentLanguage() === 'en' || !translationsReady) {
     return;
   }
   
-  // Обрабатываем атрибут data-i18n на самом элементе
+  // Handle data-i18n attribute on the element itself
   if (element.hasAttribute('data-i18n')) {
     const key = element.getAttribute('data-i18n');
     try {
-      // Извлекаем options из атрибута data-i18n-options
+      // Extract options from data-i18n-options attribute
       let options = {};
       const optionsAttr = element.getAttribute('data-i18n-options');
       if (optionsAttr) {
@@ -226,20 +262,27 @@ function manuallyTranslateElement(element) {
         }
       }
       
+      // Get translation
       const translation = getTranslation(key, options);
       if (translation && translation !== key) {
-        element.textContent = translation;
+        // Special handling for device title elements
+        if (key === 'device.title' && options.count !== undefined) {
+          // For device titles, preserve the number in the format "Gerät #3" or "Device #3"
+          element.textContent = translation;
+        } else {
+          element.textContent = translation;
+        }
       }
     } catch (e) {
       console.error(`Error translating ${key}:`, e);
     }
   }
   
-  // Находим и переводим дочерние элементы с атрибутом data-i18n
+  // Find and translate child elements with data-i18n
   element.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
     try {
-      // Извлекаем options из атрибута data-i18n-options
+      // Extract options from data-i18n-options attribute
       let options = {};
       const optionsAttr = el.getAttribute('data-i18n-options');
       if (optionsAttr) {
@@ -250,21 +293,33 @@ function manuallyTranslateElement(element) {
         }
       }
       
+      // Get translation
       const translation = getTranslation(key, options);
       if (translation && translation !== key) {
-        el.textContent = translation;
+        // Special handling for device title elements
+        if (key === 'device.title') {
+          // If this is part of a device title, don't add the number here
+          // The number will be added separately
+          el.textContent = translation;
+        } else if (key === 'device.using_address' && options.count !== undefined) {
+          // For "Using address from Device #X" messages
+          // We translate only the text part and add the number separately
+          el.textContent = translation + ` #${options.count}`;
+        } else {
+          el.textContent = translation;
+        }
       }
     } catch (e) {
       console.error(`Error translating ${key}:`, e);
     }
   });
   
-  // Обрабатываем атрибуты для перевода (data-i18n-attr)
+  // Process attribute translations (data-i18n-attr)
   element.querySelectorAll('[data-i18n-attr]').forEach(el => {
     try {
       const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
       for (const [attr, key] of Object.entries(attrsMap)) {
-        // Извлекаем options для этого атрибута
+        // Extract options for this attribute
         let options = {};
         const optionsAttr = el.getAttribute('data-i18n-options');
         if (optionsAttr) {
@@ -285,12 +340,12 @@ function manuallyTranslateElement(element) {
     }
   });
   
-  // Проверка самого элемента на наличие data-i18n-attr
+  // Check the element itself for data-i18n-attr
   if (element.hasAttribute('data-i18n-attr')) {
     try {
       const attrsMap = JSON.parse(element.getAttribute('data-i18n-attr'));
       for (const [attr, key] of Object.entries(attrsMap)) {
-        // Извлекаем options для этого атрибута
+        // Extract options for this attribute
         let options = {};
         const optionsAttr = element.getAttribute('data-i18n-options');
         if (optionsAttr) {
@@ -311,11 +366,11 @@ function manuallyTranslateElement(element) {
     }
   }
   
-  // Обработка HTML переводов (data-i18n-html)
+  // Process HTML translations (data-i18n-html)
   element.querySelectorAll('[data-i18n-html]').forEach(el => {
     const key = el.getAttribute('data-i18n-html');
     try {
-      // Извлекаем options из атрибута data-i18n-options
+      // Extract options from data-i18n-options attribute
       let options = {};
       const optionsAttr = el.getAttribute('data-i18n-options');
       if (optionsAttr) {
@@ -335,7 +390,7 @@ function manuallyTranslateElement(element) {
     }
   });
   
-  // Проверка самого элемента на наличие data-i18n-html
+  // Check the element itself for data-i18n-html
   if (element.hasAttribute('data-i18n-html')) {
     const key = element.getAttribute('data-i18n-html');
     try {
@@ -358,39 +413,71 @@ function manuallyTranslateElement(element) {
     }
   }
 }
-
-  /**
-   * Улучшенная функция для получения перевода по ключу
-   */
-  function getTranslation(key, options = {}, fallback = '') {
-    if (!window.i18n || !translationsReady || window.i18n.getCurrentLanguage() === 'en') {
-      return fallback || key.split('.').pop(); 
+/**
+ * Gets translation for a key with improved error handling and fallbacks
+ * @param {string} key - Translation key
+ * @param {Object} options - Translation options (e.g., count)
+ * @param {string} fallback - Fallback text if translation not found
+ * @returns {string} - Translated text or fallback
+ */
+function getTranslation(key, options = {}, fallback = '') {
+  // Use default English if:
+  // 1. i18n not initialized
+  // 2. Translations not loaded (after attempts)
+  // 3. Current language is English
+  if (!window.i18n || !translationsReady || window.i18n.getCurrentLanguage() === 'en') {
+    // For device references, format the fallback with the device number
+    if (key === 'device.using_address' && options.count !== undefined) {
+      return fallback || `Using Address from Device #${options.count}`;
     }
     
-    try {
-      // Удаляем префикс 'rma:' если он есть
-      const cleanKey = key.includes(':') ? key.split(':')[1] : key;
+    // Use provided fallback or extract from key (e.g., "device.title" -> "title")
+    return fallback || key.split('.').pop(); 
+  }
+  
+  try {
+    // Remove 'rma:' prefix if it exists
+    const cleanKey = key.includes(':') ? key.split(':')[1] : key;
+    
+    // Find translation in our cache
+    if (translations[cleanKey]) {
+      let result = translations[cleanKey];
       
-      // Ищем перевод в нашем кэше
-      if (translations[cleanKey]) {
-        // Обрабатываем параметры, если есть (например, count)
-        let result = translations[cleanKey];
-        
-        // Простая обработка подстановки переменных {{count}}
-        if (options.count !== undefined && result.includes('{{count}}')) {
-          result = result.replace('{{count}}', options.count);
-        }
-        
+      // Special case for device titles
+      if (cleanKey === 'device.title') {
+        // For device title, just return the word "Gerät" (or equivalent)
         return result;
       }
+      else if (cleanKey === 'device.using_address' && options.count !== undefined) {
+        // For "Using address from Device #X" messages
+        return result.replace(/\{\{count\}\}/g, options.count);
+      }
+      // Normal placeholder substitution for other cases
+      else if (options.count !== undefined && result.includes('{{count}}')) {
+        result = result.replace(/\{\{count\}\}/g, options.count);
+      }
       
-      console.log(`Translation not found for key: ${key}, using fallback`);
-      return fallback || key.split('.').pop();
-    } catch (e) {
-      console.error(`Error getting translation for ${key}:`, e);
-      return fallback || key.split('.').pop();
+      return result;
     }
+    
+    // If the key isn't found in translations, use fallback with formatted device number if applicable
+    if (key === 'device.using_address' && options.count !== undefined) {
+      return fallback || `Using Address from Device #${options.count}`;
+    }
+    
+    // Default fallback
+    return fallback || key.split('.').pop();
+  } catch (e) {
+    console.error(`Error getting translation for ${key}:`, e);
+    
+    // Safety fallback for device references even if error occurs
+    if (key === 'device.using_address' && options.count !== undefined) {
+      return `Using Address from Device #${options.count}`;
+    }
+    
+    return fallback || key.split('.').pop();
   }
+}
 
   /**
    * Loads the i18n script if it's not already loaded
@@ -486,214 +573,277 @@ function manuallyTranslateElement(element) {
     }
   }
 
-  // Function to add a new device entry
-  function addDeviceEntry() {
-    deviceCount++;
-    const deviceIndex = deviceCount;
+/**
+ * Add a new device entry to the RMA form with proper translation support
+ * @returns {HTMLElement} The created device entry element
+ */
+function addDeviceEntry() {
+  deviceCount++;
+  const deviceIndex = deviceCount;
 
-    const deviceEntry = document.createElement('div');
-    deviceEntry.className = 'device-entry';
-    deviceEntry.dataset.index = deviceIndex;
-    deviceEntry.style.border = '1px solid #ddd';
-    deviceEntry.style.borderRadius = '4px';
-    deviceEntry.style.padding = '15px';
-    deviceEntry.style.marginBottom = '20px';
-    deviceEntry.style.backgroundColor = '#f9f9f9';
+  const deviceEntry = document.createElement('div');
+  deviceEntry.className = 'device-entry';
+  deviceEntry.dataset.index = deviceIndex;
+  deviceEntry.style.border = '1px solid #ddd';
+  deviceEntry.style.borderRadius = '4px';
+  deviceEntry.style.padding = '15px';
+  deviceEntry.style.marginBottom = '20px';
+  deviceEntry.style.backgroundColor = '#f9f9f9';
 
-    // Create device header with number
-    const deviceHeader = document.createElement('div');
-    deviceHeader.style.display = 'flex';
-    deviceHeader.style.justifyContent = 'space-between';
-    deviceHeader.style.alignItems = 'center';
-    deviceHeader.style.marginBottom = '15px';
+  // Create device header with number
+  const deviceHeader = document.createElement('div');
+  deviceHeader.style.display = 'flex';
+  deviceHeader.style.justifyContent = 'space-between';
+  deviceHeader.style.alignItems = 'center';
+  deviceHeader.style.marginBottom = '15px';
 
-    const deviceTitle = document.createElement('h4');
-    deviceTitle.setAttribute('data-i18n', 'device.title');
-    deviceTitle.setAttribute('data-i18n-options', JSON.stringify({count: deviceIndex}));
-    deviceTitle.textContent = `Device #${deviceIndex}`;
-    deviceTitle.style.margin = '0';
-    deviceTitle.style.color = '#1e2071';
-
-    // Toggle button for alternate shipping address
-    const toggleButton = document.createElement('button');
-    toggleButton.type = 'button';
-    toggleButton.setAttribute('data-i18n', 'device.address_button');
-    toggleButton.textContent = 'Specify Different Return Address';
-    toggleButton.style.backgroundColor = '#eee';
-    toggleButton.style.border = '1px solid #ccc';
-    toggleButton.style.borderRadius = '4px';
-    toggleButton.style.padding = '5px 10px';
-    toggleButton.style.cursor = 'pointer';
-    toggleButton.dataset.deviceIndex = deviceIndex;
-
-    deviceHeader.appendChild(deviceTitle);
-    deviceHeader.appendChild(toggleButton);
-    deviceEntry.appendChild(deviceHeader);
-
-    // Create alternate shipping address section (initially hidden)
-    const alternateAddressSection = document.createElement('div');
-    alternateAddressSection.id = `alternate-address-${deviceIndex}`;
-    alternateAddressSection.style.display = 'none';
-    alternateAddressSection.style.padding = '10px';
-    alternateAddressSection.style.border = '1px solid #ddd';
-    alternateAddressSection.style.borderRadius = '4px';
-    alternateAddressSection.style.marginBottom = '15px';
-    alternateAddressSection.style.backgroundColor = '#fff';
-
-    // Add alternate address fields
-    alternateAddressSection.innerHTML = `
-        <h4 style="margin-top: 0; color: #1e2071;" data-i18n="device.alternate_address">Alternate Return Address</h4>
-        <p style="font-style: italic; margin-bottom: 10px;" data-i18n="device.address_info">Specify a different address for returning this device.</p>
-        
-        <label for="alt_company_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.company_name">Company Name:</b></label>
-        <input type="text" id="alt_company_${deviceIndex}" name="alt_company_${deviceIndex}" 
-               style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+  // MODIFIED: Create title with separate span for the number
+  const deviceTitle = document.createElement('h4');
+  deviceTitle.style.margin = '0';
+  deviceTitle.style.color = '#1e2071';
   
-        <label for="alt_person_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="form.contact_person">Contact Person:</label>
-        <input type="text" id="alt_person_${deviceIndex}" name="alt_person_${deviceIndex}" 
-               style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+  // Create a span for the translatable part
+  const titleText = document.createElement('span');
+  titleText.setAttribute('data-i18n', 'device.title');
+  titleText.textContent = 'Device';
   
-        <label for="alt_street_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.street">Street and House Number:</b></label>
-        <input type="text" id="alt_street_${deviceIndex}" name="alt_street_${deviceIndex}" 
-               style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+  // Create a span for the number (non-translatable)
+  const titleNumber = document.createElement('span');
+  titleNumber.textContent = ` #${deviceIndex}`;
   
-        <label for="alt_addressLine2_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="form.additional_address">Additional Address Line:</label>
-  <input type="text" id="alt_addressLine2_${deviceIndex}" name="alt_addressLine2_${deviceIndex}" 
-         style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+  // Append both parts to the title
+  deviceTitle.appendChild(titleText);
+  deviceTitle.appendChild(titleNumber);
 
-  <label for="alt_postalCode_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.postal_code">Postal Code:</b></label>
-  <input type="text" id="alt_postalCode_${deviceIndex}" name="alt_postalCode_${deviceIndex}" 
-         style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+  // Toggle button for alternate shipping address
+  const toggleButton = document.createElement('button');
+  toggleButton.type = 'button';
+  toggleButton.setAttribute('data-i18n', 'device.address_button');
+  toggleButton.textContent = 'Specify Different Return Address';
+  toggleButton.style.backgroundColor = '#eee';
+  toggleButton.style.border = '1px solid #ccc';
+  toggleButton.style.borderRadius = '4px';
+  toggleButton.style.padding = '5px 10px';
+  toggleButton.style.cursor = 'pointer';
+  toggleButton.dataset.deviceIndex = deviceIndex;
 
-  <label for="alt_city_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.city">City:</b></label>
-  <input type="text" id="alt_city_${deviceIndex}" name="alt_city_${deviceIndex}" 
-         style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+  deviceHeader.appendChild(deviceTitle);
+  deviceHeader.appendChild(toggleButton);
+  deviceEntry.appendChild(deviceHeader);
 
-        <label for="alt_country_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.country">Country:</b></label>
-        <input type="text" id="alt_country_${deviceIndex}" name="alt_country_${deviceIndex}" 
-               style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
-      `;
+  // Create alternate shipping address section (initially hidden)
+  const alternateAddressSection = document.createElement('div');
+  alternateAddressSection.id = `alternate-address-${deviceIndex}`;
+  alternateAddressSection.style.display = 'none';
+  alternateAddressSection.style.padding = '10px';
+  alternateAddressSection.style.border = '1px solid #ddd';
+  alternateAddressSection.style.borderRadius = '4px';
+  alternateAddressSection.style.marginBottom = '15px';
+  alternateAddressSection.style.backgroundColor = '#fff';
 
-    deviceEntry.appendChild(alternateAddressSection);
+  // Add alternate address fields
+  alternateAddressSection.innerHTML = `
+      <h4 style="margin-top: 0; color: #1e2071;" data-i18n="device.alternate_address">Alternate Return Address</h4>
+      <p style="font-style: italic; margin-bottom: 10px;" data-i18n="device.address_info">Specify a different address for returning this device.</p>
+      
+      <label for="alt_company_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.company_name">Company Name:</b></label>
+      <input type="text" id="alt_company_${deviceIndex}" name="alt_company_${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-    // Create serial number and description section
-    const deviceDetailsSection = document.createElement('div');
+      <label for="alt_person_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="form.contact_person">Contact Person:</label>
+      <input type="text" id="alt_person_${deviceIndex}" name="alt_person_${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-    // Serial number input
-    const serialLabel = document.createElement('label');
-    serialLabel.htmlFor = `serial${deviceIndex}`;
-    serialLabel.setAttribute('data-i18n', 'device.serial_number');
-    serialLabel.textContent = 'Serial Number:';
-    serialLabel.style.display = 'block';
-    serialLabel.style.marginTop = '10px';
-    serialLabel.style.fontWeight = 'bold';
+      <label for="alt_street_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.street">Street and House Number:</b></label>
+      <input type="text" id="alt_street_${deviceIndex}" name="alt_street_${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-    const serialInput = document.createElement('input');
-    serialInput.type = 'text';
-    serialInput.id = `serial${deviceIndex}`;
-    serialInput.name = `serial${deviceIndex}`;
-    serialInput.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "device.serial_placeholder"}));
-    serialInput.style.width = '95%';
-    serialInput.style.padding = '5px';
-    serialInput.style.fontSize = '18px';
-    serialInput.style.backgroundColor = '#eee';
-    serialInput.style.marginTop = '5px';
+      <label for="alt_addressLine2_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="form.additional_address">Additional Address Line:</label>
+      <input type="text" id="alt_addressLine2_${deviceIndex}" name="alt_addressLine2_${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-    // Description textarea
-    const descLabel = document.createElement('label');
-    descLabel.htmlFor = `description${deviceIndex}`;
-    descLabel.setAttribute('data-i18n', 'device.issue_description');
-    descLabel.textContent = 'Issue Description:';
-    descLabel.style.display = 'block';
-    descLabel.style.marginTop = '10px';
-    descLabel.style.fontWeight = 'bold';
+      <label for="alt_postalCode_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.postal_code">Postal Code:</b></label>
+      <input type="text" id="alt_postalCode_${deviceIndex}" name="alt_postalCode_${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-    const descTextarea = document.createElement('textarea');
-    descTextarea.id = `description${deviceIndex}`;
-    descTextarea.name = `description${deviceIndex}`;
-    descTextarea.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "device.description_placeholder"}));
-    descTextarea.rows = 3;
-    descTextarea.style.width = '95%';
-    descTextarea.style.padding = '5px';
-    descTextarea.style.fontSize = '18px';
-    descTextarea.style.backgroundColor = '#eee';
-    descTextarea.style.marginTop = '5px';
+      <label for="alt_city_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.city">City:</b></label>
+      <input type="text" id="alt_city_${deviceIndex}" name="alt_city_${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-    deviceDetailsSection.appendChild(serialLabel);
-    deviceDetailsSection.appendChild(serialInput);
-    deviceDetailsSection.appendChild(descLabel);
-    deviceDetailsSection.appendChild(descTextarea);
+      <label for="alt_country_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.country">Country:</b></label>
+      <input type="text" id="alt_country_${deviceIndex}" name="alt_country_${deviceIndex}" 
+             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+    `;
 
-    deviceEntry.appendChild(deviceDetailsSection);
+  deviceEntry.appendChild(alternateAddressSection);
 
-    // Add the complete device entry to the container
-    deviceEntry.appendChild(deviceDetailsSection);
+  // Create serial number and description section
+  const deviceDetailsSection = document.createElement('div');
 
-    // Add element to DOM
-    const devicesContainer = document.getElementById('devices-container');
-    if (devicesContainer) {
-      devicesContainer.appendChild(deviceEntry);
+  // Serial number input
+  const serialLabel = document.createElement('label');
+  serialLabel.htmlFor = `serial${deviceIndex}`;
+  serialLabel.setAttribute('data-i18n', 'device.serial_number');
+  serialLabel.textContent = 'Serial Number:';
+  serialLabel.style.display = 'block';
+  serialLabel.style.marginTop = '10px';
+  serialLabel.style.fontWeight = 'bold';
 
-      // Translate the new element
-      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
-        loadRmaTranslations().then(() => {
-          manuallyTranslateElement(deviceEntry);
-        });
-      }
+  const serialInput = document.createElement('input');
+  serialInput.type = 'text';
+  serialInput.id = `serial${deviceIndex}`;
+  serialInput.name = `serial${deviceIndex}`;
+  serialInput.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "device.serial_placeholder"}));
+  serialInput.style.width = '95%';
+  serialInput.style.padding = '5px';
+  serialInput.style.fontSize = '18px';
+  serialInput.style.backgroundColor = '#eee';
+  serialInput.style.marginTop = '5px';
+
+  // Description textarea
+  const descLabel = document.createElement('label');
+  descLabel.htmlFor = `description${deviceIndex}`;
+  descLabel.setAttribute('data-i18n', 'device.issue_description');
+  descLabel.textContent = 'Issue Description:';
+  descLabel.style.display = 'block';
+  descLabel.style.marginTop = '10px';
+  descLabel.style.fontWeight = 'bold';
+
+  const descTextarea = document.createElement('textarea');
+  descTextarea.id = `description${deviceIndex}`;
+  descTextarea.name = `description${deviceIndex}`;
+  descTextarea.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "device.description_placeholder"}));
+  descTextarea.rows = 3;
+  descTextarea.style.width = '95%';
+  descTextarea.style.padding = '5px';
+  descTextarea.style.fontSize = '18px';
+  descTextarea.style.backgroundColor = '#eee';
+  descTextarea.style.marginTop = '5px';
+
+  deviceDetailsSection.appendChild(serialLabel);
+  deviceDetailsSection.appendChild(serialInput);
+  deviceDetailsSection.appendChild(descLabel);
+  deviceDetailsSection.appendChild(descTextarea);
+
+  deviceEntry.appendChild(deviceDetailsSection);
+
+  // Add the complete device entry to the container
+  const devicesContainer = document.getElementById('devices-container');
+  if (devicesContainer) {
+    devicesContainer.appendChild(deviceEntry);
+
+    // Translate the new element
+    if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
+      loadRmaTranslations().then(() => {
+        manuallyTranslateElement(deviceEntry);
+      });
     }
-
-    // Set up event listeners for this device entry
-    setupDeviceEventListeners(deviceIndex);
-
-    // Display address source info
-    updateAddressSourceInfo(deviceIndex);
-
-    return deviceEntry;
   }
+
+  // Set up event listeners for this device entry
+  setupDeviceEventListeners(deviceIndex);
 
   // Display address source info
-  function updateAddressSourceInfo(deviceIndex) {
-    if (!translationsReady && window.i18n && window.i18n.getCurrentLanguage() !== 'en') {
-      // Если переводы еще не загружены, загрузим их сначала
-      loadRmaTranslations().then(() => updateAddressSourceInfo(deviceIndex));
-      return;
-    }
-    
-    const deviceEntries = document.querySelectorAll('.device-entry');
+  updateAddressSourceInfo(deviceIndex);
 
-    // Loop through all devices
-    deviceEntries.forEach(entry => {
-      const entryIndex = parseInt(entry.dataset.index, 10);
+  return deviceEntry;
+}
 
-      // Skip current and previous devices
-      if (entryIndex < deviceIndex) return;
-
-      // Find nearest address source above
-      let addressSource = findNearestAddressSource(entryIndex);
-      const toggleBtn = entry.querySelector('button');
-
-      if (!toggleBtn) return;
-
-      // Check if alternate address section is open for this device
-      const altAddressSection = document.getElementById(`alternate-address-${entryIndex}`);
-      const hasAltAddress = altAddressSection && altAddressSection.style.display !== 'none';
-
-      if (hasAltAddress) {
-        // Device has its own address
-        toggleBtn.textContent = getTranslation('device.hide_address', {}, 'Hide Return Address');
-        toggleBtn.style.backgroundColor = '#e6f7ff';
-      } else if (addressSource === 0) {
-        // Using billing address
-        toggleBtn.textContent = getTranslation('device.using_billing', {}, 'Using Billing Address');
-        toggleBtn.style.backgroundColor = '#f0f0f0';
-      } else {
-        // Using another device's address
-        const translateOptions = {count: addressSource};
-        toggleBtn.textContent = getTranslation('device.using_address', translateOptions, `Using Address from Device #${addressSource}`);
-        toggleBtn.style.backgroundColor = '#f0f0f0';
-      }
+/**
+ * Updates the display of address source information with improved error handling
+ * @param {number} deviceIndex - Index of the device to update
+ * @param {boolean} isRetry - Whether this is a retry attempt to prevent infinite recursion
+ */
+function updateAddressSourceInfo(deviceIndex, isRetry = false) {
+  // If translations aren't ready and this isn't a retry attempt
+  if (!translationsReady && window.i18n && window.i18n.getCurrentLanguage() !== 'en' && !isRetry) {
+    // Load translations once, then retry with isRetry=true to prevent infinite recursion
+    loadRmaTranslations().then(() => {
+      // Mark isRetry=true to prevent infinite recursion if translations fail to load
+      updateAddressSourceInfo(deviceIndex, true);
+    }).catch(error => {
+      console.warn("Failed to load translations, using English fallbacks:", error);
+      // Continue with English fallbacks
+      updateAddressSourceInfoEnglish(deviceIndex);
     });
+    return;
   }
+  
+  const deviceEntries = document.querySelectorAll('.device-entry');
+
+  // Loop through all devices
+  deviceEntries.forEach(entry => {
+    const entryIndex = parseInt(entry.dataset.index, 10);
+
+    // Skip current and previous devices
+    if (entryIndex < deviceIndex) return;
+
+    // Find nearest address source above
+    let addressSource = findNearestAddressSource(entryIndex);
+    const toggleBtn = entry.querySelector('button');
+
+    if (!toggleBtn) return;
+
+    // Check if alternate address section is open for this device
+    const altAddressSection = document.getElementById(`alternate-address-${entryIndex}`);
+    const hasAltAddress = altAddressSection && altAddressSection.style.display !== 'none';
+
+    if (hasAltAddress) {
+      // Device has its own address
+      toggleBtn.textContent = getTranslation('device.hide_address', {}, 'Hide Return Address');
+      toggleBtn.style.backgroundColor = '#e6f7ff';
+    } else if (addressSource === 0) {
+      // Using billing address
+      toggleBtn.textContent = getTranslation('device.using_billing', {}, 'Using Billing Address');
+      toggleBtn.style.backgroundColor = '#f0f0f0';
+    } else {
+      // Using another device's address
+      const addressText = getTranslation('device.using_address', {count: addressSource}, 'Using Address from Device #' + addressSource);
+      toggleBtn.textContent = addressText;
+      toggleBtn.style.backgroundColor = '#f0f0f0';
+    }
+  });
+}
+
+/**
+ * Fallback function that uses English strings when translations aren't available
+ * @param {number} deviceIndex - Index of the device to update
+ */
+function updateAddressSourceInfoEnglish(deviceIndex) {
+  const deviceEntries = document.querySelectorAll('.device-entry');
+
+  // Loop through all devices
+  deviceEntries.forEach(entry => {
+    const entryIndex = parseInt(entry.dataset.index, 10);
+
+    // Skip current and previous devices
+    if (entryIndex < deviceIndex) return;
+
+    // Find nearest address source above
+    let addressSource = findNearestAddressSource(entryIndex);
+    const toggleBtn = entry.querySelector('button');
+
+    if (!toggleBtn) return;
+
+    // Check if alternate address section is open for this device
+    const altAddressSection = document.getElementById(`alternate-address-${entryIndex}`);
+    const hasAltAddress = altAddressSection && altAddressSection.style.display !== 'none';
+
+    if (hasAltAddress) {
+      // Device has its own address
+      toggleBtn.textContent = 'Hide Return Address';
+      toggleBtn.style.backgroundColor = '#e6f7ff';
+    } else if (addressSource === 0) {
+      // Using billing address
+      toggleBtn.textContent = 'Using Billing Address';
+      toggleBtn.style.backgroundColor = '#f0f0f0';
+    } else {
+      // Using another device's address
+      toggleBtn.textContent = `Using Address from Device #${addressSource}`;
+      toggleBtn.style.backgroundColor = '#f0f0f0';
+    }
+  });
+}
 
   // Find nearest address source above
   function findNearestAddressSource(deviceIndex) {
