@@ -3,9 +3,9 @@
  * Displays the main content of the homepage
  */
 
-import { loadCSS, loadTemplate } from '/modules/core/module-loader.js';
-import { myFetch, picFromSet } from '/modules/utils/fetch-utils.js';
-import { fsPic } from '/modules/utils/image-utils.js';
+import { loadCSS, loadTemplate } from '/core/module-loader.js';
+import { myFetch, picFromSet } from '/utils/fetch-utils.js';
+import { fsPic } from '/utils/image-utils.js';
 
 /**
  * Initialize home content
@@ -13,10 +13,10 @@ import { fsPic } from '/modules/utils/image-utils.js';
  */
 export async function init(container) {
   // Load required CSS
-  await loadCSS('/modules/content/home-content.css');
+  await loadCSS('/content/home-content.css');
   
   // Load HTML template
-  const html = await loadTemplate('/modules/content/home-content.template.html');
+  const html = await loadTemplate('/content/home-content.template.html');
   container.innerHTML = html;
   
   // Initialize the RMA form functionality

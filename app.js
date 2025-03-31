@@ -77,20 +77,37 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false
 }));
 
+
+
+
 // Initialize Passport
 const configPassport = require('./config/passport');
 const passportInstance = configPassport(global.secretJwt);
 app.use(passport.initialize());
 
 
-// Add this new import:
-// const contentTypeDebug = require('./middleware/contentTypeDebug');
+app.use((req, res, next) => {
+    // Полный набор антикеширующих заголовков
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private, max-age=0',
+      'Pragma': 'no-cache',
+      'Expires': 0,
+      'Surrogate-Control': 'no-store',
+      // Это заставит Express пересчитывать ETag каждый раз
+      'ETag': `W/"${Date.now().toString()}"`,
+      // Всегда делать Last-Modified текущим временем
+      'Last-Modified': new Date().toUTCString()
+    });
+    next();
+  });
 
-// // Apply the content type debug middleware BEFORE static files
-// app.use(contentTypeDebug());
-
-app.use(express.static(path.join(__dirname, 'html'), { index: false }));
-
+  app.use(express.static(path.join(__dirname, 'html'), {  
+    index: false,
+    etag: false,           // Отключить ETag
+    lastModified: false,   // Отключить Last-Modified
+    maxAge: 0,             // Установить max-age в 0
+    cacheControl: false    // Позволить нашему middleware контролировать Cache-Control
+  }));
 
 // Core middleware
 app.use(express.json());

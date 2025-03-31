@@ -3,7 +3,7 @@
  * Handles the site footer with copyright and links
  */
 
-import { loadCSS, loadTemplate } from '/modules/core/module-loader.js';
+import { loadCSS, loadTemplate } from '/core/module-loader.js';
 
 /**
  * Initialize footer content
@@ -11,10 +11,10 @@ import { loadCSS, loadTemplate } from '/modules/core/module-loader.js';
  */
 export async function init(container) {
   // Load required CSS
-  await loadCSS('/modules/footer/footer.css');
+  await loadCSS('/footer/footer.css');
   
   // Load HTML template
-  const html = await loadTemplate('/modules/footer/footer.template.html');
+  const html = await loadTemplate('/footer/footer.template.html');
   container.innerHTML = html;
   
   // Set current year for copyright

@@ -3,8 +3,8 @@
  * Contains the site logo, language selector, and main navigation menu
  */
 
-import { loadCSS, loadTemplate } from '/modules/core/module-loader.js';
-import { toggleLanguagePopup, selectLanguage } from '/modules/i18n/language-selector.js';
+import { loadCSS, loadTemplate } from '/core/module-loader.js';
+import { toggleLanguagePopup, selectLanguage } from '/i18n/language-selector.js';
 
 /**
  * Header module initialization
@@ -12,10 +12,10 @@ import { toggleLanguagePopup, selectLanguage } from '/modules/i18n/language-sele
  */
 export async function init(container) {
   // Load required CSS
-  await loadCSS('/modules/header/header.css');
+  await loadCSS('/header/header.css');
   
   // Load HTML template
-  const html = await loadTemplate('/modules/header/header.template.html');
+  const html = await loadTemplate('/header/header.template.html');
   container.innerHTML = html;
   
   // Initialize event listeners

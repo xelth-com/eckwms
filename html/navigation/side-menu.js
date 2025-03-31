@@ -3,7 +3,7 @@
  * Mobile-friendly navigation menu that displays on smaller screens
  */
 
-import { loadCSS, loadTemplate } from '/modules/core/module-loader.js';
+import { loadCSS, loadTemplate } from '/core/module-loader.js';
 
 /**
  * Initialize side menu
@@ -16,10 +16,10 @@ export async function init(container) {
   }
   
   // Load required CSS
-  await loadCSS('/modules/navigation/side-menu.css');
+  await loadCSS('/navigation/side-menu.css');
   
   // Load HTML template
-  const html = await loadTemplate('/modules/navigation/side-menu.template.html');
+  const html = await loadTemplate('/navigation/side-menu.template.html');
   container.innerHTML = html;
   
   // Initialize event listeners
