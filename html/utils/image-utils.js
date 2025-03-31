@@ -46,6 +46,11 @@ export function postInit() {
  */
 export function fsPic(name) {
   const el = document.getElementById("fsPic");
+  if (!el) {
+    console.error("Fullscreen container not found");
+    return;
+  }
+  
   const img = new Image();
   
   img.onload = function() {
@@ -63,9 +68,10 @@ export function fsPic(name) {
       this.height = window.innerHeight;
     }
     
-    // Add click handler for zoom toggle
-    this.addEventListener("click", tempFa = (event) => {
-      if (this.style.cursor == 'zoom-in') {
+    // Создаем обработчики за пределами события для возможности их удаления
+    let mouseMoveHandler;
+    const clickHandler = (event) => {
+      if (this.style.cursor === 'zoom-in') {
         this.style.cursor = 'zoom-out';
         el.style.overflow = 'scroll';
         this.width = this.naturalWidth;
@@ -81,23 +87,34 @@ export function fsPic(name) {
         el.scroll((event.clientX - window.innerWidth / 4) * tx, (event.clientY - window.innerHeight / 4) * ty);
         
         // Add mousemove event for scrolling
-        this.addEventListener("mousemove", tempFb = (event) => {
-          el.scroll((event.clientX - window.innerWidth / 4) * tx, (event.clientY - window.innerHeight / 4) * ty);
-        });
+        mouseMoveHandler = (moveEvent) => {
+          el.scroll((moveEvent.clientX - window.innerWidth / 4) * tx, (moveEvent.clientY - window.innerHeight / 4) * ty);
+        };
+        this.addEventListener("mousemove", mouseMoveHandler);
       } else {
         // Remove event listeners and close fullscreen view
-        this.removeEventListener("mousemove", tempFb);
-        this.removeEventListener("click", tempFa);
+        if (mouseMoveHandler) {
+          this.removeEventListener("mousemove", mouseMoveHandler);
+        }
+        this.removeEventListener("click", clickHandler);
         this.remove();
         document.body.style.overflow = "visible";
         el.style.display = "none";
       }
-    });
+    };
+    
+    // Add click handler for zoom toggle
+    this.addEventListener("click", clickHandler);
     
     // Add the image to DOM and show fullscreen container
+    el.innerHTML = ''; // Clear previous content
     el.appendChild(this);
     el.style.display = "block";
     document.body.style.overflow = "hidden";
+  };
+  
+  img.onerror = function() {
+    console.error(`Failed to load image: ${name}`);
   };
   
   // Start loading the image
@@ -152,7 +169,7 @@ export function updatePixelRatio() {
         let divisor = 0;
         
         for (let i = -maxCount; i <= maxCount; i++) {
-          const y = ~~(1000 * Math.exp((-i * i) / (s * s)));
+          const y = Math.floor(1000 * Math.exp((-i * i) / (s * s)));
           divisor += y;
           kernelMatix += ` ${y}`;
         }

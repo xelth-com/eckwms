@@ -23,6 +23,9 @@
 
   <!-- SVG definitions -->
   <div id="svg-defs-container"></div>
+  
+  <!-- Utilities container (hidden) -->
+  <div id="utils-container" style="display: none;"></div>
 
   <!-- Core module loader script -->
   <script type="module">
@@ -33,8 +36,9 @@
       // Load SVG definitions first (they're needed by other components)
       await loadModule('svg-defs', '/svg/svg-defs.js', 'svg-defs-container');
       
-       // Load image utilities right after SVG definitions
-       await loadModule('image-utils', '/utils/image-utils.js', null);  
+      // Load image utilities with a valid container
+      await loadModule('image-utils', '/utils/image-utils.js', 'utils-container');  
+      
       // Load core components
       await loadModule('header', '/header/header.js', 'header-container');
       await loadModule('main-content', '/content/home-content.js', 'main-content-container');
@@ -49,4 +53,3 @@
   </script>
 </body>
 </html>
-
