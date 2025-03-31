@@ -1645,16 +1645,17 @@ document.addEventListener('DOMContentLoaded', function() {
           <use id="lang3" href="#en" />
         </svg>
       </div>
-      <div onclick="toggleLanguagePopup('eu')" class="button euLangButton" title="European Union Languages">
+      <div onclick="setLanguage('lang2')" class="button">
         <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
           <use id="lang2" href="#eu" />
         </svg>
       </div>
-      <div onclick="toggleLanguagePopup('un')" class="button unLangButton" title="Other Languages">
+      <div onclick="setLanguage('lang1')" class="button">
         <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
           <use id="lang1" href="#un" />
         </svg>
       </div>
+    </div>
 
     <!-- START of CONTENT -->
     <div id="euPopup" class="langPopup">
@@ -2780,7 +2781,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
       <g id="eu" filter="url(#sh002)">
-        <g id="euMask" mask="url(#maskClose)">
+        <g id="euMask" mask="url(#maskOpen)">
           <g id="s">
             <g id="c">
               <path id="t" d="M0,0v1h0.5z" transform="translate(0,-1)rotate(18)" />
@@ -2811,7 +2812,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
       <g id="un" filter="url(#sh002)">
-        <g id="unMask" mask="url(#maskClose)">
+        <g id="unMask" mask="url(#maskOpen)">
           <path fill="#009edb" fill-rule="evenodd" d="M0 0h1200v800H0z" />
           <g transform="scale(0.05) translate(-20, 120)">
             <path id="avv" fill="#fff"
