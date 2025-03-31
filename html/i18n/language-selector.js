@@ -1,22 +1,22 @@
 /**
- * Language Selector Module
- * Handles switching between languages and displaying language selection UI
+ * Language Selector Module - Восстановлен из старой версии
+ * Обрабатывает переключение языков и маски для языковых флагов
  */
 
 /**
- * Shows or hides the language selection popup
- * @param {string} popupType - Type of language popup ('eu' or 'un')
+ * Переключает видимость всплывающего меню выбора языка
+ * @param {string} popupType - Тип всплывающего меню ('eu' или 'un')
  */
 export function toggleLanguagePopup(popupType) {
   const euPopup = document.getElementById('euPopup');
   const unPopup = document.getElementById('unPopup');
   
-  // Close all popups if they're open
+  // Закрыть все меню если они открыты
   if (popupType === 'eu') {
     if (euPopup.classList.contains('visible')) {
       euPopup.classList.remove('visible');
     } else {
-      unPopup.classList.remove('visible'); // Close other popup
+      unPopup.classList.remove('visible'); // Закрыть другое меню
       euPopup.classList.add('visible');
       highlightCurrentLanguage(euPopup);
     }
@@ -24,7 +24,7 @@ export function toggleLanguagePopup(popupType) {
     if (unPopup.classList.contains('visible')) {
       unPopup.classList.remove('visible');
     } else {
-      euPopup.classList.remove('visible'); // Close other popup
+      euPopup.classList.remove('visible'); // Закрыть другое меню
       unPopup.classList.add('visible');
       highlightCurrentLanguage(unPopup);
     }
@@ -32,8 +32,8 @@ export function toggleLanguagePopup(popupType) {
 }
 
 /**
- * Highlights the currently selected language in the popup
- * @param {HTMLElement} popup - The popup element containing language buttons
+ * Выделяет текущий выбранный язык во всплывающем меню
+ * @param {HTMLElement} popup - Всплывающее меню
  */
 function highlightCurrentLanguage(popup) {
   const currentLang = getCurrentLanguage();
@@ -42,94 +42,96 @@ function highlightCurrentLanguage(popup) {
   buttons.forEach(button => {
     button.classList.remove('active');
     
-    // Get language code from data attribute
-    const langCode = button.getAttribute('data-language');
-    if (langCode === currentLang) {
-      button.classList.add('active');
+    // Извлекаем код языка из обработчика клика
+    const onclickAttr = button.getAttribute('onclick');
+    if (onclickAttr) {
+      const langMatch = onclickAttr.match(/selectLanguage\(['"]([a-z]{2})['"]\)/);
+      if (langMatch && langMatch[1] === currentLang) {
+        button.classList.add('active');
+      }
     }
   });
 }
 
 /**
- * Gets the current language from various sources
- * @returns {string} - The language code (e.g., 'en', 'de')
+ * Получает текущий язык из разных источников
+ * @returns {string} - Код языка (например 'en', 'de', 'fr')
  */
 export function getCurrentLanguage() {
-  // Check global variable
+  // Проверяем глобальную переменную
   if (typeof window.language !== 'undefined' && window.language) {
     return window.language;
   }
   
-  // Check HTML lang attribute
+  // Проверяем HTML lang атрибут
   const htmlLang = document.documentElement.lang;
   if (htmlLang) {
     return htmlLang;
   }
   
-  // Check i18next cookie
+  // Проверяем i18next cookie
   const cookieMatch = document.cookie.match(/i18next=([^;]+)/);
   if (cookieMatch) {
     return cookieMatch[1];
   }
   
-  // Check localStorage
+  // Проверяем localStorage
   try {
     const lsLang = localStorage.getItem('i18nextLng');
     if (lsLang) {
       return lsLang;
     }
   } catch (e) {
-    // Ignore localStorage errors
+    // Игнорируем ошибки localStorage
   }
   
-  // Default to English
+  // Возвращаем английский по умолчанию
   return 'en';
 }
 
 /**
- * Selects a language and updates UI
- * @param {string} langCode - Language code to switch to (e.g., 'en', 'de')
+ * Выбирает язык и обновляет маски языковых флагов
+ * @param {string} langCode - Код языка (например 'en', 'de', 'fr')
  */
 export function selectLanguage(langCode) {
-  // Close all popups
+  // Закрыть все всплывающие меню
   document.getElementById('euPopup').classList.remove('visible');
   document.getElementById('unPopup').classList.remove('visible');
   
-  // Get current language
+  // Получаем текущий язык
   const previousLanguage = getCurrentLanguage();
   
-  // If same language selected, just close popups
+  // Если выбран тот же язык, просто закрываем меню
   if (langCode === previousLanguage) {
     return;
   }
   
-  // Use i18n's changeLanguage if available
+  // Обновляем маски SVG как в оригинальной функции
+  try {
+    document.getElementById(`${previousLanguage}Mask`).setAttribute("mask", "url(#maskClose)");
+  } catch (e) { /* Игнорируем ошибки */ }
+  
+  try {
+    document.getElementById(`${langCode}Mask`).setAttribute("mask", "url(#maskOpen)");
+  } catch (e) { /* Игнорируем ошибки */ }
+  
+  // Используем функцию i18n, если она доступна
   if (window.i18n && window.i18n.changeLanguage) {
     window.i18n.changeLanguage(langCode);
   } else {
-    // Fallback: traditional method
-    reorganizeLanguageButtons(langCode, previousLanguage);
+    // Резервный вариант: использовать оригинальную логику
     
-    // Update SVG masks as in original function
-    try {
-      document.getElementById(`${previousLanguage}Mask`).setAttribute("mask", "url(#maskClose)");
-    } catch (e) { /* Ignore errors */ }
-    
-    try {
-      document.getElementById(`${langCode}Mask`).setAttribute("mask", "url(#maskOpen)");
-    } catch (e) { /* Ignore errors */ }
-    
-    // Update language variable
+    // Обновляем переменную языка
     window.language = langCode;
     window.menuUsed = true;
     
-    // Save to cookie and localStorage
+    // Сохраняем в cookie и localStorage
     document.cookie = `i18next=${langCode}; path=/; max-age=${60 * 60 * 24 * 365}`;
     try {
       localStorage.setItem('i18nextLng', langCode);
-    } catch (e) { /* Ignore errors */ }
+    } catch (e) { /* Игнорируем ошибки */ }
     
-    // Reload page with new language
+    // Перезагружаем страницу с новым языком
     const cacheBuster = Date.now();
     const url = new URL(window.location.href);
     url.searchParams.set('i18n_cb', cacheBuster);
@@ -139,72 +141,76 @@ export function selectLanguage(langCode) {
 }
 
 /**
- * Reorganizes language buttons to optimize the display of the selected language
- * @param {string} selectedLang - Selected language code
- * @param {string} previousLang - Previous language code
+ * Оригинальная функция setLanguage из старой версии
+ * @param {string} langPos - Идентификатор языка или элемента
  */
-function reorganizeLanguageButtons(selectedLang, previousLang) {
-  // Language menu container
-  const langMenu = document.getElementById('langMenu');
-  if (!langMenu) return;
-  
-  // Find button for selected language
-  let selectedButton = null;
-  const buttons = langMenu.querySelectorAll('.button');
-  
-  buttons.forEach(button => {
-    const langCode = button.getAttribute('data-language');
-    if (langCode === selectedLang) {
-      selectedButton = button;
-    }
-  });
-  
-  // Find button for previous language
-  let previousButton = null;
-  buttons.forEach(button => {
-    const langCode = button.getAttribute('data-language');
-    if (langCode === previousLang) {
-      previousButton = button;
-    }
-  });
-  
-  // If both buttons found, swap their positions
-  if (selectedButton && previousButton) {
-    const parent = langMenu;
-    
-    // Get original positions
-    const prevPosition = Array.from(parent.children).indexOf(previousButton);
-    const selectedPosition = Array.from(parent.children).indexOf(selectedButton);
-    
-    // Swap buttons
-    if (prevPosition !== -1 && selectedPosition !== -1) {
-      if (prevPosition < selectedPosition) {
-        parent.insertBefore(selectedButton, previousButton);
-      } else {
-        parent.insertBefore(selectedButton, previousButton.nextSibling);
-      }
-    }
+export function setLanguage(langPos) {
+  // Проверяем специальные случаи для всплывающих меню
+  if (langPos === 'lang2' || langPos === 'eu') {
+    toggleLanguagePopup('eu');
+    return;
+  } else if (langPos === 'lang1' || langPos === 'un') {
+    toggleLanguagePopup('un');
+    return;
   }
+  
+  // Обрабатываем обычное переключение языка
+  const previousLanguage = getCurrentLanguage();
+  
+  let newLanguage;
+  if (langPos.slice(0, 4) === "lang") {
+    window.menuUsed = true;
+    newLanguage = document.getElementById(langPos).getAttribute("href").slice(1);
+  } else {
+    newLanguage = langPos;
+  }
+  
+  if (newLanguage === previousLanguage) return;
+
+  // Обновляем маски SVG
+  try {
+    document.getElementById(`${previousLanguage}Mask`).setAttribute("mask", "url(#maskClose)");
+  } catch (e) { /* Игнорируем ошибки */ }
+  
+  try {
+    document.getElementById(`${newLanguage}Mask`).setAttribute("mask", "url(#maskOpen)");
+  } catch (e) { /* Игнорируем ошибки */ }
+
+  // Обновляем переменную языка
+  window.language = newLanguage;
+  
+  // Сохраняем в cookie и localStorage
+  document.cookie = `i18next=${newLanguage}; path=/; max-age=${60 * 60 * 24 * 365}`;
+  try {
+    localStorage.setItem('i18nextLng', newLanguage);
+  } catch (e) { /* Игнорируем ошибки */ }
+  
+  // Перезагружаем страницу с новым языком
+  const cacheBuster = Date.now();
+  const url = new URL(window.location.href);
+  url.searchParams.set('i18n_cb', cacheBuster);
+  url.searchParams.set('lang', newLanguage);
+  window.location.href = url.toString();
 }
 
 /**
- * Initialize event handlers for clicks outside the language popups
+ * Инициализация обработчиков событий для кликов вне меню языков
  */
 export function initLanguageSelector() {
   document.addEventListener('click', function(event) {
     const euPopup = document.getElementById('euPopup');
     const unPopup = document.getElementById('unPopup');
     
-    // Check click for EU menu
-    const euButton = document.querySelector('[data-language-popup="eu"]');
+    // Проверка клика для EU меню
+    const euButton = document.querySelector('[onclick="setLanguage(\'lang2\')"]');
     if (euPopup && euPopup.classList.contains('visible') && 
         !euPopup.contains(event.target) && 
         (!euButton || !euButton.contains(event.target))) {
       euPopup.classList.remove('visible');
     }
     
-    // Check click for UN menu
-    const unButton = document.querySelector('[data-language-popup="un"]');
+    // Проверка клика для UN меню
+    const unButton = document.querySelector('[onclick="setLanguage(\'lang1\')"]');
     if (unPopup && unPopup.classList.contains('visible') && 
         !unPopup.contains(event.target) && 
         (!unButton || !unButton.contains(event.target))) {
@@ -213,9 +219,10 @@ export function initLanguageSelector() {
   });
 }
 
-// Initialize when the module is loaded
+// Инициализация при загрузке модуля
 document.addEventListener('DOMContentLoaded', initLanguageSelector);
 
-// Expose functions globally that need to be accessed by inline handlers
+// Экспортируем функции в глобальное пространство для инлайн-обработчиков
 window.toggleLanguagePopup = toggleLanguagePopup;
 window.selectLanguage = selectLanguage;
+window.setLanguage = setLanguage;
