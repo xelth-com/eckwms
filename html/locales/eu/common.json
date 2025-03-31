@@ -1,0 +1,44 @@
+{
+  "links": {
+    "homepage": "M3 Mobile Hasiera Orri",
+    "partner_portal": "Bazkide\n                Ataria",
+    "technical_support": "Teknikoko Laguntza",
+    "release_notes": "OS Bertsio Oharrak",
+    "app_manual": "M3 Aplikazio Eskuliburu Gida",
+    "title": "Esteka Erabilgarriak:"
+  },
+  "footer": {
+    "copyright": "Copyright © 2024 M3 Mobile GmbH. Eskubide guztiak gordeta.\n      Baldintzak eta Baldintzak · Pribatutasun Politika · Lege Oharra"
+  },
+  "service": {
+    "title": "Gure Zerbitzu Zentroak:"
+  },
+  "rma": {
+    "request_button": "RMA Konponketa Eskaera",
+    "status_check": "Konponketa egoera egiaztatzeko, mesedez, sartu gure RMA zenbakia edo gailuaren serie zenbakia.",
+    "form_info": "Ezer ahaztu ez dadin, RMA formulario bat sortu dugu. Formulario hau betetzen baduzu eta zure paketearekin\n              batera sartzen baduzu, beharrezko informazio guztia aurrez jasoko dugu eta paketea jasotzean\n              prozesatzeko denbora murriztu dezakegu. Eskerrik asko zure lankidetzagatik!",
+    "tracking_info": "Orri honetan, zure bidalketaren edukia egiaztatu dezakezu, konponketa egoera jarraitu eta ordainketa\n              xehetasunak edo beste arazo batzuk eguneratu. Saioa hasteko xehetasunak ere bidaliko dira paketean\n              emandako helbide elektronikoan.",
+    "process_info": "Zure paketea jasotzen dugunean, kontratua amaitzen da. Zure paketea RMA zenbaki bat esleitzen diogu eta\n              horretarako orri bat sortzen dugu. Orri hau eskuratu dezakezu zure bidalketa zerbitzuak emandako\n              jarraipen zenbakia gure hasiera orrian sartuaz dagokion eremuan (hori horia)."
+  },
+  "address": {
+    "example_email": "example@eck3.com",
+    "example_phone": "[+49 00 000000]",
+    "example_city": "08150 Adibide Hiria",
+    "example_street": "Adibide Kalea 42",
+    "example_person": "[Attn. Max Mustermann]",
+    "example_company": "Adibide Enpresa",
+    "sender": "Bidaltzailea",
+    "reseller_note": "[Saltzailearen Izena]",
+    "recipient": "Hartzailea"
+  },
+  "welcome": {
+    "important_note": "Garrantzi garrantzitsua:",
+    "warranty_info": "Garrantzi eskaera edo zerbitzu pakete akordioa baduzu, mesedez, sartu saltzailearen izena.",
+    "error_description": "Mesedez, akatsaren deskribapen zehatza eman, hau arrakastaz konpontzeko aukerak nabarmen handitzen baititu.",
+    "contract_info": "Paketea bidaliz, konponketa kontratu bat ezartzen da zure (bidaltzailea) eta gure (hartzailea) artean. \nZuk estaldura kostuak ordaintzen dituzu, eta guk itzultze kostuak estaltzen ditugu. Ikuskapena eta kostuaren estimazioa doan dira.",
+    "message": "Webgunea itxita dago. Mesedez, erabili",
+    "title": "⚠️ Ohartarazpen Garrantzitsua ⚠️",
+    "process": "Prozesua sinplea da: bidali zure M3 Mobile gailua helbide honetara:",
+    "note": "P.S. Webgune nagusia behera doanean PDF bat inprimatzeko formularioa erabil dezakezu."
+  }
+}

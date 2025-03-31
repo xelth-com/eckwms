@@ -1,4 +1,4 @@
-// Modified i18n.js with RMA form compatibility
+// Modified i18n.js with unified caching mechanism
 
 (function() {
   // Default language fallback
@@ -25,6 +25,68 @@
   
   // Verbose logging control
   const VERBOSE_LOGGING = true;
+  
+  // Improved file caching system - unified for the entire application
+  if (!window.translationFileCache) {
+    window.translationFileCache = {
+      // Storage for missing files information with timestamps
+      missingFiles: {},
+      
+      // Cache expiration time - 5 minutes
+      cacheExpiry: 5 * 60 * 1000,
+      
+      // Check if a file is marked as missing
+      isFileMissing: function(fileKey) {
+        if (!this.missingFiles[fileKey]) {
+          return false;
+        }
+        
+        // Check if cache has expired
+        const timestamp = this.missingFiles[fileKey];
+        const now = Date.now();
+        
+        if (now - timestamp > this.cacheExpiry) {
+          delete this.missingFiles[fileKey];
+          return false;
+        }
+        
+        return true;
+      },
+      
+      // Mark a file as missing
+      markAsMissing: function(fileKey) {
+        this.missingFiles[fileKey] = Date.now();
+        
+        // For backward compatibility with existing code
+        if (!window.missingTranslationFiles) {
+          window.missingTranslationFiles = new Set();
+        }
+        window.missingTranslationFiles.add(fileKey);
+      },
+      
+      // Force reset cache for a specific file
+      resetFile: function(fileKey) {
+        delete this.missingFiles[fileKey];
+        if (window.missingTranslationFiles) {
+          window.missingTranslationFiles.delete(fileKey);
+        }
+      },
+      
+      // Reset all cache
+      resetAll: function() {
+        this.missingFiles = {};
+        if (window.missingTranslationFiles) {
+          window.missingTranslationFiles.clear();
+        }
+      }
+    };
+    
+    // Set up periodic cache reset (every 5 minutes)
+    setInterval(() => {
+      console.log("[i18n] Resetting translation file cache to check for new files");
+      window.translationFileCache.resetAll();
+    }, 5 * 60 * 1000);
+  }
   
   /**
    * Enhanced logging function that can be easily toggled
@@ -477,9 +539,7 @@
   }
    
 /**
- * Замените эту функцию в вашем основном файле i18n.js
- * 
- * ВАЖНО: Это должно быть в основном файле i18n.js, а не только в форме RMA!
+ * Fetch translation with improved caching of missing files
  */
 async function fetchTranslation(key, defaultText, options = {}, pendingInfo = null) {
   const language = getCurrentLanguage();
@@ -538,24 +598,19 @@ async function fetchTranslation(key, defaultText, options = {}, pendingInfo = nu
     try {
       log(`Making API request for translation: "${key}" in language: ${language}`);
       
-      // Инициализируем хранилище отсутствующих файлов, если оно еще не создано
-      if (!window.missingTranslationFiles) {
-        window.missingTranslationFiles = new Set();
-      }
-      
-      // Проверяем, не известно ли нам уже, что файл отсутствует
+      // Check for existing file using improved caching system
       const localeFileKey = `${language}:${namespace}`;
       
-      // Если файл еще не отмечен как отсутствующий, проверяем его
-      if (!window.missingTranslationFiles.has(localeFileKey)) {
+      // Check if the file is already known to be missing
+      if (!window.translationFileCache.isFileMissing(localeFileKey)) {
         try {
-          // КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Используем HEAD-запрос вместо GET
+          // Use HEAD request to check if file exists
           const checkResponse = await fetch(`/locales/${language}/${namespace}.json`, {
             method: 'HEAD',
             cache: 'no-cache'
           });
           
-          // Если файл существует, загружаем его
+          // If file exists, load it
           if (checkResponse.ok) {
             log(`File exists: /locales/${language}/${namespace}.json - loading`);
             
@@ -563,7 +618,7 @@ async function fetchTranslation(key, defaultText, options = {}, pendingInfo = nu
             if (response.ok) {
               const data = await response.json();
               
-              // Находим перевод в структуре данных
+              // Find translation in data structure
               let translation = navigateToKey(data, translationKey);
               
               if (translation) {
@@ -591,21 +646,21 @@ async function fetchTranslation(key, defaultText, options = {}, pendingInfo = nu
               }
             }
           } else {
-            // Если файл не существует, запоминаем это
-            window.missingTranslationFiles.add(localeFileKey);
+            // If file doesn't exist, mark it in cache
+            window.translationFileCache.markAsMissing(localeFileKey);
             log(`File does not exist: /locales/${language}/${namespace}.json - using API`);
           }
         } catch (fileError) {
-          // В случае ошибки запоминаем, что файл отсутствует
-          window.missingTranslationFiles.add(localeFileKey);
+          // In case of error, mark file as missing
+          window.translationFileCache.markAsMissing(localeFileKey);
           log(`Error checking locale file: ${fileError.message}`);
         }
       } else {
         log(`Already know that file is missing: /locales/${language}/${namespace}.json`);
       }
       
-      // Если мы дошли до этой точки, то файл не существует или не содержит нужного ключа
-      // Используем API-перевод
+      // If we reached here, the file doesn't exist or doesn't contain the key
+      // Use API translation
       
       try {
         const response = await fetch(`/api/translate`, {
@@ -740,26 +795,6 @@ function navigateToKey(obj, key) {
 }
   
   /**
-   * Helper function to navigate a nested structure by a dot-separated key
-   * E.g., "device.title" would navigate to obj.device.title
-   */
-  function navigateToKey(obj, key) {
-    if (!obj || !key) return null;
-    
-    const parts = key.split('.');
-    let current = obj;
-    
-    for (const part of parts) {
-      if (current[part] === undefined) {
-        return null;
-      }
-      current = current[part];
-    }
-    
-    return current;
-  }
-  
-  /**
    * Update all pending elements waiting for a translation
    */
   function updateAllPendingElements(pendingElements, translation) {
@@ -800,7 +835,7 @@ function navigateToKey(obj, key) {
     });
   }
   
-  /**
+/**
  * Update all elements with a specific translation key
  */
 function updateAllElementsWithKey(key, translation) {
@@ -811,9 +846,9 @@ function updateAllElementsWithKey(key, translation) {
   
   let updateCount = 0;
   
-  // Update text content translations - С УЧЕТОМ ИНДИВИДУАЛЬНЫХ OPTIONS
+  // Update text content translations - with individual OPTIONS support
   document.querySelectorAll(`[data-i18n="${key}"], [data-i18n="${keyWithoutPrefix}"]`).forEach(element => {
-    // Важное изменение: проверяем, есть ли у элемента индивидуальные options
+    // Check for individual options
     let options = {};
     try {
       const optionsAttr = element.getAttribute('data-i18n-options');
@@ -824,9 +859,9 @@ function updateAllElementsWithKey(key, translation) {
       logError('Error parsing data-i18n-options:', e);
     }
     
-    // Если у элемента есть счетчик, применяем его индивидуально
+    // Apply count replacement if needed
     if (options.count !== undefined && translation.includes('{{count}}')) {
-      // Создаем индивидуальную копию перевода с учетом счетчика
+      // Create individual translation copy with the count replaced
       const individualTranslation = translation.replace(/\{\{count\}\}/g, options.count);
       element.textContent = individualTranslation;
     } else {
@@ -835,9 +870,9 @@ function updateAllElementsWithKey(key, translation) {
     updateCount++;
   });
   
-  // Update HTML translations - аналогично с учетом options
+  // Update HTML translations - same with options support
   document.querySelectorAll(`[data-i18n-html="${key}"], [data-i18n-html="${keyWithoutPrefix}"]`).forEach(element => {
-    // Проверяем индивидуальные options
+    // Check for individual options
     let options = {};
     try {
       const optionsAttr = element.getAttribute('data-i18n-options');
@@ -863,7 +898,7 @@ function updateAllElementsWithKey(key, translation) {
       const attrsJson = element.getAttribute('data-i18n-attr');
       if (!attrsJson) return;
       
-      // Проверяем индивидуальные options
+      // Check for individual options
       let options = {};
       try {
         const optionsAttr = element.getAttribute('data-i18n-options');
@@ -904,9 +939,9 @@ function updateAllElementsWithKey(key, translation) {
       
       // Close all masks
       const supportedLangs = ['de', 'en', 'fr', 'it', 'es', 'pt', 'nl', 'da', 'sv', 'fi', 
-                             'el', 'cs', 'pl', 'hu', 'sk', 'sl', 'et', 'lv', 'lt', 'ro',
-                             'bg', 'hr', 'ga', 'mt', 'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 
-                             'he', 'ko', 'ja'];
+        'el', 'cs', 'pl', 'hu', 'sk', 'sl', 'et', 'lv', 'lt', 'ro',
+        'bg', 'hr', 'ga', 'mt', 'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 
+        'he', 'ko', 'ja', 'no', 'bs', 'hi'];
       
       supportedLangs.forEach(lang => {
         const maskElement = document.getElementById(`${lang}Mask`);

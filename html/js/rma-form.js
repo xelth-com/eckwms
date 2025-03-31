@@ -27,13 +27,7 @@
     // Add address logic explanation
     addAddressLogicExplanation();
     
-    // Add first device entry only if i18n is ready,
-    // otherwise wait for the i18n initialization event
-    if (i18nInitialized || 
-        (window.i18n && window.i18n.isInitialized()) || 
-        (window.i18n && window.i18n.getCurrentLanguage() === 'en')) {
-      addDeviceEntry();
-    }
+
   }
 
   /**
@@ -385,56 +379,7 @@ async function loadTranslationFileSilently(language, namespace) {
   }
 }
 
-/**
- * Создаем кэш с временными метками для отслеживания отсутствующих файлов
- * Это улучшенная версия, которая позволяет обнаружить появление новых файлов
- */
-if (!window.translationFileCache) {
-  window.translationFileCache = {
-    // Отсутствующие файлы с временными метками
-    missingFiles: {},
-    
-    // Время истечения кэша (в миллисекундах)
-    // По умолчанию - 5 минут
-    cacheExpiry: 5 * 60 * 1000,
-    
-    // Проверяет, отсутствует ли файл (с учетом истечения срока кэша)
-    isFileMissing: function(fileKey) {
-      if (!this.missingFiles[fileKey]) {
-        return false;
-      }
-      
-      // Проверяем, не истек ли срок кэша
-      const timestamp = this.missingFiles[fileKey];
-      const now = Date.now();
-      
-      if (now - timestamp > this.cacheExpiry) {
-        // Срок кэша истек, удаляем запись и возвращаем false,
-        // чтобы проверить файл снова
-        delete this.missingFiles[fileKey];
-        return false;
-      }
-      
-      // Файл отсутствует и срок кэша не истек
-      return true;
-    },
-    
-    // Отмечает файл как отсутствующий
-    markAsMissing: function(fileKey) {
-      this.missingFiles[fileKey] = Date.now();
-    },
-    
-    // Принудительный сброс кэша для конкретного файла
-    resetFile: function(fileKey) {
-      delete this.missingFiles[fileKey];
-    },
-    
-    // Сбрасывает весь кэш
-    resetAll: function() {
-      this.missingFiles = {};
-    }
-  };
-}
+
 
 /**
  * Загружает переводы для RMA без ошибок 404 и с периодической 
@@ -509,25 +454,6 @@ async function loadRmaTranslations() {
   }
 }
 
-/**
- * Периодически сбрасываем кэш отсутствующих файлов,
- * чтобы проверить, не появились ли они на сервере
- */
-function setupCacheRefresh() {
-  // Запускаем проверку каждые 5 минут (или другой интервал)
-  const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 минут
-  
-  setInterval(() => {
-    // Сброс всего кэша - при следующем запросе файлы будут проверены заново
-    if (window.translationFileCache) {
-      console.log("Сброс кэша отсутствующих файлов локализации для проверки обновлений");
-      window.translationFileCache.resetAll();
-    }
-  }, REFRESH_INTERVAL);
-}
-
-// Запускаем механизм обновления кэша
-setupCacheRefresh();
 
 /**
  * Fetches a translation with no file errors, preferring API if files missing
