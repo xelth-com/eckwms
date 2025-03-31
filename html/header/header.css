@@ -1,15 +1,13 @@
-/* Header Module Styles - Восстановлено из оригинального файла */
+/* Header Styles */
 
 /* Header container */
 .header {
   padding-top: 3px;
   padding-right: 3px;
-  display: flex;
-  justify-content: space-between;
-  align-items: start;
+  position: relative;
 }
 
-/* Language menu styles */
+/* Language menu container */
 #langMenu {
   width: max-content;
   display: inline-block; 
@@ -17,9 +15,10 @@
   border-radius: 30px; 
   background-color: rgba(255, 255, 255, 0.2);
   box-shadow: 0px 0px 30px -15px rgba(255, 255, 255, 1);
+  transition: all 0.3s ease;
 }
 
-/* Button styles for language buttons */
+/* Button styles */
 .button {
   filter: brightness(100%);
   vertical-align: center;
@@ -28,19 +27,25 @@
   display: inline-block;
   border-radius: 10px;
   background-color: rgba(180, 180, 180, 0.5);
-  box-shadow: 1px 2px 3px 0px rgba(20, 20, 20, .5), inset 1px 1px 2px 0px rgba(255, 255, 255, .5), inset -1px -1px 2px 0px rgba(50, 50, 50, .5);
+  box-shadow: 1px 2px 3px 0px rgba(20, 20, 20, .5), 
+              inset 1px 1px 2px 0px rgba(255, 255, 255, .5), 
+              inset -1px -1px 2px 0px rgba(50, 50, 50, .5);
   transition: all 0.2s;
   user-select: none;
 }
 
 .button:hover {
   background-color: rgba(180, 180, 180, 0.6);
-  box-shadow: 1px 2px 4px 0px rgba(20, 20, 20, 0.6), inset 2px 2px 4px 0px rgba(255, 255, 255, 0.6), inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, 0.6);
+  box-shadow: 1px 2px 4px 0px rgba(20, 20, 20, 0.6), 
+              inset 2px 2px 4px 0px rgba(255, 255, 255, 0.6), 
+              inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, 0.6);
 }
 
 .button:active {
   filter: brightness(95%);
-  box-shadow: 0px 0px 0px 0px rgba(20, 20, 20, .5), inset 2px 2px 2px 0px rgba(50, 50, 50, .5), inset -2px -2px 2px 0px rgba(255, 255, 255, .5);
+  box-shadow: 0px 0px 0px 0px rgba(20, 20, 20, .5), 
+              inset 2px 2px 2px 0px rgba(50, 50, 50, .5), 
+              inset -2px -2px 2px 0px rgba(255, 255, 255, .5);
 }
 
 /* Main menu styles */
@@ -62,10 +67,15 @@
   padding-left: 4px;
   padding-right: 6px;
   color: rgba(0, 0, 0, 0.5);
-  text-shadow: -0.4px -0.6px 0.3px rgb(160, 160, 160, 0.6), 0.4px 0.6px 0.3px rgb(70, 70, 70, 0.6),
-    -0.8px -1.2px 3px rgb(215, 215, 215, 0.8), 1.6px 2.2px 4px rgb(0, 0, 0, 0.8),
-    -2.4px -3.3px 8px rgb(255, 255, 255), 3.2px 4.4px 5px rgb(255, 255, 255);
-  box-shadow: 1px 2px 4px 0px rgba(20, 20, 20, 0), inset 2px 2px 4px 0px rgba(255, 255, 255, 0), inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, 0);
+  text-shadow: -0.4px -0.6px 0.3px rgb(160, 160, 160, 0.6), 
+               0.4px 0.6px 0.3px rgb(70, 70, 70, 0.6),
+               -0.8px -1.2px 3px rgb(215, 215, 215, 0.8), 
+               1.6px 2.2px 4px rgb(0, 0, 0, 0.8),
+               -2.4px -3.3px 8px rgb(255, 255, 255), 
+               3.2px 4.4px 5px rgb(255, 255, 255);
+  box-shadow: 1px 2px 4px 0px rgba(20, 20, 20, 0), 
+              inset 2px 2px 4px 0px rgba(255, 255, 255, 0), 
+              inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, 0);
 }
 
 .mainMenu:hover {
@@ -76,20 +86,31 @@
   padding-bottom: calc((45px - 1em)/2);
   border-image: linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.4)) 1 stretch;
   color: rgba(0, 0, 0, 0.7);
-  text-shadow: -0.4px -0.6px 0.3px rgb(160, 160, 160, 0.6), 0.4px 0.6px 0.3px rgb(70, 70, 70, 0.6),
-    -0.8px -1.2px 3px rgb(215, 215, 215, 0.8), 1.6px 2.2px 4px rgb(0, 0, 0, 1),
-    -2.4px -3.3px 8px rgb(255, 255, 255), 3.2px 4.4px 5px rgb(255, 255, 255, 0.5);
-  box-shadow: 1px 2px 4px 0px rgba(20, 20, 20, .7), inset 2px 2px 4px 0px rgba(255, 255, 255, .7), inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, .7);
+  text-shadow: -0.4px -0.6px 0.3px rgb(160, 160, 160, 0.6), 
+               0.4px 0.6px 0.3px rgb(70, 70, 70, 0.6),
+               -0.8px -1.2px 3px rgb(215, 215, 215, 0.8), 
+               1.6px 2.2px 4px rgb(0, 0, 0, 1),
+               -2.4px -3.3px 8px rgb(255, 255, 255), 
+               3.2px 4.4px 5px rgb(255, 255, 255, 0.5);
+  box-shadow: 1px 2px 4px 0px rgba(20, 20, 20, .7), 
+              inset 2px 2px 4px 0px rgba(255, 255, 255, .7), 
+              inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, .7);
 }
 
-/* Menu card styles */
+.mainMenuLine {
+  transition: all 2s;
+}
+
+/* Main menu card styles */
 .mainMenuCard {
   opacity: 0;
   padding: 10px 30px;
   display: none;
   position: fixed;
   border-radius: 10px;
-  box-shadow: 2px 3px 4px 0px rgba(20, 20, 20, .7), inset 2px 2px 4px 0px rgba(255, 255, 255, .7), inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, .7);
+  box-shadow: 2px 3px 4px 0px rgba(20, 20, 20, .7), 
+              inset 2px 2px 4px 0px rgba(255, 255, 255, .7), 
+              inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, .7);
   background-color: rgba(186, 128, 0, 0.5);
   width: fit-content;
   white-space: nowrap;
@@ -97,9 +118,12 @@
   transition: filter 1s ease-in;
   transition: opacity 0.8s;
   color: rgb(0, 0, 0, 0.6);
-  text-shadow: -0.4px -0.6px 0.3px rgb(160, 160, 160, 0.6), 0.4px 0.6px 0.3px rgb(70, 70, 70, 0.6),
-    -0.8px -1.2px 3px rgb(215, 215, 215, 0.8), 1.6px 2.2px 4px rgb(0, 0, 0, 0.8),
-    -2.4px -3.3px 8px rgb(255, 255, 255), 3.2px 4.4px 5px rgb(255, 255, 255);
+  text-shadow: -0.4px -0.6px 0.3px rgb(160, 160, 160, 0.6), 
+               0.4px 0.6px 0.3px rgb(70, 70, 70, 0.6),
+               -0.8px -1.2px 3px rgb(215, 215, 215, 0.8), 
+               1.6px 2.2px 4px rgb(0, 0, 0, 0.8),
+               -2.4px -3.3px 8px rgb(255, 255, 255), 
+               3.2px 4.4px 5px rgb(255, 255, 255);
   text-align: center;
   z-index: 100;
 }
@@ -197,7 +221,7 @@
   animation: fadeIn 0.3s ease;
 }
 
-/* Responsive layout */
+/* Responsive layouts */
 #mainMenuOver1000 {
   width: max-content;
   display: none;
@@ -212,6 +236,20 @@
     width: max-content;
     display: inline-block;
   }
+
+  #tableOver1000px_contents {
+    display: table;
+    width: calc(100% - 1px);
+  }
+
+  #tableCell1Over1000px_block {
+    display: table-cell;
+  }
+
+  #tableCell2Over1000px_block {
+    display: table-cell;
+    width: 450px;
+  }
 }
 
 @media screen and (max-width: 1100px) {
@@ -220,7 +258,7 @@
   }
 }
 
-/* Language visibility controls */
+/* Language button visibility controls */
 #langSide6 {
   display: none;
 }

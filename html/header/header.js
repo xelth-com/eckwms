@@ -1,14 +1,24 @@
 /**
  * Header Module
- * Contains the site logo, language selector, and main navigation menu
+ * Contains site logo, language selector, and main navigation menu
  */
 
 import { loadCSS, loadTemplate } from '/core/module-loader.js';
-import { toggleLanguagePopup, selectLanguage } from '/i18n/language-selector.js';
+import { 
+  toggleLanguagePopup, 
+  selectLanguage, 
+  setLanguage,
+  syncLanguageMasks
+} from '/i18n/language-selector.js';
+
+let waitForTransition = false;
+let cards = [];
+let menuUsed = false;
+window.menuUsed = menuUsed;
 
 /**
- * Header module initialization
- * @param {HTMLElement} container - Container element to render the header into
+ * Initialize header module
+ * @param {HTMLElement} container - Container to render header into
  */
 export async function init(container) {
   // Load required CSS
@@ -18,74 +28,76 @@ export async function init(container) {
   const html = await loadTemplate('/header/header.template.html');
   container.innerHTML = html;
   
-  // Initialize event listeners
+  // Initialize event listeners and card functionality
   initEventListeners();
+  initMainMenuCards();
 }
 
 /**
- * Initialize header-specific event listeners
+ * Initialize event listeners
  */
 function initEventListeners() {
-  // Main menu toggle
-  const menuButton = document.getElementById('mainMenuToggle');
-  if (menuButton) {
-    menuButton.addEventListener('click', () => showMenu('mainMenu'));
+  // Add main menu toggle event
+  const menuToggle = document.querySelector('[onclick="showMenu(\'mainMenu\');"]');
+  if (menuToggle) {
+    menuToggle.addEventListener('click', () => showMenu('mainMenu'));
   }
   
-  // Language menu buttons
-  const languageButtons = document.querySelectorAll('[data-language]');
-  languageButtons.forEach(button => {
-    const lang = button.getAttribute('data-language');
-    button.addEventListener('click', () => selectLanguage(lang));
-  });
-  
-  // Language popup controls
-  const euButton = document.querySelector('[data-language-popup="eu"]');
-  if (euButton) {
-    euButton.addEventListener('click', () => toggleLanguagePopup('eu'));
-  }
-  
-  const unButton = document.querySelector('[data-language-popup="un"]');
-  if (unButton) {
-    unButton.addEventListener('click', () => toggleLanguagePopup('un'));
-  }
-  
-  // Close buttons for language popups
-  const closeButtons = document.querySelectorAll('.langPopupClose');
-  closeButtons.forEach(button => {
-    button.addEventListener('click', function() {
-      const popup = this.closest('.langPopup');
-      if (popup) {
-        popup.classList.remove('visible');
-      }
-    });
+  // Add menu card event listeners
+  document.querySelectorAll('[onmouseenter^="mainMenuCardOpen"]').forEach(element => {
+    const menuId = element.id;
+    element.addEventListener('mouseenter', () => mainMenuCardOpen(menuId));
+    element.addEventListener('mouseleave', () => mainMenuCardClose(menuId));
   });
 }
 
 /**
- * Show or hide a menu
- * @param {string} menuType - Type of menu to toggle ('mainMenu' or 'sideMenu')
+ * Initialize main menu cards
  */
-function showMenu(menuType) {
-  if (window.waitForTransition) return;
-  const elements = Array.from(document.getElementsByClassName(`${menuType}Line`));
+function initMainMenuCards() {
+  cards = Array.from(document.getElementsByClassName("mainMenuCard"), (element, index) => {
+    element.style.backgroundImage = `
+      linear-gradient(90deg,#ba80 0%,#ba84 10%,#ba88 20%,#ba8c 30%,#ba8f 40%,  #ba8f 60%,#ba8c 70%,#ba88 80%,#ba84 90%,#ba80 100%),
+      linear-gradient(30deg,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80),
+      ${window.backButtonImg}`;
+    return { el: element, mmn: "", timeoutId: null, timeoutId1: null };
+  });
+}
 
-  if (document.getElementById(`${menuType}Buttons`).style.display !== "none") {
+/**
+ * Toggle main menu visibility
+ * @param {string} menuType - Type of menu ('mainMenu' or 'sideMenu')
+ */
+export function showMenu(menuType) {
+  if (window.waitForTransition) return;
+  
+  const elements = Array.from(document.getElementsByClassName(`${menuType}Line`));
+  const buttonsElement = document.getElementById(`${menuType}Buttons`);
+
+  if (buttonsElement.style.display !== "none") {
     window.waitForTransition = true;
     setTimeout(() => {
-      document.getElementById(`${menuType}Buttons`).style.display = "none";
-      if (menuType === "mainMenu") document.getElementById("langMenu").style.display = "inline-block";
+      buttonsElement.style.display = "none";
+      if (menuType === "mainMenu") {
+        const langMenu = document.getElementById("langMenu");
+        if (langMenu) langMenu.style.display = "inline-block";
+      }
       window.waitForTransition = false;
     }, 3000);
   } else {
-    if (menuType === "mainMenu") document.getElementById("langMenu").style.display = "none";
-    document.getElementById(`${menuType}Buttons`).style.display = "inline-block";
+    if (menuType === "mainMenu") {
+      const langMenu = document.getElementById("langMenu");
+      if (langMenu) langMenu.style.display = "none";
+    }
+    buttonsElement.style.display = "inline-block";
   }
 
   if (elements[1].getAttribute("x") === "10") {
+    // Open menu
     elements[1].setAttribute("x", "65");
     elements[0].style.transform = "rotate(-45deg)";
     elements[2].style.transform = "rotate(45deg)";
+    
     Array.from(document.getElementsByClassName(menuType)).forEach(element => {
       element.style.transitionDuration = `${(0.5 + Math.random())}s`;
       element.style.transitionDelay = `${Math.random()}s`;
@@ -95,6 +107,7 @@ function showMenu(menuType) {
         element.style.opacity = 1;
       }, 67);
     });
+    
     setTimeout(() => {
       Array.from(document.getElementsByClassName(menuType)).forEach(element => {
         element.style.transitionDuration = "0.3s";
@@ -102,12 +115,15 @@ function showMenu(menuType) {
       });
     }, 2000);
   } else {
+    // Close menu
     elements[1].setAttribute("x", "10");
     elements[0].style.transform = "rotate(0deg)";
     elements[2].style.transform = "rotate(0deg)";
+    
     Array.from(document.getElementsByClassName(menuType)).forEach(element => {
       element.style.transitionDuration = `${(0.5 + Math.random())}s`;
       element.style.transitionDelay = `${Math.random()}s`;
+      
       setTimeout(() => {
         element.style.visibility = "hidden";
         element.style.opacity = 0;
@@ -117,20 +133,130 @@ function showMenu(menuType) {
 }
 
 /**
- * Post-initialization tasks, run after the DOM is updated
+ * Open main menu card
+ * @param {string} mainMenuNumber - Main menu ID
+ */
+export function mainMenuCardOpen(mainMenuNumber) {
+  const menu = document.getElementById(mainMenuNumber);
+  if (!menu) return;
+  
+  menu.style.backgroundColor = "#ba87";
+  
+  // Find minimum and maximum z-index
+  let zmin = parseInt(cards[0].el.style.zIndex) || 0;
+  let zmax = parseInt(cards[0].el.style.zIndex) || 0;
+  let equal = false;
+  let i = 0;
+  
+  // Check if card is already open for this menu
+  cards.forEach((element, index) => {
+    if (element.mmn === mainMenuNumber) {
+      equal = true;
+      clearTimeout(element.timeoutId);
+      clearTimeout(element.timeoutId1);
+    }
+    
+    const z = parseInt(element.el.style.zIndex) || 0;
+    if (zmin >= z) {
+      zmin = z;
+      i = index;
+    }
+    if (zmax < z) {
+      zmax = z;
+    }
+  });
+  
+  // If already showing this menu, return
+  if (equal) {
+    return;
+  } else {
+    // Hide other cards
+    cards.forEach((element, index) => {
+      if (index !== i) {
+        element.el.style.opacity = "0";
+        element.el.style.filter = "blur(10px)";
+        element.mmn = "empty";
+        element.el.onmouseenter = null;
+        element.el.onmouseleave = null;
+      }
+    });
+  }
+
+  // Clear timeouts and show card
+  clearTimeout(cards[i].timeoutId);
+  clearTimeout(cards[i].timeoutId1);
+  
+  cards[i].el.style.zIndex = `${zmax + 1}`;
+  cards[i].el.style.display = "block";
+  cards[i].el.onmouseenter = () => mainMenuCardOpen(mainMenuNumber);
+  cards[i].el.onmouseleave = () => mainMenuCardClose(mainMenuNumber);
+  
+  const contentDiv = menu.querySelector('div[hidden]');
+  if (contentDiv) {
+    cards[i].el.innerHTML = contentDiv.innerHTML;
+  }
+  
+  cards[i].mmn = mainMenuNumber;
+  
+  // Position card
+  if (event) {
+    cards[i].el.style.left = `${Math.floor(event.clientX - (event.clientX * cards[i].el.offsetWidth / window.innerWidth))}px`;
+    cards[i].el.style.top = `${Math.floor(Math.random() * 50 + 70)}px`;
+  }
+  
+  cards[i].el.style.opacity = "1";
+  cards[i].el.style.filter = "blur(0px)";
+}
+
+/**
+ * Close main menu card
+ * @param {string} mainMenuNumber - Main menu ID
+ */
+export function mainMenuCardClose(mainMenuNumber) {
+  const menu = document.getElementById(mainMenuNumber);
+  if (!menu) return;
+  
+  menu.style.backgroundColor = "#ba80";
+
+  cards.forEach((element) => {
+    if (element.mmn === mainMenuNumber) {
+      element.timeoutId = setTimeout(() => {
+        element.el.style.opacity = "0";
+        element.el.style.filter = "blur(10px)";
+        element.mmn = "empty";
+        element.el.onmouseenter = null;
+        element.el.onmouseleave = null;
+        
+        element.timeoutId1 = setTimeout(() => {
+          element.el.style.display = "none";
+        }, 500);
+      }, 1000);
+    }
+  });
+}
+
+/**
+ * Post-initialization tasks
  */
 export function postInit() {
   // Auto-show main menu on desktop after 30 seconds if not used yet
   setTimeout(() => {
     if (window.matchMedia("(min-width: 1001px)").matches) {
-      if (document.getElementById("mainMenuButtons").style.display === "none") {
+      const menuButtons = document.getElementById("mainMenuButtons");
+      if (menuButtons && menuButtons.style.display === "none") {
         if (!window.menuUsed) {
           showMenu("mainMenu");
         }
       }
     }
   }, 30000);
+  
+  // Synchronize language masks
+  syncLanguageMasks();
 }
 
-// Expose functions globally that need to be accessed by inline handlers
+// Export functions for global access
 window.showMenu = showMenu;
+window.mainMenuCardOpen = mainMenuCardOpen;
+window.mainMenuCardClose = mainMenuCardClose;
+window.waitForTransition = waitForTransition;

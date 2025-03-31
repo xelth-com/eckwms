@@ -1,22 +1,22 @@
 /**
- * Language Selector Module - Восстановлен из старой версии
- * Обрабатывает переключение языков и маски для языковых флагов
+ * Language Selector Module
+ * Handles language switching and flag masks
  */
 
 /**
- * Переключает видимость всплывающего меню выбора языка
- * @param {string} popupType - Тип всплывающего меню ('eu' или 'un')
+ * Shows or hides language selection popup
+ * @param {string} popupType - Type of popup ('eu' or 'un')
  */
 export function toggleLanguagePopup(popupType) {
   const euPopup = document.getElementById('euPopup');
   const unPopup = document.getElementById('unPopup');
   
-  // Закрыть все меню если они открыты
+  // Close all menus if they are open
   if (popupType === 'eu') {
     if (euPopup.classList.contains('visible')) {
       euPopup.classList.remove('visible');
     } else {
-      unPopup.classList.remove('visible'); // Закрыть другое меню
+      unPopup.classList.remove('visible'); // Close other menu
       euPopup.classList.add('visible');
       highlightCurrentLanguage(euPopup);
     }
@@ -24,7 +24,7 @@ export function toggleLanguagePopup(popupType) {
     if (unPopup.classList.contains('visible')) {
       unPopup.classList.remove('visible');
     } else {
-      euPopup.classList.remove('visible'); // Закрыть другое меню
+      euPopup.classList.remove('visible'); // Close other menu
       unPopup.classList.add('visible');
       highlightCurrentLanguage(unPopup);
     }
@@ -32,8 +32,8 @@ export function toggleLanguagePopup(popupType) {
 }
 
 /**
- * Выделяет текущий выбранный язык во всплывающем меню
- * @param {HTMLElement} popup - Всплывающее меню
+ * Highlights current selected language in popup
+ * @param {HTMLElement} popup - Popup element
  */
 function highlightCurrentLanguage(popup) {
   const currentLang = getCurrentLanguage();
@@ -42,7 +42,7 @@ function highlightCurrentLanguage(popup) {
   buttons.forEach(button => {
     button.classList.remove('active');
     
-    // Извлекаем код языка из обработчика клика
+    // Extract language code from click handler
     const onclickAttr = button.getAttribute('onclick');
     if (onclickAttr) {
       const langMatch = onclickAttr.match(/selectLanguage\(['"]([a-z]{2})['"]\)/);
@@ -54,84 +54,82 @@ function highlightCurrentLanguage(popup) {
 }
 
 /**
- * Получает текущий язык из разных источников
- * @returns {string} - Код языка (например 'en', 'de', 'fr')
+ * Gets current language from various sources
+ * @returns {string} - Language code (e.g., 'en')
  */
 export function getCurrentLanguage() {
-  // Проверяем глобальную переменную
+  // Check global variable
   if (typeof window.language !== 'undefined' && window.language) {
     return window.language;
   }
   
-  // Проверяем HTML lang атрибут
+  // Check HTML lang attribute
   const htmlLang = document.documentElement.lang;
   if (htmlLang) {
     return htmlLang;
   }
   
-  // Проверяем i18next cookie
+  // Check i18next cookie
   const cookieMatch = document.cookie.match(/i18next=([^;]+)/);
   if (cookieMatch) {
     return cookieMatch[1];
   }
   
-  // Проверяем localStorage
+  // Check localStorage
   try {
     const lsLang = localStorage.getItem('i18nextLng');
     if (lsLang) {
       return lsLang;
     }
   } catch (e) {
-    // Игнорируем ошибки localStorage
+    // Ignore localStorage errors
   }
   
-  // Возвращаем английский по умолчанию
+  // Default to English
   return 'en';
 }
 
 /**
- * Выбирает язык и обновляет маски языковых флагов
- * @param {string} langCode - Код языка (например 'en', 'de', 'fr')
+ * Selects a language from popup
+ * @param {string} langCode - Language code to select
  */
 export function selectLanguage(langCode) {
-  // Закрыть все всплывающие меню
+  // Close all popups
   document.getElementById('euPopup').classList.remove('visible');
   document.getElementById('unPopup').classList.remove('visible');
   
-  // Получаем текущий язык
+  // Get current language
   const previousLanguage = getCurrentLanguage();
   
-  // Если выбран тот же язык, просто закрываем меню
+  // If selected same language, just close menu
   if (langCode === previousLanguage) {
     return;
   }
   
-  // Обновляем маски SVG как в оригинальной функции
+  // Update SVG masks (important visual feature from original)
   try {
     document.getElementById(`${previousLanguage}Mask`).setAttribute("mask", "url(#maskClose)");
-  } catch (e) { /* Игнорируем ошибки */ }
+  } catch (e) { /* Ignore errors */ }
   
   try {
     document.getElementById(`${langCode}Mask`).setAttribute("mask", "url(#maskOpen)");
-  } catch (e) { /* Игнорируем ошибки */ }
+  } catch (e) { /* Ignore errors */ }
   
-  // Используем функцию i18n, если она доступна
-  if (window.i18n && window.i18n.changeLanguage) {
+  // Use i18n function if available
+  if (window.i18n && typeof window.i18n.changeLanguage === 'function') {
     window.i18n.changeLanguage(langCode);
   } else {
-    // Резервный вариант: использовать оригинальную логику
-    
-    // Обновляем переменную языка
+    // Fallback to original implementation
     window.language = langCode;
     window.menuUsed = true;
     
-    // Сохраняем в cookie и localStorage
+    // Save in cookie and localStorage
     document.cookie = `i18next=${langCode}; path=/; max-age=${60 * 60 * 24 * 365}`;
     try {
       localStorage.setItem('i18nextLng', langCode);
-    } catch (e) { /* Игнорируем ошибки */ }
+    } catch (e) { /* Ignore errors */ }
     
-    // Перезагружаем страницу с новым языком
+    // Reload page with new language
     const cacheBuster = Date.now();
     const url = new URL(window.location.href);
     url.searchParams.set('i18n_cb', cacheBuster);
@@ -141,11 +139,11 @@ export function selectLanguage(langCode) {
 }
 
 /**
- * Оригинальная функция setLanguage из старой версии
- * @param {string} langPos - Идентификатор языка или элемента
+ * Original language selection function from old implementation
+ * @param {string} langPos - Language position or identifier
  */
 export function setLanguage(langPos) {
-  // Проверяем специальные случаи для всплывающих меню
+  // Handle special cases for popup menus
   if (langPos === 'lang2' || langPos === 'eu') {
     toggleLanguagePopup('eu');
     return;
@@ -154,10 +152,11 @@ export function setLanguage(langPos) {
     return;
   }
   
-  // Обрабатываем обычное переключение языка
+  // Get previous language
   const previousLanguage = getCurrentLanguage();
-  
   let newLanguage;
+  
+  // Extract language code
   if (langPos.slice(0, 4) === "lang") {
     window.menuUsed = true;
     newLanguage = document.getElementById(langPos).getAttribute("href").slice(1);
@@ -167,25 +166,25 @@ export function setLanguage(langPos) {
   
   if (newLanguage === previousLanguage) return;
 
-  // Обновляем маски SVG
+  // Critical: Update SVG masks for visual feedback
   try {
     document.getElementById(`${previousLanguage}Mask`).setAttribute("mask", "url(#maskClose)");
-  } catch (e) { /* Игнорируем ошибки */ }
+  } catch (e) { /* Ignore errors */ }
   
   try {
     document.getElementById(`${newLanguage}Mask`).setAttribute("mask", "url(#maskOpen)");
-  } catch (e) { /* Игнорируем ошибки */ }
+  } catch (e) { /* Ignore errors */ }
 
-  // Обновляем переменную языка
+  // Update language variable
   window.language = newLanguage;
   
-  // Сохраняем в cookie и localStorage
+  // Save preferences
   document.cookie = `i18next=${newLanguage}; path=/; max-age=${60 * 60 * 24 * 365}`;
   try {
     localStorage.setItem('i18nextLng', newLanguage);
-  } catch (e) { /* Игнорируем ошибки */ }
+  } catch (e) { /* Ignore errors */ }
   
-  // Перезагружаем страницу с новым языком
+  // Reload with new language
   const cacheBuster = Date.now();
   const url = new URL(window.location.href);
   url.searchParams.set('i18n_cb', cacheBuster);
@@ -194,14 +193,18 @@ export function setLanguage(langPos) {
 }
 
 /**
- * Инициализация обработчиков событий для кликов вне меню языков
+ * Initialize language selector with outside click handling
  */
 export function initLanguageSelector() {
+  // Sync language masks on initialization
+  syncLanguageMasks();
+  
+  // Add event listener for clicks outside language popup
   document.addEventListener('click', function(event) {
     const euPopup = document.getElementById('euPopup');
     const unPopup = document.getElementById('unPopup');
     
-    // Проверка клика для EU меню
+    // Check click for EU menu
     const euButton = document.querySelector('[onclick="setLanguage(\'lang2\')"]');
     if (euPopup && euPopup.classList.contains('visible') && 
         !euPopup.contains(event.target) && 
@@ -209,7 +212,7 @@ export function initLanguageSelector() {
       euPopup.classList.remove('visible');
     }
     
-    // Проверка клика для UN меню
+    // Check click for UN menu
     const unButton = document.querySelector('[onclick="setLanguage(\'lang1\')"]');
     if (unPopup && unPopup.classList.contains('visible') && 
         !unPopup.contains(event.target) && 
@@ -219,10 +222,42 @@ export function initLanguageSelector() {
   });
 }
 
-// Инициализация при загрузке модуля
+/**
+ * Sync language masks with current language
+ */
+export function syncLanguageMasks() {
+  try {
+    const currentLang = getCurrentLanguage();
+    console.log(`Synchronizing language masks for ${currentLang}`);
+    
+    // Close all masks
+    const supportedLangs = ['de', 'en', 'fr', 'it', 'es', 'pt', 'nl', 'da', 'sv', 'fi', 
+      'el', 'cs', 'pl', 'hu', 'sk', 'sl', 'et', 'lv', 'lt', 'ro',
+      'bg', 'hr', 'ga', 'mt', 'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 
+      'he', 'ko', 'ja', 'no', 'bs', 'hi'];
+    
+    supportedLangs.forEach(lang => {
+      const maskElement = document.getElementById(`${lang}Mask`);
+      if (maskElement) {
+        maskElement.setAttribute("mask", "url(#maskClose)");
+      }
+    });
+    
+    // Open current language mask
+    const currentMask = document.getElementById(`${currentLang}Mask`);
+    if (currentMask) {
+      currentMask.setAttribute("mask", "url(#maskOpen)");
+    }
+  } catch (e) {
+    console.error("Error synchronizing language masks:", e);
+  }
+}
+
+// Initialize language selector when DOM is ready
 document.addEventListener('DOMContentLoaded', initLanguageSelector);
 
-// Экспортируем функции в глобальное пространство для инлайн-обработчиков
+// Export to window for inline handlers
 window.toggleLanguagePopup = toggleLanguagePopup;
-window.selectLanguage = selectLanguage;
+window.selectLanguage = selectLanguage; 
 window.setLanguage = setLanguage;
+window.syncLanguageMasks = syncLanguageMasks;
