@@ -157,12 +157,48 @@ html[lang="he"] body {
   font-family: "Noto Sans Arabic", "Noto Sans Hebrew", sans-serif;
 }
 
+/* Styles for languages with Devanagari script (Hindi) */
+html[lang="hi"] body {
+  font-family: "Noto Sans Devanagari", sans-serif;
+}
+
+/* Styles for Bosnian and other Slavic languages using Latin script */
+html[lang="bs"] body {
+  font-family: "Noto Sans", sans-serif;
+}
+
+/* Styles for Norwegian */
+html[lang="no"] body {
+  font-family: "Noto Sans", sans-serif;
+}
+
 /* Поддержка сложных языков с неевропейской письменностью */
 html[lang="ar"] .complex-script,
 html[lang="he"] .complex-script,
 html[lang="zh"] .complex-script,
 html[lang="ja"] .complex-script,
-html[lang="ko"] .complex-script {
+html[lang="ko"] .complex-script,
+html[lang="hi"] .complex-script {
   line-height: 1.5;
   font-size: 1.1em;
+}
+
+/* Special handling for right-to-left languages */
+html[lang="ar"],
+html[lang="he"] {
+  direction: rtl;
+}
+
+/* Fonts may need additional tweaking for complex scripts */
+html[lang="ar"] input,
+html[lang="he"] input,
+html[lang="hi"] input {
+  font-family: inherit;
+}
+
+/* Input field adjustments for languages with taller glyphs */
+html[lang="hi"] input,
+html[lang="ar"] input,
+html[lang="he"] input {
+  line-height: 1.4;
 }

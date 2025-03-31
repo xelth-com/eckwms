@@ -384,15 +384,15 @@ function initI18n(options = {}) {
   // FIXED PATH: Using html/locales instead of just locales
   const localesPath = path.join(process.cwd(), 'html', 'locales');
 
-  // List of all supported languages
-  const supportedLngs = [
-    // EU official languages
-    'de', 'en', 'fr', 'it', 'es', 'pt', 'nl', 'da', 'sv', 'fi',
-    'el', 'cs', 'pl', 'hu', 'sk', 'sl', 'et', 'lv', 'lt', 'ro',
-    'bg', 'hr', 'ga', 'mt',
-    // Additional languages
-    'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja'
-  ];
+// List of all supported languages
+const supportedLngs = [
+  // EU official languages
+  'de', 'en', 'fr', 'it', 'es', 'pt', 'nl', 'da', 'sv', 'fi',
+  'el', 'cs', 'pl', 'hu', 'sk', 'sl', 'et', 'lv', 'lt', 'ro',
+  'bg', 'hr', 'ga', 'mt',
+  // Additional languages
+  'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja', 'no', 'bs', 'hi'
+];
 
   // Namespaces list
   const namespaces = ['common', 'rma', 'dashboard', 'auth'];

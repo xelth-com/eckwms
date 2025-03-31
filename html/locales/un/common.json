@@ -1,0 +1,44 @@
+{
+  "links": {
+    "homepage": "M3 Mobile Homepage",
+    "partner_portal": "Partner  \n                Portal",
+    "technical_support": "Technical Support",
+    "release_notes": "OS Release Notes",
+    "app_manual": "M3 Application Manual Guide",
+    "title": "Useful Links:"
+  },
+  "footer": {
+    "copyright": "Copyright © 2024 M3 Mobile GmbH. All rights reserved.  \n      Terms & Conditions · Privacy Policy · Legal Notice"
+  },
+  "service": {
+    "title": "Our Service Centers:"
+  },
+  "rma": {
+    "request_button": "RMA Repair Request",
+    "status_check": "To check the repair status, please enter our RMA number or the device serial number.",
+    "form_info": "To make sure nothing is forgotten, we have created an RMA form. If you fill out this form and include it  \n              with your package, we receive all the necessary information in advance and can reduce processing time  \n              during  \n              package intake. Thank you for your cooperation!",
+    "tracking_info": "On this page, you can check your shipment's contents, track the repair status, and update payment  \n              details or address other issues if necessary. Login details will also be sent to the email address you  \n              provided on the package.",
+    "process_info": "Once we receive your package, the contract is concluded. We assign your package an RMA number and create  \n              a  \n              dedicated page for it. You can access this page by entering the tracking number provided by your  \n              shipping  \n              service on our homepage in the corresponding field (yellow label)."
+  },
+  "address": {
+    "example_email": "example@eck3.com",
+    "example_phone": "[+49 00 000000]",
+    "example_city": "08150 Example City",
+    "example_street": "Example Street 42",
+    "example_person": "[Attn. Max Mustermann]",
+    "example_company": "Example Company",
+    "sender": "Sender",
+    "reseller_note": "[Resellerin Adı]",
+    "recipient": "Alıcı"
+  },
+  "welcome": {
+    "important_note": "Important Note:",
+    "warranty_info": "Eğer bir garanti talebiniz veya bir servis paketi anlaşmanız varsa, lütfen resellerin adını ekleyin.",
+    "error_description": "Lütfen ayrıntılı bir hata tanımı sağlayın, çünkü bu başarılı bir onarım olasılığını önemli ölçüde artırır.",
+    "contract_info": "Paketi göndererek, siz (gönderen) ve biz (alıcı) arasında bir onarım sözleşmesi kurulmuş olur. \n              Bize olan nakliye masraflarını siz karşılıyorsunuz, biz ise geri gönderim masraflarını karşılıyoruz. İnceleme ve maliyet\n              tahmini ücretsizdir.",
+    "message": "Web sitesi kapalı. Lütfen kullanın",
+    "title": "⚠️ Önemli Duyuru ⚠️",
+    "process": "Süreç basit: M3 Mobil cihazınızı aşağıdaki adrese gönderin:",
+    "note": "Not: Ana web sitesi kapandığında bir PDF yazdırmak için formu kullanabilirsiniz."
+  }
+}

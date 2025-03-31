@@ -242,7 +242,7 @@ async function translateText(text, targetLang, context = '', sourceLang = proces
       'bg': 'Bulgarian', 'hr': 'Croatian', 'ga': 'Irish', 'mt': 'Maltese',
       'ru': 'Russian', 'tr': 'Turkish', 'ar': 'Arabic', 'zh': 'Chinese',
       'uk': 'Ukrainian', 'sr': 'Serbian', 'he': 'Hebrew', 'ko': 'Korean', 
-      'ja': 'Japanese'
+      'ja': 'Japanese', 'no': 'Norwegian', 'bs': 'Bosnian', 'hi': 'Hindi'
     };
     
     const targetLanguageName = languageNames[targetLanguage] || targetLanguage;
