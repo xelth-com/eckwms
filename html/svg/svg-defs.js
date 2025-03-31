@@ -3,7 +3,7 @@
  * Contains all SVG filters, icons, and flag definitions
  */
 
-import { loadTemplate } from '/modules/core/module-loader.js';
+import { loadTemplate } from '/core/module-loader.js';
 
 /**
  * Initialize SVG definitions
@@ -11,7 +11,7 @@ import { loadTemplate } from '/modules/core/module-loader.js';
  */
 export async function init(container) {
   // Load the SVG definitions template
-  const html = await loadTemplate('/modules/svg/svg-defs.template.html');
+  const html = await loadTemplate('/svg/svg-defs.template.html');
   container.innerHTML = html;
   
   // Initialize SVG-specific functionality
@@ -60,6 +60,8 @@ function initSvgBackgrounds() {
   let specularExponent = 40;
   
   const tempUserAgent = navigator.userAgent.toLowerCase();
+  // Объявляем переменную перед использованием
+  let tempIndex;
   if ((tempIndex = tempUserAgent.indexOf('chrome/')) > -1) {
     if (tempUserAgent.slice(tempIndex + 7, tempIndex + 10) < 117) {
       surfaceScaleDif = 6;

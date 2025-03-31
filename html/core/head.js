@@ -3,7 +3,7 @@
  * Sets up the document <head> with meta tags, CSS, and essential scripts
  */
 
-import { loadCSS } from '/modules/core/module-loader.js';
+import { loadCSS } from '/core/module-loader.js';
 
 /**
  * Initialize the document head
@@ -140,8 +140,8 @@ function setFavicons() {
  * Load essential stylesheets
  */
 function loadEssentialStyles() {
-  loadCSS('/modules/common/global.css');
-  loadCSS('/modules/i18n/i18n.css');
+  loadCSS('/common/global.css');
+  loadCSS('/i18n/i18n.css');
 }
 
 /**
