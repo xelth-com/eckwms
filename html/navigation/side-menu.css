@@ -1,6 +1,7 @@
+
 /* Side Menu Styles */
 
-/* Side menu container */
+/* Side menu container - fixed positioning as in original */
 #sideMenuUnder1000 {
   position: fixed;
   top: max(0px, calc((100vh - 350px)/3 + 50px));
@@ -68,6 +69,10 @@
 }
 
 @media screen and (max-width: 555px) {
+  #langMain6 {
+    display: none;
+  }
+  
   #langSide6 {
     display: inline-block;
   }
@@ -78,6 +83,10 @@
 }
 
 @media screen and (max-width: 490px) {
+  #langMain5 {
+    display: none;
+  }
+  
   #langSide5 {
     display: inline-block;
   }
@@ -88,6 +97,10 @@
 }
 
 @media screen and (max-width: 425px) {
+  #langMain4 {
+    display: none;
+  }
+  
   #langSide4 {
     display: inline-block;
   }
