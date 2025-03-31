@@ -1,4 +1,4 @@
-/* Header Module Styles */
+/* Header Module Styles - Restored from original */
 
 /* Header container */
 .header {
@@ -197,7 +197,12 @@
   animation: fadeIn 0.3s ease;
 }
 
-/* Responsive styles */
+/* Responsive layout */
+#mainMenuOver1000 {
+  width: max-content;
+  display: none;
+}
+
 @media screen and (min-width: 1101px) {
   #sideMenuUnder1000 {
     display: none;
@@ -215,6 +220,7 @@
   }
 }
 
+/* Language visibility controls */
 #langSide6 {
   display: none;
 }
