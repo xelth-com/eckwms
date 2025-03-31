@@ -8,32 +8,32 @@
 
   <div id="langMenu" style="width: max-content;display: inline-block; border: 0px solid #fff; border-radius: 30px; background-color: #fff3;
     box-shadow: 0px 0px 30px -15px rgba(255, 255, 255)">
-    <div id="langMain6" data-language="ko" class="button">
+    <div id="langMain6" onclick="setLanguage('lang6')" class="button">
       <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
         <use id="lang6" href="#ko" />
       </svg>
     </div>
-    <div id="langMain5" data-language="fr" class="button">
+    <div id="langMain5" onclick="setLanguage('lang5')" class="button">
       <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
         <use id="lang5" href="#fr" />
       </svg>
     </div>
-    <div id="langMain4" data-language="de" class="button">
+    <div id="langMain4" onclick="setLanguage('lang4')" class="button">
       <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
         <use id="lang4" href="#de" />
       </svg>
     </div>
-    <div data-language="en" class="button">
+    <div onclick="setLanguage('lang3')" class="button">
       <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
         <use id="lang3" href="#en" />
       </svg>
     </div>
-    <div data-language-popup="eu" class="button">
+    <div onclick="setLanguage('lang2')" class="button">
       <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
         <use id="lang2" href="#eu" />
       </svg>
     </div>
-    <div data-language-popup="un" class="button">
+    <div onclick="setLanguage('lang1')" class="button">
       <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
         <use id="lang1" href="#un" />
       </svg>
@@ -44,40 +44,40 @@
   <div id="euPopup" class="langPopup">
     <div class="langPopupHeader">
       <h3 data-i18n="language.select">Select Language</h3>
-      <button class="langPopupClose">×</button>
+      <button class="langPopupClose" onclick="toggleLanguagePopup('eu')">×</button>
     </div>
     <div class="langGrid">
-      <div class="langButton" data-language="de">
+      <div class="langButton" onclick="selectLanguage('de')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#de" />
         </svg>
         <span data-i18n="language.de">Deutsch</span>
       </div>
-      <div class="langButton" data-language="fr">
+      <div class="langButton" onclick="selectLanguage('fr')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#fr" />
         </svg>
         <span data-i18n="language.fr">Français</span>
       </div>
-      <div class="langButton" data-language="it">
+      <div class="langButton" onclick="selectLanguage('it')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#it" />
         </svg>
         <span data-i18n="language.it">Italiano</span>
       </div>
-      <div class="langButton" data-language="es">
+      <div class="langButton" onclick="selectLanguage('es')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#es" />
         </svg>
         <span data-i18n="language.es">Español</span>
       </div>
-      <div class="langButton" data-language="pt">
+      <div class="langButton" onclick="selectLanguage('pt')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#pt" />
         </svg>
         <span data-i18n="language.pt">Português</span>
       </div>
-      <div class="langButton" data-language="nl">
+      <div class="langButton" onclick="selectLanguage('nl')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#nl" />
         </svg>
@@ -90,40 +90,40 @@
   <div id="unPopup" class="langPopup">
     <div class="langPopupHeader">
       <h3 data-i18n="language.select">Select Language</h3>
-      <button class="langPopupClose">×</button>
+      <button class="langPopupClose" onclick="toggleLanguagePopup('un')">×</button>
     </div>
     <div class="langGrid">
-      <div class="langButton" data-language="ru">
+      <div class="langButton" onclick="selectLanguage('ru')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#ru" />
         </svg>
         <span data-i18n="language.ru">Русский</span>
       </div>
-      <div class="langButton" data-language="zh">
+      <div class="langButton" onclick="selectLanguage('zh')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#zh" />
         </svg>
         <span data-i18n="language.zh">中文</span>
       </div>
-      <div class="langButton" data-language="ar">
+      <div class="langButton" onclick="selectLanguage('ar')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#ar" />
         </svg>
         <span data-i18n="language.ar">العربية</span>
       </div>
-      <div class="langButton" data-language="ja">
+      <div class="langButton" onclick="selectLanguage('ja')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#ja" />
         </svg>
         <span data-i18n="language.ja">日本語</span>
       </div>
-      <div class="langButton" data-language="ko">
+      <div class="langButton" onclick="selectLanguage('ko')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#ko" />
         </svg>
         <span data-i18n="language.ko">한국어</span>
       </div>
-      <div class="langButton" data-language="tr">
+      <div class="langButton" onclick="selectLanguage('tr')">
         <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
           <use href="#tr" />
         </svg>
@@ -134,6 +134,7 @@
 
   <div id="mainMenuOver1000">
     <div id="mainMenuButtons" style="width: max-content;display: none;">
+      <!-- Original menu items from the old version -->
       <div id="mainMenu12" class="mainMenu" onmouseenter="mainMenuCardOpen('mainMenu12')"
         onmouseleave="mainMenuCardClose('mainMenu12')" onclick="myFetch('partsOX10','mainMenu12')">
         OX10
@@ -215,7 +216,7 @@
         </div>
       </div>
     </div>
-    <div id="mainMenuToggle"
+    <div onclick="showMenu('mainMenu');"
       style="box-shadow: none; background: rgba(150, 150, 150, 0);vertical-align: bottom;display: inline-block;width: fit-content;height: fit-content">
       <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
         <g>
