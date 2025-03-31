@@ -1,0 +1,160 @@
+/* Global CSS Styles */
+
+/* Reset and base styles */
+:root {
+  --fontSize: 20px;
+  --lineHeight: 30px;
+  --textShadow1: -0.4px -0.6px 0.3px rgb(160, 160, 160, 0.6), 0.4px 0.6px 0.3px rgb(70, 70, 70, 0.6),
+    -0.8px -1.2px 3px rgb(215, 215, 215, 0.8), 1.6px 2.2px 4px rgb(0, 0, 0, 0.8),
+    -2.4px -3.3px 8px rgb(255, 255, 255), 3.2px 4.4px 5px rgb(255, 255, 255);
+}
+
+/* Base body styles */
+body {
+  font-style: oblique;
+  font-size: var(--fontSize);
+  line-height: var(--lineHeight);
+  font-family: "Comic Sans MS", sans-serif;
+  background-color: #b0b0b0;
+  margin: 0;
+  padding: 0;
+}
+
+/* Basic element resets */
+div {
+  margin: 0px;
+  padding: 0px;
+}
+
+td {
+  text-align: right;
+  vertical-align: bottom;
+}
+
+ol, ul {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+p {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* Form elements */
+input, textarea, select, button {
+  font-family: "Comic Sans MS", sans-serif;
+}
+
+/* Common utility classes */
+.hidden {
+  display: none !important;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+/* Focus styles for accessibility */
+:focus {
+  outline: 2px solid rgba(0, 100, 255, 0.4);
+  outline-offset: 2px;
+}
+
+/* Screen reader only text */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Common animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes slideIn {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* RTL support */
+html[dir="rtl"] {
+  text-align: right;
+}
+
+html[dir="rtl"] input,
+html[dir="rtl"] textarea {
+  text-align: right;
+}
+
+/* Common link styles */
+a {
+  color: #1e2071;
+  text-decoration: none;
+  transition: color 0.3s ease;
+}
+
+a:hover {
+  color: #1e2071cc;
+  text-decoration: underline;
+}
+
+/* Clearfix utility */
+.clearfix::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+/* Loading indicator */
+.loading-indicator {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  border-radius: 50%;
+  border-top-color: #1e2071;
+  animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Print styles */
+@media print {
+  body {
+    background: none;
+    color: black;
+    font-size: 12pt;
+  }
+  
+  a {
+    color: #000;
+    text-decoration: underline;
+  }
+  
+  .no-print {
+    display: none !important;
+  }
+}
