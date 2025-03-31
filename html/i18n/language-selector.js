@@ -11,6 +11,8 @@ export function toggleLanguagePopup(popupType) {
   const euPopup = document.getElementById('euPopup');
   const unPopup = document.getElementById('unPopup');
   
+  if (!euPopup || !unPopup) return;
+  
   // Close all menus if they are open
   if (popupType === 'eu') {
     if (euPopup.classList.contains('visible')) {
@@ -49,6 +51,12 @@ function highlightCurrentLanguage(popup) {
       if (langMatch && langMatch[1] === currentLang) {
         button.classList.add('active');
       }
+    }
+    
+    // Also check data-language attribute
+    const dataLang = button.getAttribute('data-language');
+    if (dataLang === currentLang) {
+      button.classList.add('active');
     }
   });
 }
@@ -95,8 +103,11 @@ export function getCurrentLanguage() {
  */
 export function selectLanguage(langCode) {
   // Close all popups
-  document.getElementById('euPopup').classList.remove('visible');
-  document.getElementById('unPopup').classList.remove('visible');
+  const euPopup = document.getElementById('euPopup');
+  const unPopup = document.getElementById('unPopup');
+  
+  if (euPopup) euPopup.classList.remove('visible');
+  if (unPopup) unPopup.classList.remove('visible');
   
   // Get current language
   const previousLanguage = getCurrentLanguage();
@@ -106,14 +117,11 @@ export function selectLanguage(langCode) {
     return;
   }
   
-  // Update SVG masks (important visual feature from original)
-  try {
-    document.getElementById(`${previousLanguage}Mask`).setAttribute("mask", "url(#maskClose)");
-  } catch (e) { /* Ignore errors */ }
+  // Set menuUsed flag for auto-display logic
+  window.menuUsed = true;
   
-  try {
-    document.getElementById(`${langCode}Mask`).setAttribute("mask", "url(#maskOpen)");
-  } catch (e) { /* Ignore errors */ }
+  // Update SVG masks (important visual feature from original)
+  updateLanguageMasks(previousLanguage, langCode);
   
   // Use i18n function if available
   if (window.i18n && typeof window.i18n.changeLanguage === 'function') {
@@ -121,7 +129,6 @@ export function selectLanguage(langCode) {
   } else {
     // Fallback to original implementation
     window.language = langCode;
-    window.menuUsed = true;
     
     // Save in cookie and localStorage
     document.cookie = `i18next=${langCode}; path=/; max-age=${60 * 60 * 24 * 365}`;
@@ -139,8 +146,29 @@ export function selectLanguage(langCode) {
 }
 
 /**
- * Original language selection function from old implementation
- * @param {string} langPos - Language position or identifier
+ * Updates the language masks in SVGs
+ * @param {string} previousLang - Previous language code
+ * @param {string} newLang - New language code
+ */
+function updateLanguageMasks(previousLang, newLang) {
+  try {
+    const prevMask = document.getElementById(`${previousLang}Mask`);
+    if (prevMask) {
+      prevMask.setAttribute("mask", "url(#maskClose)");
+    }
+  } catch (e) { /* Ignore errors */ }
+  
+  try {
+    const newMask = document.getElementById(`${newLang}Mask`);
+    if (newMask) {
+      newMask.setAttribute("mask", "url(#maskOpen)");
+    }
+  } catch (e) { /* Ignore errors */ }
+}
+
+/**
+ * Legacy language selection function for compatibility
+ * @param {string} langPos - Language position or code
  */
 export function setLanguage(langPos) {
   // Handle special cases for popup menus
@@ -159,21 +187,31 @@ export function setLanguage(langPos) {
   // Extract language code
   if (langPos.slice(0, 4) === "lang") {
     window.menuUsed = true;
-    newLanguage = document.getElementById(langPos).getAttribute("href").slice(1);
+    const langElement = document.getElementById(langPos);
+    if (langElement) {
+      // Try different ways to extract language code
+      const hrefLang = langElement.getAttribute("href");
+      if (hrefLang && hrefLang.startsWith("#")) {
+        newLanguage = hrefLang.slice(1);
+      } else {
+        // Look for SVG use element
+        const useElement = langElement.querySelector("use");
+        if (useElement) {
+          const useHref = useElement.getAttribute("href");
+          if (useHref && useHref.startsWith("#")) {
+            newLanguage = useHref.slice(1);
+          }
+        }
+      }
+    }
   } else {
     newLanguage = langPos;
   }
   
-  if (newLanguage === previousLanguage) return;
+  if (!newLanguage || newLanguage === previousLanguage) return;
 
-  // Critical: Update SVG masks for visual feedback
-  try {
-    document.getElementById(`${previousLanguage}Mask`).setAttribute("mask", "url(#maskClose)");
-  } catch (e) { /* Ignore errors */ }
-  
-  try {
-    document.getElementById(`${newLanguage}Mask`).setAttribute("mask", "url(#maskOpen)");
-  } catch (e) { /* Ignore errors */ }
+  // Update masks for visual feedback
+  updateLanguageMasks(previousLanguage, newLanguage);
 
   // Update language variable
   window.language = newLanguage;
@@ -190,36 +228,6 @@ export function setLanguage(langPos) {
   url.searchParams.set('i18n_cb', cacheBuster);
   url.searchParams.set('lang', newLanguage);
   window.location.href = url.toString();
-}
-
-/**
- * Initialize language selector with outside click handling
- */
-export function initLanguageSelector() {
-  // Sync language masks on initialization
-  syncLanguageMasks();
-  
-  // Add event listener for clicks outside language popup
-  document.addEventListener('click', function(event) {
-    const euPopup = document.getElementById('euPopup');
-    const unPopup = document.getElementById('unPopup');
-    
-    // Check click for EU menu
-    const euButton = document.querySelector('[onclick="setLanguage(\'lang2\')"]');
-    if (euPopup && euPopup.classList.contains('visible') && 
-        !euPopup.contains(event.target) && 
-        (!euButton || !euButton.contains(event.target))) {
-      euPopup.classList.remove('visible');
-    }
-    
-    // Check click for UN menu
-    const unButton = document.querySelector('[onclick="setLanguage(\'lang1\')"]');
-    if (unPopup && unPopup.classList.contains('visible') && 
-        !unPopup.contains(event.target) && 
-        (!unButton || !unButton.contains(event.target))) {
-      unPopup.classList.remove('visible');
-    }
-  });
 }
 
 /**
@@ -253,11 +261,114 @@ export function syncLanguageMasks() {
   }
 }
 
-// Initialize language selector when DOM is ready
-document.addEventListener('DOMContentLoaded', initLanguageSelector);
+/**
+ * Initialize language selector
+ */
+export function initLanguageSelector() {
+  // Initial sync of language masks
+  syncLanguageMasks();
+  
+  // Set up outside click handlers
+  setupOutsideClickHandlers();
+  
+  // Update language buttons
+  updateLanguageButtons();
+}
 
-// Export to window for inline handlers
+/**
+ * Set up handlers to close popup when clicking outside
+ */
+function setupOutsideClickHandlers() {
+  document.addEventListener('click', function(event) {
+    const euPopup = document.getElementById('euPopup');
+    const unPopup = document.getElementById('unPopup');
+    
+    // EU popup outside click
+    if (euPopup && euPopup.classList.contains('visible')) {
+      const isClickInside = euPopup.contains(event.target);
+      const isClickOnTrigger = event.target.closest('[data-language-popup="eu"]');
+      
+      if (!isClickInside && !isClickOnTrigger) {
+        euPopup.classList.remove('visible');
+      }
+    }
+    
+    // UN popup outside click
+    if (unPopup && unPopup.classList.contains('visible')) {
+      const isClickInside = unPopup.contains(event.target);
+      const isClickOnTrigger = event.target.closest('[data-language-popup="un"]');
+      
+      if (!isClickInside && !isClickOnTrigger) {
+        unPopup.classList.remove('visible');
+      }
+    }
+  });
+}
+
+/**
+ * Update language buttons with proper event handlers
+ */
+function updateLanguageButtons() {
+  // Set up popup triggers
+  document.querySelectorAll('[data-language-popup]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const popupType = btn.getAttribute('data-language-popup');
+      toggleLanguagePopup(popupType);
+    });
+  });
+  
+  // Set up language buttons in popup
+  document.querySelectorAll('.langButton[data-language]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const langCode = btn.getAttribute('data-language');
+      if (langCode) {
+        selectLanguage(langCode);
+      }
+    });
+  });
+  
+  // Set up language buttons in main menu
+  document.querySelectorAll('#langMenu [data-language]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const langCode = btn.getAttribute('data-language');
+      if (langCode) {
+        setLanguage(langCode);
+      }
+    });
+  });
+  
+  // Handle legacy onclick attributes
+  document.querySelectorAll('[onclick^="setLanguage"]').forEach(btn => {
+    const clickHandler = btn.getAttribute('onclick');
+    if (clickHandler) {
+      // Keep the original handler but ensure our code runs too
+      btn.addEventListener('click', (e) => {
+        // Let the original handler run first
+        setTimeout(() => {
+          // Check if we need to add our own handling
+          if (window.setLanguage && !e.defaultPrevented) {
+            const match = clickHandler.match(/setLanguage\(['"]([^'"]+)['"]\)/);
+            if (match) {
+              const param = match[1];
+              if (param) setLanguage(param);
+            }
+          }
+        }, 0);
+      });
+    }
+  });
+}
+
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initLanguageSelector);
+} else {
+  initLanguageSelector();
+}
+
+// Export for global access
 window.toggleLanguagePopup = toggleLanguagePopup;
 window.selectLanguage = selectLanguage; 
 window.setLanguage = setLanguage;
 window.syncLanguageMasks = syncLanguageMasks;
+window.getCurrentLanguage = getCurrentLanguage;

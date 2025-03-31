@@ -4,17 +4,12 @@
  */
 
 import { loadCSS, loadTemplate } from '/core/module-loader.js';
-import { 
-  toggleLanguagePopup, 
-  selectLanguage, 
-  setLanguage,
-  syncLanguageMasks
-} from '/i18n/language-selector.js';
+import { syncLanguageMasks, initLanguageSelector } from '/i18n/language-selector.js';
 
-let waitForTransition = false;
+// Globals for menu state tracking
+window.waitForTransition = false;
+window.menuUsed = false;
 let cards = [];
-let menuUsed = false;
-window.menuUsed = menuUsed;
 
 /**
  * Initialize header module
@@ -28,9 +23,10 @@ export async function init(container) {
   const html = await loadTemplate('/header/header.template.html');
   container.innerHTML = html;
   
-  // Initialize event listeners and card functionality
+  // Initialize components
   initEventListeners();
   initMainMenuCards();
+  applyButtonBackgrounds();
 }
 
 /**
@@ -38,16 +34,50 @@ export async function init(container) {
  */
 function initEventListeners() {
   // Add main menu toggle event
-  const menuToggle = document.querySelector('[onclick="showMenu(\'mainMenu\');"]');
+  const menuToggle = document.querySelector('#mainMenuToggle');
   if (menuToggle) {
     menuToggle.addEventListener('click', () => showMenu('mainMenu'));
   }
   
-  // Add menu card event listeners
+  // Add menu card hover events
   document.querySelectorAll('[onmouseenter^="mainMenuCardOpen"]').forEach(element => {
     const menuId = element.id;
+    element.removeAttribute('onmouseenter');
+    element.removeAttribute('onmouseleave');
     element.addEventListener('mouseenter', () => mainMenuCardOpen(menuId));
     element.addEventListener('mouseleave', () => mainMenuCardClose(menuId));
+  });
+  
+  // Add click handlers for menu items
+  document.querySelectorAll('.mainMenu[onclick]').forEach(element => {
+    const onclickAttr = element.getAttribute('onclick');
+    if (onclickAttr) {
+      element.removeAttribute('onclick');
+      element.addEventListener('click', (e) => {
+        // Extract function and parameters
+        const match = onclickAttr.match(/myFetch\(['"](.*?)['"],\s*['"](.*?)['"]\)/);
+        if (match && window.myFetch) {
+          const param1 = match[1];
+          const param2 = match[2];
+          window.myFetch(param1, param2);
+        }
+      });
+    }
+  });
+}
+
+/**
+ * Apply SVG backgrounds to buttons
+ */
+function applyButtonBackgrounds() {
+  if (!window.backSvg2) return;
+  
+  const backButtonImg = `url(data:image/svg+xml;charset=utf-8;base64,${btoa(window.backSvg2)})`;
+  window.backButtonImg = backButtonImg;
+  
+  // Apply to all buttons
+  Array.from(document.getElementsByClassName("button")).forEach(element => {
+    element.style.backgroundImage = backButtonImg;
   });
 }
 
@@ -58,9 +88,19 @@ function initMainMenuCards() {
   cards = Array.from(document.getElementsByClassName("mainMenuCard"), (element, index) => {
     element.style.backgroundImage = `
       linear-gradient(90deg,#ba80 0%,#ba84 10%,#ba88 20%,#ba8c 30%,#ba8f 40%,  #ba8f 60%,#ba8c 70%,#ba88 80%,#ba84 90%,#ba80 100%),
-      linear-gradient(30deg,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80),
-      ${window.backButtonImg}`;
-    return { el: element, mmn: "", timeoutId: null, timeoutId1: null };
+      linear-gradient(30deg,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80)`;
+    
+    // Add background image if available
+    if (window.backButtonImg) {
+      element.style.backgroundImage += `, ${window.backButtonImg}`;
+    }
+    
+    return { 
+      el: element, 
+      mmn: "", 
+      timeoutId: null, 
+      timeoutId1: null 
+    };
   });
 }
 
@@ -73,6 +113,8 @@ export function showMenu(menuType) {
   
   const elements = Array.from(document.getElementsByClassName(`${menuType}Line`));
   const buttonsElement = document.getElementById(`${menuType}Buttons`);
+  
+  if (!elements.length || !buttonsElement) return;
 
   if (buttonsElement.style.display !== "none") {
     window.waitForTransition = true;
@@ -92,8 +134,8 @@ export function showMenu(menuType) {
     buttonsElement.style.display = "inline-block";
   }
 
-  if (elements[1].getAttribute("x") === "10") {
-    // Open menu
+  if (elements.length > 1 && elements[1].getAttribute("x") === "10") {
+    // Open menu animation
     elements[1].setAttribute("x", "65");
     elements[0].style.transform = "rotate(-45deg)";
     elements[2].style.transform = "rotate(45deg)";
@@ -114,8 +156,8 @@ export function showMenu(menuType) {
         element.style.transitionDelay = "0s";
       });
     }, 2000);
-  } else {
-    // Close menu
+  } else if (elements.length > 1) {
+    // Close menu animation
     elements[1].setAttribute("x", "10");
     elements[0].style.transform = "rotate(0deg)";
     elements[2].style.transform = "rotate(0deg)";
@@ -143,8 +185,8 @@ export function mainMenuCardOpen(mainMenuNumber) {
   menu.style.backgroundColor = "#ba87";
   
   // Find minimum and maximum z-index
-  let zmin = parseInt(cards[0].el.style.zIndex) || 0;
-  let zmax = parseInt(cards[0].el.style.zIndex) || 0;
+  let zmin = parseInt(cards[0]?.el?.style?.zIndex) || 0;
+  let zmax = parseInt(cards[0]?.el?.style?.zIndex) || 0;
   let equal = false;
   let i = 0;
   
@@ -191,17 +233,19 @@ export function mainMenuCardOpen(mainMenuNumber) {
   cards[i].el.onmouseenter = () => mainMenuCardOpen(mainMenuNumber);
   cards[i].el.onmouseleave = () => mainMenuCardClose(mainMenuNumber);
   
-  const contentDiv = menu.querySelector('div[hidden]');
-  if (contentDiv) {
-    cards[i].el.innerHTML = contentDiv.innerHTML;
+  // Get content from hidden div 
+  const hiddenDiv = menu.querySelector('div[hidden]');
+  if (hiddenDiv) {
+    cards[i].el.innerHTML = hiddenDiv.innerHTML;
   }
   
   cards[i].mmn = mainMenuNumber;
   
   // Position card
+  const event = window.event;
   if (event) {
-    cards[i].el.style.left = `${Math.floor(event.clientX - (event.clientX * cards[i].el.offsetWidth / window.innerWidth))}px`;
-    cards[i].el.style.top = `${Math.floor(Math.random() * 50 + 70)}px`;
+    cards[i].el.style.left = `${parseInt(event.clientX - (event.clientX * cards[i].el.offsetWidth / window.innerWidth))}px`;
+    cards[i].el.style.top = `${parseInt(Math.random() * 50 + 70)}px`;
   }
   
   cards[i].el.style.opacity = "1";
@@ -239,7 +283,10 @@ export function mainMenuCardClose(mainMenuNumber) {
  * Post-initialization tasks
  */
 export function postInit() {
-  // Auto-show main menu on desktop after 30 seconds if not used yet
+  // Initialize language selector
+  initLanguageSelector();
+  
+  // Auto-show main menu on desktop after delay if not used
   setTimeout(() => {
     if (window.matchMedia("(min-width: 1001px)").matches) {
       const menuButtons = document.getElementById("mainMenuButtons");
@@ -250,13 +297,9 @@ export function postInit() {
       }
     }
   }, 30000);
-  
-  // Synchronize language masks
-  syncLanguageMasks();
 }
 
 // Export functions for global access
 window.showMenu = showMenu;
 window.mainMenuCardOpen = mainMenuCardOpen;
 window.mainMenuCardClose = mainMenuCardClose;
-window.waitForTransition = waitForTransition;
