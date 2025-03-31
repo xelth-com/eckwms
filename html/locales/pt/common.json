@@ -1,1 +1,59 @@
-﻿{}
+{
+  "language": {
+    "ar": "العربية",
+    "zh": "中文",
+    "tr": "I'm sorry, but I can only assist with translations from English to Portuguese. If you have a specific text in English that you would like me to translate, please provide it, and I'll be happy to help!",
+    "ko": "I'm sorry, but I can only assist with translations from English to Portuguese. If you have a specific text in English that you would like translated, please provide it, and I'll be happy to help!",
+    "ja": "I'm sorry, but I can only assist with translations from English to Portuguese. If you have a specific text in English that you would like translated, please provide it, and I'll be happy to help!",
+    "ru": "I'm sorry, but I can only assist with translations from English to Portuguese. If you have a specific text in English that you would like me to translate, please provide it, and I'll be happy to help!",
+    "nl": "Português",
+    "pt": "Claro! Por favor, forneça o texto em inglês que você gostaria que eu traduzisse para o português.",
+    "es": "Português",
+    "it": "Italiano",
+    "fr": "Português",
+    "de": "Alemão",
+    "select": "Selecione o idioma"
+  },
+  "links": {
+    "homepage": "Página Inicial M3 Mobile",
+    "partner_portal": "Portal do Parceiro",
+    "technical_support": "Suporte Técnico",
+    "release_notes": "Notas de Lançamento do SO",
+    "app_manual": "Manual do Aplicativo M3",
+    "title": "Links Úteis:"
+  },
+  "footer": {
+    "copyright": "Copyright © 2024 M3 Mobile GmbH. Todos os direitos reservados.\n      Termos e Condições · Política de Privacidade · Aviso Legal"
+  },
+  "service": {
+    "title": "Nossos Centros de Serviço:"
+  },
+  "rma": {
+    "request_button": "Solicitação de Reparação RMA",
+    "status_check": "Para verificar o status da reparação, por favor insira nosso número RMA ou o número de série do dispositivo.",
+    "form_info": "Para garantir que nada seja esquecido, criamos um formulário RMA. Se você preencher este formulário e incluí-lo\n              com seu pacote, receberemos todas as informações necessárias com antecedência e podemos reduzir o tempo de processamento\n              durante a\n              recepção do pacote. Obrigado pela sua cooperação!",
+    "tracking_info": "Nesta página, você pode verificar o conteúdo da sua remessa, acompanhar o status da reparação e atualizar os detalhes de pagamento\n              ou resolver outras questões, se necessário. Os detalhes de login também serão enviados para o endereço de e-mail que você\n              forneceu no pacote.",
+    "process_info": "Assim que recebermos seu pacote, o contrato será concluído. Atribuímos um número RMA ao seu pacote e criamos uma\n              página\n              dedicada para ele. Você pode acessar esta página inserindo o número de rastreamento fornecido pelo seu\n              serviço de\n              envio em nossa página inicial no campo correspondente (etiqueta amarela)."
+  },
+  "address": {
+    "example_email": "example@eck3.com",
+    "example_phone": "[+49 00 000000]",
+    "example_city": "08150 Cidade Exemplo",
+    "example_street": "Rua Exemplo 42",
+    "example_person": "[Atenção. Max Mustermann]",
+    "example_company": "Exemplo de Empresa",
+    "sender": "Remetente",
+    "reseller_note": "[Nome do Revendedor]",
+    "recipient": "Destinatário"
+  },
+  "welcome": {
+    "important_note": "Nota Importante:",
+    "warranty_info": "Se você tiver uma reivindicação de garantia ou um contrato de pacote de serviço, por favor inclua o nome do revendedor.",
+    "error_description": "Por favor, forneça uma descrição detalhada do erro, pois isso aumenta significativamente as chances de um reparo bem-sucedido.",
+    "contract_info": "Ao enviar o pacote, um contrato de reparo é estabelecido entre você (o remetente) e nós (o destinatário). Você cobre os custos de envio para nós, e nós cobrimos os custos de envio de retorno. A inspeção e a estimativa de custos são gratuitas.",
+    "message": "O site está fechado. Por favor, use",
+    "title": "⚠️ Aviso Importante ⚠️",
+    "process": "O processo é simples: envie seu dispositivo M3 Mobile para o seguinte endereço:",
+    "note": "P.S. Você pode usar o formulário para imprimir um PDF caso o site principal fique fora do ar."
+  }
+}

@@ -40,5 +40,20 @@
     "title": "⚠️ Avis Important ⚠️",
     "process": "Le processus est simple : envoyez votre appareil M3 Mobile à l'adresse ci-dessous :",
     "note": "P.S. Vous pouvez utiliser ce formulaire pour imprimer un PDF si le site principal est indisponible."
+  },
+  "language": {
+    "tr": "Turc",
+    "ko": "Coréen",
+    "ja": "Japonais",
+    "ar": "Arabe",
+    "zh": "Chinois",
+    "ru": "Russe",
+    "nl": "Néerlandais",
+    "pt": "Portugais",
+    "es": "Espagnol",
+    "it": "Italien",
+    "fr": "Français",
+    "de": "Allemand",
+    "select": "Choisissez une langue"
   }
 }
