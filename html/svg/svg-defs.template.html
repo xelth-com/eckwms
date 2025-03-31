@@ -1,19 +1,65 @@
+<!-- html/svg/svg-defs.template.html -->
+<!-- SVG definitions for icons, masks, filters, and language flags -->
+
 <svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
   <!-- SVG Filters -->
   <defs>
-    <!-- Shadow filter -->
-    <filter id="sh002" x="-0.3" y="-0.3" height="1.8" width="1.8">
-      <feGaussianBlur stdDeviation="0.3" />
-      <feOffset dx="0.2" dy="0.2" />
-      <feFlood flood-color="rgba(0,0,0,0.5)" />
-      <feComposite operator="in" in2="SourceGraphic" />
+    <!-- Shadow and effect filters -->
+    <filter id="sh002" height="150%" width="150%" x="-0.25" y="-0.25">
+      <!--kernel 1.5px*2dppx=3-->
+      <feConvolveMatrix id="1.5_|_y" in="SourceAlpha" order="1,11" divisor="987" bias="0" preserveAlpha="false"
+        kernelMatrix="
+        8	26	64	120	176	199	176	120	64	26	8
+        " />
+      <feConvolveMatrix id="1.5_|_x" order="11,1" divisor="987" bias="0" preserveAlpha="false" kernelMatrix="
+        8	26	64	120	176	199	176	120	64	26	8
+        " />
+      <feColorMatrix result="obj" values="0 0 0 0 0 
+        0 0 0 0 0
+        0 0 0 0 0 
+        0 0 0 1 0" />
+      <feSpecularLighting surfaceScale="1" specularExponent="40">
+        <feDistantLight azimuth='240' elevation='20' />
+      </feSpecularLighting>
+      <feColorMatrix result="spec" values="1 0 0 0 0 
+        0 1 0 0 0
+        0 0 1 0 0 
+        0 0 0 1 0" />
+      <feDiffuseLighting in="obj" surfaceScale="1" lighting-color="#fff">
+        <feDistantLight azimuth='240' elevation='20' />
+      </feDiffuseLighting>
+      <feColorMatrix values="1 0 0 0 0 
+        0 1 0 0 0
+        0 0 1 0 0 
+        0 0 0 1 0" />
+      <feComposite in2="SourceGraphic" operator="arithmetic" k1="1.2" k2="0" k3="0.8" k4="0" />
+      <feComposite in2="spec" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" />
+      <feDropShadow dx="2" dy="3" stdDeviation="1.5" flood-color="#000" flood-opacity="0.5" />
+    </filter>
+
+    <filter id="sh003" x='-0.025' y='-0.025' width='105%' height='105%'>
+      <feTurbulence class="seed" baseFrequency="0.5" numOctaves="2" seed="678" />
+      <feDisplacementMap in="SourceGraphic" scale="3" xChannelSelector="R" yChannelSelector="G" />
+      <feGaussianBlur stdDeviation="0.25" />
+    </filter>
+
+    <filter id="sh004" x='-0.025' y='-0.025' width='105%' height='105%'>
+      <feTurbulence class="seed" baseFrequency="0.5" numOctaves="2" seed="678" />
+      <feDisplacementMap in="SourceGraphic" scale="3" xChannelSelector="R" yChannelSelector="G" />
+      <feGaussianBlur stdDeviation="0.25" result="out" />
+      <feOffset dx="0" dy="0" />
+      <feGaussianBlur stdDeviation="1" />
+      <feColorMatrix result="out2" type="matrix" values="
+                 1 0 0 0 0         
+                 0 1 0 0 0                    
+                 0 0 1 0 0                  
+                 0 0 0 0.5 0 " />
       <feMerge>
         <feMergeNode />
-        <feMergeNode in="SourceGraphic" />
+        <feMergeNode in="out" />
       </feMerge>
     </filter>
 
-    <!-- Button effects -->
     <filter id="buttonGlow" x="-0.2" y="-0.2" width="1.4" height="1.4">
       <feGaussianBlur stdDeviation="2" />
       <feOffset dx="0" dy="1" />
@@ -22,11 +68,50 @@
 
     <!-- Masks for language flags -->
     <mask id="maskOpen">
-      <rect x="0" y="0" width="100%" height="100%" fill="white" />
+      <rect fill="#ffffff" height="30" id="svg_4" rx="7" stroke="#aaaaaa" stroke-width="0" width="38" x="10" y="10" />
     </mask>
     <mask id="maskClose">
-      <rect x="0" y="0" width="100%" height="100%" fill="white" opacity="0.5" />
+      <circle cx="29" cy="25" fill="#ffffff" id="svg_2" r="15" stroke="#aaaaaa" stroke-width="0" />
     </mask>
+
+    <!-- Gradient definitions -->
+    <linearGradient id="fill1" x1="0.4" x2="0.6" y1="0" y2="1">
+      <stop class="pinColor" offset="0" stop-color="hsl(0, 100%, 80%)" />
+      <stop class="pinColor" offset="0.36" stop-color="hsl(0, 100%, 32%)" />
+    </linearGradient>
+    
+    <radialGradient id="fill2" cx="0.4" cy="0" r="0.5" spreadMethod="pad">
+      <stop class="pinColor" offset="0" stop-color="hsl(0, 100%, 80%)" />
+      <stop class="pinColor" offset="1" stop-color="hsl(0, 100%, 37%)" />
+    </radialGradient>
+    
+    <radialGradient cx="0.4" cy="0" id="fill3" r="1" spreadMethod="pad">
+      <stop class="pinColor" offset="0" stop-color="hsl(0, 100%, 30%)" />
+      <stop class="pinColor" offset="1" stop-color="hsl(0, 100%, 65%)" />
+    </radialGradient>
+    
+    <linearGradient id="fill4" spreadMethod="reflect" x1="0" x2="1" y1="0.6" y2="0.4">
+      <stop class="pinColor" offset="0" stop-color="hsl(0, 100%, 40%)" />
+      <stop class="pinColor" offset="0.5" stop-color="hsl(0, 100%, 90%)" />
+      <stop class="pinColor" offset="1" stop-color="hsl(0, 100%, 40%)" />
+    </linearGradient>
+    
+    <filter id="f1">
+      <feOffset dx="1" dy="4" />
+      <feGaussianBlur stdDeviation="1.5" />
+      <feColorMatrix type="matrix" values="0.2 0 0 0 0 0 0.2 0 0 0 0 0 0.2 0 0 0 0 0 0.5 0" />
+      <feBlend in="SourceGraphic" />
+    </filter>
+    
+    <filter id="f2">
+      <feOffset dx="0" dy="0" />
+      <feGaussianBlur stdDeviation="5" />
+      <feColorMatrix type="matrix" values="0.2 0 0 0 0 0 0.2 0 0 0 0 0 0.2 0 0 0 0 0 0.8 0" />
+    </filter>
+    
+    <filter id="f3">
+      <feGaussianBlur stdDeviation="0.2" />
+    </filter>
   </defs>
 
   <!-- Logo -->
@@ -39,103 +124,190 @@
 
   <!-- Language flags -->
   <!-- English flag -->
-  <symbol id="en" viewBox="0 0 60 50">
-    <g>
-      <rect x="5" y="5" width="50" height="40" fill="#00247d" />
-      <path d="M5,5 L55,45 M55,5 L5,45" stroke="#fff" stroke-width="8" />
-      <path d="M30,5 L30,45 M5,25 L55,25" stroke="#fff" stroke-width="13" />
-      <path d="M30,5 L30,45 M5,25 L55,25" stroke="#cf142b" stroke-width="7" />
-      <path d="M5,5 L55,45 M55,5 L5,45" stroke="#cf142b" stroke-width="5" />
-    </g>
+  <g id="en" filter="url(#sh002)">
     <g id="enMask" mask="url(#maskClose)">
-      <rect x="5" y="5" width="50" height="40" fill-opacity="0" />
+      <rect fill="#c0c0c0" height="30" stroke-width="0" width="40" x="9" y="10" />
+      <rect fill="hsl(350, 85%, 39%)" height="6" stroke-width="0" width="40" x="9" y="22" />
+      <rect fill="hsl(350, 85%, 39%)" height="30" stroke-width="0" width="6" x="26" y="10" />
+      <g id="apartUk">
+        <path d="m4,-15l0,9l12,-9l-12,0z" fill="hsl(222, 98%, 26%)" stroke-width="0" />
+        <path d="m21,-4l0,-9l-12,9l12,0z" fill="hsl(222, 98%, 26%)" stroke-width="0" />
+        <path d="m4,-4l12,-9l3,0l-12,9l-3,0z" fill="#bb0000" stroke-width="0" />
+      </g>
+      <use transform="translate(29,25) " href="#apartUk" />
+      <use transform="translate(29,25) scale(-1,1)" href="#apartUk" />
+      <use transform="translate(29,25) scale(1,-1)" href="#apartUk" />
+      <use transform="translate(29,25) scale(-1,-1)" href="#apartUk" />
     </g>
-  </symbol>
+  </g>
 
   <!-- German flag -->
-  <symbol id="de" viewBox="0 0 60 50">
-    <g>
-      <rect x="5" y="5" width="50" height="40" fill="#000" />
-      <rect x="5" y="5" width="50" height="13" fill="#000" />
-      <rect x="5" y="18" width="50" height="13" fill="#dd0000" />
-      <rect x="5" y="31" width="50" height="13" fill="#ffce00" />
-    </g>
+  <g id="de" filter="url(#sh002)">
     <g id="deMask" mask="url(#maskClose)">
-      <rect x="5" y="5" width="50" height="40" fill-opacity="0" />
+      <rect fill="#202020" height="10" stroke-width="0" width="40" x="9" y="10" />
+      <rect fill="#bb0000" height="10" stroke-width="0" width="40" x="9" y="20" />
+      <rect fill="#BC9D00" height="10" stroke-width="0" width="40" x="9" y="30" />
     </g>
-  </symbol>
+  </g>
 
   <!-- French flag -->
-  <symbol id="fr" viewBox="0 0 60 50">
-    <g>
-      <rect x="5" y="5" width="50" height="40" fill="#fff" />
-      <rect x="5" y="5" width="17" height="40" fill="#002654" />
-      <rect x="38" y="5" width="17" height="40" fill="#ce1126" />
-    </g>
+  <g id="fr" filter="url(#sh002)">
     <g id="frMask" mask="url(#maskClose)">
-      <rect x="5" y="5" width="50" height="40" fill-opacity="0" />
+      <rect fill="hsl(353, 85%, 40%)" height="30" stroke-width="0" width="13.33" x="9" y="10" />
+      <rect fill="#c0c0c0" height="30" stroke-width="0" width="13.33" x="22.33" y="10" />
+      <rect fill="hsl(213, 100%, 23%)" height="30" stroke-width="0" width="13.33" x="35.66" y="10" />
     </g>
-  </symbol>
+  </g>
 
   <!-- Korean flag -->
-  <symbol id="ko" viewBox="0 0 60 50">
-    <g>
-      <rect x="5" y="5" width="50" height="40" fill="#fff" />
-      <ellipse cx="30" cy="25" rx="15" ry="15" fill="#c60c30" />
-      <path d="M30,10 C34,10 38,12 38,18 C38,24 30,25 30,25 C30,25 22,24 22,18 C22,12 26,10 30,10 Z" fill="#003478" />
-      <path d="M30,40 C26,40 22,38 22,32 C22,26 30,25 30,25 C30,25 38,26 38,32 C38,38 34,40 30,40 Z" fill="#003478" />
-    </g>
+  <g id="ko" filter="url(#sh002)">
     <g id="koMask" mask="url(#maskClose)">
-      <rect x="5" y="5" width="50" height="40" fill-opacity="0" />
+      <rect fill="#c0c0c0" height="30" stroke-width="0" width="40" x="9" y="10" />
+      <g transform="translate(29 24.8) scale(0.35)">
+        <g stroke="#000" stroke-width="4">
+          <path transform="rotate(33.69006752598)"
+            d="M-50-12v24m6 0v-24m6 0v24m76 0V1m0-2v-11m6 0v11m0 2v11m6 0V1m0-2v-11m6 0v24m6 0V1m0-2v-11" />
+          <path transform="rotate(-33.69006752598)"
+            d="M-50-12v24m6 0V1m0-2v-11m6 0v24m76 0V1m0-2v-11m6 0v24m6 0V1m0-2v-11m6 0v24m6 0V1m0-2v-11" />
+        </g>
+        <g transform="rotate(33.69006752598)">
+          <path fill="#cd2e3a" d="M12 0a18 18 0 11-36 0 24 24 0 1148 0" />
+          <path fill="#0047a0" d="M0 0a12 12 0 1124 0 24 24 0 11-48 0 12 12 0 1024 0" />
+        </g>
+      </g>
     </g>
-  </symbol>
+  </g>
 
   <!-- EU symbol -->
-  <symbol id="eu" viewBox="0 0 60 50">
-    <g>
-      <rect x="5" y="5" width="50" height="40" fill="#039" />
-      <circle cx="30" cy="25" r="15" fill="none" stroke="#fc0" stroke-width="1" />
-      <!-- EU stars -->
-      <g fill="#fc0">
-        <circle cx="30" cy="13" r="2" />
-        <circle cx="36" cy="15" r="2" />
-        <circle cx="40" cy="20" r="2" />
-        <circle cx="41" cy="25" r="2" />
-        <circle cx="40" cy="30" r="2" />
-        <circle cx="36" cy="35" r="2" />
-        <circle cx="30" cy="37" r="2" />
-        <circle cx="24" cy="35" r="2" />
-        <circle cx="20" cy="30" r="2" />
-        <circle cx="19" cy="25" r="2" />
-        <circle cx="20" cy="20" r="2" />
-        <circle cx="24" cy="15" r="2" />
+  <g id="eu" filter="url(#sh002)">
+    <g id="euMask" mask="url(#maskClose)">
+      <rect fill="#039" width="40" height="30" x="9" y="10" />
+      <g fill="#fc0" transform="scale(1.8) translate(16, 13.7)">
+        <g id="s">
+          <g id="c">
+            <path id="t" d="M0,0v1h0.5z" transform="translate(0,-1)rotate(18)" />
+            <use href="#t" transform="scale(-1,1)" />
+          </g>
+          <g id="a">
+            <use href="#c" transform="rotate(72)" />
+            <use href="#c" transform="rotate(144)" />
+          </g>
+          <use href="#a" transform="scale(-1,1)" />
+        </g>
+        <use href="#s" y="-6" />
+        <use href="#s" y="6" />
+        <g id="l">
+          <use href="#s" x="-6" />
+          <use href="#s" transform="rotate(150)translate(0,6)rotate(66)" />
+          <use href="#s" transform="rotate(120)translate(0,6)rotate(24)" />
+          <use href="#s" transform="rotate(60)translate(0,6)rotate(12)" />
+          <use href="#s" transform="rotate(30)translate(0,6)rotate(42)" />
+        </g>
+        <use href="#l" transform="scale(-1,1)" />
       </g>
     </g>
-    <g id="euMask" mask="url(#maskClose)">
-      <rect x="5" y="5" width="50" height="40" fill-opacity="0" />
-    </g>
-  </symbol>
+  </g>
 
   <!-- UN symbol -->
-  <symbol id="un" viewBox="0 0 60 50">
-    <g>
-      <rect x="5" y="5" width="50" height="40" fill="#5b92e5" />
-      <circle cx="30" cy="25" r="15" fill="#fff" />
-      <g fill="#5b92e5">
-        <path d="M30,10 C33,17 36,22 45,25 C36,28 33,33 30,40 C27,33 24,28 15,25 C24,22 27,17 30,10 Z" />
+  <g id="un" filter="url(#sh002)">
+    <g id="unMask" mask="url(#maskClose)">
+      <path fill="#009edb" fill-rule="evenodd" d="M0 0h1200v800H0z" transform="scale(0.033)" />
+      <g transform="scale(0.05) translate(-20, 120)">
+        <!-- UN globe details -->
+        <path id="avv" fill="#fff"
+          d="M662.75 589.2c-2.694 3.079-6.18 5.956-9.466 8.608-21.233-21.943-46.16-46.262-69.854-46.262-14.69 0-25.27 11.182-37.613 19.072-17.13 10.949-40.626 17.115-60.761 9.08-10.83-4.113-21.323-10.17-29.165-20.01 15.848 10.93 39.58 12.4 57.472 4.977 19.776-8.205 39.904-19.099 62.44-19.099 33.223 0 64.797 22.473 86.947 43.635zm-245.54-69.014c21.996 25.039 57.87 16.983 87.234 23.237 4.087.87 7.926 2.227 12.313 1.554-3.49-2.214-8.118-2.463-12.15-3.982-22.783-8.583-26.335-32.967-38.804-49.748 15.926 10.587 29.12 25.082 44.012 38.703 10.364 9.48 23.277 13.537 36.67 16.262-3.218 1.176-7.428.899-10.894 1.758-24.056 5.968-50.727 15.388-76.324 6.941-16.52-5.451-33.71-18.361-42.057-34.725zm-35.258-57.95c13.72 31.063 48.191 33.496 71.111 52.552 4.358 3.624 8.679 6.959 13.466 9.191l.247-.25c-5.289-4.785-11.012-10.488-15.109-16.44-13.1-19.035-8.74-45.052-18.841-65.232 9.177 10.988 17.784 22.302 23.068 34.883 8.503 20.246 11.392 43.342 30.463 58.726-20.64-6.81-44.452-5.454-63.039-17.628-19.537-12.797-37.644-32.996-41.366-55.802z" />
+        <use href="#avv" width="100%" height="100%" fill="#fff" transform="matrix(-1 0 0 1 1200 0)" />
       </g>
     </g>
-    <g id="unMask" mask="url(#maskClose)">
-      <rect x="5" y="5" width="50" height="40" fill-opacity="0" />
+  </g>
+
+  <!-- Additional flags -->
+  <g id="it" filter="url(#sh002)">
+    <g id="itMask" mask="url(#maskClose)">
+      <rect fill="#009246" height="30" stroke-width="0" width="13.33" x="9" y="10" />
+      <rect fill="#ffffff" height="30" stroke-width="0" width="13.33" x="22.33" y="10" />
+      <rect fill="#ce2b37" height="30" stroke-width="0" width="13.33" x="35.66" y="10" />
     </g>
-  </symbol>
+  </g>
+
+  <g id="es" filter="url(#sh002)">
+    <g id="esMask" mask="url(#maskClose)">
+      <rect fill="#c60b1e" height="10" stroke-width="0" width="40" x="9" y="10" />
+      <rect fill="#ffc400" height="10" stroke-width="0" width="40" x="9" y="20" />
+      <rect fill="#c60b1e" height="10" stroke-width="0" width="40" x="9" y="30" />
+    </g>
+  </g>
+
+  <g id="pt" filter="url(#sh002)">
+    <g id="ptMask" mask="url(#maskClose)">
+      <rect fill="#006600" height="30" stroke-width="0" width="15" x="9" y="10" />
+      <rect fill="#ff0000" height="30" stroke-width="0" width="25" x="24" y="10" />
+      <circle cx="24" cy="25" fill="#ffff00" r="7" />
+    </g>
+  </g>
+
+  <g id="nl" filter="url(#sh002)">
+    <g id="nlMask" mask="url(#maskClose)">
+      <rect fill="#AE1C28" height="10" stroke-width="0" width="40" x="9" y="10" />
+      <rect fill="#FFFFFF" height="10" stroke-width="0" width="40" x="9" y="20" />
+      <rect fill="#21468B" height="10" stroke-width="0" width="40" x="9" y="30" />
+    </g>
+  </g>
+
+  <g id="zh" filter="url(#sh002)">
+    <g id="zhMask" mask="url(#maskClose)">
+      <rect fill="#DE2910" height="30" stroke-width="0" width="40" x="9" y="10" />
+      <g transform="translate(15, 15) scale(0.3)">
+        <polygon fill="#FFDE00"
+          points="0,-20 5.8779,-6.1803 19.0211,-6.1803 7.5716,2.3607 13.4442,16.1803 0,7.6393 -13.4442,16.1803 -7.5716,2.3607 -19.0211,-6.1803 -5.8779,-6.1803" />
+        <polygon fill="#FFDE00" points="0,3 1.7634,-0.9541 -1.7634,-0.9541"
+          transform="translate(25, -15) rotate(35)" />
+        <polygon fill="#FFDE00" points="0,3 1.7634,-0.9541 -1.7634,-0.9541"
+          transform="translate(30, -8) rotate(10)" />
+        <polygon fill="#FFDE00" points="0,3 1.7634,-0.9541 -1.7634,-0.9541"
+          transform="translate(30, 0) rotate(-15)" />
+        <polygon fill="#FFDE00" points="0,3 1.7634,-0.9541 -1.7634,-0.9541"
+          transform="translate(25, 8) rotate(-40)" />
+      </g>
+    </g>
+  </g>
+
+  <g id="ja" filter="url(#sh002)">
+    <g id="jaMask" mask="url(#maskClose)">
+      <rect fill="#FFFFFF" height="30" stroke-width="0" width="40" x="9" y="10" />
+      <circle cx="29" cy="25" fill="#BC002D" r="9" />
+    </g>
+  </g>
+
+  <g id="ar" filter="url(#sh002)">
+    <g id="arMask" mask="url(#maskClose)">
+      <rect fill="#006C35" height="30" stroke-width="0" width="40" x="9" y="10" />
+      <g transform="translate(29, 25) scale(0.5)">
+        <path fill="#FFFFFF" d="M0,-15 L3,-5 L13,-5 L5,2 L8,12 L0,5 L-8,12 L-5,2 L-13,-5 L-3,-5 Z" />
+      </g>
+    </g>
+  </g>
+
+  <g id="tr" filter="url(#sh002)">
+    <g id="trMask" mask="url(#maskClose)">
+      <rect fill="#E30A17" height="30" stroke-width="0" width="40" x="9" y="10" />
+      <circle cx="22" cy="25" fill="#FFFFFF" r="6" />
+      <circle cx="24" cy="25" fill="#E30A17" r="5" />
+      <g transform="translate(30, 25) scale(0.3)">
+        <polygon fill="#FFFFFF"
+          points="0,-20 5.8779,-6.1803 19.0211,-6.1803 7.5716,2.3607 13.4442,16.1803 0,7.6393 -13.4442,16.1803 -7.5716,2.3607 -19.0211,-6.1803 -5.8779,-6.1803" />
+      </g>
+    </g>
+  </g>
 
   <!-- Pin icon for stickers -->
   <symbol id="pin" viewBox="0 0 60 70">
-    <g>
-      <ellipse cx="30" cy="15" rx="12" ry="6" fill="#ff8c00" filter="url(#buttonGlow)" />
-      <path d="M30,15 L30,60" stroke="#ff8c00" stroke-width="3" />
-      <circle cx="30" cy="60" r="5" fill="#ff8c00" />
+    <ellipse class="pinColor" cx="27.95" cy="37.46" fill="hsl(0, 100%, 50%)" filter="url(#f2)" rx="12" ry="9.53"
+      stroke-width="0" transform="rotate(-10.4686 27.95 37.46)" />
+    <g filter="url(#f3)">
+      <circle cx="24.5" cy="18.75" fill="url(#fill2)" filter="url(#f1)" r="16" stroke="url(#fill1)" />
+      <circle cx="24.5" cy="18.75" fill="url(#fill4)" r="9" stroke-width="0" />
+      <circle cx="25.75" cy="25.5" fill="url(#fill3)" r="12" stroke="url(#fill1)" stroke-width="2" />
     </g>
   </symbol>
 </svg>
