@@ -1,8 +1,44 @@
 /**
- * Image Utilities
+ * Image Utilities Module
  * Handles image-related operations including fullscreen viewing,
  * SVG filter adjustments, and visual effects for pins and stickers.
  */
+
+/**
+ * Initializes the module
+ * @param {HTMLElement} container - Container element (not used in this module)
+ */
+export async function init(container) {
+  console.log("Initializing image utilities module");
+  
+  // Store reference to device pixel ratio
+  window.devicePixelRatioWas = window.devicePixelRatio;
+  
+  // Export functions to global scope for access from other modules
+  window.fsPic = fsPic;
+  window.picFromSet = picFromSet;
+  window.updatePixelRatio = updatePixelRatio;
+  window.applyRandomEffects = applyRandomEffects;
+  
+  // Update SVG filters based on pixel ratio
+  updatePixelRatio();
+}
+
+/**
+ * Post-initialization tasks - called after DOM is updated
+ */
+export function postInit() {
+  console.log("Post-initializing image utilities module");
+  
+  // Apply random effects to all stickers and pins
+  applyRandomEffects();
+  
+  // Set up observer for dynamically added content
+  initDynamicContentObserver();
+  
+  // Set up listener for device pixel ratio changes
+  setupPixelRatioChangeListener();
+}
 
 /**
  * Shows an image in fullscreen mode with zoom capabilities
@@ -83,11 +119,9 @@ export function picFromSet(editId, picsArray = []) {
 }
 
 /**
- * Updates pixel ratio-dependent SVG filters
- * This function adjusts kernel matrices for feConvolveMatrix filters
- * based on the current device pixel ratio
+ * Set up listener for device pixel ratio changes
  */
-export function updatePixelRatio() {
+function setupPixelRatioChangeListener() {
   if (window.removePiselRatio != null) {
     window.removePiselRatio();
   }
@@ -99,7 +133,14 @@ export function updatePixelRatio() {
   window.removePiselRatio = () => {
     media.removeEventListener("change", updatePixelRatio);
   };
+}
 
+/**
+ * Updates pixel ratio-dependent SVG filters
+ * This function adjusts kernel matrices for feConvolveMatrix filters
+ * based on the current device pixel ratio
+ */
+export function updatePixelRatio() {
   // Update kernel matrices based on pixel ratio
   Array.from(document.getElementsByTagName("feConvolveMatrix")).forEach(element => {
     if (typeof element.getAttribute('id') === 'string') {
@@ -222,41 +263,3 @@ function initDynamicContentObserver() {
     subtree: true
   });
 }
-
-/**
- * Initializes all image effects
- * This is the main function to call when setting up visual effects
- */
-export function initImageEffects() {
-  console.log("Initializing image effects");
-  
-  // Store reference to device pixel ratio
-  window.devicePixelRatioWas = window.devicePixelRatio;
-  
-  // Update SVG filters based on pixel ratio
-  updatePixelRatio();
-  
-  // Apply random rotations and colors
-  applyRandomEffects();
-  
-  // Create observer to handle dynamically added content
-  initDynamicContentObserver();
-}
-
-// Initialize when DOM content is loaded
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initImageEffects);
-} else {
-  // If DOM is already loaded, apply effects immediately
-  initImageEffects();
-}
-
-// Apply effects after all resources are loaded as well
-window.addEventListener('load', applyRandomEffects);
-
-// Export functions for global access
-window.fsPic = fsPic;
-window.picFromSet = picFromSet;
-window.updatePixelRatio = updatePixelRatio;
-window.applyRandomEffects = applyRandomEffects;
-window.initImageEffects = initImageEffects;
