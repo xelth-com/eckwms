@@ -239,10 +239,15 @@ export function syncLanguageMasks() {
     console.log(`Synchronizing language masks for ${currentLang}`);
     
     // Close all masks
-    const supportedLangs = ['de', 'en', 'fr', 'it', 'es', 'pt', 'nl', 'da', 'sv', 'fi', 
-      'el', 'cs', 'pl', 'hu', 'sk', 'sl', 'et', 'lv', 'lt', 'ro',
-      'bg', 'hr', 'ga', 'mt', 'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 
-      'he', 'ko', 'ja', 'no', 'bs', 'hi'];
+    const supportedLangs = [
+      // --- EU Languages ---
+      'en', 'de', 'pl', 'fr', 'it', 'es', 'nl', 'ro', 'hr', 'bg', 'el',
+      'pt', 'cs', 'hu', 'sv', 'da', 'fi', 'sk', 'lt', 'lv', 'et', 'sl',
+      'mt', 'ga',
+      // --- Non-EU Languages ---
+      'tr', 'ru', 'ar', 'uk', 'sr', 'bs', 'no', 'zh', 'hi', 'ja', 'ko',
+      'he'
+    ]
     
     supportedLangs.forEach(lang => {
       const maskElement = document.getElementById(`${lang}Mask`);
