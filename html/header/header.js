@@ -86,34 +86,13 @@ function applyButtonBackgrounds() {
  */
 function initMainMenuCards() {
   cards = Array.from(document.getElementsByClassName("mainMenuCard"), (element, index) => {
-    // Recreate the complex background from the old implementation
     element.style.backgroundImage = `
-      linear-gradient(90deg,
-        #ba80 0%,
-        #ba84 10%,
-        #ba88 20%,
-        #ba8c 30%,
-        #ba8f 40%,
-        #ba8f 60%,
-        #ba8c 70%,
-        #ba88 80%,
-        #ba84 90%,
-        #ba80 100%
-      ),
-      linear-gradient(30deg,
-        #ba80, #ba80, #ba80, 
-        #ba8f, #ba8f, 
-        #ba80, #ba80, #ba80,
-        #ba8f, #ba8f, 
-        #ba80, #ba80, #ba80,
-        #ba8f, #ba8f, 
-        #ba80, #ba80, #ba80
-      )`;
+      linear-gradient(90deg,#ba80 0%,#ba84 10%,#ba88 20%,#ba8c 30%,#ba8f 40%,  #ba8f 60%,#ba8c 70%,#ba88 80%,#ba84 90%,#ba80 100%),
+      linear-gradient(30deg,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80,#ba8f,#ba8f,#ba80,#ba80,#ba80)`;
     
-    // Add SVG background if available
-    if (window.backSvg2) {
-      const svgBackgroundImg = `url(data:image/svg+xml;charset=utf-8;base64,${btoa(window.backSvg2)})`;
-      element.style.backgroundImage += `, ${svgBackgroundImg}`;
+    // Add background image if available
+    if (window.backButtonImg) {
+      element.style.backgroundImage += `, ${window.backButtonImg}`;
     }
     
     return { 
