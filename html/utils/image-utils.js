@@ -1,3 +1,4 @@
+// html/utils/image-utils.js
 /**
  * Image Utilities Module
  * Handles image-related operations including fullscreen viewing,
@@ -31,7 +32,10 @@ export function postInit() {
   console.log("Post-initializing image utilities module");
   
   // Apply random effects to all stickers and pins
-  applyRandomEffects();
+  setTimeout(() => {
+    console.log("Applying random effects after delay to ensure DOM is ready");
+    applyRandomEffects();
+  }, 100);
   
   // Set up observer for dynamically added content
   initDynamicContentObserver();
@@ -188,104 +192,451 @@ export function updatePixelRatio() {
 }
 
 /**
- * Get a realistic sticker color with proper hue, saturation, and lightness
+ * Generate a random sticker color
+ * Returns a color from predefined palette or based on custom attributes
  * @param {number} index - Sticker index for variety
+ * @param {HTMLElement} element - Sticker element that might have custom color settings
  * @returns {Object} - Object with hue, saturation, and lightness values
  */
-function getStickerColor(index) {
-  // Predefined realistic sticker colors - pastels for all except first one
-  const stickerColors = [
-    { hue: 57, saturation: 96, lightness: 48 },   // Default yellow (first sticker)
-    { hue: 190, saturation: 70, lightness: 65 },  // Light blue
-    { hue: 340, saturation: 60, lightness: 75 },  // Pink
-    { hue: 120, saturation: 50, lightness: 70 },  // Light green
-    { hue: 40, saturation: 80, lightness: 65 },   // Orange/peach
-    { hue: 280, saturation: 50, lightness: 75 },  // Light purple
-    { hue: 15, saturation: 70, lightness: 65 }    // Salmon
+function generateStickerColor(index, element) {
+  // Seed for deterministic randomness
+  const seed = index * 137 + 29; // Prime numbers for better distribution
+  
+  // Predefined sticker color palettes (paler than original)
+  const stickerPalettes = [
+    // Yellow/Gold palette
+    { hue: 57, saturation: 85, lightness: 55 },
+    // Blue palette
+    { hue: 210, saturation: 60, lightness: 75 },
+    // Pink/Rose palette
+    { hue: 340, saturation: 50, lightness: 80 },
+    // Green palette
+    { hue: 120, saturation: 40, lightness: 78 },
+    // Orange/Peach palette
+    { hue: 32, saturation: 70, lightness: 75 },
+    // Purple palette
+    { hue: 280, saturation: 40, lightness: 80 },
+    // Teal palette
+    { hue: 170, saturation: 50, lightness: 70 }
   ];
 
-  // For first sticker, always use the default
-  if (index === 0) {
-    return stickerColors[0];
+  // Check for custom color settings
+  if (element && element.dataset) {
+    // Check for explicit hue value
+    const customHue = parseInt(element.dataset.hue);
+    if (!isNaN(customHue)) {
+      return {
+        hue: customHue,
+        saturation: 60,
+        lightness: 70
+      };
+    }
+    
+    // Check for hue range
+    const minHue = parseInt(element.dataset.minHue);
+    const maxHue = parseInt(element.dataset.maxHue);
+    if (!isNaN(minHue) && !isNaN(maxHue)) {
+      const range = maxHue - minHue;
+      // Use seed for deterministic random hue within range
+      const hue = minHue + (seed % range);
+      return {
+        hue,
+        saturation: 60,
+        lightness: 70
+      };
+    }
   }
   
-  // For other stickers, choose a color avoiding the first (default)
-  // Pick a color based on index or random if index is too large
-  const colorIndex = index < stickerColors.length ? index : 
-                   1 + Math.floor(Math.random() * (stickerColors.length - 1));
+  // Default behavior: first sticker always gets yellow, others get random palette
+  if (index === 0) {
+    return stickerPalettes[0];
+  }
   
-  return stickerColors[colorIndex];
+  // For other stickers, select palette based on index or seed
+  const paletteIndex = 1 + (seed % (stickerPalettes.length - 1));
+  return stickerPalettes[paletteIndex];
 }
 
 /**
- * Get a pin color that contrasts well with the sticker
- * @param {Object} stickerColor - The sticker color properties
- * @returns {Object} - Object with hue, saturation, and lightness values
- */
-function getPinColor(stickerColor) {
-  // For pins, use a complementary color that's darker and more saturated
-  const hue = (stickerColor.hue + 180) % 360;
-  return {
-    hue: hue,
-    saturation: 90,  // More saturated
-    lightness: 30    // Darker
-  };
-}
-
-/**
- * Applies random rotations to stickers and appropriate colors to pins
- * Uses realistic colors for stickers and ensures good contrast with pins
+ * Applies random effects to stickers and buttons
+ * Uses realistic colors and ensures good contrast
  */
 export function applyRandomEffects() {
-  console.log("Applying random effects to stickers and pins");
+  console.log("Applying random effects to stickers, pins, and buttons");
   
-  // First, get all stickers
+  // Get all stickers
   const stickers = document.querySelectorAll('.sticker');
+  console.log(`Found ${stickers.length} stickers to colorize`);
   
-  // Apply random rotation and color to each sticker
+  // Store sticker colors to use for buttons later
+  const stickerColors = [];
+  
+  // Process each sticker
   stickers.forEach((sticker, index) => {
-    // Random rotation between -4.5 and 4.5 degrees for all stickers
-    const randomRotation = Math.random() * 9 - 4.5;
+    // Random rotation between -4 and 4 degrees for natural look
+    const randomRotation = (Math.random() * 8) - 4;
     sticker.style.transform = `rotate(${randomRotation}deg)`;
     
-    // Get sticker color based on index
-    const stickerColor = getStickerColor(index);
+    // Get color based on index or custom attributes
+    const color = generateStickerColor(index, sticker);
+    stickerColors.push(color);
     
-    // Store color info in dataset for debugging and future reference
-    sticker.dataset.hue = stickerColor.hue;
-    sticker.dataset.saturation = stickerColor.saturation;
-    sticker.dataset.lightness = stickerColor.lightness;
+    // Store color in the element's dataset for reference
+    sticker.dataset.appliedHue = color.hue;
+    sticker.dataset.appliedSaturation = color.saturation;
+    sticker.dataset.appliedLightness = color.lightness;
     
-    // Apply base sticker color through CSS
+    // Apply sticker background with gradient
     sticker.style.background = `linear-gradient(
-      hsla(${stickerColor.hue}, ${stickerColor.saturation}%, 38%, 0.3) 70px, 
-      hsla(${stickerColor.hue}, ${stickerColor.saturation}%, 28%, 0.3), 
-      hsla(${stickerColor.hue}, ${stickerColor.saturation}%, 99%, 0) 75px),
-      hsla(${stickerColor.hue}, ${stickerColor.saturation}%, ${stickerColor.lightness}%, 0.65)`;
+      hsla(${color.hue}, ${color.saturation}%, 38%, 0.25) 70px, 
+      hsla(${color.hue}, ${color.saturation}%, 28%, 0.25), 
+      hsla(${color.hue}, ${color.saturation}%, 99%, 0) 75px),
+      hsla(${color.hue}, ${color.saturation}%, ${color.lightness}%, 0.55)`;
     
-    // Get corresponding pin color
-    const pinColor = getPinColor(stickerColor);
+    console.log(`Sticker ${index}: Applied hue=${color.hue}, sat=${color.saturation}, light=${color.lightness}`);
+
+    // Find and colorize pins within the sticker
+    colorizeStrickerPins(sticker, color);
+  });
+  
+  // Apply colors to buttons based on sticker colors
+  colorizeButtons(stickerColors);
+}
+
+/**
+ * Colorize all pins within a sticker - direct approach working with SVG definition
+ * @param {HTMLElement} sticker - The sticker element
+ * @param {Object} stickerColor - The color of the sticker
+ */
+function colorizeStrickerPins(sticker, stickerColor) {
+  // Generate random pin hue that differs from sticker hue by at least 20 units
+  let pinHue;
+  let hueDiff;
+  
+  do {
+    pinHue = Math.floor(Math.random() * 360);
+    hueDiff = Math.min(
+      Math.abs(pinHue - stickerColor.hue),
+      360 - Math.abs(pinHue - stickerColor.hue)
+    );
+  } while (hueDiff < 20);
+  
+  console.log(`Sticker hue: ${stickerColor.hue}, Pin hue: ${pinHue} (diff: ${hueDiff})`);
+  
+  // Find pins in this sticker by use reference
+  const pinUses = sticker.querySelectorAll('use[href="#pin"]');
+  
+  // Direct approach: find the pin definition once
+  const pinDef = document.getElementById('pin');
+  if (pinDef) {
+    // Find all elements with pinColor class in the definition
+    const pinColorElements = pinDef.querySelectorAll('.pinColor');
     
-    // Apply colors to all SVG elements in the sticker
-    const svgs = sticker.querySelectorAll('svg');
-    svgs.forEach(svg => {
-      // Apply color to pins
-      const pinElements = svg.querySelectorAll('.pinColor');
-      pinElements.forEach(pinElement => {
-        // Apply pin color based on element type
-        if (pinElement.tagName.toLowerCase() === 'stop') {
-          // For gradient stops
-          pinElement.setAttribute('stop-color', `hsl(${pinColor.hue}, ${pinColor.saturation}%, ${pinColor.lightness}%)`);
-        } else if (pinElement.hasAttribute('fill') && !pinElement.getAttribute('fill').startsWith('url(#')) {
-          // For elements with direct fill attribute (not gradients)
-          pinElement.setAttribute('fill', `hsl(${pinColor.hue}, ${pinColor.saturation}%, ${pinColor.lightness}%)`);
+    // Store original colors to restore later
+    if (!pinDef._originalColors) {
+      pinDef._originalColors = [];
+      pinColorElements.forEach(el => {
+        // Store original attributes
+        if (el.hasAttribute('fill')) {
+          pinDef._originalColors.push({
+            element: el,
+            attribute: 'fill',
+            value: el.getAttribute('fill')
+          });
+        }
+        if (el.hasAttribute('stop-color')) {
+          pinDef._originalColors.push({
+            element: el,
+            attribute: 'stop-color',
+            value: el.getAttribute('stop-color')
+          });
         }
       });
+    }
+    
+    // Temporarily modify the original definition
+    pinColorElements.forEach(el => {
+      if (el.hasAttribute('fill') && !el.getAttribute('fill').startsWith('url(')) {
+        el.setAttribute('fill', `hsl(${pinHue}, 90%, 45%)`);
+      }
+      if (el.hasAttribute('stop-color')) {
+        el.setAttribute('stop-color', `hsl(${pinHue}, 90%, 45%)`);
+      }
+    });
+    
+    // Force a repaint of the pins
+    pinUses.forEach(use => {
+      use.style.display = 'none';
+      setTimeout(() => { use.style.display = ''; }, 0);
+    });
+    
+    // Reset original colors with a small delay
+    setTimeout(() => {
+      if (pinDef._originalColors) {
+        pinDef._originalColors.forEach(item => {
+          item.element.setAttribute(item.attribute, item.value);
+        });
+      }
+    }, 100);
+  }
+}
+
+/**
+ * Changes only the hue of a color while preserving saturation and lightness
+ * Works with various color formats (hex, rgb, hsl)
+ * @param {string} originalColor - Original color in any valid CSS format
+ * @param {number} newHue - New hue value (0-360)
+ * @param {number} lightnessAdjust - Optional adjustment to lightness (-100 to 100)
+ * @returns {string} - New color in appropriate format
+ */
+function changeHuePreserveOthers(originalColor, newHue, lightnessAdjust = 0) {
+  // Handle empty or invalid colors
+  if (!originalColor || originalColor === 'none' || originalColor === 'transparent') {
+    return originalColor;
+  }
+  
+  // Parse color to RGB
+  let r, g, b;
+  
+  // Handle different color formats
+  if (originalColor.startsWith('#')) {
+    // Handle hex format
+    const hex = originalColor.substring(1);
+    const bigint = parseInt(hex, 16);
+    r = (bigint >> 16) & 255;
+    g = (bigint >> 8) & 255;
+    b = bigint & 255;
+  } else if (originalColor.startsWith('rgb')) {
+    // Handle rgb/rgba format
+    const matches = originalColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)/);
+    if (matches) {
+      r = parseInt(matches[1]);
+      g = parseInt(matches[2]);
+      b = parseInt(matches[3]);
+    } else {
+      // Can't parse, return original
+      return originalColor;
+    }
+  } else if (originalColor.startsWith('hsl')) {
+    // Handle hsl/hsla format - replace the hue value and adjust lightness
+    const matches = originalColor.match(/hsla?\((\d+),\s*([\d.]+)%,\s*([\d.]+)%(?:,\s*([\d.]+))?\)/);
+    if (matches) {
+      // Extract values
+      const oldHue = parseInt(matches[1]);
+      const sat = parseFloat(matches[2]);
+      let light = parseFloat(matches[3]);
+      const alpha = matches[4] ? parseFloat(matches[4]) : 1;
+      
+      // Adjust lightness, ensuring it stays between 0-100
+      light = Math.max(0, Math.min(100, light + lightnessAdjust));
+      
+      // Return new HSL/HSLA with updated hue and lightness
+      if (matches[4]) {
+        return `hsla(${newHue}, ${sat}%, ${light}%, ${alpha})`;
+      } else {
+        return `hsl(${newHue}, ${sat}%, ${light}%)`;
+      }
+    } else {
+      // Can't parse, return original
+      return originalColor;
+    }
+  } else {
+    // Unknown format, return original
+    return originalColor;
+  }
+  
+  // Convert RGB to HSL
+  r /= 255;
+  g /= 255;
+  b /= 255;
+  
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  
+  if (max === min) {
+    // Achromatic (gray)
+    h = 0;
+    s = 0;
+  } else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    
+    h /= 6;
+  }
+  
+  // Convert to degrees, use the new hue, keep original saturation
+  h = newHue;
+  s = Math.round(s * 100);
+  
+  // Apply lightness adjustment, ensuring it stays between 0-100
+  l = Math.round(l * 100) + lightnessAdjust;
+  l = Math.max(0, Math.min(100, l));
+  
+  // Return new HSL color
+  return `hsl(${h}, ${s}%, ${l}%)`;
+}
+
+/**
+ * Apply colors to all buttons based on sticker colors
+ * @param {Array} stickerColors - Array of sticker colors
+ */
+function colorizeButtons(stickerColors) {
+  // Get all buttons
+  const buttons = document.querySelectorAll('.button');
+  console.log(`Found ${buttons.length} buttons to colorize`);
+  
+  if (buttons.length === 0 || stickerColors.length === 0) {
+    return;
+  }
+  
+  // Apply colors to each button
+  buttons.forEach((button, index) => {
+    // Get a base color from the sticker colors (cycle through them)
+    const baseColor = stickerColors[index % stickerColors.length];
+    
+    // Create a color 20 units away from the base color
+    const buttonHue = (baseColor.hue + 20) % 360;
+    
+    // Create button color CSS
+    const buttonColorStyle = `hsla(${buttonHue}, ${baseColor.saturation}%, ${baseColor.lightness}%, 0.5)`;
+    
+    // Apply the color
+    button.style.backgroundColor = buttonColorStyle;
+    
+    console.log(`Button ${index}: Applied hue=${buttonHue} (based on sticker hue ${baseColor.hue})`);
+  });
+}
+
+/**
+ * Force recoloring of all pins in the document
+ * Each pin gets a random hue based on its sticker, preserving gradients and shadows
+ */
+function forceRecolorAllPins() {
+  // Get all stickers first
+  const stickers = document.querySelectorAll('.sticker');
+  console.log(`Found ${stickers.length} stickers to process their pins`);
+  
+  // Process pins in each sticker
+  stickers.forEach((sticker, stickerIndex) => {
+    // Get sticker's hue from dataset if available
+    const stickerHue = parseInt(sticker.dataset.appliedHue || sticker.dataset.hue || 0);
+    
+    // Find all pins within this sticker
+    const pins = sticker.querySelectorAll('use[href="#pin"]');
+    console.log(`Sticker ${stickerIndex} (hue ${stickerHue}) has ${pins.length} pins`);
+    
+    // Process each pin in this sticker
+    pins.forEach((pin, pinIndex) => {
+      // Generate random hue that differs from sticker hue by at least 20 units
+      let pinHue;
+      let hueDiff;
+      
+      do {
+        pinHue = Math.floor(Math.random() * 360);
+        // Calculate minimum distance on the color wheel (considering it's circular)
+        hueDiff = Math.min(
+          Math.abs(pinHue - stickerHue),
+          360 - Math.abs(pinHue - stickerHue)
+        );
+      } while (hueDiff < 20);
+      
+      console.log(`Pin ${pinIndex} in sticker ${stickerIndex}: Applying hue ${pinHue} (differs from sticker by ${hueDiff})`);
+      
+      // Set data attribute for debugging
+      pin.dataset.appliedHue = pinHue;
+      
+      // Since pins are defined using <use> elements that reference a shared <defs> element,
+      // we need to create custom styles to override the colors for each specific pin
+      
+      // Create a unique class name for this pin
+      const uniqueClassName = `pin-${stickerIndex}-${pinIndex}`;
+      pin.classList.add(uniqueClassName);
+      
+      // Create or update a style element for this pin
+      let styleEl = document.getElementById(`style-${uniqueClassName}`);
+      if (!styleEl) {
+        styleEl = document.createElement('style');
+        styleEl.id = `style-${uniqueClassName}`;
+        document.head.appendChild(styleEl);
+      }
+      
+      // Create CSS that targets all .pinColor elements within this specific pin
+      // This allows us to selectively override colors just for this pin
+      styleEl.textContent = `
+        .${uniqueClassName} .pinColor[fill]:not([fill^="url"]) {
+          fill: hsl(${pinHue}, var(--pin-saturation, 90%), var(--pin-lightness, 40%)) !important;
+        }
+        .${uniqueClassName} .pinColor[stop-color] {
+          stop-color: hsl(${pinHue}, var(--pin-saturation, 90%), var(--pin-lightness, 40%)) !important;
+        }
+      `;
     });
   });
   
-  // Log debug info
-  console.log(`Applied colors to ${stickers.length} stickers`);
+  // Look for pins outside stickers as fallback
+  const standalonesPins = Array.from(document.querySelectorAll('use[href="#pin"]')).filter(
+    pin => !pin.closest('.sticker')
+  );
+  
+  console.log(`Found ${standalonesPins.length} standalone pins outside of stickers`);
+  
+  standalonesPins.forEach((pin, index) => {
+    // Generate a completely random hue for standalone pins
+    const pinHue = Math.floor(Math.random() * 360);
+    
+    console.log(`Standalone pin ${index}: Applying hue ${pinHue}`);
+    
+    // Create a unique class for this pin
+    const uniqueClassName = `standalone-pin-${index}`;
+    pin.classList.add(uniqueClassName);
+    
+    // Create or update style element
+    let styleEl = document.getElementById(`style-${uniqueClassName}`);
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = `style-${uniqueClassName}`;
+      document.head.appendChild(styleEl);
+    }
+    
+    // Create CSS for this pin
+    styleEl.textContent = `
+      .${uniqueClassName} .pinColor[fill]:not([fill^="url"]) {
+        fill: hsl(${pinHue}, var(--pin-saturation, 90%), var(--pin-lightness, 40%)) !important;
+      }
+      .${uniqueClassName} .pinColor[stop-color] {
+        stop-color: hsl(${pinHue}, var(--pin-saturation, 90%), var(--pin-lightness, 40%)) !important;
+      }
+    `;
+  });
+  
+  // Define CSS variables for pin colors (can be customized in future)
+  const rootStyle = document.getElementById('pin-root-style') || document.createElement('style');
+  rootStyle.id = 'pin-root-style';
+  rootStyle.textContent = `
+    :root {
+      --pin-saturation: 90%;
+      --pin-lightness: 40%;
+    }
+  `;
+  document.head.appendChild(rootStyle);
+  
+  // Force a redraw to ensure colors update
+  const allSvgElements = document.querySelectorAll('svg');
+  allSvgElements.forEach(svg => {
+    // Trigger a reflow
+    const display = svg.style.display;
+    svg.style.display = 'none';
+    setTimeout(() => {
+      svg.style.display = display;
+    }, 0);
+  });
 }
 
 /**
@@ -321,4 +672,13 @@ function initDynamicContentObserver() {
     childList: true,
     subtree: true
   });
+  
+  // Force recolor of all pins after a short delay
+  setTimeout(() => {
+    forceRecolorAllPins();
+  }, 500);
 }
+
+// Add to window object for direct access
+window.forceApplyRandomEffects = applyRandomEffects;
+window.forceRecolorAllPins = forceRecolorAllPins;
