@@ -1,5 +1,7 @@
 /* i18n.css - Стили для элементов мультиязычности */
 
+/* ====== БАЗОВЫЕ СТИЛИ МУЛЬТИЯЗЫЧНОСТИ ====== */
+
 /* Контейнер переключателя языков */
 .language-selector {
   position: relative;
@@ -50,6 +52,8 @@
   background-color: rgba(0, 0, 0, 0.1);
 }
 
+/* ====== ПОДДЕРЖКА LTR/RTL НАПРАВЛЕНИЯ ====== */
+
 /* Default text alignment for LTR languages */
 html[dir="ltr"] {
   text-align: left;
@@ -68,7 +72,6 @@ html[dir="ltr"] .form-group label {
   text-align: left;
 }
 
-
 /* Для RTL языков (арабский, иврит) */
 html[dir="rtl"] {
   text-align: right;
@@ -86,6 +89,14 @@ html[dir="rtl"] .language-selector {
 html[dir="rtl"] .form-group label {
   text-align: right;
 }
+
+/* Special handling for right-to-left languages */
+html[lang="ar"],
+html[lang="he"] {
+  direction: rtl;
+}
+
+/* ====== АНИМАЦИИ И ЭФФЕКТЫ ====== */
 
 /* Анимация для загрузки переводов */
 .i18n-loading {
@@ -117,32 +128,7 @@ html[dir="rtl"] .form-group label {
   }
 }
 
-/* Компактный режим для мобильных устройств */
-@media (max-width: 768px) {
-  .language-selector {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    max-width: 100%;
-    padding: 0.15rem;
-    justify-content: flex-start;
-  }
-  
-  .language-option {
-    padding: 0.4rem 0.8rem;
-    font-size: 0.8rem;
-    margin: 0.15rem;
-  }
-  
-  .language-option span {
-    display: none;
-  }
-  
-  .language-more-btn {
-    padding: 0.4rem 0.8rem;
-    font-size: 0.8rem;
-    margin: 0.15rem;
-  }
-}
+/* ====== ПОДДЕРЖКА РАЗЛИЧНЫХ ШРИФТОВ ====== */
 
 /* Стили для языков с иероглифами (китайский, японский, корейский) */
 html[lang="zh"] body,
@@ -183,12 +169,6 @@ html[lang="hi"] .complex-script {
   font-size: 1.1em;
 }
 
-/* Special handling for right-to-left languages */
-html[lang="ar"],
-html[lang="he"] {
-  direction: rtl;
-}
-
 /* Fonts may need additional tweaking for complex scripts */
 html[lang="ar"] input,
 html[lang="he"] input,
@@ -201,4 +181,141 @@ html[lang="hi"] input,
 html[lang="ar"] input,
 html[lang="he"] input {
   line-height: 1.4;
+}
+
+/* ====== НОВЫЙ СЕЛЕКТОР ЯЗЫКОВ ====== */
+
+/* Language menu container */
+#langMenu {
+  display: flex;
+  justify-content: flex-end;
+  position: relative;
+  border-radius: 30px; 
+  background-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0px 0px 30px -15px rgba(255, 255, 255, 1);
+  transition: all 0.3s ease;
+  margin-left: auto;
+  padding: 3px;
+  max-width: calc(100% - 150px);
+  overflow: hidden;
+}
+
+/* Language button groups */
+.langButtonGroup {
+  display: flex;
+  flex-wrap: nowrap;
+  transition: all 0.5s ease;
+}
+
+/* Button styles */
+.button {
+  filter: brightness(100%);
+  vertical-align: center;
+  width: fit-content;
+  height: fit-content;
+  display: inline-block;
+  border-radius: 10px;
+  background-color: rgba(180, 180, 180, 0.5);
+  box-shadow: 1px 2px 3px 0px rgba(20, 20, 20, .5), 
+              inset 1px 1px 2px 0px rgba(255, 255, 255, .5), 
+              inset -1px -1px 2px 0px rgba(50, 50, 50, .5);
+  transition: all 0.2s;
+  user-select: none;
+  margin: 0 2px;
+}
+
+.button:hover {
+  background-color: rgba(180, 180, 180, 0.6);
+  box-shadow: 1px 2px 4px 0px rgba(20, 20, 20, 0.6), 
+              inset 2px 2px 4px 0px rgba(255, 255, 255, 0.6), 
+              inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, 0.6);
+}
+
+.button:active {
+  filter: brightness(95%);
+  box-shadow: 0px 0px 0px 0px rgba(20, 20, 20, .5), 
+              inset 2px 2px 2px 0px rgba(50, 50, 50, .5), 
+              inset -2px -2px 2px 0px rgba(255, 255, 255, .5);
+}
+
+/* Language toggle button */
+#langToggleBtn {
+  background-color: rgba(100, 100, 100, 0.7);
+  box-shadow: 1px 2px 3px 0px rgba(20, 20, 20, .7), 
+              inset 1px 1px 2px 0px rgba(255, 255, 255, .7), 
+              inset -1px -1px 2px 0px rgba(50, 50, 50, .7);
+}
+
+#langToggleBtn:hover {
+  background-color: rgba(120, 120, 120, 0.8);
+}
+
+/* RTL support for new language menu */
+html[dir="rtl"] #langMenu {
+  flex-direction: row-reverse;
+}
+
+/* Make sure the language toggle button is always visible */
+#langToggleBtn {
+  display: inline-block !important;
+}
+
+/* ====== АДАПТИВНОСТЬ ====== */
+
+/* Компактный режим для мобильных устройств */
+@media (max-width: 768px) {
+  .language-selector {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    max-width: 100%;
+    padding: 0.15rem;
+    justify-content: flex-start;
+  }
+  
+  .language-option {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    margin: 0.15rem;
+  }
+  
+  .language-option span {
+    display: none;
+  }
+  
+  .language-more-btn {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    margin: 0.15rem;
+  }
+}
+
+/* Responsive design for language buttons */
+@media screen and (max-width: 1200px) {
+  #langMenu {
+    max-width: calc(100% - 130px);
+  }
+}
+
+@media screen and (max-width: 1000px) {
+  #langMenu {
+    max-width: calc(100% - 110px);
+  }
+}
+
+@media screen and (max-width: 800px) {
+  #langMenu {
+    max-width: calc(100% - 90px);
+  }
+}
+
+@media screen and (max-width: 600px) {
+  #langMenu {
+    max-width: calc(100% - 70px);
+  }
+}
+
+@media screen and (max-width: 400px) {
+  #langMenu {
+    max-width: calc(100% - 50px);
+  }
 }

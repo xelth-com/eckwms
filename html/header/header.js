@@ -4,7 +4,6 @@
  */
 
 import { loadCSS, loadTemplate } from '/core/module-loader.js';
-import { syncLanguageMasks, initLanguageSelector } from '/i18n/language-selector.js';
 
 // Globals for menu state tracking
 window.waitForTransition = false;
@@ -64,6 +63,24 @@ function initEventListeners() {
       });
     }
   });
+  
+  // Add language button click handlers
+  document.querySelectorAll('#langMenu [data-language]').forEach(button => {
+    button.addEventListener('click', function() {
+      const langCode = this.getAttribute('data-language');
+      if (langCode && window.setLanguageByCode) {
+        window.setLanguageByCode(langCode);
+      } else if (langCode && window.setLanguage) {
+        window.setLanguage(langCode);
+      }
+    });
+  });
+  
+  // Add toggle button click handler
+  const toggleBtn = document.getElementById('langToggleBtn');
+  if (toggleBtn && window.toggleLanguageGroup) {
+    toggleBtn.addEventListener('click', window.toggleLanguageGroup);
+  }
 }
 
 /**
@@ -283,8 +300,15 @@ export function mainMenuCardClose(mainMenuNumber) {
  * Post-initialization tasks
  */
 export function postInit() {
-  // Initialize language selector
-  initLanguageSelector();
+  // Initialize language adjustments
+  if (window.syncLanguageMasks) {
+    window.syncLanguageMasks();
+  }
+  
+  // Initialize responsive behavior
+  if (window.adjustLanguageButtons) {
+    window.adjustLanguageButtons();
+  }
   
   // Auto-show main menu on desktop after delay if not used
   setTimeout(() => {
