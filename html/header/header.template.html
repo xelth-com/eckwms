@@ -1,12 +1,12 @@
 <!-- 
- * Extended language buttons row implementation
+ * Redesigned language buttons row implementation
  * Author: Claude
  * Created: April 1, 2025
  * Description: Implements a responsive language selection system with buttons that
  * extend to the Betruger logo and disappear as screen size decreases
  -->
 
-<div style="padding-top: 3px;padding-right: 3px;" class="header" id="myHeader">
+ <div style="padding-top: 3px;padding-right: 3px;" class="header" id="myHeader">
   <a href="https://betruger.com/" style="width: min-content;display: inline-block;">
     <svg id="betrugerSvg" xmlns="http://www.w3.org/2000/svg" style="position: absolute; left: 0px; top: 0px;"
       viewBox="0 0 110 110" width="110" height="110">
@@ -16,183 +16,179 @@
 
   <div id="langMenu" style="width: max-content;display: inline-block; border: 0px solid #fff; border-radius: 30px; background-color: #fff3;
     box-shadow: 0px 0px 30px -15px rgba(255, 255, 255)">
-    <!-- Additional languages buttons in right-to-left order -->
+    <!-- Language toggle button - leftmost (17th) button -->
+    <div id="langToggleBtn" class="button">
+      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+        <use href="#langToggle" />
+      </svg>
+    </div>
     
-    <div id="langMain17" onclick="setLanguage('lang17')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang17" href="#bg" />
-      </svg>
-    </div>
-    <div id="langMain16" onclick="setLanguage('lang16')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang16" href="#hr" />
-      </svg>
-    </div>
-    <div id="langMain15" onclick="setLanguage('lang15')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang15" href="#ro" />
-      </svg>
-    </div>
-    <div id="langMain14" onclick="setLanguage('lang14')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang14" href="#uk" />
-      </svg>
-    </div>
-    <div id="langMain13" onclick="setLanguage('lang13')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang13" href="#ar" />
-      </svg>
-    </div>
-    <div id="langMain12" onclick="setLanguage('lang12')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang12" href="#ru" />
-      </svg>
-    </div>
-    <div id="langMain11" onclick="setLanguage('lang11')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang11" href="#nl" />
-      </svg>
-    </div>
-    <div id="langMain10" onclick="setLanguage('lang10')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang10" href="#zh" />
-      </svg>
-    </div>
-    <div id="langMain9" onclick="setLanguage('lang9')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang9" href="#es" />
-      </svg>
-    </div>
-    <div id="langMain8" onclick="setLanguage('lang8')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang8" href="#it" />
-      </svg>
-    </div>
-    <div id="langMain7" onclick="setLanguage('lang7')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang7" href="#pl" />
-      </svg>
-    </div>
-    <div id="langMain6" onclick="setLanguage('lang6')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang6" href="#ko" />
-      </svg>
-    </div>
-    <div id="langMain5" onclick="setLanguage('lang5')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang5" href="#fr" />
-      </svg>
-    </div>
-    <div id="langMain4" onclick="setLanguage('lang4')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang4" href="#de" />
-      </svg>
-    </div>
-    <div id="langMain3" onclick="setLanguage('lang3')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang3" href="#en" />
-      </svg>
-    </div>
-    <div id="langMain2" onclick="setLanguage('lang2')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang2" href="#eu" />
-      </svg>
-    </div>
-    <div id="langMain1" onclick="setLanguage('lang1')" class="button">
-      <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
-        <use id="lang1" href="#un" />
-      </svg>
-    </div>
-  </div>
-
-  <!-- EU Languages Popup -->
-  <div id="euPopup" class="langPopup">
-    <div class="langPopupHeader">
-      <h3 data-i18n="language.select">Выберите язык</h3>
-      <button class="langPopupClose" onclick="toggleLanguagePopup('eu')">×</button>
-    </div>
-    <div class="langGrid">
-      <div class="langButton" onclick="selectLanguage('de')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
+    <!-- Group 1 Language Buttons (first 16 languages) -->
+    <div id="langGroup1" class="langButtonGroup">
+      <!-- Languages in the required order -->
+      <div id="langMain1" data-language="en" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#en" />
+        </svg>
+      </div>
+      <div id="langMain2" data-language="de" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
           <use href="#de" />
         </svg>
-        <span data-i18n="language.de">Deutsch</span>
       </div>
-      <div class="langButton" onclick="selectLanguage('fr')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
-          <use href="#fr" />
-        </svg>
-        <span data-i18n="language.fr">Français</span>
-      </div>
-      <div class="langButton" onclick="selectLanguage('it')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
-          <use href="#it" />
-        </svg>
-        <span data-i18n="language.it">Italiano</span>
-      </div>
-      <div class="langButton" onclick="selectLanguage('es')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
-          <use href="#es" />
-        </svg>
-        <span data-i18n="language.es">Español</span>
-      </div>
-      <div class="langButton" onclick="selectLanguage('pt')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
-          <use href="#pt" />
-        </svg>
-        <span data-i18n="language.pt">Português</span>
-      </div>
-      <div class="langButton" onclick="selectLanguage('nl')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
-          <use href="#nl" />
-        </svg>
-        <span data-i18n="language.nl">Nederlands</span>
-      </div>
-    </div>
-  </div>
-  
-  <!-- Other Languages Popup -->
-  <div id="unPopup" class="langPopup">
-    <div class="langPopupHeader">
-      <h3 data-i18n="language.select">Выберите язык</h3>
-      <button class="langPopupClose" onclick="toggleLanguagePopup('un')">×</button>
-    </div>
-    <div class="langGrid">
-      <div class="langButton" onclick="selectLanguage('ru')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
-          <use href="#ru" />
-        </svg>
-        <span data-i18n="language.ru">Русский</span>
-      </div>
-      <div class="langButton" onclick="selectLanguage('zh')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
-          <use href="#zh" />
-        </svg>
-        <span data-i18n="language.zh">中文</span>
-      </div>
-      <div class="langButton" onclick="selectLanguage('ar')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
-          <use href="#ar" />
-        </svg>
-        <span data-i18n="language.ar">العربية</span>
-      </div>
-      <div class="langButton" onclick="selectLanguage('ja')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
-          <use href="#ja" />
-        </svg>
-        <span data-i18n="language.ja">日本語</span>
-      </div>
-      <div class="langButton" onclick="selectLanguage('ko')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
-          <use href="#ko" />
-        </svg>
-        <span data-i18n="language.ko">한국어</span>
-      </div>
-      <div class="langButton" onclick="selectLanguage('tr')">
-        <svg width="30" height="25" xmlns="http://www.w3.org/2000/svg">
+      <div id="langMain3" data-language="tr" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
           <use href="#tr" />
         </svg>
-        <span data-i18n="language.tr">Türkçe</span>
+      </div>
+      <div id="langMain4" data-language="pl" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#pl" />
+        </svg>
+      </div>
+      <div id="langMain5" data-language="fr" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#fr" />
+        </svg>
+      </div>
+      <div id="langMain6" data-language="it" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#it" />
+        </svg>
+      </div>
+      <div id="langMain7" data-language="es" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#es" />
+        </svg>
+      </div>
+      <div id="langMain8" data-language="ru" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#ru" />
+        </svg>
+      </div>
+      <div id="langMain9" data-language="ar" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#ar" />
+        </svg>
+      </div>
+      <div id="langMain10" data-language="zh" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#zh" />
+        </svg>
+      </div>
+      <div id="langMain11" data-language="ro" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#ro" />
+        </svg>
+      </div>
+      <div id="langMain12" data-language="hr" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#hr" />
+        </svg>
+      </div>
+      <div id="langMain13" data-language="bg" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#bg" />
+        </svg>
+      </div>
+      <div id="langMain14" data-language="hi" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#hi" />
+        </svg>
+      </div>
+      <div id="langMain15" data-language="ja" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#ja" />
+        </svg>
+      </div>
+      <div id="langMain16" data-language="ko" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#ko" />
+        </svg>
+      </div>
+    </div>
+    
+    <!-- Group 2 Language Buttons (remaining languages) -->
+    <div id="langGroup2" class="langButtonGroup" style="display:none;">
+      <div id="langMain17" data-language="nl" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#nl" />
+        </svg>
+      </div>
+      <div id="langMain18" data-language="uk" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#uk" />
+        </svg>
+      </div>
+      <div id="langMain19" data-language="el" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#el" />
+        </svg>
+      </div>
+      <div id="langMain20" data-language="sr" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#sr" />
+        </svg>
+      </div>
+      <div id="langMain21" data-language="bs" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#bs" />
+        </svg>
+      </div>
+      <div id="langMain22" data-language="pt" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#pt" />
+        </svg>
+      </div>
+      <div id="langMain23" data-language="cs" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#cs" />
+        </svg>
+      </div>
+      <div id="langMain24" data-language="hu" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#hu" />
+        </svg>
+      </div>
+      <div id="langMain25" data-language="sv" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#sv" />
+        </svg>
+      </div>
+      <div id="langMain26" data-language="da" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#da" />
+        </svg>
+      </div>
+      <div id="langMain27" data-language="no" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#no" />
+        </svg>
+      </div>
+      <div id="langMain28" data-language="fi" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#fi" />
+        </svg>
+      </div>
+      <div id="langMain29" data-language="sk" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#sk" />
+        </svg>
+      </div>
+      <div id="langMain30" data-language="lt" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#lt" />
+        </svg>
+      </div>
+      <div id="langMain31" data-language="lv" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#lv" />
+        </svg>
+      </div>
+      <div id="langMain32" data-language="et" class="button">
+        <svg width="60" height="50" xmlns="http://www.w3.org/2000/svg">
+          <use href="#et" />
+        </svg>
       </div>
     </div>
   </div>
