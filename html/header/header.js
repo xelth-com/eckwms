@@ -147,37 +147,49 @@ function initMainMenuCards() {
  * @param {string} menuType - Type of menu ('mainMenu' or 'sideMenu')
  */
 export function showMenu(menuType) {
+  // Prevent multiple simultaneous transitions
   if (window.waitForTransition) return;
   
+  // Find menu line elements and buttons container
   const elements = Array.from(document.getElementsByClassName(`${menuType}Line`));
   const buttonsElement = document.getElementById(`${menuType}Buttons`);
   
+  // Exit if no elements found
   if (!elements.length || !buttonsElement) return;
 
+  // Find language menu
+  const langMenu = document.getElementById("langMenu");
+
+  // Toggle menu visibility
   if (buttonsElement.style.display !== "none") {
+    // Closing menu
     window.waitForTransition = true;
     setTimeout(() => {
       buttonsElement.style.display = "none";
-      if (menuType === "mainMenu") {
-        const langMenu = document.getElementById("langMenu");
-        if (langMenu) langMenu.style.display = "inline-block";
+      
+      // Special handling for main menu to show language menu
+      if (menuType === "mainMenu" && langMenu) {
+        langMenu.style.display = "inline-block";
       }
+      
       window.waitForTransition = false;
     }, 3000);
   } else {
-    if (menuType === "mainMenu") {
-      const langMenu = document.getElementById("langMenu");
-      if (langMenu) langMenu.style.display = "none";
+    // Opening menu
+    if (menuType === "mainMenu" && langMenu) {
+      langMenu.style.display = "none";
     }
     buttonsElement.style.display = "inline-block";
   }
 
+  // Animate menu lines
   if (elements.length > 1 && elements[1].getAttribute("x") === "10") {
     // Open menu animation
     elements[1].setAttribute("x", "65");
     elements[0].style.transform = "rotate(-45deg)";
     elements[2].style.transform = "rotate(45deg)";
     
+    // Animate menu items
     Array.from(document.getElementsByClassName(menuType)).forEach(element => {
       element.style.transitionDuration = `${(0.5 + Math.random())}s`;
       element.style.transitionDelay = `${Math.random()}s`;
@@ -188,6 +200,7 @@ export function showMenu(menuType) {
       }, 67);
     });
     
+    // Reset transition timing
     setTimeout(() => {
       Array.from(document.getElementsByClassName(menuType)).forEach(element => {
         element.style.transitionDuration = "0.3s";
@@ -200,6 +213,7 @@ export function showMenu(menuType) {
     elements[0].style.transform = "rotate(0deg)";
     elements[2].style.transform = "rotate(0deg)";
     
+    // Animate menu items out
     Array.from(document.getElementsByClassName(menuType)).forEach(element => {
       element.style.transitionDuration = `${(0.5 + Math.random())}s`;
       element.style.transitionDelay = `${Math.random()}s`;
