@@ -275,6 +275,12 @@
     display: none;
   }
  }
+
+ @media screen and (max-width: 1362px) {
+  #langMain17 {
+    display: none;
+  }
+ }
  
  @media screen and (max-width: 1298px) {
   #langMain16 {

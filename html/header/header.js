@@ -233,7 +233,7 @@ function initLanguageButtonsWithCurrentLanguage() {
 
   // Определяем количество видимых кнопок
   let visibleCount = 0;
-  for (let i = 32; i >= 1; i--) {
+  for (let i = 17; i >= 1; i--) {
     const btn = document.getElementById(`langMain${i}`);
     if (btn) {
       const style = window.getComputedStyle(btn);
@@ -298,7 +298,7 @@ function toggleLanguageGroup() {
   let visibleCount = 0;
   let lastActiveLanguage = null;
 
-  for (let i = 32; i >= 1; i--) {
+  for (let i = 17; i >= 1; i--) {
     const btn = document.getElementById(`langMain${i}`);
     if (btn) {
       const style = window.getComputedStyle(btn);
