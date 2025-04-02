@@ -4,6 +4,7 @@
  */
 
 import { loadCSS, loadTemplate } from '/core/module-loader.js';
+import { syncLanguageMasks, initLanguageSelector } from '/i18n/language-selector.js';
 
 // Globals for menu state tracking
 window.waitForTransition = false;
@@ -26,6 +27,23 @@ export async function init(container) {
   initEventListeners();
   initMainMenuCards();
   applyButtonBackgrounds();
+  
+  // Ensure only one language group is visible initially
+  ensureOneLanguageGroupVisible();
+}
+
+/**
+ * Ensure only one language group is visible
+ */
+function ensureOneLanguageGroupVisible() {
+  const group1 = document.getElementById('langGroup1');
+  const group2 = document.getElementById('langGroup2');
+  
+  if (group1 && group2) {
+    // Default to group 1 visible, group 2 hidden
+    group1.style.display = 'flex';
+    group2.style.display = 'none';
+  }
 }
 
 /**
@@ -64,23 +82,26 @@ function initEventListeners() {
     }
   });
   
-  // Add language button click handlers
+  // Add language toggle button event listener
+  const langToggleBtn = document.getElementById('langToggleBtn');
+  if (langToggleBtn && window.toggleLanguageGroup) {
+    langToggleBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      window.toggleLanguageGroup();
+    });
+    console.log('Added event listener to language toggle button from header.js');
+  }
+  
+  // Add language selection events
   document.querySelectorAll('#langMenu [data-language]').forEach(button => {
     button.addEventListener('click', function() {
       const langCode = this.getAttribute('data-language');
-      if (langCode && window.setLanguageByCode) {
-        window.setLanguageByCode(langCode);
-      } else if (langCode && window.setLanguage) {
+      if (langCode && window.setLanguage) {
         window.setLanguage(langCode);
       }
     });
   });
-  
-  // Add toggle button click handler
-  const toggleBtn = document.getElementById('langToggleBtn');
-  if (toggleBtn && window.toggleLanguageGroup) {
-    toggleBtn.addEventListener('click', window.toggleLanguageGroup);
-  }
 }
 
 /**
@@ -297,17 +318,64 @@ export function mainMenuCardClose(mainMenuNumber) {
 }
 
 /**
+ * Fix language toggle button CSS
+ */
+function fixLanguageToggleCSS() {
+  // Create style element for fixes
+  const styleElement = document.createElement('style');
+  styleElement.textContent = `
+    /* Fix language menu layout */
+    #langMenu {
+      display: flex !important;
+      flex-wrap: nowrap !important;
+      align-items: center !important;
+      margin-left: auto;
+      padding: 3px;
+      flex-direction: row-reverse !important; /* RTL layout */
+    }
+    
+    .langButtonGroup {
+      display: flex !important;
+      flex-wrap: nowrap !important;
+      flex-direction: row-reverse !important; /* RTL layout */
+    }
+    
+    #langToggleBtn {
+      display: inline-block !important;
+      margin: 0 3px;
+      vertical-align: middle;
+      order: 1 !important; /* Put toggle button on the left */
+    }
+    
+    #langMenu .button {
+      margin: 0 2px;
+      vertical-align: middle;
+    }
+    
+    /* Ensure only one group is visible initially */
+    #langGroup1 {
+      display: flex !important;
+    }
+    
+    #langGroup2 {
+      display: none !important;
+    }
+  `;
+  document.head.appendChild(styleElement);
+}
+
+/**
  * Post-initialization tasks
  */
 export function postInit() {
-  // Initialize language adjustments
-  if (window.syncLanguageMasks) {
-    window.syncLanguageMasks();
-  }
+  // Fix language toggle button CSS
+  fixLanguageToggleCSS();
   
-  // Initialize responsive behavior
-  if (window.adjustLanguageButtons) {
-    window.adjustLanguageButtons();
+  // Initialize language selector
+  if (typeof initLanguageSelector === 'function') {
+    initLanguageSelector();
+  } else if (window.syncLanguageMasks) {
+    window.syncLanguageMasks();
   }
   
   // Auto-show main menu on desktop after delay if not used
