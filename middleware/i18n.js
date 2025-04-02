@@ -386,12 +386,8 @@ function initI18n(options = {}) {
 
 // List of all supported languages
 const supportedLngs = [
-  // EU official languages
-  'de', 'en', 'fr', 'it', 'es', 'pt', 'nl', 'da', 'sv', 'fi',
-  'el', 'cs', 'pl', 'hu', 'sk', 'sl', 'et', 'lv', 'lt', 'ro',
-  'bg', 'hr', 'ga', 'mt',
-  // Additional languages
-  'ru', 'tr', 'ar', 'zh', 'uk', 'sr', 'he', 'ko', 'ja', 'no', 'bs', 'hi'
+  'en', 'de', 'tr', 'pl', 'fr', 'it', 'es', 'ru', 'ar', 'zh', 'ro', 'hr', 'bg', 'hi', 'ja', 'ko', 'cs',
+  'nl', 'el', 'pt', 'he', 'hu', 'sv', 'da', 'fi', 'sk', 'lt', 'lv', 'et', 'sl', 'uk', 'sr', 'bs', 'no'
 ];
 
   // Namespaces list
