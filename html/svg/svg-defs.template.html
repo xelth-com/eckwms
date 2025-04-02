@@ -647,9 +647,12 @@
     <!-- Русский флаг (ru) -->
     <g id="ru" filter="url(#sh002)">
       <g id="ruMask" mask="url(#maskClose)">
+        <!-- Верхняя полоса - бледно-голубая -->
         <rect fill="#c0c0c0" height="10" stroke-width="0" width="40" x="9" y="10" />
+        <!-- Средняя полоса - очень бледно-голубая -->
         <rect fill="#088CE8" height="10" stroke-width="0" width="40" x="9" y="20" />
-        <rect fill="#c0c0c0" height="10" stroke-width="0" width="40" x="9" y="30" />
+        <!-- Нижняя полоса - бледно-красная -->
+        <rect fill="#e07777" height="10" stroke-width="0" width="40" x="9" y="30" />
       </g>
     </g>
 
@@ -666,9 +669,12 @@
     <g id="zh" filter="url(#sh002)">
       <g id="zhMask" mask="url(#maskClose)">
         <rect fill="#DE2910" height="30" stroke-width="0" width="40" x="9" y="10" />
-        <g transform="translate(15, 15) scale(0.3)">
+        <!-- Оптимальная позиция: среднее между исходным y=15 и предложенным y=25 -->
+        <g transform="translate(20, 20) scale(0.3)">
+          <!-- Большая звезда в центре -->
           <polygon fill="#FFDE00"
             points="0,-20 5.8779,-6.1803 19.0211,-6.1803 7.5716,2.3607 13.4442,16.1803 0,7.6393 -13.4442,16.1803 -7.5716,2.3607 -19.0211,-6.1803 -5.8779,-6.1803" />
+          <!-- Маленькие звезды в оригинальных позициях относительно флага -->
           <polygon fill="#FFDE00" points="0,3 1.7634,-0.9541 -1.7634,-0.9541"
             transform="translate(25, -15) rotate(35)" />
           <polygon fill="#FFDE00" points="0,3 1.7634,-0.9541 -1.7634,-0.9541"
@@ -693,7 +699,7 @@
 
     <g id="ja" filter="url(#sh002)">
       <g id="jaMask" mask="url(#maskClose)">
-        <rect fill="#FFFFFF" height="30" stroke-width="0" width="40" x="9" y="10" />
+        <rect fill="#c0c0c0" height="30" stroke-width="0" width="40" x="9" y="10" />
         <circle cx="29" cy="25" fill="#BC002D" r="9" />
       </g>
     </g>
