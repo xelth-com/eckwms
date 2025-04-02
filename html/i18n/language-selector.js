@@ -3,9 +3,6 @@
  * Handles language switching and flag masks
  */
 
-// Track current language group (Group 1 or Group 2)
-let currentLanguageGroup = 1;
-
 /**
  * Shows or hides language selection popup
  * @param {string} popupType - Type of popup ('eu' or 'un')
@@ -33,35 +30,6 @@ export function toggleLanguagePopup(popupType) {
       unPopup.classList.add('visible');
       highlightCurrentLanguage(unPopup);
     }
-  }
-}
-
-/**
- * Toggle between language groups (Group 1 and Group 2)
- */
-export function toggleLanguageGroup() {
-  console.log("Language group toggle initiated");
-  
-  const group1 = document.getElementById('langGroup1');
-  const group2 = document.getElementById('langGroup2');
-  
-  if (!group1 || !group2) {
-    console.error("Language groups not found in DOM");
-    return;
-  }
-  
-  if (currentLanguageGroup === 1) {
-    // Switch to group 2
-    group1.style.display = 'none';
-    group2.style.display = 'flex';
-    currentLanguageGroup = 2;
-    console.log("Switched to language group 2");
-  } else {
-    // Switch to group 1
-    group1.style.display = 'flex';
-    group2.style.display = 'none';
-    currentLanguageGroup = 1;
-    console.log("Switched to language group 1");
   }
 }
 
@@ -264,9 +232,8 @@ export function setLanguage(langPos) {
 
 /**
  * Sync language masks with current language
- * @param {boolean} shouldToggleGroup - Whether to toggle groups if current language is in a different group
  */
-export function syncLanguageMasks(shouldToggleGroup = true) {
+export function syncLanguageMasks() {
   try {
     const currentLang = getCurrentLanguage();
     console.log(`Synchronizing language masks for ${currentLang}`);
@@ -280,7 +247,7 @@ export function syncLanguageMasks(shouldToggleGroup = true) {
       // --- Non-EU Languages ---
       'tr', 'ru', 'ar', 'uk', 'sr', 'bs', 'no', 'zh', 'hi', 'ja', 'ko',
       'he'
-    ];
+    ]
     
     supportedLangs.forEach(lang => {
       const maskElement = document.getElementById(`${lang}Mask`);
@@ -293,41 +260,6 @@ export function syncLanguageMasks(shouldToggleGroup = true) {
     const currentMask = document.getElementById(`${currentLang}Mask`);
     if (currentMask) {
       currentMask.setAttribute("mask", "url(#maskOpen)");
-      
-      // Only attempt to toggle group if explicitly requested
-      if (shouldToggleGroup) {
-        const group1 = document.getElementById('langGroup1');
-        const group2 = document.getElementById('langGroup2');
-        
-        if (group1 && group2) {
-          try {
-            // Check if current language is in group 2
-            const group2Languages = Array.from(document.querySelectorAll('#langGroup2 [data-language]'))
-              .map(el => el.getAttribute('data-language'));
-            
-            // Check if current language is in group 1
-            const group1Languages = Array.from(document.querySelectorAll('#langGroup1 [data-language]'))
-              .map(el => el.getAttribute('data-language'));
-            
-            // Update display based on which group contains the current language
-            if (group2Languages.includes(currentLang) && currentLanguageGroup === 1) {
-              // Current language is in group 2 but group 1 is shown
-              group1.style.display = 'none';
-              group2.style.display = 'flex';
-              currentLanguageGroup = 2;
-              console.log('Switched to language group 2');
-            } else if (group1Languages.includes(currentLang) && currentLanguageGroup === 2) {
-              // Current language is in group 1 but group 2 is shown
-              group1.style.display = 'flex';
-              group2.style.display = 'none';
-              currentLanguageGroup = 1;
-              console.log('Switched to language group 1');
-            }
-          } catch (innerError) {
-            console.error("Error in group switching logic:", innerError);
-          }
-        }
-      }
     }
   } catch (e) {
     console.error("Error synchronizing language masks:", e);
@@ -338,97 +270,14 @@ export function syncLanguageMasks(shouldToggleGroup = true) {
  * Initialize language selector
  */
 export function initLanguageSelector() {
-  console.log("Initializing language selector");
-  
-  // Set default language group
-  currentLanguageGroup = 1;
-  
   // Initial sync of language masks
   syncLanguageMasks();
   
-  // Set up outside click handlers for popups
+  // Set up outside click handlers
   setupOutsideClickHandlers();
   
   // Update language buttons
   updateLanguageButtons();
-  
-  // Apply CSS fixes for language toggle button
-  applyLanguageToggleCSS();
-  
-  // Make sure only one group is visible initially
-  ensureOneGroupVisible();
-  
-  console.log("Language selector initialized");
-}
-
-/**
- * Ensure only one language group is visible
- */
-function ensureOneGroupVisible() {
-  const group1 = document.getElementById('langGroup1');
-  const group2 = document.getElementById('langGroup2');
-  
-  if (group1 && group2) {
-    // Default to group 1 visible, group 2 hidden
-    group1.style.display = 'flex';
-    group2.style.display = 'none';
-    currentLanguageGroup = 1;
-    
-    // Check if current language is in group 2
-    const currentLang = getCurrentLanguage();
-    const group2Languages = Array.from(document.querySelectorAll('#langGroup2 [data-language]'))
-      .map(el => el.getAttribute('data-language'));
-    
-    if (group2Languages.includes(currentLang)) {
-      // If current language is in group 2, switch to it
-      group1.style.display = 'none';
-      group2.style.display = 'flex';
-      currentLanguageGroup = 2;
-    }
-  }
-}
-
-/**
- * Apply CSS fixes for language toggle button
- */
-function applyLanguageToggleCSS() {
-  // Create style element for fixes
-  const styleElement = document.createElement('style');
-  styleElement.textContent = `
-    /* Fix language menu layout */
-    #langMenu {
-      display: flex !important;
-      flex-wrap: nowrap !important;
-      align-items: center !important;
-      margin-left: auto;
-      padding: 3px;
-      flex-direction: row-reverse !important; /* RTL layout */
-    }
-    
-    .langButtonGroup {
-      display: flex !important;
-      flex-wrap: nowrap !important;
-      flex-direction: row-reverse !important; /* RTL layout */
-    }
-    
-    #langToggleBtn {
-      display: inline-block !important;
-      margin: 0 3px;
-      vertical-align: middle;
-      order: 1 !important; /* Put toggle button on the left */
-    }
-    
-    #langMenu .button {
-      margin: 0 2px;
-      vertical-align: middle;
-    }
-
-    /* Ensure only one group is visible initially */
-    #langGroup2 {
-      display: none;
-    }
-  `;
-  document.head.appendChild(styleElement);
 }
 
 /**
@@ -465,16 +314,6 @@ function setupOutsideClickHandlers() {
  * Update language buttons with proper event handlers
  */
 function updateLanguageButtons() {
-  // Set up language toggle button
-  const toggleBtn = document.getElementById('langToggleBtn');
-  if (toggleBtn) {
-    toggleBtn.removeEventListener('click', toggleLanguageGroup); // Remove any existing handlers
-    toggleBtn.addEventListener('click', toggleLanguageGroup);
-    console.log('Added event listener to language toggle button');
-  } else {
-    console.warn('Language toggle button not found in DOM');
-  }
-  
   // Set up popup triggers
   document.querySelectorAll('[data-language-popup]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -529,8 +368,7 @@ function updateLanguageButtons() {
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initLanguageSelector);
 } else {
-  // If DOM is already loaded, run now
-  setTimeout(initLanguageSelector, 0);
+  initLanguageSelector();
 }
 
 // Export for global access
@@ -539,4 +377,3 @@ window.selectLanguage = selectLanguage;
 window.setLanguage = setLanguage;
 window.syncLanguageMasks = syncLanguageMasks;
 window.getCurrentLanguage = getCurrentLanguage;
-window.toggleLanguageGroup = toggleLanguageGroup;
