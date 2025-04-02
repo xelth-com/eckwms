@@ -11,6 +11,9 @@ window.waitForTransition = false;
 window.menuUsed = false;
 let cards = [];
 
+// Store the auto-show menu timeout ID so we can clear it
+let autoShowMenuTimeout = null;
+
 /**
  * Initialize header module
  * @param {HTMLElement} container - Container to render header into
@@ -98,6 +101,7 @@ function initEventListeners() {
     button.addEventListener('click', function () {
       const langCode = this.getAttribute('data-language');
       if (langCode && window.setLanguage) {
+        resetMenuTimer();
         window.setLanguage(langCode);
       }
     });
@@ -283,10 +287,42 @@ function initLanguageButtonsWithCurrentLanguage() {
 }
 
 /**
+ * Reset menu timer when user interacts with language elements
+ */
+function resetMenuTimer() {
+  // Set flag to indicate menu was interacted with
+  window.menuUsed = true;
+  
+  // Clear existing timeout if it exists
+  if (autoShowMenuTimeout) {
+    clearTimeout(autoShowMenuTimeout);
+    console.log("Menu auto-display timer reset due to user interaction");
+  }
+  
+  // Set a new timeout (maintains the auto-display functionality but resets the timer)
+  autoShowMenuTimeout = setTimeout(() => {
+    // Reset the flag to allow auto-display again
+    window.menuUsed = false;
+    
+    if (window.matchMedia("(min-width: 1001px)").matches) {
+      const menuButtons = document.getElementById("mainMenuButtons");
+      if (menuButtons && menuButtons.style.display === "none") {
+        if (!window.menuUsed) {
+          showMenu("mainMenu");
+        }
+      }
+    }
+  }, 30000); // Same 30-second delay as original
+}
+
+/**
  * Функция циклического переключения языковых кнопок
  * Поддерживает до 32 языковых кнопок
  */
 function toggleLanguageGroup() {
+  // Reset menu timer when toggling language group
+  resetMenuTimer();
+  
   console.log("Toggling language group");
 
   // Убедимся, что список языков инициализирован
@@ -619,8 +655,32 @@ export function postInit() {
     window.syncLanguageMasks();
   }
 
+  // Add event listeners to language menu elements to reset timer
+  const langMenu = document.getElementById('langMenu');
+  if (langMenu) {
+    langMenu.addEventListener('mouseover', resetMenuTimer);
+  }
+  
+  // Add event listeners to language toggle button
+  const langToggleBtn = document.getElementById('langToggleBtn');
+  if (langToggleBtn) {
+    langToggleBtn.addEventListener('click', resetMenuTimer);
+  }
+  
+  // Add event listeners to all language buttons
+  document.querySelectorAll('#langMenu [data-language]').forEach(button => {
+    button.addEventListener('mouseover', resetMenuTimer);
+    button.addEventListener('click', resetMenuTimer);
+  });
+  
+  // Add event listeners to language groups
+  const langGroup1 = document.getElementById('langGroup1');
+  const langGroup2 = document.getElementById('langGroup2');
+  if (langGroup1) langGroup1.addEventListener('mouseover', resetMenuTimer);
+  if (langGroup2) langGroup2.addEventListener('mouseover', resetMenuTimer);
+
   // Auto-show main menu on desktop after delay if not used
-  setTimeout(() => {
+  autoShowMenuTimeout = setTimeout(() => {
     if (window.matchMedia("(min-width: 1001px)").matches) {
       const menuButtons = document.getElementById("mainMenuButtons");
       if (menuButtons && menuButtons.style.display === "none") {
@@ -642,3 +702,4 @@ window.mainMenuCardClose = mainMenuCardClose;
 window.toggleLanguageGroup = toggleLanguageGroup;
 window.initLanguageButtonsWithCurrentLanguage = initLanguageButtonsWithCurrentLanguage;
 window.getCurrentLanguage = getCurrentLanguage;
+window.resetMenuTimer = resetMenuTimer;
