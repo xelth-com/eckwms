@@ -240,14 +240,9 @@ export function syncLanguageMasks() {
     
     // Close all masks
     const supportedLangs = [
-      // --- EU Languages ---
-      'en', 'de', 'pl', 'fr', 'it', 'es', 'nl', 'ro', 'hr', 'bg', 'el',
-      'pt', 'cs', 'hu', 'sv', 'da', 'fi', 'sk', 'lt', 'lv', 'et', 'sl',
-      'mt', 'ga',
-      // --- Non-EU Languages ---
-      'tr', 'ru', 'ar', 'uk', 'sr', 'bs', 'no', 'zh', 'hi', 'ja', 'ko',
-      'he'
-    ]
+      'en', 'de', 'tr', 'pl', 'fr', 'it', 'es', 'ru', 'ar', 'zh', 'ro', 'hr', 'bg', 'hi', 'ja', 'ko', 'cs',
+      'nl', 'el', 'pt', 'he', 'hu', 'sv', 'da', 'fi', 'sk', 'lt', 'lv', 'et', 'sl', 'uk', 'sr', 'bs', 'no'
+    ];
     
     supportedLangs.forEach(lang => {
       const maskElement = document.getElementById(`${lang}Mask`);
