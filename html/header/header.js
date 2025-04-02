@@ -162,6 +162,7 @@ export function showMenu(menuType) {
 
   // Toggle menu visibility
   if (buttonsElement.style.display !== "none") {
+
     // Closing menu
     window.waitForTransition = true;
     setTimeout(() => {
@@ -176,8 +177,10 @@ export function showMenu(menuType) {
     }, 3000);
   } else {
     // Opening menu
+
     if (menuType === "mainMenu" && langMenu) {
-      langMenu.style.display = "none";
+      console.log(langMenu)
+      langMenu.style.setProperty('display', 'none', 'important');
     }
     buttonsElement.style.display = "inline-block";
   }

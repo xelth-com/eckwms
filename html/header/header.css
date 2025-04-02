@@ -5,10 +5,10 @@
   padding-top: 3px;
   padding-right: 3px;
   position: relative;
-}
-
-/* Language menu container */
-#langMenu {
+ }
+ 
+ /* Language menu container */
+ #langMenu {
   width: max-content;
   display: inline-block; 
   border: 0px solid #fff; 
@@ -16,10 +16,10 @@
   background-color: rgba(255, 255, 255, 0.2);
   box-shadow: 0px 0px 30px -15px rgba(255, 255, 255, 1);
   transition: all 0.3s ease;
-}
-
-/* Button styles */
-.button {
+ }
+ 
+ /* Button styles */
+ .button {
   filter: brightness(100%);
   vertical-align: center;
   width: fit-content;
@@ -32,24 +32,24 @@
               inset -1px -1px 2px 0px rgba(50, 50, 50, .5);
   transition: all 0.2s;
   user-select: none;
-}
-
-.button:hover {
+ }
+ 
+ .button:hover {
   background-color: rgba(180, 180, 180, 0.6);
   box-shadow: 1px 2px 4px 0px rgba(20, 20, 20, 0.6), 
               inset 2px 2px 4px 0px rgba(255, 255, 255, 0.6), 
               inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, 0.6);
-}
-
-.button:active {
+ }
+ 
+ .button:active {
   filter: brightness(95%);
   box-shadow: 0px 0px 0px 0px rgba(20, 20, 20, .5), 
               inset 2px 2px 2px 0px rgba(50, 50, 50, .5), 
               inset -2px -2px 2px 0px rgba(255, 255, 255, .5);
-}
-
-/* Main menu styles */
-.mainMenu {
+ }
+ 
+ /* Main menu styles */
+ .mainMenu {
   vertical-align: bottom;
   width: fit-content;
   height: fit-content;
@@ -76,9 +76,9 @@
   box-shadow: 1px 2px 4px 0px rgba(20, 20, 20, 0), 
               inset 2px 2px 4px 0px rgba(255, 255, 255, 0), 
               inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, 0);
-}
-
-.mainMenu:hover {
+ }
+ 
+ .mainMenu:hover {
   border: 2px solid;
   border-top: 0px solid;
   border-bottom: 0px solid;
@@ -95,14 +95,14 @@
   box-shadow: 1px 2px 4px 0px rgba(20, 20, 20, .7), 
               inset 2px 2px 4px 0px rgba(255, 255, 255, .7), 
               inset -1.5px -1.5px 3px 0px rgba(50, 50, 50, .7);
-}
-
-.mainMenuLine {
+ }
+ 
+ .mainMenuLine {
   transition: all 2s;
-}
-
-/* Main menu card styles */
-.mainMenuCard {
+ }
+ 
+ /* Main menu card styles */
+ .mainMenuCard {
   opacity: 0;
   padding: 10px 30px;
   display: none;
@@ -126,10 +126,10 @@
                3.2px 4.4px 5px rgb(255, 255, 255);
   text-align: center;
   z-index: 100;
-}
-
-/* Language popup styles */
-.langPopup {
+ }
+ 
+ /* Language popup styles */
+ .langPopup {
   display: none;
   position: absolute;
   top: 65px;
@@ -143,43 +143,43 @@
   font-family: "Comic Sans MS", sans-serif;
   filter: brightness(100%);
   transition: all 0.3s ease;
-}
-
-.langPopupHeader {
+ }
+ 
+ .langPopupHeader {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.1);
   padding-bottom: 10px;
-}
-
-.langPopupHeader h3 {
+ }
+ 
+ .langPopupHeader h3 {
   margin: 0;
   font-size: 18px;
   color: rgba(0, 0, 0, 0.7);
-}
-
-.langPopupClose {
+ }
+ 
+ .langPopupClose {
   background: none;
   border: none;
   font-size: 24px;
   cursor: pointer;
   color: rgba(0, 0, 0, 0.5);
   transition: color 0.3s;
-}
-
-.langPopupClose:hover {
+ }
+ 
+ .langPopupClose:hover {
   color: rgba(0, 0, 0, 0.8);
-}
-
-.langGrid {
+ }
+ 
+ .langGrid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
-}
-
-.langButton {
+ }
+ 
+ .langButton {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -187,122 +187,220 @@
   border-radius: 8px;
   cursor: pointer;
   transition: background-color 0.3s, transform 0.2s;
-}
-
-.langButton:hover {
+ }
+ 
+ .langButton:hover {
   background-color: rgba(180, 180, 180, 0.2);
   transform: translateY(-2px);
-}
-
-.langButton svg {
+ }
+ 
+ .langButton svg {
   margin-bottom: 5px;
   filter: drop-shadow(1px 1px 2px rgba(0, 0, 0, 0.2));
-}
-
-.langButton span {
+ }
+ 
+ .langButton span {
   font-size: 12px;
   text-align: center;
   color: rgba(0, 0, 0, 0.7);
-}
-
-/* Styles for active language button in menu */
-.langButton.active {
+ }
+ 
+ /* Styles for active language button in menu */
+ .langButton.active {
   background-color: rgba(180, 180, 180, 0.4);
-}
-
-/* Animation for popup appearance */
-@keyframes fadeIn {
+ }
+ 
+ /* Animation for popup appearance */
+ @keyframes fadeIn {
   from { opacity: 0; transform: translateY(-10px); }
   to { opacity: 1; transform: translateY(0); }
-}
-
-.langPopup.visible {
+ }
+ 
+ .langPopup.visible {
   display: block;
   animation: fadeIn 0.3s ease;
-}
-
-/* Responsive layouts */
-#mainMenuOver1000 {
+ }
+ 
+ /* Responsive layouts */
+ #mainMenuOver1000 {
   width: max-content;
   display: none;
-}
-
-@media screen and (min-width: 1101px) {
+ }
+ 
+ @media screen and (min-width: 1101px) {
   #sideMenuUnder1000 {
     display: none;
   }
-
+ 
   #mainMenuOver1000 {
     width: max-content;
     display: inline-block;
   }
-
+ 
   #tableOver1000px_contents {
     display: table;
     width: calc(100% - 1px);
   }
-
+ 
   #tableCell1Over1000px_block {
     display: table-cell;
   }
-
+ 
   #tableCell2Over1000px_block {
     display: table-cell;
     width: 450px;
   }
-}
-
-@media screen and (max-width: 1100px) {
+ }
+ 
+ @media screen and (max-width: 1100px) {
   #langMenu {
-    display: inline-block !important;
+    display: inline-block;
   }
-}
+ }
+ 
 
-/* Language button visibility controls */
-#langSide6 {
-  display: none;
-}
+ 
+ @media screen and (max-width: 1200px) {
+  #langMenu {
+    max-width: calc(100% - 130px);
+  }
+ }
+ 
+ @media screen and (max-width: 1000px) {
+  #langMenu {
+    max-width: calc(100% - 110px);
+  }
+  
+  #langGroup2 {
+    display: none;
+  }
+ }
+ 
+ @media screen and (max-width: 1298px) {
+  #langMain16 {
+    display: none;
+  }
+ }
+ 
+ @media screen and (max-width: 1234px) {
+  #langMain15 {
+    display: none;
+  }
+ }
+ 
+ @media screen and (max-width: 800px) {
+  #langMenu {
+    max-width: calc(100% - 90px);
+  }
+  
 
-@media screen and (max-width: 555px) {
+ }
+ 
+ @media screen and (max-width: 1170px) {
+  #langMain14 {
+    display: none;
+  }
+ }
+
+ @media screen and (max-width: 1050px) {
+  #langMain13 {
+    display: none;
+  }
+ }
+ 
+ @media screen and (max-width: 986px) {
+  #langMain12 {
+    display: none;
+  }
+ }
+ 
+ @media screen and (max-width: 922px) {
+  #langMain11 {
+    display: none;
+  }
+ }
+ 
+ @media screen and (max-width: 858px) {
+  
+  #langMain10 {
+    display: none;
+  }
+ }
+
+ @media screen and (max-width: 600px) {
+  #langMenu {
+    max-width: calc(100% - 70px);
+  }
+
+ }
+ 
+ @media screen and (max-width: 794px) {
+  #langMain9 {
+    display: none;
+  }
+ }
+
+ @media screen and (max-width: 730px) {
+  #langMain8 {
+    display: none;
+  }
+ }
+
+
+ @media screen and (max-width: 666px) {
+  #langMain7 {
+    display: none;
+  }
+ }
+ 
+ @media screen and (max-width: 600px) {
   #langMain6 {
     display: none;
   }
+ }
+ 
 
-  #langSide6 {
-    display: inline-block;
-  }
-}
+ 
 
-#langSide5 {
-  display: none;
-}
-
-@media screen and (max-width: 490px) {
+ 
+ @media screen and (max-width: 545px) {
   #langMain5 {
     display: none;
   }
+ }
 
-  #langSide5 {
-    display: inline-block;
-  }
-}
 
-#langSide4 {
-  display: none;
-}
-
-@media screen and (max-width: 425px) {
+ @media screen and (max-width: 480px) {
   #langMain4 {
     display: none;
   }
+ }
 
-  #langSide4 {
-    display: inline-block;
+ 
+ @media screen and (max-width: 400px) {
+  #langMain3 {
+    display: none;
   }
-}
+ }
+ 
+ @media screen and (max-width: 335px) {
+  #langMain2 {
+    display: none;
+  }
+ }
+ 
+ @media screen and (max-width: 270px) {
+  
+  #langMain1 {
+    display: none;
+  }
+ }
 
-/* Mobile adaptations */
-@media (max-width: 768px) {
+ 
+
+ 
+ /* Mobile adaptations */
+ @media (max-width: 768px) {
   .langPopup {
     width: 280px;
     right: 5px;
@@ -311,31 +409,26 @@
   .langGrid {
     grid-template-columns: repeat(2, 1fr);
   }
-}
-
-/* RTL language support */
-html[dir="rtl"] .langPopup {
+ }
+ 
+ /* RTL language support */
+ html[dir="rtl"] .langPopup {
   right: auto;
   left: 10px;
-}
-
-/* Language Menu Positioning Styles */
-.header {
+ }
+ 
+ /* Language Menu Positioning Styles */
+ .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 10px;
   position: relative;
-}
-
-#langMenu {
+ }
+ 
+ #langMenu {
   /* Option 1: Flex-end positioning */
   margin-left: auto;  /* Pushes the language menu to the right */
-  
-  /* Option 2: Absolute positioning (alternative) */
-  /* position: absolute;
-  top: 10px;
-  right: 10px; */
   
   /* Responsive considerations */
   display: inline-flex;
@@ -344,19 +437,19 @@ html[dir="rtl"] .langPopup {
   
   /* Optional: Add some visual breathing room */
   gap: 10px;
-}
-
-/* RTL (Right-to-Left) Language Support */
-html[dir="rtl"] #langMenu {
+ }
+ 
+ /* RTL (Right-to-Left) Language Support */
+ html[dir="rtl"] #langMenu {
   margin-left: 0;
   margin-right: auto;
-}
-
-/* Responsive adjustments */
-@media screen and (max-width: 768px) {
+ }
+ 
+ /* Responsive adjustments */
+ @media screen and (max-width: 768px) {
   #langMenu {
     /* For smaller screens, consider allowing wrapping */
     flex-wrap: wrap;
     justify-content: flex-end;
   }
-}
+ }
