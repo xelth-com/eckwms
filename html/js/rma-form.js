@@ -42,20 +42,55 @@
         console.log("i18n:initialized event received");
         i18nInitialized = true;
         
-        // Load translations if not English
-        if (window.i18n.getCurrentLanguage() !== 'en') {
-          loadRmaTranslations().then(() => {
+        // Set compatibility mode for RMA
+        if (window.i18n && typeof window.i18n.setCompatibilityMode === 'function') {
+          window.i18n.setCompatibilityMode(true, 'rma');
+          console.log("Compatibility mode enabled for RMA");
+        }
+        
+        // Load RMA namespace explicitly
+        if (window.i18n && typeof window.i18n.loadNamespaces === 'function') {
+          console.log("Loading RMA namespace...");
+          window.i18n.loadNamespaces('rma').then(() => {
+            console.log("RMA namespace loaded successfully");
+            
+            // Now it's safe to load translations and add device entry
+            if (window.i18n.getCurrentLanguage() !== 'en') {
+              loadRmaTranslations().then(() => {
+                if (deviceCount === 0) {
+                  addDeviceEntry();
+                } else {
+                  // Update translations for existing elements
+                  updateAllTranslations();
+                }
+              });
+            } else {
+              // For English, just add the element
+              if (deviceCount === 0) {
+                addDeviceEntry();
+              }
+            }
+          }).catch(err => {
+            console.error("Error loading RMA namespace:", err);
+            // Continue anyway
             if (deviceCount === 0) {
               addDeviceEntry();
-            } else {
-              // Update translations for existing elements
-              updateAllTranslations();
             }
           });
         } else {
-          // For English, just add the element
-          if (deviceCount === 0) {
-            addDeviceEntry();
+          // Fallback if loadNamespaces is not available
+          if (window.i18n.getCurrentLanguage() !== 'en') {
+            loadRmaTranslations().then(() => {
+              if (deviceCount === 0) {
+                addDeviceEntry();
+              } else {
+                updateAllTranslations();
+              }
+            });
+          } else {
+            if (deviceCount === 0) {
+              addDeviceEntry();
+            }
           }
         }
       });
@@ -66,20 +101,53 @@
         console.log("i18n is already initialized");
         i18nInitialized = true;
         
-        // Load translations if not English
-        if (window.i18n.getCurrentLanguage() !== 'en') {
-          loadRmaTranslations().then(() => {
+        // Set compatibility mode for RMA
+        if (typeof window.i18n.setCompatibilityMode === 'function') {
+          window.i18n.setCompatibilityMode(true, 'rma');
+          console.log("Compatibility mode enabled for RMA");
+        }
+        
+        // Load RMA namespace explicitly
+        if (typeof window.i18n.loadNamespaces === 'function') {
+          console.log("Loading RMA namespace...");
+          window.i18n.loadNamespaces('rma').then(() => {
+            console.log("RMA namespace loaded successfully");
+            
+            // Now it's safe to load translations and add device entry
+            if (window.i18n.getCurrentLanguage() !== 'en') {
+              loadRmaTranslations().then(() => {
+                if (deviceCount === 0) {
+                  addDeviceEntry();
+                } else {
+                  updateAllTranslations();
+                }
+              });
+            } else {
+              if (deviceCount === 0) {
+                addDeviceEntry();
+              }
+            }
+          }).catch(err => {
+            console.error("Error loading RMA namespace:", err);
+            // Continue anyway
             if (deviceCount === 0) {
               addDeviceEntry();
-            } else {
-              // Update translations for existing elements
-              updateAllTranslations();
             }
           });
         } else {
-          // For English, just add the element
-          if (deviceCount === 0) {
-            addDeviceEntry();
+          // Fallback if loadNamespaces is not available
+          if (window.i18n.getCurrentLanguage() !== 'en') {
+            loadRmaTranslations().then(() => {
+              if (deviceCount === 0) {
+                addDeviceEntry();
+              } else {
+                updateAllTranslations();
+              }
+            });
+          } else {
+            if (deviceCount === 0) {
+              addDeviceEntry();
+            }
           }
         }
       } else {
@@ -89,20 +157,52 @@
           console.log("i18n:initialized event received");
           i18nInitialized = true;
           
-          // Load translations if not English
-          if (window.i18n.getCurrentLanguage() !== 'en') {
-            loadRmaTranslations().then(() => {
+          // Set compatibility mode for RMA
+          if (window.i18n && typeof window.i18n.setCompatibilityMode === 'function') {
+            window.i18n.setCompatibilityMode(true, 'rma');
+            console.log("Compatibility mode enabled for RMA");
+          }
+          
+          // Load RMA namespace
+          if (window.i18n && typeof window.i18n.loadNamespaces === 'function') {
+            console.log("Loading RMA namespace...");
+            window.i18n.loadNamespaces('rma').then(() => {
+              console.log("RMA namespace loaded successfully");
+              
+              if (window.i18n.getCurrentLanguage() !== 'en') {
+                loadRmaTranslations().then(() => {
+                  if (deviceCount === 0) {
+                    addDeviceEntry();
+                  } else {
+                    updateAllTranslations();
+                  }
+                });
+              } else {
+                if (deviceCount === 0) {
+                  addDeviceEntry();
+                }
+              }
+            }).catch(err => {
+              console.error("Error loading RMA namespace:", err);
+              // Continue anyway
               if (deviceCount === 0) {
                 addDeviceEntry();
-              } else {
-                // Update translations for existing elements
-                updateAllTranslations();
               }
             });
           } else {
-            // For English, just add the element
-            if (deviceCount === 0) {
-              addDeviceEntry();
+            // Fallback
+            if (window.i18n.getCurrentLanguage() !== 'en') {
+              loadRmaTranslations().then(() => {
+                if (deviceCount === 0) {
+                  addDeviceEntry();
+                } else {
+                  updateAllTranslations();
+                }
+              });
+            } else {
+              if (deviceCount === 0) {
+                addDeviceEntry();
+              }
             }
           }
         });
@@ -248,14 +348,17 @@
   function getTranslation(key, options = {}, fallback = '') {
     // Use main i18n system if available
     if (window.i18n && typeof window.i18n.t === 'function') {
+      // Always prefix with 'rma:' if not already present
+      const adjustedKey = key.includes(':') ? key : `rma:${key}`;
+      
       // Special case handling for device references
       if (key === 'device.using_address' && options.count !== undefined) {
         // Use i18n.t with the right options
-        return window.i18n.t(key, {...options, defaultValue: fallback || `Using Address from Device #${options.count}`});
+        return window.i18n.t(adjustedKey, {...options, defaultValue: fallback || `Using Address from Device #${options.count}`});
       }
       
       // Use i18n.t for translation
-      return window.i18n.t(key, {...options, defaultValue: fallback || key.split('.').pop()});
+      return window.i18n.t(adjustedKey, {...options, defaultValue: fallback || key.split('.').pop()});
     }
     
     // Fallback: our local implementation
@@ -296,7 +399,9 @@
       
       // Not found in local cache - use main i18n system if available
       if (window.i18n && typeof window.i18n.t === 'function') {
-        return window.i18n.t(key, {...options, defaultValue: fallback || key.split('.').pop()});
+        // Always prefix with 'rma:' if not already present
+        const adjustedKey = key.includes(':') ? key : `rma:${key}`;
+        return window.i18n.t(adjustedKey, {...options, defaultValue: fallback || key.split('.').pop()});
       }
       
       // Final fallback
@@ -339,22 +444,143 @@
     }
   }
 
-/**
- * Применяет переводы к элементу и его дочерним элементам
- * @param {HTMLElement} element - Контейнер с элементами для перевода
- */
-function manuallyTranslateElement(element) {
-  // Используем общий метод, если доступен
-  if (window.i18n && typeof window.i18n.translateElement === 'function') {
-    window.i18n.translateElement(element);
-    return;
+  /**
+   * Применяет переводы к элементу и его дочерним элементам
+   * @param {HTMLElement} element - Контейнер с элементами для перевода
+   */
+  function manuallyTranslateElement(element) {
+    // Используем общий метод, если доступен
+    if (window.i18n && typeof window.i18n.translateElement === 'function') {
+      // Включаем параметр namespace для RMA
+      window.i18n.translateElement(element, { namespace: 'rma' });
+      return;
+    }
+    
+    // Если общий метод недоступен, используем оригинальную реализацию
+    console.warn('i18n.translateElement is not available, using original implementation');
+    
+    // Пропускаем если используем язык по умолчанию
+    if (!window.i18n || window.i18n.getCurrentLanguage() === 'en') {
+      return;
+    }
+    
+    // Обрабатываем элементы с data-i18n
+    const elementsWithI18n = [element, ...element.querySelectorAll('[data-i18n]')];
+    elementsWithI18n.forEach(el => {
+      if (el.hasAttribute('data-i18n')) {
+        const key = el.getAttribute('data-i18n');
+        
+        // Извлекаем опции из атрибута data-i18n-options
+        let options = {};
+        try {
+          const optionsAttr = el.getAttribute('data-i18n-options');
+          if (optionsAttr) {
+            options = JSON.parse(optionsAttr);
+          }
+        } catch (parseError) {
+          console.error(`Error parsing data-i18n-options for ${key}:`, parseError);
+        }
+        
+        // Получаем перевод
+        const translation = getTranslation(key.includes(':') ? key : 'rma:' + key, options);
+        if (translation && translation !== key) {
+          el.textContent = translation;
+          
+          // ВАЖНОЕ ИСПРАВЛЕНИЕ: удаляем атрибут data-i18n после перевода!
+          el.removeAttribute('data-i18n');
+          
+          // Также удаляем data-i18n-options если он есть
+          if (el.hasAttribute('data-i18n-options')) {
+            el.removeAttribute('data-i18n-options');
+          }
+          
+          console.log(`[RMA] Removed data-i18n after translation for "${key}"`);
+        }
+      }
+    });
+    
+    // Обрабатываем атрибутные переводы (data-i18n-attr)
+    const elementsWithAttrI18n = [element, ...element.querySelectorAll('[data-i18n-attr]')];
+    elementsWithAttrI18n.forEach(el => {
+      if (el.hasAttribute('data-i18n-attr')) {
+        try {
+          const attrsMap = JSON.parse(el.getAttribute('data-i18n-attr'));
+          
+          // Извлекаем опции для этого элемента
+          let options = {};
+          const optionsAttr = el.getAttribute('data-i18n-options');
+          if (optionsAttr) {
+            try {
+              options = JSON.parse(optionsAttr);
+            } catch (parseError) {
+              console.error(`Error parsing data-i18n-options:`, parseError);
+            }
+          }
+          
+          // Счетчик для отслеживания успешных переводов
+          let successfulTranslations = 0;
+          const totalAttributes = Object.keys(attrsMap).length;
+          
+          // Обрабатываем каждый атрибут
+          for (const [attr, key] of Object.entries(attrsMap)) {
+            const translation = getTranslation(key.includes(':') ? key : 'rma:' + key, options);
+            if (translation && translation !== key) {
+              el.setAttribute(attr, translation);
+              successfulTranslations++;
+            }
+          }
+          
+          // ВАЖНОЕ ИСПРАВЛЕНИЕ: удаляем data-i18n-attr после перевода всех атрибутов!
+          if (successfulTranslations === totalAttributes) {
+            el.removeAttribute('data-i18n-attr');
+            
+            // Также удаляем data-i18n-options если он есть
+            if (el.hasAttribute('data-i18n-options')) {
+              el.removeAttribute('data-i18n-options');
+            }
+            
+            console.log(`[RMA] Removed data-i18n-attr after translating all ${totalAttributes} attributes`);
+          }
+        } catch (e) {
+          console.error('Error parsing data-i18n-attr:', e);
+        }
+      }
+    });
+    
+    // Обрабатываем HTML переводы (data-i18n-html)
+    const elementsWithHtmlI18n = [element, ...element.querySelectorAll('[data-i18n-html]')];
+    elementsWithHtmlI18n.forEach(el => {
+      if (el.hasAttribute('data-i18n-html')) {
+        const key = el.getAttribute('data-i18n-html');
+        
+        // Извлекаем опции
+        let options = {};
+        const optionsAttr = el.getAttribute('data-i18n-options');
+        if (optionsAttr) {
+          try {
+            options = JSON.parse(optionsAttr);
+          } catch (parseError) {
+            console.error(`Error parsing data-i18n-options for HTML ${key}:`, parseError);
+          }
+        }
+        
+        const translation = getTranslation(key.includes(':') ? key : 'rma:' + key, options);
+        if (translation && translation !== key) {
+          el.innerHTML = translation;
+          
+          // ВАЖНОЕ ИСПРАВЛЕНИЕ: удаляем data-i18n-html после перевода!
+          el.removeAttribute('data-i18n-html');
+          
+          // Также удаляем data-i18n-options если он есть
+          if (el.hasAttribute('data-i18n-options')) {
+            el.removeAttribute('data-i18n-options');
+          }
+          
+          console.log(`[RMA] Removed data-i18n-html after translation for "${key}"`);
+        }
+      }
+    });
   }
-  
-  // Если общий метод недоступен, используем оригинальную реализацию
-  console.warn('i18n.translateElement not available, using original implementation');
-  
-  // ... оставьте оригинальный код здесь как запасной вариант ...
-}
 
   /**
    * Loads the i18n script if it's not already loaded
