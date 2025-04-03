@@ -1,10 +1,10 @@
-// Modified i18n.js with unified caching mechanism
+// i18n.js - Optimized with prioritized file loading and backend coordination
 
 (function() {
   // Default language fallback
   const defaultLanguage = 'en';
   
-  // Store translations cache
+  // Store translations cache (in-memory)
   const translationsCache = {};
   
   // Enhanced tracking of pending translations
@@ -20,73 +20,12 @@
   // Track initialization state
   let isInitialized = false;
   
-  // RMA compatibility: Add event dispatching for initialization
+  // RMA compatibility mode
   let rmaCompatibilityMode = true;
   
-  // Verbose logging control
-  const VERBOSE_LOGGING = true;
-  
-  // Improved file caching system - unified for the entire application
-  if (!window.translationFileCache) {
-    window.translationFileCache = {
-      // Storage for missing files information with timestamps
-      missingFiles: {},
-      
-      // Cache expiration time - 5 minutes
-      cacheExpiry: 5 * 60 * 1000,
-      
-      // Check if a file is marked as missing
-      isFileMissing: function(fileKey) {
-        if (!this.missingFiles[fileKey]) {
-          return false;
-        }
-        
-        // Check if cache has expired
-        const timestamp = this.missingFiles[fileKey];
-        const now = Date.now();
-        
-        if (now - timestamp > this.cacheExpiry) {
-          delete this.missingFiles[fileKey];
-          return false;
-        }
-        
-        return true;
-      },
-      
-      // Mark a file as missing
-      markAsMissing: function(fileKey) {
-        this.missingFiles[fileKey] = Date.now();
-        
-        // For backward compatibility with existing code
-        if (!window.missingTranslationFiles) {
-          window.missingTranslationFiles = new Set();
-        }
-        window.missingTranslationFiles.add(fileKey);
-      },
-      
-      // Force reset cache for a specific file
-      resetFile: function(fileKey) {
-        delete this.missingFiles[fileKey];
-        if (window.missingTranslationFiles) {
-          window.missingTranslationFiles.delete(fileKey);
-        }
-      },
-      
-      // Reset all cache
-      resetAll: function() {
-        this.missingFiles = {};
-        if (window.missingTranslationFiles) {
-          window.missingTranslationFiles.clear();
-        }
-      }
-    };
-    
-    // Set up periodic cache reset (every 5 minutes)
-    setInterval(() => {
-      console.log("[i18n] Resetting translation file cache to check for new files");
-      window.translationFileCache.resetAll();
-    }, 5 * 60 * 1000);
-  }
+  // Logging controls
+  const VERBOSE_LOGGING = false;
+  const LOG_ERRORS = true;
   
   /**
    * Enhanced logging function that can be easily toggled
@@ -101,7 +40,9 @@
    * Error logging function that always logs
    */
   function logError(...args) {
-    console.error('[i18n ERROR]', ...args);
+    if (LOG_ERRORS) {
+      console.error('[i18n ERROR]', ...args);
+    }
   }
   
   /**
@@ -128,52 +69,18 @@
     const cookieMatch = document.cookie.match(/i18next=([^;]+)/);
     if (cookieMatch) return cookieMatch[1];
     
+    // Check localStorage
+    try {
+      const lsLang = localStorage.getItem('i18nextLng');
+      if (lsLang) return lsLang;
+    } catch (e) {
+      // Silent catch for localStorage errors
+    }
+    
     // Default language fallback
     return defaultLanguage;
   }
-  
-  /**
-   * Change the current language
-   */
-  function setLanguage(langPos) {
-    // Current language
-    const previousLanguage = getCurrentLanguage();
-    
-    // Parse language from button or direct string
-    let newLanguage;
-    if (langPos.slice(0, 4) === "lang") {
-      newLanguage = document.getElementById(langPos).getAttribute("href").slice(1);
-    } else {
-      newLanguage = langPos;
-    }
-    
-    log(`Changing language from ${previousLanguage} to ${newLanguage}`);
-    
-    if (newLanguage === previousLanguage) {
-      log('Language is already set to', newLanguage, '- skipping change');
-      return;
-    }
-    
-    // Visual updates for SVG masks
-    try {
-      document.getElementById(`${previousLanguage}Mask`).setAttribute("mask", "url(#maskClose)");
-    } catch (e) { /* Silent catch */ }
-    
-    // Store language preference in cookie and localStorage
-    document.cookie = `i18next=${newLanguage}; path=/; max-age=${60 * 60 * 24 * 365}`;
-    try {
-      localStorage.setItem('i18nextLng', newLanguage);
-    } catch (e) { /* Silent catch */ }
-    
-    // Add cache busting parameter to URL and reload
-    const cacheBuster = Date.now();
-    const url = new URL(window.location.href);
-    url.searchParams.set('i18n_cb', cacheBuster);
-    url.searchParams.set('lang', newLanguage);
-    
-    window.location.href = url.toString();
-  }
-  
+
   /**
    * Initialize i18n with meta tag prioritization
    */
@@ -242,11 +149,27 @@
     document.addEventListener('DOMContentLoaded', function() {
       if (window.translationUtils) {
         init();
+      } else {
+        // Wait for translationUtils to load
+        const checkInterval = setInterval(function() {
+          if (window.translationUtils) {
+            clearInterval(checkInterval);
+            init();
+          }
+        }, 50);
       }
     });
   } else {
     if (window.translationUtils) {
       init();
+    } else {
+      // Wait for translationUtils to load
+      const checkInterval = setInterval(function() {
+        if (window.translationUtils) {
+          clearInterval(checkInterval);
+          init();
+        }
+      }, 50);
     }
   }
   
@@ -374,17 +297,8 @@
     const key = element.getAttribute('data-i18n');
     if (!key) return;
     
-    // RMA compatibility: Add namespace prefix if needed
-    let fullKey = key;
-    if (!key.includes(':') && getCurrentLanguage() !== 'en') {
-      fullKey = 'rma:' + key;
-    }
-    
     // Important: Get original text *before* emptying it for immediate display
     const originalText = element.textContent.trim();
-    
-    // RMA compatibility: Set the same text immediately (don't empty it)
-    // This keeps the original text visible during translation
     
     // Add handling for additional options
     let options = {};
@@ -401,25 +315,45 @@
     // Add defaultValue to options
     options.defaultValue = originalText;
     
-    log(`Translating element with key: "${fullKey}", text: "${originalText.substring(0, 30)}${originalText.length > 30 ? '...' : ''}"`);
+    log(`Translating element with key: "${key}", text: "${originalText.substring(0, 30)}${originalText.length > 30 ? '...' : ''}"`);
     
     // Information about element for adding to waiting list
     const pendingInfo = {
       element: element,
       type: PENDING_TYPES.TEXT,
-      key: fullKey
+      key: key
     };
     
-    // Use API translation with key, text and options
-    fetchTranslation(fullKey, originalText, options, pendingInfo).then(translation => {
-      if (translation) {
-        log(`Applied translation for "${fullKey}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
-        element.textContent = translation;
-      } else {
-        log(`No translation applied for "${fullKey}", using original text`);
+    // First check if file-based translation exists - prioritize this over API
+    checkTranslationFile(key, options).then(fileTranslation => {
+      if (fileTranslation) {
+        log(`Applied file-based translation for "${key}": "${fileTranslation}"`);
+        element.textContent = fileTranslation;
+        return;
       }
+      
+      // No file translation, try API
+      fetchTranslation(key, originalText, options, pendingInfo).then(translation => {
+        if (translation) {
+          log(`Applied API translation for "${key}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
+          element.textContent = translation;
+        } else {
+          log(`No translation applied for "${key}", using original text`);
+        }
+      }).catch(err => {
+        logError(`Failed to fetch translation for key "${key}":`, err);
+      });
     }).catch(err => {
-      logError(`Failed to fetch translation for key "${fullKey}":`, err);
+      logError(`Error checking file translation for "${key}":`, err);
+      
+      // Fall back to API translation on error
+      fetchTranslation(key, originalText, options, pendingInfo).then(translation => {
+        if (translation) {
+          element.textContent = translation;
+        }
+      }).catch(() => {
+        // Silent catch - already logged in fetchTranslation
+      });
     });
   }
   
@@ -435,34 +369,48 @@
       log(`Processing attribute translations: ${attrsJson}`, element);
       
       for (const [attr, key] of Object.entries(attrs)) {
-        // RMA compatibility: Add namespace prefix if needed
-        let fullKey = key;
-        if (!key.includes(':') && getCurrentLanguage() !== 'en') {
-          fullKey = 'rma:' + key;
-        }
-        
         const originalValue = element.getAttribute(attr) || '';
         
-        log(`Translating attribute "${attr}" with key "${fullKey}", value: "${originalValue}"`);
+        log(`Translating attribute "${attr}" with key "${key}", value: "${originalValue}"`);
         
         // Information about element for adding to waiting list
         const pendingInfo = {
           element: element,
           type: PENDING_TYPES.ATTR,
           attr: attr,
-          key: fullKey
+          key: key
         };
         
-        // Use API translation for this key/value
-        fetchTranslation(fullKey, originalValue, {}, pendingInfo).then(translation => {
-          if (translation && translation !== originalValue) {
-            log(`Applied translation for attribute "${attr}": "${translation}"`);
-            element.setAttribute(attr, translation);
-          } else {
-            log(`No translation applied for attribute "${attr}", using original value`);
+        // First check if file-based translation exists
+        checkTranslationFile(key, {}).then(fileTranslation => {
+          if (fileTranslation) {
+            log(`Applied file-based translation for attribute "${attr}": "${fileTranslation}"`);
+            element.setAttribute(attr, fileTranslation);
+            return;
           }
+          
+          // No file translation, try API
+          fetchTranslation(key, originalValue, {}, pendingInfo).then(translation => {
+            if (translation && translation !== originalValue) {
+              log(`Applied API translation for attribute "${attr}": "${translation}"`);
+              element.setAttribute(attr, translation);
+            } else {
+              log(`No translation applied for attribute "${attr}", using original value`);
+            }
+          }).catch(err => {
+            logError(`Failed to fetch translation for attribute "${attr}" with key "${key}":`, err);
+          });
         }).catch(err => {
-          logError(`Failed to fetch translation for attribute "${attr}" with key "${fullKey}":`, err);
+          logError(`Error checking file translation for attribute "${key}":`, err);
+          
+          // Fall back to API translation on error
+          fetchTranslation(key, originalValue, {}, pendingInfo).then(translation => {
+            if (translation && translation !== originalValue) {
+              element.setAttribute(attr, translation);
+            }
+          }).catch(() => {
+            // Silent catch - already logged in fetchTranslation
+          });
         });
       }
     } catch (error) {
@@ -477,34 +425,140 @@
     const key = element.getAttribute('data-i18n-html');
     if (!key) return;
     
-    // RMA compatibility: Add namespace prefix if needed
-    let fullKey = key;
-    if (!key.includes(':') && getCurrentLanguage() !== 'en') {
-      fullKey = 'rma:' + key;
-    }
-    
     const originalHtml = element.innerHTML.trim();
     
-    log(`Translating HTML content with key: "${fullKey}", length: ${originalHtml.length} chars`);
+    log(`Translating HTML content with key: "${key}", length: ${originalHtml.length} chars`);
     
     // Information about element for adding to waiting list
     const pendingInfo = {
       element: element,
       type: PENDING_TYPES.HTML,
-      key: fullKey
+      key: key
     };
     
-    // Use API translation for this key/html
-    fetchTranslation(fullKey, originalHtml, {}, pendingInfo).then(translation => {
-      if (translation && translation !== originalHtml) {
-        log(`Applied HTML translation for "${fullKey}", length: ${translation.length} chars`);
-        element.innerHTML = translation;
-      } else {
-        log(`No HTML translation applied for "${fullKey}", using original content`);
+    // First check if file-based translation exists
+    checkTranslationFile(key, {}).then(fileTranslation => {
+      if (fileTranslation) {
+        log(`Applied file-based HTML translation for "${key}", length: ${fileTranslation.length} chars`);
+        element.innerHTML = fileTranslation;
+        return;
       }
+      
+      // No file translation, try API
+      fetchTranslation(key, originalHtml, {}, pendingInfo).then(translation => {
+        if (translation && translation !== originalHtml) {
+          log(`Applied API HTML translation for "${key}", length: ${translation.length} chars`);
+          element.innerHTML = translation;
+        } else {
+          log(`No HTML translation applied for "${key}", using original content`);
+        }
+      }).catch(err => {
+        logError(`Failed to fetch HTML translation for key "${key}":`, err);
+      });
     }).catch(err => {
-      logError(`Failed to fetch HTML translation for key "${fullKey}":`, err);
+      logError(`Error checking file translation for HTML "${key}":`, err);
+      
+      // Fall back to API translation on error
+      fetchTranslation(key, originalHtml, {}, pendingInfo).then(translation => {
+        if (translation && translation !== originalHtml) {
+          element.innerHTML = translation;
+        }
+      }).catch(() => {
+        // Silent catch - already logged in fetchTranslation
+      });
     });
+  }
+  
+  /**
+   * Check if a translation exists in a file
+   * @param {string} key - Translation key
+   * @param {Object} options - Options like count, etc.
+   * @returns {Promise<string|null>} - Translation or null if not found
+   */
+  async function checkTranslationFile(key, options = {}) {
+    const language = getCurrentLanguage();
+    
+    // Skip for default language
+    if (language === defaultLanguage) {
+      return null;
+    }
+    
+    // Extract namespace from key
+    let namespace = 'common';
+    let translationKey = key;
+    
+    if (key.includes(':')) {
+      const parts = key.split(':');
+      namespace = parts[0];
+      translationKey = parts.slice(1).join(':');
+    }
+    
+    // Check if this file is known to be missing
+    if (window.translationFileCache && 
+        window.translationFileCache.isFileMissing(`${language}:${namespace}`)) {
+      return null;
+    }
+    
+    // Try to fetch the translation file with HEAD request first to avoid 404 console errors
+    try {
+      const checkResponse = await fetch(`/locales/${language}/${namespace}.json`, {
+        method: 'HEAD',
+        cache: 'no-cache'
+      });
+      
+      // If file doesn't exist, mark it and return null
+      if (!checkResponse.ok) {
+        if (window.translationFileCache) {
+          window.translationFileCache.markAsMissing(`${language}:${namespace}`);
+        }
+        return null;
+      }
+      
+      // File exists, now load it
+      const response = await fetch(`/locales/${language}/${namespace}.json`);
+      if (!response.ok) {
+        if (window.translationFileCache) {
+          window.translationFileCache.markAsMissing(`${language}:${namespace}`);
+        }
+        return null;
+      }
+      
+      // Parse the file
+      const data = await response.json();
+      
+      // Navigate to the key
+      const keyParts = translationKey.split('.');
+      let current = data;
+      
+      for (const part of keyParts) {
+        if (!current || current[part] === undefined) {
+          return null;
+        }
+        current = current[part];
+      }
+      
+      // If we found a translation, apply any options like count
+      if (current && typeof current === 'string') {
+        let result = current;
+        
+        // Apply count replacement if needed
+        if (options.count !== undefined && result.includes('{{count}}')) {
+          result = result.replace(/\{\{count\}\}/g, options.count);
+        }
+        
+        return result;
+      }
+      
+      return null;
+    } catch (error) {
+      // Mark file as missing to avoid repeated failures
+      if (window.translationFileCache) {
+        window.translationFileCache.markAsMissing(`${language}:${namespace}`);
+      }
+      
+      // Rethrow for handling upstream
+      throw error;
+    }
   }
   
   /**
@@ -538,261 +592,176 @@
     log('Page translation initiated, waiting for API responses');
   }
    
-/**
- * Fetch translation with improved caching of missing files
- */
-async function fetchTranslation(key, defaultText, options = {}, pendingInfo = null) {
-  const language = getCurrentLanguage();
-  
-  // Skip translation for default language
-  if (language === defaultLanguage) {
-    log(`Using default language (${defaultLanguage}), skipping translation fetch for "${key}"`);
-    return Promise.resolve(defaultText);
-  }
-  
-  // Extract namespace from key if present
-  let namespace = 'common';
-  let translationKey = key;
-  
-  if (key.includes(':')) {
-    const parts = key.split(':');
-    namespace = parts[0];
-    translationKey = parts.slice(1).join(':');
-  }
-  
-  // Use the same algorithm as server to generate cache key
-  const cacheKey = window.translationUtils ? 
-      window.translationUtils.generateTranslationKey(defaultText, language, namespace, options) :
-      `${language}:${namespace}:${translationKey}`;
-  
-  // Add language prefix for client-side cache
-  const fullCacheKey = `${language}:${cacheKey}`;
-  
-  log(`Translation request for key: "${key}" with cache key: "${fullCacheKey}"`);
-  
-  // Check client cache first
-  if (translationsCache[fullCacheKey]) {
-    log(`Found in client cache: "${fullCacheKey}"`);
-    return Promise.resolve(translationsCache[fullCacheKey]);
-  }
-  
-  // Add request to an already waiting one, if it exists
-  if (pendingTranslations[fullCacheKey]) {
-    log(`Translation already pending for "${fullCacheKey}", registering element for later update`);
+  /**
+   * Fetch translation with improved caching and backend coordination
+   */
+  async function fetchTranslation(key, defaultText, options = {}, pendingInfo = null) {
+    const language = getCurrentLanguage();
     
-    // If element info is provided, register it for updating later
-    if (pendingInfo) {
-      // Create elements array if it doesn't exist
-      if (!pendingTranslations[fullCacheKey].elements) {
-        pendingTranslations[fullCacheKey].elements = [];
-      }
-      pendingTranslations[fullCacheKey].elements.push(pendingInfo);
+    // Skip translation for default language
+    if (language === defaultLanguage) {
+      log(`Using default language (${defaultLanguage}), skipping translation fetch for "${key}"`);
+      return Promise.resolve(defaultText);
     }
     
-    // Return existing Promise to avoid creating duplicate requests
-    return pendingTranslations[fullCacheKey].request;
-  }
-  
-  // Create a new Promise for the request
-  const translationPromise = new Promise(async (resolve, reject) => {
-    try {
-      log(`Making API request for translation: "${key}" in language: ${language}`);
+    // Extract namespace from key if present
+    let namespace = 'common';
+    let translationKey = key;
+    
+    if (key.includes(':')) {
+      const parts = key.split(':');
+      namespace = parts[0];
+      translationKey = parts.slice(1).join(':');
+    }
+    
+    // Use the same algorithm as server to generate cache key
+    const cacheKey = window.translationUtils ? 
+        window.translationUtils.generateTranslationKey(defaultText, language, namespace, options) :
+        `${language}:${namespace}:${translationKey}`;
+    
+    // Add language prefix for client-side cache
+    const fullCacheKey = `${language}:${cacheKey}`;
+    
+    log(`Translation request for key: "${key}" with cache key: "${fullCacheKey}"`);
+    
+    // Check client cache first
+    if (translationsCache[fullCacheKey]) {
+      log(`Found in client cache: "${fullCacheKey}"`);
+      return Promise.resolve(translationsCache[fullCacheKey]);
+    }
+    
+    // Add request to an already waiting one, if it exists
+    if (pendingTranslations[fullCacheKey]) {
+      log(`Translation already pending for "${fullCacheKey}", registering element for later update`);
       
-      // Check for existing file using improved caching system
-      const localeFileKey = `${language}:${namespace}`;
+      // If element info is provided, register it for updating later
+      if (pendingInfo) {
+        // Create elements array if it doesn't exist
+        if (!pendingTranslations[fullCacheKey].elements) {
+          pendingTranslations[fullCacheKey].elements = [];
+        }
+        pendingTranslations[fullCacheKey].elements.push(pendingInfo);
+      }
       
-      // Check if the file is already known to be missing
-      if (!window.translationFileCache.isFileMissing(localeFileKey)) {
+      // Return existing Promise to avoid creating duplicate requests
+      return pendingTranslations[fullCacheKey].request;
+    }
+    
+    // Create a new Promise for the request
+    const translationPromise = new Promise(async (resolve, reject) => {
+      try {
+        log(`Making API request for translation: "${key}" in language: ${language}`);
+        
+        // Now try the API
         try {
-          // Use HEAD request to check if file exists
-          const checkResponse = await fetch(`/locales/${language}/${namespace}.json`, {
-            method: 'HEAD',
-            cache: 'no-cache'
+          const response = await fetch(`/api/translate`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'app-language': language
+            },
+            body: JSON.stringify({
+              text: defaultText,
+              targetLang: language,
+              context: namespace,
+              key: translationKey,
+              defaultValue: defaultText,
+              background: false,
+              options: options
+            })
           });
           
-          // If file exists, load it
-          if (checkResponse.ok) {
-            log(`File exists: /locales/${language}/${namespace}.json - loading`);
+          const data = await response.json();
+          
+          log(`API response for "${key}": status=${response.status}, fromCache=${data.fromCache}, translated length=${data.translated?.length}`);
+          
+          // Handle "pending" status with retry
+          if (response.status === 202 && data.status === 'pending') {
+            const retryAfter = parseInt(response.headers.get('Retry-After') || '3', 10);
             
-            const response = await fetch(`/locales/${language}/${namespace}.json`);
-            if (response.ok) {
-              const data = await response.json();
+            log(`Translation pending for "${key}", will retry after ${retryAfter} seconds`);
+            
+            // Schedule retry with the server's suggested delay
+            setTimeout(() => {
+              log(`Retrying translation for "${key}" after delay`);
               
-              // Find translation in data structure
-              let translation = navigateToKey(data, translationKey);
+              // Save pending elements for later updating
+              const pendingElements = pendingTranslations[fullCacheKey]?.elements || [];
               
-              if (translation) {
-                log(`Found translation in locale file: "${translation}"`);
-                
-                // Apply parameter substitution
-                if (options.count !== undefined && typeof translation === 'string') {
-                  translation = translation.replace(/\{\{count\}\}/g, options.count);
-                }
-                
-                // Cache the translation
-                translationsCache[fullCacheKey] = translation;
+              // Remove from pending to allow new request
+              delete pendingTranslations[fullCacheKey];
+              
+              // Re-request the translation
+              fetchTranslation(key, defaultText, options).then(translation => {
+                log(`Retry successful for "${key}", updating elements`);
                 
                 // Update all pending elements
-                if (pendingTranslations[fullCacheKey] && pendingTranslations[fullCacheKey].elements) {
-                  updateAllPendingElements(pendingTranslations[fullCacheKey].elements, translation);
-                }
-                
-                // Update all elements with this key
-                updateAllElementsWithKey(key, translation);
+                updateAllPendingElements(pendingElements, translation);
                 
                 // Resolve the Promise with the obtained translation
                 resolve(translation);
-                return translation;
-              }
-            }
-          } else {
-            // If file doesn't exist, mark it in cache
-            window.translationFileCache.markAsMissing(localeFileKey);
-            log(`File does not exist: /locales/${language}/${namespace}.json - using API`);
+              }).catch(err => {
+                logError(`Retry failed for "${key}":`, err);
+                reject(err);
+              });
+            }, retryAfter * 1000);
+            
+            // Return default text for now
+            return defaultText;
           }
-        } catch (fileError) {
-          // In case of error, mark file as missing
-          window.translationFileCache.markAsMissing(localeFileKey);
-          log(`Error checking locale file: ${fileError.message}`);
-        }
-      } else {
-        log(`Already know that file is missing: /locales/${language}/${namespace}.json`);
-      }
-      
-      // If we reached here, the file doesn't exist or doesn't contain the key
-      // Use API translation
-      
-      try {
-        const response = await fetch(`/api/translate`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'app-language': language
-          },
-          body: JSON.stringify({
-            text: defaultText,
-            targetLang: language,
-            context: namespace,
-            key: translationKey,
-            defaultValue: defaultText,
-            background: false,
-            options: options
-          })
-        });
-        
-        const data = await response.json();
-        
-        log(`API response for "${key}": status=${response.status}, fromCache=${data.fromCache}, translated length=${data.translated?.length}`);
-        
-        // Handle "pending" status with retry
-        if (response.status === 202 && data.status === 'pending') {
-          const retryAfter = parseInt(response.headers.get('Retry-After') || '3', 10);
           
-          log(`Translation pending for "${key}", will retry after ${retryAfter} seconds`);
-          
-          // Schedule retry with the server's suggested delay
-          setTimeout(() => {
-            log(`Retrying translation for "${key}" after delay`);
+          // Handle completed translation
+          if (data.translated) {
+            const translation = data.translated;
+            log(`Received translation for "${key}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
             
-            // Save pending elements for later updating
-            const pendingElements = pendingTranslations[fullCacheKey]?.elements || [];
+            // Cache the translation using the same key format as backend
+            translationsCache[fullCacheKey] = translation;
             
-            // Remove from pending to allow new request
+            // Update all pending elements
+            if (pendingTranslations[fullCacheKey] && pendingTranslations[fullCacheKey].elements) {
+              updateAllPendingElements(pendingTranslations[fullCacheKey].elements, translation);
+            }
+            
+            // Clear pending status
             delete pendingTranslations[fullCacheKey];
             
-            // Re-request the translation
-            fetchTranslation(key, defaultText, options).then(translation => {
-              log(`Retry successful for "${key}", updating elements`);
-              
-              // Update all pending elements
-              updateAllPendingElements(pendingElements, translation);
-              
-              // Resolve the Promise with the obtained translation
-              resolve(translation);
-            }).catch(err => {
-              logError(`Retry failed for "${key}":`, err);
-              reject(err);
-            });
-          }, retryAfter * 1000);
-          
-          // Return default text for now
-          return defaultText;
-        }
-        
-        // Handle completed translation
-        if (data.translated) {
-          const translation = data.translated;
-          log(`Received translation for "${key}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
-          
-          // Cache the translation using the same key format as backend
-          translationsCache[fullCacheKey] = translation;
-          
-          // Update all pending elements
-          if (pendingTranslations[fullCacheKey] && pendingTranslations[fullCacheKey].elements) {
-            updateAllPendingElements(pendingTranslations[fullCacheKey].elements, translation);
+            // Also update all elements with this key
+            updateAllElementsWithKey(key, translation);
+            
+            // Resolve Promise with the obtained translation
+            resolve(translation);
+            return translation;
           }
           
-          // Clear pending status
+          // If we got here, no usable translation
+          log(`No usable translation for "${key}", using original text`);
+          delete pendingTranslations[fullCacheKey];
+          resolve(defaultText);
+          return defaultText;
+        } catch (error) {
+          logError(`API error when translating "${key}":`, error);
           delete pendingTranslations[fullCacheKey];
           
-          // Also update all elements with this key
-          updateAllElementsWithKey(key, translation);
-          
-          // Resolve Promise with the obtained translation
-          resolve(translation);
-          return translation;
+          // Return the default text to avoid breaking the UI
+          resolve(defaultText);
+          return defaultText;
         }
-        
-        // If we got here, no usable translation
-        log(`No usable translation for "${key}", using original text`);
-        delete pendingTranslations[fullCacheKey];
-        resolve(defaultText);
-        return defaultText;
       } catch (error) {
-        logError(`API error when translating "${key}":`, error);
-        delete pendingTranslations[fullCacheKey];
-        
-        // RMA compatibility: Don't reject, but return the default text to avoid breaking the UI
+        logError(`Unexpected error for "${key}":`, error);
         resolve(defaultText);
         return defaultText;
       }
-    } catch (error) {
-      logError(`Unexpected error for "${key}":`, error);
-      resolve(defaultText);
-      return defaultText;
-    }
-  });
-  
-  // Save the Promise and element info in pending list
-  pendingTranslations[fullCacheKey] = {
-    request: translationPromise,
-    elements: pendingInfo ? [pendingInfo] : []
-  };
-  
-  return translationPromise;
-}
-
-/**
- * Helper function to navigate to a nested key in a json object
- * @param {Object} obj - Object to navigate
- * @param {string} key - Key with dot notation
- * @returns {*} - Value at the key or undefined
- */
-function navigateToKey(obj, key) {
-  if (!obj || !key) return undefined;
-  
-  const parts = key.split('.');
-  let current = obj;
-  
-  for (const part of parts) {
-    if (current[part] === undefined) {
-      return undefined;
-    }
-    current = current[part];
+    });
+    
+    // Save the Promise and element info in pending list
+    pendingTranslations[fullCacheKey] = {
+      request: translationPromise,
+      elements: pendingInfo ? [pendingInfo] : []
+    };
+    
+    return translationPromise;
   }
-  
-  return current;
-}
   
   /**
    * Update all pending elements waiting for a translation
@@ -835,69 +804,19 @@ function navigateToKey(obj, key) {
     });
   }
   
-/**
- * Update all elements with a specific translation key
- */
-function updateAllElementsWithKey(key, translation) {
-  log(`Updating all elements with key "${key}" to new translation`);
-  
-  // RMA compatibility: Handle both prefixed and non-prefixed keys
-  const keyWithoutPrefix = key.includes(':') ? key.split(':')[1] : key;
-  
-  let updateCount = 0;
-  
-  // Update text content translations - with individual OPTIONS support
-  document.querySelectorAll(`[data-i18n="${key}"], [data-i18n="${keyWithoutPrefix}"]`).forEach(element => {
-    // Check for individual options
-    let options = {};
-    try {
-      const optionsAttr = element.getAttribute('data-i18n-options');
-      if (optionsAttr) {
-        options = JSON.parse(optionsAttr);
-      }
-    } catch (e) {
-      logError('Error parsing data-i18n-options:', e);
-    }
+  /**
+   * Update all elements with a specific translation key
+   */
+  function updateAllElementsWithKey(key, translation) {
+    log(`Updating all elements with key "${key}" to new translation`);
     
-    // Apply count replacement if needed
-    if (options.count !== undefined && translation.includes('{{count}}')) {
-      // Create individual translation copy with the count replaced
-      const individualTranslation = translation.replace(/\{\{count\}\}/g, options.count);
-      element.textContent = individualTranslation;
-    } else {
-      element.textContent = translation;
-    }
-    updateCount++;
-  });
-  
-  // Update HTML translations - same with options support
-  document.querySelectorAll(`[data-i18n-html="${key}"], [data-i18n-html="${keyWithoutPrefix}"]`).forEach(element => {
-    // Check for individual options
-    let options = {};
-    try {
-      const optionsAttr = element.getAttribute('data-i18n-options');
-      if (optionsAttr) {
-        options = JSON.parse(optionsAttr);
-      }
-    } catch (e) {
-      logError('Error parsing data-i18n-options:', e);
-    }
+    // Handle both prefixed and non-prefixed keys
+    const keyWithoutPrefix = key.includes(':') ? key.split(':')[1] : key;
     
-    if (options.count !== undefined && translation.includes('{{count}}')) {
-      const individualTranslation = translation.replace(/\{\{count\}\}/g, options.count);
-      element.innerHTML = individualTranslation;
-    } else {
-      element.innerHTML = translation;
-    }
-    updateCount++;
-  });
-  
-  // Update attribute translations
-  document.querySelectorAll('[data-i18n-attr]').forEach(element => {
-    try {
-      const attrsJson = element.getAttribute('data-i18n-attr');
-      if (!attrsJson) return;
-      
+    let updateCount = 0;
+    
+    // Update text content translations - with individual OPTIONS support
+    document.querySelectorAll(`[data-i18n="${key}"], [data-i18n="${keyWithoutPrefix}"]`).forEach(element => {
       // Check for individual options
       let options = {};
       try {
@@ -909,25 +828,75 @@ function updateAllElementsWithKey(key, translation) {
         logError('Error parsing data-i18n-options:', e);
       }
       
-      const attrs = JSON.parse(attrsJson);
-      for (const [attr, attrKey] of Object.entries(attrs)) {
-        if (attrKey === key || attrKey === keyWithoutPrefix) {
-          if (options.count !== undefined && translation.includes('{{count}}')) {
-            const individualTranslation = translation.replace(/\{\{count\}\}/g, options.count);
-            element.setAttribute(attr, individualTranslation);
-          } else {
-            element.setAttribute(attr, translation);
-          }
-          updateCount++;
-        }
+      // Apply count replacement if needed
+      if (options.count !== undefined && translation.includes('{{count}}')) {
+        // Create individual translation copy with the count replaced
+        const individualTranslation = translation.replace(/\{\{count\}\}/g, options.count);
+        element.textContent = individualTranslation;
+      } else {
+        element.textContent = translation;
       }
-    } catch (error) {
-      logError('Error processing attribute translation update:', error);
-    }
-  });
-  
-  log(`Updated ${updateCount} elements with key "${key}"`);
-}
+      updateCount++;
+    });
+    
+    // Update HTML translations - same with options support
+    document.querySelectorAll(`[data-i18n-html="${key}"], [data-i18n-html="${keyWithoutPrefix}"]`).forEach(element => {
+      // Check for individual options
+      let options = {};
+      try {
+        const optionsAttr = element.getAttribute('data-i18n-options');
+        if (optionsAttr) {
+          options = JSON.parse(optionsAttr);
+        }
+      } catch (e) {
+        logError('Error parsing data-i18n-options:', e);
+      }
+      
+      if (options.count !== undefined && translation.includes('{{count}}')) {
+        const individualTranslation = translation.replace(/\{\{count\}\}/g, options.count);
+        element.innerHTML = individualTranslation;
+      } else {
+        element.innerHTML = translation;
+      }
+      updateCount++;
+    });
+    
+    // Update attribute translations
+    document.querySelectorAll('[data-i18n-attr]').forEach(element => {
+      try {
+        const attrsJson = element.getAttribute('data-i18n-attr');
+        if (!attrsJson) return;
+        
+        // Check for individual options
+        let options = {};
+        try {
+          const optionsAttr = element.getAttribute('data-i18n-options');
+          if (optionsAttr) {
+            options = JSON.parse(optionsAttr);
+          }
+        } catch (e) {
+          logError('Error parsing data-i18n-options:', e);
+        }
+        
+        const attrs = JSON.parse(attrsJson);
+        for (const [attr, attrKey] of Object.entries(attrs)) {
+          if (attrKey === key || attrKey === keyWithoutPrefix) {
+            if (options.count !== undefined && translation.includes('{{count}}')) {
+              const individualTranslation = translation.replace(/\{\{count\}\}/g, options.count);
+              element.setAttribute(attr, individualTranslation);
+            } else {
+              element.setAttribute(attr, translation);
+            }
+            updateCount++;
+          }
+        }
+      } catch (error) {
+        logError('Error processing attribute translation update:', error);
+      }
+    });
+    
+    log(`Updated ${updateCount} elements with key "${key}"`);
+  }
   
   /**
    * Update SVG language masks to show active language
@@ -962,7 +931,6 @@ function updateAllElementsWithKey(key, translation) {
   
   /**
    * Simple translation function - will use cache or default text
-   * RMA compatibility: Adjusted to handle RMA form's approach
    */
   function t(key, options = {}) {
     const defaultValue = options.defaultValue || key;
@@ -997,6 +965,54 @@ function updateAllElementsWithKey(key, translation) {
       return translationsCache[fullCacheKey];
     }
     
+    // Not in cache, check synchronously for file-based translation
+    // This is done synchronously to avoid Promise in t() function
+    let fileTranslation = null;
+    
+    // Simple synchronous file check using XMLHttpRequest
+    if (!window.translationFileCache || 
+        !window.translationFileCache.isFileMissing(`${language}:${namespace}`)) {
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', `/locales/${language}/${namespace}.json`, false); // Synchronous request
+        xhr.send(null);
+        
+        if (xhr.status === 200) {
+          const data = JSON.parse(xhr.responseText);
+          // Navigate to nested key
+          const keyParts = translationKey.split('.');
+          let current = data;
+          for (const part of keyParts) {
+            if (!current || current[part] === undefined) {
+              current = null;
+              break;
+            }
+            current = current[part];
+          }
+          
+          if (current && typeof current === 'string') {
+            fileTranslation = current;
+            
+            // Process options
+            if (options.count !== undefined && fileTranslation.includes('{{count}}')) {
+              fileTranslation = fileTranslation.replace(/\{\{count\}\}/g, options.count);
+            }
+            
+            // Cache this translation
+            translationsCache[fullCacheKey] = fileTranslation;
+            return fileTranslation;
+          }
+        } else if (xhr.status === 404) {
+          // Mark file as missing to prevent future requests
+          if (window.translationFileCache) {
+            window.translationFileCache.markAsMissing(`${language}:${namespace}`);
+          }
+        }
+      } catch (e) {
+        // Silent fail - continue with API request
+      }
+    }
+    
     // Not in cache, schedule async fetch for future use
     if (!pendingTranslations[fullCacheKey]) {
       log(`Scheduling async fetch for "${fullKey}"`);
@@ -1026,7 +1042,7 @@ function updateAllElementsWithKey(key, translation) {
     return defaultValue;
   }
   
-  // Export public API - RMA compatibility: Make sure all needed functions are exposed
+  // Export public API
   window.i18n = {
     init,
     t,
@@ -1037,7 +1053,7 @@ function updateAllElementsWithKey(key, translation) {
     syncLanguageMasks,
     isInitialized: () => isInitialized,
     
-    // RMA compatibility: Export additional functions required by RMA form
+    // RMA compatibility: Export additional functions 
     setRmaCompatibilityMode: (mode) => { rmaCompatibilityMode = mode },
     forceTriggerInitEvent: () => {
       const event = new CustomEvent('i18n:initialized', {
@@ -1046,4 +1062,42 @@ function updateAllElementsWithKey(key, translation) {
       document.dispatchEvent(event);
     }
   };
+  
+  /**
+   * Change the current language
+   */
+  function setLanguage(langCode) {
+    // Current language
+    const previousLanguage = getCurrentLanguage();
+    
+    // If selected same language, do nothing
+    if (langCode === previousLanguage) {
+      return;
+    }
+    
+    log(`Changing language from ${previousLanguage} to ${langCode}`);
+    
+    // Visual updates for SVG masks
+    try {
+      document.getElementById(`${previousLanguage}Mask`).setAttribute("mask", "url(#maskClose)");
+    } catch (e) { /* Silent catch */ }
+    
+    try {
+      document.getElementById(`${langCode}Mask`).setAttribute("mask", "url(#maskOpen)");
+    } catch (e) { /* Silent catch */ }
+    
+    // Store language preference in cookie and localStorage
+    document.cookie = `i18next=${langCode}; path=/; max-age=${60 * 60 * 24 * 365}`;
+    try {
+      localStorage.setItem('i18nextLng', langCode);
+    } catch (e) { /* Silent catch */ }
+    
+    // Add cache busting parameter to URL and reload
+    const cacheBuster = Date.now();
+    const url = new URL(window.location.href);
+    url.searchParams.set('i18n_cb', cacheBuster);
+    url.searchParams.set('lang', langCode);
+    
+    window.location.href = url.toString();
+  }
 })();
