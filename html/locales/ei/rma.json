@@ -1,0 +1,26 @@
+{
+  "form": {
+    "submit": "Submit Form",
+    "back": "Back",
+    "add_device": "Add Another Device",
+    "device_info": "Device Information",
+    "phone": "Phone:",
+    "invoice_email": "E-Invoice Email:",
+    "contact_email": "Contact Email:",
+    "contact_info": "Contact Information",
+    "reseller_name": "In case of warranty, please provide the reseller's name:",
+    "country": "Country:",
+    "city": "City:",
+    "postal_code": "Postal Code:",
+    "additional_address": "Additional Address Line:",
+    "house_number": "House Number:",
+    "street": "Street:",
+    "contact_person": "Contact Person:",
+    "vat_number": "VAT Number:",
+    "company_name": "Company Name:",
+    "billing_info": "Billing Information"
+  },
+  "device": {
+    "info_text": "Add devices that need to be repaired. Each device can be shipped to a different address if needed."
+  }
+}
