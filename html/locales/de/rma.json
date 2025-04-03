@@ -29,7 +29,7 @@
     "serial_placeholder": "Seriennummer eingeben",
     "issue_description": "Problembeschreibung:",
     "description_placeholder": "Beschreiben Sie das Problem",
-    "address_button": "Anders Adresse für die Rücksendung angeben",
+    "address_button": "Unterschiedliche Adresse für die Rücksendung angeben",
     "hide_address": "Rücksendeadresse ausblenden",
     "alternate_address": "Alternativ Rücksendeadresse",
     "address_info": "Bitte geben Sie eine andere Adresse für die Rücksendung dieses Geräts an.",
@@ -38,7 +38,7 @@
     "info_text": "Fügen Sie Geräte hinzu, die repariert werden müssen. Jedes Gerät kann bei Bedarf an eine andere Adresse versendet werden."
   },
   "address_logic": {
-    "title": "Geräte-Rückgabeinformationen:",
+    "title": "Gerät",
     "info": [
       "Standardmäßig werden alle Geräte an die in der Rechnungsinformationen angegebene Adresse versendet.",
       "Sie können eine alternative Rücksendeadresse für jedes Gerät angeben.",

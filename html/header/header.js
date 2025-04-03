@@ -436,7 +436,7 @@ export function showMenu(menuType) {
     // Opening menu
 
     if (menuType === "mainMenu" && langMenu) {
-      console.log(langMenu)
+      
       langMenu.style.setProperty('display', 'none', 'important');
     }
     buttonsElement.style.display = "inline-block";
