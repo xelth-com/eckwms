@@ -422,94 +422,96 @@
     });
   }
 
-  /**
-   * Обрабатываем перевод атрибутов элемента с удалением атрибута после подтвержденного перевода
-   */
-  function processAttrTranslation(element) {
-    try {
-      const attrsJson = element.getAttribute('data-i18n-attr');
-      if (!attrsJson) return;
+/**
+ * Handles attribute translations with proper attribute removal after confirmed success
+ * @param {HTMLElement} element - Element with data-i18n-attr
+ */
+function processAttrTranslation(element) {
+  try {
+    const attrsJson = element.getAttribute('data-i18n-attr');
+    if (!attrsJson) return;
+    
+    const attrs = JSON.parse(attrsJson);
+    log(`Processing attribute translations: ${attrsJson}`, element);
+    
+    // Track translation promises for each attribute
+    const translationPromises = [];
+    
+    for (const [attr, key] of Object.entries(attrs)) {
+      // Get original attribute value
+      const originalValue = element.getAttribute(attr) || '';
       
-      const attrs = JSON.parse(attrsJson);
-      log(`Обрабатываем переводы атрибутов: ${attrsJson}`, element);
+      log(`Translating attribute "${attr}" with key "${key}", value: "${originalValue}"`);
       
-      // Отслеживаем успешные переводы
-      const translationPromises = [];
+      // Pending info for tracking
+      const pendingInfo = {
+        element: element,
+        type: PENDING_TYPES.ATTR,
+        attr: attr,
+        key: key
+      };
       
-      for (const [attr, key] of Object.entries(attrs)) {
-        const originalValue = element.getAttribute(attr) || '';
-        
-        log(`Переводим атрибут "${attr}" с ключом "${key}", значение: "${originalValue}"`);
-        
-        // Информация об элементе для добавления в список ожидания
-        const pendingInfo = {
-          element: element,
-          type: PENDING_TYPES.ATTR,
-          attr: attr,
-          key: key
-        };
-        
-        // Создаем Promise для перевода этого атрибута
-        const translationPromise = (async () => {
-          // Сначала проверяем, существует ли перевод на основе файла
-          try {
-            const fileTranslation = await checkTranslationFile(key, {});
-            if (fileTranslation) {
-              log(`Применен перевод из файла для атрибута "${attr}": "${fileTranslation}"`);
-              element.setAttribute(attr, fileTranslation);
-              // Переводы на основе файлов считаются успешными
-              return true;
-            }
-            
-            // Нет перевода из файла, пробуем API
-            const response = await fetchTranslation(key, originalValue, {}, pendingInfo);
-            if (!response) {
-              log(`Нет ответа от API для атрибута "${attr}", сохраняем атрибут`);
-              return false;
-            }
-            
-            // Извлекаем перевод и статус
-            const translation = typeof response === 'object' ? response.translated : response;
-            const status = typeof response === 'object' ? response.status : 'complete';
-            const fromSource = typeof response === 'object' ? response.fromSource : false;
-            
-            if (translation) {
-              element.setAttribute(attr, translation);
-              log(`Применен перевод API для атрибута "${attr}": "${translation}"`);
-            }
-            
-            // Успешно только если у нас есть перевод, статус complete, и не из исходного языка
-            return (status === 'complete' && translation && !fromSource);
-          } catch (err) {
-            logError(`Ошибка при переводе атрибута "${attr}" с ключом "${key}":`, err);
-            return false; // Не успешно переведено
-          }
-        })();
-        
-        translationPromises.push(translationPromise);
-      }
-      
-      // После завершения всех переводов атрибутов, удаляем data-i18n-attr, если все были успешными
-      Promise.all(translationPromises).then(results => {
-        const allSuccessful = results.every(result => result === true);
-        if (allSuccessful) {
-          // Удаляем атрибут data-i18n-attr после успешного перевода всех атрибутов
-          element.removeAttribute('data-i18n-attr');
-          
-          // Также удаляем опции, если они присутствуют
-          if (element.hasAttribute('data-i18n-options')) {
-            element.removeAttribute('data-i18n-options');
+      // Create Promise for this attribute's translation
+      const translationPromise = (async () => {
+        // First check for file-based translation
+        try {
+          const fileTranslation = await checkTranslationFile(key, {});
+          if (fileTranslation) {
+            log(`Applied file translation for attribute "${attr}": "${fileTranslation}"`);
+            element.setAttribute(attr, fileTranslation);
+            // File translations are always considered successful
+            return true;
           }
           
-          log(`Удален data-i18n-attr после успешного перевода всех атрибутов`);
-        } else {
-          log(`Сохраняем data-i18n-attr, потому что не все атрибуты были успешно переведены`);
+          // No file translation, try API
+          const response = await fetchTranslation(key, originalValue, {}, pendingInfo);
+          if (!response) {
+            log(`No response from API for attribute "${attr}", keeping attribute`);
+            return false;
+          }
+          
+          // Extract translation and status
+          const translation = typeof response === 'object' ? response.translated : response;
+          const status = typeof response === 'object' ? response.status : 'complete';
+          const fromSource = typeof response === 'object' ? response.fromSource : false;
+          
+          if (translation) {
+            element.setAttribute(attr, translation);
+            log(`Applied API translation for attribute "${attr}": "${translation}"`);
+          }
+          
+          // Only successful if we have translation, status is complete, and not from source language
+          return (status === 'complete' && translation && !fromSource);
+        } catch (err) {
+          logError(`Error translating attribute "${attr}" with key "${key}":`, err);
+          return false; // Not successful
         }
-      });
-    } catch (error) {
-      logError('Ошибка при обработке перевода атрибута:', error);
+      })();
+      
+      translationPromises.push(translationPromise);
     }
+    
+    // After all attribute translations complete, remove data-i18n-attr if all were successful
+    Promise.all(translationPromises).then(results => {
+      const allSuccessful = results.every(result => result === true);
+      if (allSuccessful) {
+        // Remove data-i18n-attr after successful translation of all attributes
+        element.removeAttribute('data-i18n-attr');
+        
+        // Also remove options if present
+        if (element.hasAttribute('data-i18n-options')) {
+          element.removeAttribute('data-i18n-options');
+        }
+        
+        log(`Removed data-i18n-attr after successful translation of all attributes`);
+      } else {
+        log(`Keeping data-i18n-attr because not all attributes were successfully translated`);
+      }
+    });
+  } catch (error) {
+    logError('Error processing attribute translation:', error);
   }
+}
 
   /**
    * Обрабатываем перевод HTML контента с удалением атрибута после подтвержденного перевода
@@ -737,345 +739,345 @@
     log('Перевод страницы запущен, ожидаем ответов API');
   }
   
-  /**
-   * Получаем перевод с улучшенной обработкой ответов
-   * @param {string} key - Ключ перевода
-   * @param {string} defaultText - Текст по умолчанию, если перевод не удался
-   * @param {Object} options - Опции перевода (count и т.д.)
-   * @param {Object} pendingInfo - Информация об элементе, который переводится
-   * @returns {Promise<Object|string>} - Объект ответа со статусом или просто переведенный текст
-   */
-  async function fetchTranslation(key, defaultText, options = {}, pendingInfo = null) {
-    const language = getCurrentLanguage();
+/**
+ * Fetch translation with improved response handling
+ * @param {string} key - Translation key
+ * @param {string} defaultText - Default text if translation fails
+ * @param {Object} options - Translation options (count etc.)
+ * @param {Object} pendingInfo - Information about the element being translated
+ * @returns {Promise<Object|string>} - Response object with status or just translated text
+ */
+async function fetchTranslation(key, defaultText, options = {}, pendingInfo = null) {
+  const language = getCurrentLanguage();
+  
+  // Skip translation for default language
+  if (language === defaultLanguage) {
+    log(`Using default language (${defaultLanguage}), skipping translation request for "${key}"`);
+    return {
+      translated: defaultText,
+      original: defaultText,
+      language: language,
+      fromSource: true, // Important flag indicating this is from source language
+      status: 'complete'
+    };
+  }
+  
+  // Extract namespace from key, if present
+  let namespace = 'common';
+  let translationKey = key;
+  
+  if (key.includes(':')) {
+    const parts = key.split(':');
+    namespace = parts[0];
+    translationKey = parts.slice(1).join(':');
+  }
+  
+  // Use same algorithm as server for cache key generation
+  const cacheKey = window.translationUtils ? 
+      window.translationUtils.generateTranslationKey(defaultText, language, namespace, options) :
+      `${language}:${namespace}:${translationKey}`;
+  
+  // Add language prefix for client cache
+  const fullCacheKey = `${language}:${cacheKey}`;
+  
+  log(`Requesting translation for key: "${key}" with cache key: "${fullCacheKey}"`);
+  
+  // First check client cache
+  if (translationsCache[fullCacheKey]) {
+    log(`Found in client cache: "${fullCacheKey}"`);
+    return {
+      translated: translationsCache[fullCacheKey],
+      original: defaultText,
+      language: language,
+      fromCache: true,
+      status: 'complete'
+    };
+  }
+  
+  // Add to existing pending request if it exists
+  if (pendingTranslations[fullCacheKey]) {
+    log(`Translation already pending for "${fullCacheKey}", registering element for later update`);
     
-    // Пропускаем перевод для языка по умолчанию
-    if (language === defaultLanguage) {
-      log(`Используем язык по умолчанию (${defaultLanguage}), пропускаем запрос перевода для "${key}"`);
-      return {
-        translated: defaultText,
-        original: defaultText,
-        language: language,
-        fromSource: true, // Важный флаг, указывающий, что это из исходного языка
-        status: 'complete'
-      };
-    }
-    
-    // Извлекаем пространство имен из ключа, если оно присутствует
-    let namespace = 'common';
-    let translationKey = key;
-    
-    if (key.includes(':')) {
-      const parts = key.split(':');
-      namespace = parts[0];
-      translationKey = parts.slice(1).join(':');
-    }
-    
-    // Используем тот же алгоритм, что и сервер, для генерации ключа кэша
-    const cacheKey = window.translationUtils ? 
-        window.translationUtils.generateTranslationKey(defaultText, language, namespace, options) :
-        `${language}:${namespace}:${translationKey}`;
-    
-    // Добавляем префикс языка для клиентского кэша
-    const fullCacheKey = `${language}:${cacheKey}`;
-    
-    log(`Запрос перевода для ключа: "${key}" с ключом кэша: "${fullCacheKey}"`);
-    
-    // Сначала проверяем клиентский кэш
-    if (translationsCache[fullCacheKey]) {
-      log(`Найдено в клиентском кэше: "${fullCacheKey}"`);
-      return {
-        translated: translationsCache[fullCacheKey],
-        original: defaultText,
-        language: language,
-        fromCache: true,
-        status: 'complete'
-      };
-    }
-    
-    // Добавляем запрос к уже ожидающему, если он существует
-    if (pendingTranslations[fullCacheKey]) {
-      log(`Перевод уже ожидает для "${fullCacheKey}", регистрируем элемент для последующего обновления`);
-      
-      // Если предоставлена информация об элементе, регистрируем его для последующего обновления
-      if (pendingInfo) {
-        // Создаем массив элементов, если он не существует
-        if (!pendingTranslations[fullCacheKey].elements) {
-          pendingTranslations[fullCacheKey].elements = [];
-        }
-        pendingTranslations[fullCacheKey].elements.push(pendingInfo);
+    // If element info provided, register it for later update
+    if (pendingInfo) {
+      // Create elements array if it doesn't exist
+      if (!pendingTranslations[fullCacheKey].elements) {
+        pendingTranslations[fullCacheKey].elements = [];
       }
-      
-      // Возвращаем существующий Promise, чтобы избежать создания дубликатов запросов
-      return pendingTranslations[fullCacheKey].request;
+      pendingTranslations[fullCacheKey].elements.push(pendingInfo);
     }
     
-    // Создаем новый Promise для запроса
-    const translationPromise = new Promise(async (resolve, reject) => {
+    // Return existing Promise to avoid duplicate requests
+    return pendingTranslations[fullCacheKey].request;
+  }
+  
+  // Create new Promise for the request
+  const translationPromise = new Promise(async (resolve, reject) => {
+    try {
+      log(`Making API request for translation: "${key}" in language: ${language}`);
+      
+      // Now try the API
       try {
-        log(`Делаем API запрос на перевод: "${key}" на языке: ${language}`);
+        const response = await fetch(`/api/translate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'app-language': language
+          },
+          body: JSON.stringify({
+            text: defaultText,
+            targetLang: language,
+            context: namespace,
+            key: translationKey,
+            defaultValue: defaultText,
+            background: false,
+            options: options
+          })
+        });
         
-        // Теперь пробуем API
-        try {
-          const response = await fetch(`/api/translate`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'app-language': language
-            },
-            body: JSON.stringify({
-              text: defaultText,
-              targetLang: language,
-              context: namespace,
-              key: translationKey,
-              defaultValue: defaultText,
-              background: false,
-              options: options
-            })
-          });
+        const data = await response.json();
+        
+        log(`API response for "${key}": status=${response.status}, fromCache=${data.fromCache}, translated length=${data.translated?.length}`);
+        
+        // Handle "pending" status with retry
+        if (response.status === 202 && data.status === 'pending') {
+          const retryAfter = parseInt(response.headers.get('Retry-After') || '3', 10);
           
-          const data = await response.json();
+          log(`Translation pending for "${key}", will retry in ${retryAfter} seconds`);
           
-          log(`API ответ для "${key}": status=${response.status}, fromCache=${data.fromCache}, translated length=${data.translated?.length}`);
-          
-          // Обрабатываем статус "pending" с повторной попыткой
-          if (response.status === 202 && data.status === 'pending') {
-            const retryAfter = parseInt(response.headers.get('Retry-After') || '3', 10);
+          // Schedule retry with server-suggested delay
+          setTimeout(() => {
+            log(`Retrying translation for "${key}" after delay`);
             
-            log(`Перевод ожидает для "${key}", повторим через ${retryAfter} секунд`);
+            // Save pending elements for later update
+            const pendingElements = pendingTranslations[fullCacheKey]?.elements || [];
             
-            // Планируем повторную попытку с предложенной сервером задержкой
-            setTimeout(() => {
-              log(`Повторяем перевод для "${key}" после задержки`);
-              
-              // Сохраняем ожидающие элементы для последующего обновления
-              const pendingElements = pendingTranslations[fullCacheKey]?.elements || [];
-              
-              // Удаляем из ожидающих, чтобы разрешить новый запрос
-              delete pendingTranslations[fullCacheKey];
-              
-              // Повторно запрашиваем перевод
-              fetchTranslation(key, defaultText, options).then(translation => {
-                log(`Повторная попытка успешна для "${key}", обновляем элементы`);
-                
-                // Обновляем все ожидающие элементы
-                updateAllPendingElements(pendingElements, translation);
-                
-                // Разрешаем Promise с полученным переводом
-                resolve(translation);
-              }).catch(err => {
-                logError(`Повторная попытка не удалась для "${key}":`, err);
-                reject(err);
-              });
-            }, retryAfter * 1000);
-            
-            // Возвращаем объект ответа со статусом pending
-            return {
-              translated: defaultText, // Возвращаем оригинал как заполнитель
-              original: defaultText,
-              language: language,
-              status: 'pending',
-              retryAfter: retryAfter
-            };
-          }
-          
-          // Обрабатываем завершенный перевод
-          if (data.translated) {
-            const translation = data.translated;
-            log(`Получен перевод для "${key}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
-            
-            // Подготавливаем объект ответа
-            const responseObj = {
-              translated: translation,
-              original: defaultText,
-              language: language,
-              fromCache: !!data.fromCache,
-              fromSource: !!data.fromSource,
-              status: data.status || 'complete'
-            };
-            
-            // Кэшируем перевод, используя тот же формат ключа, что и бэкенд
-            translationsCache[fullCacheKey] = translation;
-            
-            // Обновляем все ожидающие элементы
-            if (pendingTranslations[fullCacheKey] && pendingTranslations[fullCacheKey].elements) {
-              updateAllPendingElements(pendingTranslations[fullCacheKey].elements, responseObj);
-            }
-            
-            // Очищаем статус ожидания
+            // Remove from pending to allow new request
             delete pendingTranslations[fullCacheKey];
             
-            // Также обновляем все элементы с этим ключом
-            updateAllElementsWithKey(key, responseObj);
-            
-            // Разрешаем Promise с объектом ответа
-            resolve(responseObj);
-            return responseObj;
+            // Request translation again
+            fetchTranslation(key, defaultText, options).then(translation => {
+              log(`Retry successful for "${key}", updating elements`);
+              
+              // Update all pending elements
+              updateAllPendingElements(pendingElements, translation);
+              
+              // Resolve Promise with obtained translation
+              resolve(translation);
+            }).catch(err => {
+              logError(`Retry failed for "${key}":`, err);
+              reject(err);
+            });
+          }, retryAfter * 1000);
+          
+          // Return response object with pending status
+          return {
+            translated: defaultText, // Return original as placeholder
+            original: defaultText,
+            language: language,
+            status: 'pending',
+            retryAfter: retryAfter
+          };
+        }
+        
+        // Process completed translation
+        if (data.translated) {
+          const translation = data.translated;
+          log(`Got translation for "${key}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
+          
+          // Prepare response object
+          const responseObj = {
+            translated: translation,
+            original: defaultText,
+            language: language,
+            fromCache: !!data.fromCache,
+            fromSource: !!data.fromSource,
+            status: data.status || 'complete'
+          };
+          
+          // Cache translation using same key format as backend
+          translationsCache[fullCacheKey] = translation;
+          
+          // Update all pending elements
+          if (pendingTranslations[fullCacheKey] && pendingTranslations[fullCacheKey].elements) {
+            updateAllPendingElements(pendingTranslations[fullCacheKey].elements, responseObj);
           }
           
-          // Если мы дошли сюда, нет пригодного для использования перевода
-          log(`Нет пригодного для использования перевода для "${key}", используем оригинальный текст`);
+          // Clear pending status
           delete pendingTranslations[fullCacheKey];
           
-          // Возвращаем объект ответа со статусом ошибки
-          const errorResponseObj = {
-            translated: defaultText,
-            original: defaultText,
-            language: language,
-            status: 'error',
-            error: 'Данные перевода не возвращены'
-          };
+          // Also update all elements with this key
+          updateAllElementsWithKey(key, responseObj);
           
-          resolve(errorResponseObj);
-          return errorResponseObj;
-        } catch (error) {
-          logError(`API ошибка при переводе "${key}":`, error);
-          delete pendingTranslations[fullCacheKey];
-          
-          // Возвращаем объект ответа с ошибкой
-          const errorResponseObj = {
-            translated: defaultText,
-            original: defaultText,
-            language: language,
-            status: 'error',
-            error: error.message
-          };
-          
-          resolve(errorResponseObj);
-          return errorResponseObj;
+          // Resolve Promise with response object
+          resolve(responseObj);
+          return responseObj;
         }
-      } catch (error) {
-        logError(`Непредвиденная ошибка для "${key}":`, error);
         
-        // Возвращаем объект ответа с ошибкой
+        // If we reach here, no usable translation
+        log(`No usable translation for "${key}", using original text`);
+        delete pendingTranslations[fullCacheKey];
+        
+        // Return response object with error status
         const errorResponseObj = {
           translated: defaultText,
           original: defaultText,
           language: language,
           status: 'error',
-          error: 'Непредвиденная ошибка'
+          error: 'Translation data not returned'
+        };
+        
+        resolve(errorResponseObj);
+        return errorResponseObj;
+      } catch (error) {
+        logError(`API error translating "${key}":`, error);
+        delete pendingTranslations[fullCacheKey];
+        
+        // Return response object with error
+        const errorResponseObj = {
+          translated: defaultText,
+          original: defaultText,
+          language: language,
+          status: 'error',
+          error: error.message
         };
         
         resolve(errorResponseObj);
         return errorResponseObj;
       }
-    });
-    
-    // Сохраняем Promise и информацию об элементе в списке ожидания
-    pendingTranslations[fullCacheKey] = {
-      request: translationPromise,
-      elements: pendingInfo ? [pendingInfo] : []
-    };
-    
-    return translationPromise;
+    } catch (error) {
+      logError(`Unexpected error for "${key}":`, error);
+      
+      // Return response object with error
+      const errorResponseObj = {
+        translated: defaultText,
+        original: defaultText,
+        language: language,
+        status: 'error',
+        error: 'Unexpected error'
+      };
+      
+      resolve(errorResponseObj);
+      return errorResponseObj;
+    }
+  });
+  
+  // Save Promise and element info in pending list
+  pendingTranslations[fullCacheKey] = {
+    request: translationPromise,
+    elements: pendingInfo ? [pendingInfo] : []
+  };
+  
+  return translationPromise;
+}
+  
+/**
+ * Update all pending elements waiting for translation
+ * with attribute removal after confirmed translation
+ */
+function updateAllPendingElements(pendingElements, response) {
+  if (!pendingElements || !pendingElements.length) {
+    return;
   }
   
-  /**
-   * Обновляем все ожидающие элементы, ожидающие перевода
-   * с удалением атрибута после подтвержденного перевода
-   */
-  function updateAllPendingElements(pendingElements, response) {
-    if (!pendingElements || !pendingElements.length) {
-      return;
-    }
-    
-    // Извлекаем перевод и статус
-    const translation = typeof response === 'object' ? response.translated : response;
-    const status = typeof response === 'object' ? response.status : 'complete';
-    const fromSource = typeof response === 'object' ? response.fromSource : false;
-    
-    if (!translation) {
-      log(`Нет перевода для обновления ожидающих элементов`);
-      return;
-    }
-    
-    log(`Обновляем ${pendingElements.length} ожидающих элементов переводом, статус: ${status}`);
-    
-    pendingElements.forEach(info => {
-      if (!info || !info.element) return;
-      
-      // Применяем соответствующее обновление в зависимости от типа элемента
-      switch (info.type) {
-        case PENDING_TYPES.TEXT:
-          // Обновляем текстовое содержимое
-          info.element.textContent = translation;
-          log(`Обновлен текстовый элемент переводом, ключ: ${info.key}`);
-          
-          // Удаляем теги i18n только если перевод был успешным
-          if (status === 'complete' && !fromSource) {
-            info.element.removeAttribute('data-i18n');
-            
-            // Также удаляем опции, если они присутствуют
-            if (info.element.hasAttribute('data-i18n-options')) {
-              info.element.removeAttribute('data-i18n-options');
-            }
-            
-            log(`Удален атрибут data-i18n после ожидающего обновления с подтвержденным переводом`);
-          } else {
-            log(`Сохраняем атрибут data-i18n после ожидающего обновления, статус: ${status}, fromSource: ${fromSource}`);
-          }
-          break;
-          
-        case PENDING_TYPES.ATTR:
-          // Обновляем атрибут
-          if (info.attr) {
-            info.element.setAttribute(info.attr, translation);
-            log(`Обновлен атрибут ${info.attr} переводом, ключ: ${info.key}`);
-            
-            // Проверяем, все ли атрибуты переведены перед удалением data-i18n-attr
-            // Удаляем только если у нас успешный перевод
-            if (status === 'complete' && !fromSource) {
-              const attrsJson = info.element.getAttribute('data-i18n-attr');
-              if (attrsJson) {
-                try {
-                  const allAttrs = JSON.parse(attrsJson);
-                  const attrKeys = Object.keys(allAttrs);
-                  
-                  // Удаляем только если это последний атрибут или если мы обновляем все сразу
-                  if (attrKeys.length === 1 || (pendingElements.length === attrKeys.length)) {
-                    info.element.removeAttribute('data-i18n-attr');
-                    
-                    // Также удаляем опции, если они присутствуют
-                    if (info.element.hasAttribute('data-i18n-options')) {
-                      info.element.removeAttribute('data-i18n-options');
-                    }
-                    
-                    log(`Удален data-i18n-attr после обновления всех атрибутов`);
-                  }
-                } catch (e) {
-                  logError('Ошибка при разборе data-i18n-attr во время обновления:', e);
-                }
-              }
-            } else {
-              log(`Сохраняем data-i18n-attr, статус: ${status}, fromSource: ${fromSource}`);
-            }
-          }
-          break;
-          
-        case PENDING_TYPES.HTML:
-          // Обновляем HTML содержимое
-          info.element.innerHTML = translation;
-          log(`Обновлен HTML элемент переводом, ключ: ${info.key}`);
-          
-          // Удаляем теги i18n только если перевод был успешным
-          if (status === 'complete' && !fromSource) {
-            info.element.removeAttribute('data-i18n-html');
-            
-            // Также удаляем опции, если они присутствуют
-            if (info.element.hasAttribute('data-i18n-options')) {
-              info.element.removeAttribute('data-i18n-options');
-            }
-            
-            log(`Удален атрибут data-i18n-html после ожидающего обновления с подтвержденным переводом`);
-          } else {
-            log(`Сохраняем атрибут data-i18n-html после ожидающего обновления, статус: ${status}, fromSource: ${fromSource}`);
-          }
-          break;
-          
-        default:
-          logError(`Неизвестный тип ожидающего элемента: ${info.type}`);
-      }
-    });
+  // Extract translation and status
+  const translation = typeof response === 'object' ? response.translated : response;
+  const status = typeof response === 'object' ? response.status : 'complete';
+  const fromSource = typeof response === 'object' ? response.fromSource : false;
+  
+  if (!translation) {
+    log(`No translation to update pending elements`);
+    return;
   }
+  
+  log(`Updating ${pendingElements.length} pending elements with translation, status: ${status}`);
+  
+  pendingElements.forEach(info => {
+    if (!info || !info.element) return;
+    
+    // Apply appropriate update based on element type
+    switch (info.type) {
+      case PENDING_TYPES.TEXT:
+        // Update text content
+        info.element.textContent = translation;
+        log(`Updated text element with translation, key: ${info.key}`);
+        
+        // Only remove i18n tags if translation was successful
+        if (status === 'complete' && !fromSource) {
+          info.element.removeAttribute('data-i18n');
+          
+          // Also remove options if present
+          if (info.element.hasAttribute('data-i18n-options')) {
+            info.element.removeAttribute('data-i18n-options');
+          }
+          
+          log(`Removed data-i18n attribute after pending update with confirmed translation`);
+        } else {
+          log(`Keeping data-i18n attribute after pending update, status: ${status}, fromSource: ${fromSource}`);
+        }
+        break;
+        
+      case PENDING_TYPES.ATTR:
+        // Update attribute
+        if (info.attr) {
+          info.element.setAttribute(info.attr, translation);
+          log(`Updated attribute ${info.attr} with translation, key: ${info.key}`);
+          
+          // Check if all attributes are translated before removing data-i18n-attr
+          // Only remove if we have successful translation
+          if (status === 'complete' && !fromSource) {
+            const attrsJson = info.element.getAttribute('data-i18n-attr');
+            if (attrsJson) {
+              try {
+                const allAttrs = JSON.parse(attrsJson);
+                const attrKeys = Object.keys(allAttrs);
+                
+                // Only remove if this is the last attribute or if we're updating all at once
+                if (attrKeys.length === 1 || (pendingElements.length === attrKeys.length)) {
+                  info.element.removeAttribute('data-i18n-attr');
+                  
+                  // Also remove options if present
+                  if (info.element.hasAttribute('data-i18n-options')) {
+                    info.element.removeAttribute('data-i18n-options');
+                  }
+                  
+                  log(`Removed data-i18n-attr after updating all attributes`);
+                }
+              } catch (e) {
+                logError('Error parsing data-i18n-attr during update:', e);
+              }
+            }
+          } else {
+            log(`Keeping data-i18n-attr, status: ${status}, fromSource: ${fromSource}`);
+          }
+        }
+        break;
+        
+      case PENDING_TYPES.HTML:
+        // Update HTML content
+        info.element.innerHTML = translation;
+        log(`Updated HTML element with translation, key: ${info.key}`);
+        
+        // Only remove i18n tags if translation was successful
+        if (status === 'complete' && !fromSource) {
+          info.element.removeAttribute('data-i18n-html');
+          
+          // Also remove options if present
+          if (info.element.hasAttribute('data-i18n-options')) {
+            info.element.removeAttribute('data-i18n-options');
+          }
+          
+          log(`Removed data-i18n-html attribute after pending update with confirmed translation`);
+        } else {
+          log(`Keeping data-i18n-html attribute after pending update, status: ${status}, fromSource: ${fromSource}`);
+        }
+        break;
+        
+      default:
+        logError(`Unknown pending element type: ${info.type}`);
+    }
+  });
+}
   
   /**
    * Обновляем все элементы с определенным ключом перевода
