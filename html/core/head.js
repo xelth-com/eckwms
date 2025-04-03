@@ -5,6 +5,59 @@
 
 import { loadCSS } from '/core/module-loader.js';
 
+
+
+/**
+ * Загружает необходимые пространства имен для текущей страницы
+ * @param {string} pagePath - Путь текущей страницы
+ */
+function loadRequiredNamespaces(pagePath) {
+  if (!window.i18n) return;
+  
+  // Базовые пространства имен, которые нужны на всех страницах
+  const baseNamespaces = ['common'];
+  
+  // Специфичные для страниц пространства имен
+  const pageSpecificNamespaces = {
+    '/': ['common'],                  // Главная страница
+    '/rma': ['rma', 'common'],        // Страница RMA
+    '/status': ['common', 'status'],  // Страница статуса
+    '/admin': ['common', 'admin'],    // Админ-панель
+    '/auth': ['common', 'auth']       // Страница аутентификации
+  };
+  
+  // Получаем список необходимых пространств имен для текущей страницы
+  const pathNamespaces = pageSpecificNamespaces[pagePath] || [];
+  
+  // Объединяем базовые и специфичные пространства имен, убираем дубликаты
+  const namespacesToLoad = [...new Set([...baseNamespaces, ...pathNamespaces])];
+  
+  console.log(`[i18n] Preloading namespaces for page ${pagePath}: ${namespacesToLoad.join(', ')}`);
+  
+  // Добавляем мета-тег с информацией о требуемых пространствах имен
+  let nsMetaTag = document.querySelector('meta[name="i18n-namespaces"]');
+  if (!nsMetaTag) {
+    nsMetaTag = document.createElement('meta');
+    nsMetaTag.name = 'i18n-namespaces';
+    document.head.appendChild(nsMetaTag);
+  }
+  nsMetaTag.content = namespacesToLoad.join(',');
+  
+  // Загружаем пространства имен через i18n API
+  if (typeof window.i18n.loadNamespaces === 'function') {
+    window.i18n.loadNamespaces(namespacesToLoad)
+      .then(() => {
+        console.log(`[i18n] Successfully loaded namespaces: ${namespacesToLoad.join(', ')}`);
+      })
+      .catch(err => {
+        console.error(`[i18n] Error loading namespaces: ${err.message}`);
+      });
+  }
+}
+
+
+
+
 /**
  * Initialize the document head
  */
@@ -26,6 +79,16 @@ export function init() {
   
   // Load essential scripts
   loadEssentialScripts();
+  
+  // Preload required namespaces for this page
+  if (window.i18n) {
+    loadRequiredNamespaces(window.location.pathname);
+  } else {
+    // Если i18n еще не загружен, ждем события инициализации
+    document.addEventListener('i18n:initialized', function() {
+      loadRequiredNamespaces(window.location.pathname);
+    });
+  }
 }
 
 /**
