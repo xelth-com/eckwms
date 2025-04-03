@@ -200,6 +200,112 @@ async function saveTranslationError(text, lang, errorMsg, context = '') {
 }
 
 /**
+ * Ищет перевод для ключа во всех доступных пространствах имен
+ * @param {string} key - Ключ перевода, возможно с префиксом namespace
+ * @param {string} language - Целевой язык
+ * @returns {Promise<Object|null>} - Объект с переводом или null
+ */
+async function findTranslationInAllNamespaces(key, language) {
+  // Игнорируем для языка по умолчанию
+  if (language === (process.env.DEFAULT_LANGUAGE || 'en')) {
+    return null;
+  }
+
+  // Стандартные пространства имен для проверки
+  const DEFAULT_NAMESPACES = ['common', 'rma', 'dashboard', 'auth', 'status'];
+  
+  // Извлекаем пространство имен из ключа, если оно есть
+  let namespace = null;
+  let translationKey = key;
+  
+  if (key.includes(':')) {
+    const parts = key.split(':');
+    namespace = parts[0];
+    translationKey = parts.slice(1).join(':');
+    
+    // Проверяем указанное пространство имен сначала
+    try {
+      const filePath = path.join(process.cwd(), 'html', 'locales', language, `${namespace}.json`);
+      if (fs.existsSync(filePath)) {
+        const fileContent = await fs.promises.readFile(filePath, 'utf8');
+        const translations = stripBOM(fileContent);
+        const translationObj = JSON.parse(translations);
+        
+        // Проверяем вложенный ключ
+        const keyParts = translationKey.split('.');
+        let current = translationObj;
+        let found = true;
+        
+        for (const part of keyParts) {
+          if (current && typeof current === 'object' && part in current) {
+            current = current[part];
+          } else {
+            found = false;
+            break;
+          }
+        }
+        
+        if (found && typeof current === 'string') {
+          console.log(`[i18n] Found key ${translationKey} in specified namespace ${namespace}`);
+          return {
+            namespace,
+            key: translationKey,
+            translation: current
+          };
+        }
+      }
+    } catch (error) {
+      console.warn(`[i18n] Error checking specified namespace ${namespace}:`, error.message);
+    }
+  }
+  
+  // Если не найден или namespace не указан, проверяем все пространства имен
+  for (const ns of DEFAULT_NAMESPACES) {
+    // Пропускаем уже проверенное пространство имен
+    if (ns === namespace) continue;
+    
+    try {
+      const filePath = path.join(process.cwd(), 'html', 'locales', language, `${ns}.json`);
+      if (fs.existsSync(filePath)) {
+        const fileContent = await fs.promises.readFile(filePath, 'utf8');
+        const translations = stripBOM(fileContent);
+        const translationObj = JSON.parse(translations);
+        
+        // Проверяем вложенный ключ
+        const keyToCheck = namespace ? translationKey : key; // Используем ключ без namespace если он уже был извлечен
+        const keyParts = keyToCheck.split('.');
+        let current = translationObj;
+        let found = true;
+        
+        for (const part of keyParts) {
+          if (current && typeof current === 'object' && part in current) {
+            current = current[part];
+          } else {
+            found = false;
+            break;
+          }
+        }
+        
+        if (found && typeof current === 'string') {
+          console.log(`[i18n] Found key ${keyToCheck} in namespace ${ns}`);
+          return {
+            namespace: ns,
+            key: keyToCheck,
+            translation: current
+          };
+        }
+      }
+    } catch (error) {
+      console.warn(`[i18n] Error checking namespace ${ns}:`, error.message);
+    }
+  }
+  
+  // Не найдено ни в одном пространстве имен
+  console.log(`[i18n] Key ${key} not found in any namespace for language ${language}`);
+  return null;
+}
+
+/**
  * Handle single text translation - i18next compatible endpoint
  * POST /api/translate
  * Body formats supported:
@@ -220,7 +326,7 @@ router.post('/translate', async (req, res) => {
       background = req.body.background || false;
       sourceLang = process.env.DEFAULT_LANGUAGE || 'en';
       
-      // НОВОЕ: извлекаем опции из формата i18next
+      // Извлекаем опции из формата i18next
       options = req.body.options || {};
       
       // Особый случай: если передан count напрямую в запросе (не в options)
@@ -235,7 +341,7 @@ router.post('/translate', async (req, res) => {
       background = req.body.background || false;
       sourceLang = req.body.sourceLang || process.env.DEFAULT_LANGUAGE || 'en';
       
-      // НОВОЕ: извлекаем опции из запроса
+      // Извлекаем опции из запроса
       options = req.body.options || {};
     }
     
@@ -262,7 +368,7 @@ router.post('/translate', async (req, res) => {
       userAgent: req.get('User-Agent'),
       textLength: text.length,
       language: targetLang,
-      options: options // НОВОЕ: добавляем опции в логи
+      options: options 
     };
     
     if (process.env.NODE_ENV === 'development') {
@@ -288,6 +394,40 @@ router.post('/translate', async (req, res) => {
         translated: cachedTranslation,
         language: targetLang,
         fromCache: true,
+        status: 'complete',
+        requestInfo: process.env.NODE_ENV === 'development' ? requestInfo : undefined
+      });
+    }
+    
+    // Сформируем полный ключ для поиска
+    const fullKey = context ? `${context}:${req.body.key || ''}` : req.body.key || '';
+    
+    // Перед запросом к API для перевода, проверяем все пространства имен
+    const translationFound = await findTranslationInAllNamespaces(fullKey, targetLang);
+    if (translationFound) {
+      // Если перевод найден в любом пространстве имен, возвращаем его
+      console.log(`[i18n] Using translation from file for ${fullKey} (found in ${translationFound.namespace})`);
+      
+      // Форматируем перевод с учетом параметра count, если нужно
+      let finalTranslation = translationFound.translation;
+      if (options.count !== undefined && finalTranslation.includes('{{count}}')) {
+        finalTranslation = finalTranslation.replace(/\{\{count\}\}/g, options.count);
+      }
+      
+      // Также добавляем в API кэш
+      try {
+        await saveToCache(text, targetLang, finalTranslation, 
+                         translationFound.namespace, options);
+      } catch (cacheError) {
+        console.error(`[i18n] Error saving to cache:`, cacheError);
+      }
+      
+      return res.json({
+        original: text,
+        translated: finalTranslation,
+        language: targetLang,
+        fromFile: true,
+        namespace: translationFound.namespace,
         status: 'complete',
         requestInfo: process.env.NODE_ENV === 'development' ? requestInfo : undefined
       });
@@ -319,7 +459,7 @@ router.post('/translate', async (req, res) => {
         startTime: Date.now(),
         text: text.substring(0, 30) + '...',
         retryCount: 0,
-        options: options // НОВОЕ: сохраняем опции
+        options: options
       });
       
       backgroundQueue.enqueue({
@@ -327,7 +467,7 @@ router.post('/translate', async (req, res) => {
         targetLang,
         context: context || '',
         sourceLang: sourceLang || 'en',
-        options: options, // НОВОЕ: передаем опции
+        options: options,
         queueKey: queueKey
       });
       
@@ -348,16 +488,16 @@ router.post('/translate', async (req, res) => {
       startTime: Date.now(),
       text: text.substring(0, 30) + '...',
       retryCount: 0,
-      options: options // НОВОЕ: сохраняем опции
+      options: options
     });
     
-    // НОВОЕ: передаем options в функцию translateText
+    // передаем options в функцию translateText
     const translatedText = await translateText(
       text, 
       targetLang, 
       context || '', 
       sourceLang || 'en',
-      options // Передаем опции
+      options
     );
     
     // Remove from processing map when done
