@@ -197,43 +197,44 @@
     };
   }
   
-  /**
-   * Настраиваем наблюдатель мутаций для перевода динамически добавленных элементов
-   */
-  function setupMutationObserver() {
-    if (!window.MutationObserver) {
-      log('MutationObserver не поддерживается, пропускаем настройку динамического перевода');
-      return;
-    }
+/**
+ * Модифицируем setupMutationObserver для использования нового метода
+ */
+function setupMutationObserver() {
+  if (!window.MutationObserver) {
+    log('MutationObserver not supported, skipping dynamic translation setup');
+    return;
+  }
+  
+  log('Setting up MutationObserver for dynamic content');
+  const observer = new MutationObserver(mutations => {
+    let elementsToTranslate = 0;
     
-    log('Настраиваем MutationObserver для динамического контента');
-    const observer = new MutationObserver(mutations => {
-      let elementsToTranslate = 0;
-      
-      for (const mutation of mutations) {
-        if (mutation.type === 'childList' && mutation.addedNodes.length) {
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              if (needsTranslation(node)) {
-                elementsToTranslate++;
-                translateDynamicElement(node);
-              }
+    for (const mutation of mutations) {
+      if (mutation.type === 'childList' && mutation.addedNodes.length) {
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            if (needsTranslation(node)) {
+              elementsToTranslate++;
+              // Используем новый метод для перевода
+              translateElement(node);
             }
           }
         }
       }
-      
-      if (elementsToTranslate > 0) {
-        log(`Переведено ${elementsToTranslate} динамически добавленных элементов`);
-      }
-    });
+    }
     
-    // Начинаем наблюдение
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-  }
+    if (elementsToTranslate > 0) {
+      log(`Started translation for ${elementsToTranslate} dynamically added elements`);
+    }
+  });
+  
+  // Начинаем наблюдение
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+}
   
   /**
    * Проверяем, нуждается ли элемент в переводе
@@ -1079,6 +1080,394 @@ function updateAllPendingElements(pendingElements, response) {
   });
 }
   
+/**
+ * Переводит элемент и его дочерние элементы с полной поддержкой локальных файлов
+ * @param {HTMLElement} element - Элемент для перевода
+ * @param {Object} options - Дополнительные опции
+ */
+async function translateElement(element, options = {}) {
+  const language = getCurrentLanguage();
+  
+  // Пропускаем перевод для языка по умолчанию
+  if (language === defaultLanguage) {
+    log('Using default language, skipping element translation');
+    return;
+  }
+  
+  log(`Translating element and its children for ${language}:`, element);
+  
+  // Загружаем файлы переводов для наиболее используемых пространств имен
+  await loadCommonNamespaces(language);
+  
+  // Обрабатываем стандартные переводы
+  const standardElements = [element, ...Array.from(element.querySelectorAll('[data-i18n]'))];
+  if (standardElements.length > 0) {
+    log(`Found ${standardElements.length} elements with data-i18n`);
+    
+    for (const el of standardElements) {
+      if (el.hasAttribute('data-i18n')) {
+        await processElementWithLocalFiles(el);
+      }
+    }
+  }
+  
+  // Обрабатываем переводы атрибутов
+  const attrElements = [element, ...Array.from(element.querySelectorAll('[data-i18n-attr]'))];
+  if (attrElements.length > 0) {
+    log(`Found ${attrElements.length} elements with data-i18n-attr`);
+    
+    for (const el of attrElements) {
+      if (el.hasAttribute('data-i18n-attr')) {
+        await processAttrWithLocalFiles(el);
+      }
+    }
+  }
+  
+  // Обрабатываем HTML переводы
+  const htmlElements = [element, ...Array.from(element.querySelectorAll('[data-i18n-html]'))];
+  if (htmlElements.length > 0) {
+    log(`Found ${htmlElements.length} elements with data-i18n-html`);
+    
+    for (const el of htmlElements) {
+      if (el.hasAttribute('data-i18n-html')) {
+        await processHtmlWithLocalFiles(el);
+      }
+    }
+  }
+  
+  log('Element and children translation completed');
+}
+
+/**
+ * Загружает файлы переводов для основных пространств имен
+ * @param {string} language - Код языка
+ */
+async function loadCommonNamespaces(language) {
+  if (language === defaultLanguage) return;
+  
+  const commonNamespaces = ['common', 'rma', 'dashboard', 'auth'];
+  
+  for (const namespace of commonNamespaces) {
+    await loadNamespaceFile(language, namespace);
+  }
+}
+
+/**
+ * Загружает файл перевода для указанного языка и пространства имен
+ * @param {string} language - Код языка
+ * @param {string} namespace - Пространство имен
+ * @returns {Object|null} - Объект с переводами или null
+ */
+async function loadNamespaceFile(language, namespace) {
+  try {
+    if (language === defaultLanguage) return null;
+    
+    // Проверяем, не загружен ли уже файл
+    if (window.i18nLoadedFiles && window.i18nLoadedFiles[`${language}:${namespace}`]) {
+      return window.i18nLoadedFiles[`${language}:${namespace}`];
+    }
+    
+    // Инициализируем объект для отслеживания загруженных файлов
+    if (!window.i18nLoadedFiles) {
+      window.i18nLoadedFiles = {};
+    }
+    
+    // Проверяем, не является ли файл отсутствующим
+    if (window.translationFileCache && window.translationFileCache.isFileMissing(`${language}:${namespace}`)) {
+      log(`File ${language}:${namespace} is known to be missing, skipping`);
+      return null;
+    }
+    
+    // Сначала проверяем наличие файла с помощью HEAD запроса
+    try {
+      const checkResponse = await fetch(`/locales/${language}/${namespace}.json`, {
+        method: 'HEAD',
+        cache: 'no-cache'
+      });
+      
+      if (checkResponse.ok) {
+        // Файл существует, загружаем
+        const response = await fetch(`/locales/${language}/${namespace}.json`);
+        const data = await response.json();
+        
+        // Преобразуем в плоскую структуру для удобства поиска
+        const flattenedData = flattenTranslations(data);
+        
+        // Сохраняем в глобальном кэше
+        window.i18nLoadedFiles[`${language}:${namespace}`] = flattenedData;
+        
+        log(`Loaded translation file for ${language}:${namespace}`);
+        return flattenedData;
+      } else {
+        // Файл не существует, помечаем
+        if (window.translationFileCache) {
+          window.translationFileCache.markAsMissing(`${language}:${namespace}`);
+        }
+        log(`Translation file not found for ${language}:${namespace}`);
+        return null;
+      }
+    } catch (error) {
+      log(`Error checking translation file for ${language}:${namespace}:`, error);
+      if (window.translationFileCache) {
+        window.translationFileCache.markAsMissing(`${language}:${namespace}`);
+      }
+      return null;
+    }
+  } catch (error) {
+    log(`Failed to load namespace file ${language}:${namespace}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Преобразует вложенную структуру переводов в плоскую с нотацией через точку
+ * @param {Object} obj - Исходный объект переводов
+ * @param {string} prefix - Префикс для ключей
+ * @returns {Object} - Сглаженный объект
+ */
+function flattenTranslations(obj, prefix = '') {
+  return Object.keys(obj).reduce((acc, key) => {
+    const prefixedKey = prefix ? `${prefix}.${key}` : key;
+    
+    if (typeof obj[key] === 'object' && obj[key] !== null) {
+      Object.assign(acc, flattenTranslations(obj[key], prefixedKey));
+    } else {
+      acc[prefixedKey] = obj[key];
+    }
+    
+    return acc;
+  }, {});
+}
+
+/**
+ * Ищет перевод для ключа в локальных файлах
+ * @param {string} key - Ключ перевода
+ * @param {Object} options - Опции перевода
+ * @returns {string|null} - Найденный перевод или null
+ */
+async function getLocalTranslation(key, options = {}) {
+  const language = getCurrentLanguage();
+  
+  if (language === defaultLanguage) return null;
+  
+  // Извлекаем пространство имен и ключ
+  let namespace = 'common';
+  let translationKey = key;
+  
+  if (key.includes(':')) {
+    const parts = key.split(':');
+    namespace = parts[0];
+    translationKey = parts.slice(1).join(':');
+  }
+  
+  // Загружаем файл перевода, если еще не загружен
+  const translations = await loadNamespaceFile(language, namespace);
+  
+  if (!translations) return null;
+  
+  // Ищем перевод в плоской структуре
+  if (translations[translationKey]) {
+    let translated = translations[translationKey];
+    
+    // Обрабатываем шаблоны
+    if (options.count !== undefined && translated.includes('{{count}}')) {
+      translated = translated.replace(/\{\{count\}\}/g, options.count);
+    }
+    
+    return translated;
+  }
+  
+  return null;
+}
+
+/**
+ * Обрабатывает элемент с переводом текста с поддержкой локальных файлов
+ * @param {HTMLElement} element - Элемент для перевода
+ */
+async function processElementWithLocalFiles(element) {
+  const key = element.getAttribute('data-i18n');
+  if (!key) return;
+  
+  // Получаем оригинальный текст
+  const originalText = element.textContent.trim();
+  
+  // Обрабатываем опции
+  let options = {};
+  try {
+    const optionsAttr = element.getAttribute('data-i18n-options');
+    if (optionsAttr) {
+      options = JSON.parse(optionsAttr);
+    }
+  } catch (error) {
+    logError(`Error parsing data-i18n-options for ${key}:`, error);
+  }
+  
+  // Сначала пробуем получить перевод из локальных файлов
+  const localTranslation = await getLocalTranslation(key, options);
+  
+  if (localTranslation) {
+    // Применяем перевод из файла
+    element.textContent = localTranslation;
+    
+    // Удаляем атрибуты перевода
+    element.removeAttribute('data-i18n');
+    if (element.hasAttribute('data-i18n-options')) {
+      element.removeAttribute('data-i18n-options');
+    }
+    
+    log(`Applied local file translation for "${key}": "${localTranslation.substring(0, 30)}${localTranslation.length > 30 ? '...' : ''}"`);
+    return;
+  }
+  
+  // Если не нашли в локальных файлах, используем API перевод
+  try {
+    await processElementTranslation(element);
+  } catch (error) {
+    logError(`Failed to translate element with key "${key}":`, error);
+  }
+}
+
+/**
+ * Обрабатывает элемент с переводом атрибутов с поддержкой локальных файлов
+ * @param {HTMLElement} element - Элемент для перевода
+ */
+async function processAttrWithLocalFiles(element) {
+  try {
+    const attrsJson = element.getAttribute('data-i18n-attr');
+    if (!attrsJson) return;
+    
+    const attrs = JSON.parse(attrsJson);
+    log(`Processing attributes with local files: ${attrsJson}`, element);
+    
+    // Отслеживаем успешные переводы
+    let successfulTranslations = 0;
+    const totalAttributes = Object.keys(attrs).length;
+    
+    // Обрабатываем каждый атрибут
+    for (const [attr, key] of Object.entries(attrs)) {
+      // Получаем текущее значение атрибута
+      const originalValue = element.getAttribute(attr) || '';
+      
+      // Обрабатываем опции
+      let options = {};
+      try {
+        const optionsAttr = element.getAttribute('data-i18n-options');
+        if (optionsAttr) {
+          options = JSON.parse(optionsAttr);
+        }
+      } catch (error) {
+        logError(`Error parsing data-i18n-options for attribute "${attr}":`, error);
+      }
+      
+      // Сначала пробуем получить перевод из локальных файлов
+      const localTranslation = await getLocalTranslation(key, options);
+      
+      if (localTranslation) {
+        // Применяем перевод из файла
+        element.setAttribute(attr, localTranslation);
+        successfulTranslations++;
+        
+        log(`Applied local file translation for attribute "${attr}" with key "${key}": "${localTranslation}"`);
+      } else {
+        // Если не нашли в локальных файлах, используем перевод через API
+        try {
+          // Информация об элементе для добавления в список ожидания
+          const pendingInfo = {
+            element: element,
+            type: PENDING_TYPES.ATTR,
+            attr: attr,
+            key: key
+          };
+          
+          const response = await fetchTranslation(key, originalValue, options, pendingInfo);
+          
+          if (response) {
+            // Извлекаем перевод и статус
+            const translation = typeof response === 'object' ? response.translated : response;
+            const status = typeof response === 'object' ? response.status : 'complete';
+            const fromSource = typeof response === 'object' ? response.fromSource : false;
+            
+            if (translation) {
+              element.setAttribute(attr, translation);
+              log(`Applied API translation for attribute "${attr}": "${translation}"`);
+              
+              // Считаем успешным только если статус complete и не из исходного языка
+              if (status === 'complete' && !fromSource) {
+                successfulTranslations++;
+              }
+            }
+          }
+        } catch (error) {
+          logError(`Error translating attribute "${attr}" with key "${key}":`, error);
+        }
+      }
+    }
+    
+    // Удаляем data-i18n-attr после успешного перевода всех атрибутов
+    if (successfulTranslations === totalAttributes) {
+      element.removeAttribute('data-i18n-attr');
+      
+      if (element.hasAttribute('data-i18n-options')) {
+        element.removeAttribute('data-i18n-options');
+      }
+      
+      log(`Removed data-i18n-attr after successful translation of all ${totalAttributes} attributes`);
+    } else {
+      log(`Keeping data-i18n-attr, only ${successfulTranslations}/${totalAttributes} attributes translated successfully`);
+    }
+  } catch (error) {
+    logError('Error processing attribute translation with local files:', error);
+  }
+}
+
+/**
+ * Обрабатывает элемент с переводом HTML с поддержкой локальных файлов
+ * @param {HTMLElement} element - Элемент для перевода
+ */
+async function processHtmlWithLocalFiles(element) {
+  const key = element.getAttribute('data-i18n-html');
+  if (!key) return;
+  
+  // Получаем оригинальный HTML
+  const originalHtml = element.innerHTML.trim();
+  
+  // Обрабатываем опции
+  let options = {};
+  try {
+    const optionsAttr = element.getAttribute('data-i18n-options');
+    if (optionsAttr) {
+      options = JSON.parse(optionsAttr);
+    }
+  } catch (error) {
+    logError(`Error parsing data-i18n-options for HTML key "${key}":`, error);
+  }
+  
+  // Сначала пробуем получить перевод из локальных файлов
+  const localTranslation = await getLocalTranslation(key, options);
+  
+  if (localTranslation) {
+    // Применяем перевод из файла
+    element.innerHTML = localTranslation;
+    
+    // Удаляем атрибуты перевода
+    element.removeAttribute('data-i18n-html');
+    if (element.hasAttribute('data-i18n-options')) {
+      element.removeAttribute('data-i18n-options');
+    }
+    
+    log(`Applied local file translation for HTML "${key}": "${localTranslation.substring(0, 30)}${localTranslation.length > 30 ? '...' : ''}"`);
+    return;
+  }
+  
+  // Если не нашли в локальных файлах, используем API перевод
+  try {
+    await processHtmlTranslation(element);
+  } catch (error) {
+    logError(`Failed to translate HTML element with key "${key}":`, error);
+  }
+}
+
+
   /**
    * Обновляем все элементы с определенным ключом перевода
    * с удалением атрибута после подтвержденного перевода
@@ -1376,26 +1765,27 @@ function updateAllPendingElements(pendingElements, response) {
     return defaultValue;
   }
   
-  // Экспортируем публичный API
-  window.i18n = {
-    init,
-    t,
-    getCurrentLanguage,
-    changeLanguage: setLanguage,
-    translateDynamicElement,
-    updatePageTranslations: translatePageElements,
-    syncLanguageMasks,
-    isInitialized: () => isInitialized,
-    
-    // Совместимость с RMA: экспортируем дополнительные функции
-    setRmaCompatibilityMode: (mode) => { rmaCompatibilityMode = mode },
-    forceTriggerInitEvent: () => {
-      const event = new CustomEvent('i18n:initialized', {
-        detail: { language: getCurrentLanguage() }
-      });
-      document.dispatchEvent(event);
-    }
-  };
+// Экспортируем расширенный публичный API
+window.i18n = {
+  init,
+  t,
+  getCurrentLanguage,
+  changeLanguage: setLanguage,
+  translateElement,              // Новая функция для перевода элементов
+  translateDynamicElement,       // Для обратной совместимости
+  updatePageTranslations: translatePageElements,
+  syncLanguageMasks,
+  isInitialized: () => isInitialized,
+  
+  // Для RMA-совместимости
+  setRmaCompatibilityMode: (mode) => { rmaCompatibilityMode = mode },
+  forceTriggerInitEvent: () => {
+    const event = new CustomEvent('i18n:initialized', {
+      detail: { language: getCurrentLanguage() }
+    });
+    document.dispatchEvent(event);
+  }
+};
   
   /**
    * Изменяем текущий язык
