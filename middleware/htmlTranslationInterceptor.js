@@ -1,64 +1,8 @@
-// middleware/htmlTranslationInterceptor.js
+// middleware/htmlTranslationInterceptor.js - Modified version with placeholder fix
 const interceptor = require('express-interceptor');
 const { stripBOM } = require('../utils/bomUtils');
 const { checkCache, saveToCache } = require('../services/translationService');
 const { generateTranslationKey } = require('../utils/translationKeys');
-const path = require('path');
-const fs = require('fs');
-
-/**
- * Извлекает необходимые пространства имен из HTML-контента
- * @param {string} htmlContent - HTML-контент для анализа
- * @returns {string[]} - Массив пространств имен
- */
-function extractRequiredNamespaces(htmlContent) {
-  // Найти мета-тег с namespaces
-  const nsMatch = htmlContent.match(/<meta\s+name=["']i18n-namespaces["']\s+content=["']([^"']+)["']\s*\/?>/i);
-  if (nsMatch && nsMatch[1]) {
-    return nsMatch[1].split(',').map(ns => ns.trim());
-  }
-  
-  // Если мета-тег не найден, проверяем data-i18n атрибуты
-  const namespaces = new Set(['common']); // common всегда загружаем
-  
-  // Ищем все атрибуты data-i18n и извлекаем namespace
-  const i18nRegex = /data-i18n=["']([^"']+)["']/g;
-  let match;
-  while ((match = i18nRegex.exec(htmlContent)) !== null) {
-    const key = match[1];
-    if (key.includes(':')) {
-      const namespace = key.split(':')[0];
-      namespaces.add(namespace);
-    }
-  }
-  
-  // Также проверяем html и attr атрибуты
-  const htmlRegex = /data-i18n-html=["']([^"']+)["']/g;
-  while ((match = htmlRegex.exec(htmlContent)) !== null) {
-    const key = match[1];
-    if (key.includes(':')) {
-      const namespace = key.split(':')[0];
-      namespaces.add(namespace);
-    }
-  }
-  
-  const attrRegex = /data-i18n-attr=["'](.*?)["']/g;
-  while ((match = attrRegex.exec(htmlContent)) !== null) {
-    try {
-      const attrObj = JSON.parse(match[1]);
-      Object.values(attrObj).forEach(key => {
-        if (key.includes(':')) {
-          const namespace = key.split(':')[0];
-          namespaces.add(namespace);
-        }
-      });
-    } catch (e) {
-      // Игнорируем ошибки парсинга JSON
-    }
-  }
-  
-  return Array.from(namespaces);
-}
 
 /**
  * Creates an HTML interceptor for i18n translation with improved placeholder handling
@@ -106,10 +50,6 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
 
         console.log(`[i18n] Intercepting HTML response for language: ${language} (path: ${req.path})`);
 
-        // Извлечь и предзагрузить необходимые пространства имен
-        const namespaces = extractRequiredNamespaces(body);
-        console.log(`[i18n] Identified namespaces for path ${req.path}: ${namespaces.join(', ')}`);
-        
         // Add meta-tag with language for all languages
         let processedBody = body;
         if (body.includes('<head>') && !body.includes('meta name="app-language"')) {
@@ -169,28 +109,14 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
           return;
         }
 
-        // Preload namespaces to ensure cache is fresh
+        // Preload common namespaces to ensure cache is fresh
         try {
-          // Preload both detected namespaces and common ones for safety
-          const combinedNamespaces = [...new Set([...namespaces, 'common', 'rma', 'dashboard', 'auth'])];
-          
-          // Для каждого namespace загрузить ресурсы
-          await Promise.all(combinedNamespaces.map(async (ns) => {
-            try {
-              await i18next.reloadResources(language, ns);
-              console.log(`[i18n] Preloaded namespace ${ns} for ${language}`);
-              
-              // Проверяем наличие файла перевода для namespace
-              const filePath = path.join(process.cwd(), 'html', 'locales', language, `${ns}.json`);
-              if (fs.existsSync(filePath)) {
-                console.log(`[i18n] Translation file exists for ${language}:${ns}`);
-              } else {
-                console.warn(`[i18n] No translation file found for ${language}:${ns}`);
-              }
-            } catch (err) {
-              console.warn(`[i18n] Error preloading namespace ${ns}: ${err.message}`);
-            }
-          }));
+          // This is non-blocking and won't delay response
+          const namespaces = ['common', 'rma', 'dashboard', 'auth'];
+          namespaces.forEach(namespace => {
+            i18next.reloadResources(language, namespace)
+              .catch(err => console.warn(`[i18n] Error preloading namespace ${namespace}:`, err));
+          });
         } catch (error) {
           console.error('[i18n] Namespace preloading error:', error);
         }
@@ -248,40 +174,6 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
             }
           } catch (cacheError) {
             console.error(`[i18n] Cache check error for ${cacheKey}:`, cacheError);
-          }
-
-          // Проверяем, существует ли ключ в других пространствах имен, если его нет в указанном
-          // Перебираем все загруженные пространства имен, кроме текущего
-          if (!key.includes(':') && namespaces.length > 1) {
-            for (const ns of namespaces) {
-              if (ns === namespace) continue; // Пропускаем текущий namespace, он уже проверен
-              
-              // Проверяем существование ключа в другом namespace
-              const exists = i18next.exists(key, {
-                ns: ns,
-                lng: language
-              });
-              
-              if (exists) {
-                console.log(`[i18n] Found key ${key} in different namespace: ${ns}`);
-                // Получаем перевод из найденного namespace
-                const translation = i18next.t(key, {
-                  ns: ns,
-                  lng: language,
-                  defaultValue: originalText,
-                  ...options
-                });
-                
-                // Сохраняем в кэш
-                try {
-                  await saveToCache(originalText, language, translation, ns, options);
-                } catch (saveError) {
-                  console.error(`[i18n] Error saving to cache:`, saveError);
-                }
-                
-                return [translation, false]; // Помечаем как переведенный
-              }
-            }
           }
 
           // No cache hit - use i18next but first check if a key exists
@@ -590,7 +482,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                 try {
                   options = JSON.parse(optionsMatch[1]);
                 } catch (e) {
-                  console.error(`[i18n] Error parsing data-i18n-options for HTML ${key}:`, e.message);
+                  console.error(`[i18n] Error parsing data-i18n-options for HTML: ${e.message}`);
                 }
               }
 

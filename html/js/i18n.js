@@ -1159,312 +1159,215 @@ function translateDynamicElement(element, options = {}) {
       return acc;
     }, {});
   }
-
-
-
-
-/**
- * Добавьте эту функцию в html/js/i18n.js
- * для более умного поиска переводов в разных пространствах имен
- */
-
-/**
- * Интеллектуальный поиск перевода в разных пространствах имен
- * @param {string} key - Ключ перевода (возможно с namespace)
- * @param {object} options - Опции перевода
- * @returns {Promise<string|null>} - Найденный перевод или null
- */
-async function smartNamespaceSearch(key, options = {}) {
-  const language = getCurrentLanguage();
-  
-  // Пропускаем для языка по умолчанию
-  if (language === defaultLanguage) {
-    return null;
-  }
-  
-  // Стандартные пространства имен для проверки
-  const DEFAULT_NAMESPACES = ['common', 'rma', 'dashboard', 'auth', 'status'];
-  
-  // Извлекаем пространство имен из ключа, если оно там есть
-  let namespace = null;
-  let translationKey = key;
-  
-  if (key.includes(':')) {
-    const parts = key.split(':');
-    namespace = parts[0];
-    translationKey = parts.slice(1).join(':');
-    
-    // Проверяем указанное пространство имен сначала
-    const fileTranslation = await getLocalTranslation(key, options);
-    if (fileTranslation) {
-      log(`Found translation for "${key}" in specified namespace ${namespace}`);
-      return fileTranslation;
-    }
-  }
-  
-  // Если не указан namespace или не найден перевод, проверяем все пространства имен
-  for (const ns of DEFAULT_NAMESPACES) {
-    // Пропускаем уже проверенное пространство имен
-    if (ns === namespace) continue;
-    
-    // Формируем ключ с новым namespace
-    const nsKey = `${ns}:${translationKey}`;
-    const fileTranslation = await getLocalTranslation(nsKey, options);
-    
-    if (fileTranslation) {
-      log(`Found translation for "${translationKey}" in namespace ${ns}`);
-      
-      // Кэшируем результат с оригинальным ключом для будущих запросов
-      if (key !== nsKey) {
-        // Генерируем ключ кэша для оригинального ключа
-        const cacheKey = window.translationUtils ? 
-            window.translationUtils.generateTranslationKey(options.defaultValue || '', language, namespace || '', options) :
-            `${language}:${namespace || ''}:${key}`;
-        const fullCacheKey = `${language}:${cacheKey}`;
-        
-        // Сохраняем в кэше с оригинальным ключом
-        translationsCache[fullCacheKey] = fileTranslation;
-        log(`Cached found translation under original key "${key}"`);
-      }
-      
-      return fileTranslation;
-    }
-  }
-  
-  log(`No translation found for "${key}" in any namespace`);
-  return null;
-}
-
-
   
   /**
- * Fetch translation with improved response handling and smart namespace search
- * @param {string} key - Translation key
- * @param {string} defaultText - Default text if translation fails
- * @param {Object} options - Translation options (count etc.)
- * @param {Object} pendingInfo - Information about the element being translated
- * @returns {Promise<Object|string>} - Response object with status or just translated text
- */
-async function fetchTranslation(key, defaultText, options = {}, pendingInfo = null) {
-  const language = getCurrentLanguage();
-  
-  // Skip translation for default language
-  if (language === defaultLanguage) {
-    log(`Using default language (${defaultLanguage}), skipping translation request for "${key}"`);
-    return {
-      translated: defaultText,
-      original: defaultText,
-      language: language,
-      fromSource: true, // Important flag indicating this is from source language
-      status: 'complete'
-    };
-  }
-  
-  // Extract namespace from key, if present
-  let namespace = 'common';
-  let translationKey = key;
-  
-  if (key.includes(':')) {
-    const parts = key.split(':');
-    namespace = parts[0];
-    translationKey = parts.slice(1).join(':');
-  }
-  
-  // First try smart namespace search
-  const smartTranslation = await smartNamespaceSearch(key, {
-    ...options, 
-    defaultValue: defaultText
-  });
-  
-  if (smartTranslation) {
-    log(`Smart namespace search found translation for "${key}"`);
-    return {
-      translated: smartTranslation,
-      original: defaultText,
-      language: language,
-      fromSmartSearch: true,
-      status: 'complete'
-    };
-  }
-  
-  // Use same algorithm as server for cache key generation
-  const cacheKey = window.translationUtils ? 
-      window.translationUtils.generateTranslationKey(defaultText, language, namespace, options) :
-      `${language}:${namespace}:${translationKey}`;
-  
-  // Add language prefix for client cache
-  const fullCacheKey = `${language}:${cacheKey}`;
-  
-  log(`Requesting translation for key: "${key}" with cache key: "${fullCacheKey}"`);
-  
-  // Check client cache
-  if (translationsCache[fullCacheKey]) {
-    log(`Found in client cache: "${fullCacheKey}"`);
-    return {
-      translated: translationsCache[fullCacheKey],
-      original: defaultText,
-      language: language,
-      fromCache: true,
-      status: 'complete'
-    };
-  }
-  
-  // Add to existing pending request if it exists
-  if (pendingTranslations[fullCacheKey]) {
-    log(`Translation already pending for "${fullCacheKey}", registering element for later update`);
+   * Fetch translation with improved response handling
+   * @param {string} key - Translation key
+   * @param {string} defaultText - Default text if translation fails
+   * @param {Object} options - Translation options (count etc.)
+   * @param {Object} pendingInfo - Information about the element being translated
+   * @returns {Promise<Object|string>} - Response object with status or just translated text
+   */
+  async function fetchTranslation(key, defaultText, options = {}, pendingInfo = null) {
+    const language = getCurrentLanguage();
     
-    // If element info provided, register it for later update
-    if (pendingInfo) {
-      // Create elements array if it doesn't exist
-      if (!pendingTranslations[fullCacheKey].elements) {
-        pendingTranslations[fullCacheKey].elements = [];
-      }
-      pendingTranslations[fullCacheKey].elements.push(pendingInfo);
+    // Skip translation for default language
+    if (language === defaultLanguage) {
+      log(`Using default language (${defaultLanguage}), skipping translation request for "${key}"`);
+      return {
+        translated: defaultText,
+        original: defaultText,
+        language: language,
+        fromSource: true, // Important flag indicating this is from source language
+        status: 'complete'
+      };
     }
     
-    // Return existing Promise to avoid duplicate requests
-    return pendingTranslations[fullCacheKey].request;
-  }
-  
-  // Create new Promise for the request
-  const translationPromise = new Promise(async (resolve, reject) => {
-    try {
-      log(`Making API request for translation: "${key}" in language: ${language}`);
+    // Extract namespace from key, if present
+    let namespace = 'common';
+    let translationKey = key;
+    
+    if (key.includes(':')) {
+      const parts = key.split(':');
+      namespace = parts[0];
+      translationKey = parts.slice(1).join(':');
+    }
+    
+    // Use same algorithm as server for cache key generation
+    const cacheKey = window.translationUtils ? 
+        window.translationUtils.generateTranslationKey(defaultText, language, namespace, options) :
+        `${language}:${namespace}:${translationKey}`;
+    
+    // Add language prefix for client cache
+    const fullCacheKey = `${language}:${cacheKey}`;
+    
+    log(`Requesting translation for key: "${key}" with cache key: "${fullCacheKey}"`);
+    
+    // First check client cache
+    if (translationsCache[fullCacheKey]) {
+      log(`Found in client cache: "${fullCacheKey}"`);
+      return {
+        translated: translationsCache[fullCacheKey],
+        original: defaultText,
+        language: language,
+        fromCache: true,
+        status: 'complete'
+      };
+    }
+    
+    // Add to existing pending request if it exists
+    if (pendingTranslations[fullCacheKey]) {
+      log(`Translation already pending for "${fullCacheKey}", registering element for later update`);
       
-      // Try the API
+      // If element info provided, register it for later update
+      if (pendingInfo) {
+        // Create elements array if it doesn't exist
+        if (!pendingTranslations[fullCacheKey].elements) {
+          pendingTranslations[fullCacheKey].elements = [];
+        }
+        pendingTranslations[fullCacheKey].elements.push(pendingInfo);
+      }
+      
+      // Return existing Promise to avoid duplicate requests
+      return pendingTranslations[fullCacheKey].request;
+    }
+    
+    // Create new Promise for the request
+    const translationPromise = new Promise(async (resolve, reject) => {
       try {
-        const response = await fetch(`/api/translate`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'app-language': language
-          },
-          body: JSON.stringify({
-            text: defaultText,
-            targetLang: language,
-            context: namespace,
-            key: translationKey,
-            defaultValue: defaultText,
-            background: false,
-            options: options
-          })
-        });
+        log(`Making API request for translation: "${key}" in language: ${language}`);
         
-        const data = await response.json();
-        
-        log(`API response for "${key}": status=${response.status}, fromCache=${data.fromCache}, translated length=${data.translated?.length}`);
-        
-        // Handle "pending" status with retry
-        if (response.status === 202 && data.status === 'pending') {
-          const retryAfter = parseInt(response.headers.get('Retry-After') || '3', 10);
+        // Now try the API
+        try {
+          const response = await fetch(`/api/translate`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'app-language': language
+            },
+            body: JSON.stringify({
+              text: defaultText,
+              targetLang: language,
+              context: namespace,
+              key: translationKey,
+              defaultValue: defaultText,
+              background: false,
+              options: options
+            })
+          });
           
-          log(`Translation pending for "${key}", will retry in ${retryAfter} seconds`);
+          const data = await response.json();
           
-          // Schedule retry with server-suggested delay
-          setTimeout(() => {
-            log(`Retrying translation for "${key}" after delay`);
+          log(`API response for "${key}": status=${response.status}, fromCache=${data.fromCache}, translated length=${data.translated?.length}`);
+          
+          // Handle "pending" status with retry
+          if (response.status === 202 && data.status === 'pending') {
+            const retryAfter = parseInt(response.headers.get('Retry-After') || '3', 10);
             
-            // Save pending elements for later update
-            const pendingElements = pendingTranslations[fullCacheKey]?.elements || [];
+            log(`Translation pending for "${key}", will retry in ${retryAfter} seconds`);
             
-            // Remove from pending to allow new request
+            // Schedule retry with server-suggested delay
+            setTimeout(() => {
+              log(`Retrying translation for "${key}" after delay`);
+              
+              // Save pending elements for later update
+              const pendingElements = pendingTranslations[fullCacheKey]?.elements || [];
+              
+              // Remove from pending to allow new request
+              delete pendingTranslations[fullCacheKey];
+              
+              // Request translation again
+              fetchTranslation(key, defaultText, options).then(translation => {
+                log(`Retry successful for "${key}", updating elements`);
+                
+                // Update all pending elements
+                updateAllPendingElements(pendingElements, translation);
+                
+                // Resolve Promise with obtained translation
+                resolve(translation);
+              }).catch(err => {
+                logError(`Retry failed for "${key}":`, err);
+                reject(err);
+              });
+            }, retryAfter * 1000);
+            
+            // Return response object with pending status
+            return {
+              translated: defaultText, // Return original as placeholder
+              original: defaultText,
+              language: language,
+              status: 'pending',
+              retryAfter: retryAfter
+            };
+          }
+          
+          // Process completed translation
+          if (data.translated) {
+            const translation = data.translated;
+            log(`Got translation for "${key}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
+            
+            // Prepare response object
+            const responseObj = {
+              translated: translation,
+              original: defaultText,
+              language: language,
+              fromCache: !!data.fromCache,
+              fromSource: !!data.fromSource,
+              status: data.status || 'complete'
+            };
+            
+            // Cache translation using same key format as backend
+            translationsCache[fullCacheKey] = translation;
+            
+            // Update all pending elements
+            if (pendingTranslations[fullCacheKey] && pendingTranslations[fullCacheKey].elements) {
+              updateAllPendingElements(pendingTranslations[fullCacheKey].elements, responseObj);
+            }
+            
+            // Clear pending status
             delete pendingTranslations[fullCacheKey];
             
-            // Request translation again
-            fetchTranslation(key, defaultText, options).then(translation => {
-              log(`Retry successful for "${key}", updating elements`);
-              
-              // Update all pending elements
-              updateAllPendingElements(pendingElements, translation);
-              
-              // Resolve Promise with obtained translation
-              resolve(translation);
-            }).catch(err => {
-              logError(`Retry failed for "${key}":`, err);
-              reject(err);
-            });
-          }, retryAfter * 1000);
-          
-          // Return response object with pending status
-          return {
-            translated: defaultText, // Return original as placeholder
-            original: defaultText,
-            language: language,
-            status: 'pending',
-            retryAfter: retryAfter
-          };
-        }
-        
-        // Process completed translation
-        if (data.translated) {
-          const translation = data.translated;
-          log(`Got translation for "${key}": "${translation.substring(0, 30)}${translation.length > 30 ? '...' : ''}"`);
-          
-          // Flag indicating whether this translation came from a file on the server
-          const fromFile = !!data.fromFile;
-          
-          // Prepare response object
-          const responseObj = {
-            translated: translation,
-            original: defaultText,
-            language: language,
-            fromCache: !!data.fromCache,
-            fromFile: fromFile,
-            fromSource: !!data.fromSource,
-            namespace: data.namespace || namespace,
-            status: data.status || 'complete'
-          };
-          
-          // Cache translation using same key format as backend
-          translationsCache[fullCacheKey] = translation;
-          
-          // If this came from a file but in a different namespace,
-          // also cache it with the original namespace for future lookups
-          if (fromFile && data.namespace && data.namespace !== namespace) {
-            // Generate an additional cache key for the original namespace
-            const additionalCacheKey = window.translationUtils ? 
-                window.translationUtils.generateTranslationKey(defaultText, language, data.namespace, options) :
-                `${language}:${data.namespace}:${translationKey}`;
+            // Also update all elements with this key
+            updateAllElementsWithKey(key, responseObj);
             
-            const fullAdditionalCacheKey = `${language}:${additionalCacheKey}`;
-            translationsCache[fullAdditionalCacheKey] = translation;
-            log(`Also cached under original namespace ${data.namespace} with key ${fullAdditionalCacheKey}`);
+            // Resolve Promise with response object
+            resolve(responseObj);
+            return responseObj;
           }
           
-          // Update all pending elements
-          if (pendingTranslations[fullCacheKey] && pendingTranslations[fullCacheKey].elements) {
-            updateAllPendingElements(pendingTranslations[fullCacheKey].elements, responseObj);
-          }
-          
-          // Clear pending status
+          // If we reach here, no usable translation
+          log(`No usable translation for "${key}", using original text`);
           delete pendingTranslations[fullCacheKey];
           
-          // Also update all elements with this key
-          updateAllElementsWithKey(key, responseObj);
+          // Return response object with error status
+          const errorResponseObj = {
+            translated: defaultText,
+            original: defaultText,
+            language: language,
+            status: 'error',
+            error: 'Translation data not returned'
+          };
           
-          // Resolve Promise with response object
-          resolve(responseObj);
-          return responseObj;
+          resolve(errorResponseObj);
+          return errorResponseObj;
+        } catch (error) {
+          logError(`API error translating "${key}":`, error);
+          delete pendingTranslations[fullCacheKey];
+          
+          // Return response object with error
+          const errorResponseObj = {
+            translated: defaultText,
+            original: defaultText,
+            language: language,
+            status: 'error',
+            error: error.message
+          };
+          
+          resolve(errorResponseObj);
+          return errorResponseObj;
         }
-        
-        // If we reach here, no usable translation
-        log(`No usable translation for "${key}", using original text`);
-        delete pendingTranslations[fullCacheKey];
-        
-        // Return response object with error status
-        const errorResponseObj = {
-          translated: defaultText,
-          original: defaultText,
-          language: language,
-          status: 'error',
-          error: 'Translation data not returned'
-        };
-        
-        resolve(errorResponseObj);
-        return errorResponseObj;
       } catch (error) {
-        logError(`API error translating "${key}":`, error);
-        delete pendingTranslations[fullCacheKey];
+        logError(`Unexpected error for "${key}":`, error);
         
         // Return response object with error
         const errorResponseObj = {
@@ -1472,37 +1375,22 @@ async function fetchTranslation(key, defaultText, options = {}, pendingInfo = nu
           original: defaultText,
           language: language,
           status: 'error',
-          error: error.message
+          error: 'Unexpected error'
         };
         
         resolve(errorResponseObj);
         return errorResponseObj;
       }
-    } catch (error) {
-      logError(`Unexpected error for "${key}":`, error);
-      
-      // Return response object with error
-      const errorResponseObj = {
-        translated: defaultText,
-        original: defaultText,
-        language: language,
-        status: 'error',
-        error: 'Unexpected error'
-      };
-      
-      resolve(errorResponseObj);
-      return errorResponseObj;
-    }
-  });
-  
-  // Save Promise and element info in pending list
-  pendingTranslations[fullCacheKey] = {
-    request: translationPromise,
-    elements: pendingInfo ? [pendingInfo] : []
-  };
-  
-  return translationPromise;
-}
+    });
+    
+    // Save Promise and element info in pending list
+    pendingTranslations[fullCacheKey] = {
+      request: translationPromise,
+      elements: pendingInfo ? [pendingInfo] : []
+    };
+    
+    return translationPromise;
+  }
     
   /**
    * Update all pending elements waiting for translation
@@ -1797,270 +1685,117 @@ async function fetchTranslation(key, defaultText, options = {}, pendingInfo = nu
   }
   
   /**
- * Интеллектуальный поиск перевода в разных пространствах имен
- * @param {string} key - Ключ перевода (возможно с namespace)
- * @param {object} options - Опции перевода
- * @returns {Promise<string|null>} - Найденный перевод или null
- */
-async function smartNamespaceSearch(key, options = {}) {
-  const language = getCurrentLanguage();
-  
-  // Пропускаем для языка по умолчанию
-  if (language === defaultLanguage) {
-    return null;
-  }
-  
-  // Стандартные пространства имен для проверки
-  const DEFAULT_NAMESPACES = ['common', 'rma', 'dashboard', 'auth', 'status'];
-  
-  // Извлекаем пространство имен из ключа, если оно там есть
-  let namespace = null;
-  let translationKey = key;
-  
-  if (key.includes(':')) {
-    const parts = key.split(':');
-    namespace = parts[0];
-    translationKey = parts.slice(1).join(':');
+   * Простая функция перевода - будет использовать кэш или текст по умолчанию
+   */
+  function t(key, options = {}) {
+    const defaultValue = options.defaultValue || key;
+    const language = getCurrentLanguage();
     
-    // Проверяем указанное пространство имен сначала
-    const fileTranslation = await getLocalTranslation(key, options);
-    if (fileTranslation) {
-      log(`Found translation for "${key}" in specified namespace ${namespace}`);
-      return fileTranslation;
+    // Пропускаем перевод для языка по умолчанию
+    if (language === defaultLanguage) {
+      return defaultValue;
     }
-  }
-  
-  // Если не указан namespace или не найден перевод, проверяем все пространства имен
-  for (const ns of DEFAULT_NAMESPACES) {
-    // Пропускаем уже проверенное пространство имен
-    if (ns === namespace) continue;
     
-    // Формируем ключ с новым namespace
-    const nsKey = `${ns}:${translationKey}`;
-    const fileTranslation = await getLocalTranslation(nsKey, options);
+    // Применяем правило добавления namespace при необходимости
+    const adjustedKey = maybeAddNamespace(key);
     
-    if (fileTranslation) {
-      log(`Found translation for "${translationKey}" in namespace ${ns}`);
-      
-      // Кэшируем результат с оригинальным ключом для будущих запросов
-      if (key !== nsKey) {
-        // Генерируем ключ кэша для оригинального ключа
-        const cacheKey = window.translationUtils ? 
-            window.translationUtils.generateTranslationKey(options.defaultValue || '', language, namespace || '', options) :
-            `${language}:${namespace || ''}:${key}`;
-        const fullCacheKey = `${language}:${cacheKey}`;
+    // Извлекаем пространство имен
+    let namespace = 'common';
+    let translationKey = adjustedKey;
+    
+    if (adjustedKey.includes(':')) {
+      const parts = adjustedKey.split(':');
+      namespace = parts[0];
+      translationKey = parts.slice(1).join(':');
+    }
+    
+    // Проверяем кэш и возвращаем немедленно, если найдено
+    const cacheKey = window.translationUtils ? 
+        window.translationUtils.generateTranslationKey(defaultValue, language, namespace, options) :
+        `${language}:${namespace}:${translationKey}`;
+    const fullCacheKey = `${language}:${cacheKey}`;
+    
+    // Проверяем кэш и возвращаем немедленно, если найдено
+    if (translationsCache[fullCacheKey]) {
+      return translationsCache[fullCacheKey];
+    }
+    
+    // Не в кэше, синхронно проверяем перевод на основе файла
+    // Это делается синхронно, чтобы избежать Promise в функции t()
+    let fileTranslation = null;
+    
+    // Простая синхронная проверка файла с использованием XMLHttpRequest
+    if (!window.translationFileCache || 
+        !window.translationFileCache.isFileMissing(`${language}:${namespace}`)) {
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', `/locales/${language}/${namespace}.json`, false); // Синхронный запрос
+        xhr.send(null);
         
-        // Сохраняем в кэше с оригинальным ключом
-        translationsCache[fullCacheKey] = fileTranslation;
-        log(`Cached found translation under original key "${key}"`);
+        if (xhr.status === 200) {
+          const data = JSON.parse(xhr.responseText);
+          // Переходим к вложенному ключу
+          const keyParts = translationKey.split('.');
+          let current = data;
+          for (const part of keyParts) {
+            if (!current || current[part] === undefined) {
+              current = null;
+              break;
+            }
+            current = current[part];
+          }
+          
+          if (current && typeof current === 'string') {
+            fileTranslation = current;
+            
+            // Обрабатываем опции
+            if (options.count !== undefined && fileTranslation.includes('{{count}}')) {
+              fileTranslation = fileTranslation.replace(/\{\{count\}\}/g, options.count);
+            }
+            
+            // Кэшируем этот перевод
+            translationsCache[fullCacheKey] = fileTranslation;
+            return fileTranslation;
+          }
+        } else if (xhr.status === 404) {
+          // Отмечаем файл как отсутствующий, чтобы предотвратить будущие запросы
+          if (window.translationFileCache) {
+            window.translationFileCache.markAsMissing(`${language}:${namespace}`);
+          }
+        }
+      } catch (e) {
+        // Тихий сбой - продолжаем с API запросом
       }
-      
-      return fileTranslation;
     }
-  }
-  
-  log(`No translation found for "${key}" in any namespace`);
-  return null;
-}
-
-/**
- * Простая функция перевода - основная точка входа для получения переводов
- * @param {string} key - Ключ перевода
- * @param {Object} options - Опции перевода (count, defaultValue и т.д.)
- * @returns {string} - Переведенный текст или значение по умолчанию
- */
-function t(key, options = {}) {
-  // Обработка ключа и options
-  if (!key) return '';
-  
-  // Извлекаем defaultValue из опций или используем ключ
-  const defaultValue = options.defaultValue || key.split('.').pop() || key;
-  
-  // Получаем текущий язык
-  const language = getCurrentLanguage();
-  
-  // Пропускаем перевод для языка по умолчанию
-  if (language === defaultLanguage) {
+    
+    // Не в кэше, планируем асинхронную выборку для будущего использования
+    if (!pendingTranslations[fullCacheKey]) {
+      log(`Планируем асинхронную выборку для "${adjustedKey}"`);
+      
+      // Правильно инициализируем ожидающую запись
+      pendingTranslations[fullCacheKey] = {
+        request: null,
+        elements: []
+      };
+      
+      fetchTranslation(adjustedKey, defaultValue, options)
+        .then(translation => {
+          translationsCache[fullCacheKey] = translation.translated || translation;
+          delete pendingTranslations[fullCacheKey];
+          
+          // Если перевод отличается, обновляем DOM элементы
+          if ((translation.translated || translation) !== defaultValue) {
+            updateAllElementsWithKey(adjustedKey, translation);
+          }
+        })
+        .catch(() => {
+          delete pendingTranslations[fullCacheKey];
+        });
+    }
+    
+    // Возвращаем значение по умолчанию пока что
     return defaultValue;
   }
-  
-  // Применяем правило добавления namespace при необходимости
-  const adjustedKey = maybeAddNamespace(key);
-  
-  // Извлекаем пространство имен и ключ
-  let namespace = 'common';
-  let translationKey = adjustedKey;
-  
-  if (adjustedKey.includes(':')) {
-    const parts = adjustedKey.split(':');
-    namespace = parts[0];
-    translationKey = parts.slice(1).join(':');
-  }
-  
-  // Формируем ключ для кэша с учетом опций
-  const cacheKey = window.translationUtils ? 
-      window.translationUtils.generateTranslationKey(defaultValue, language, namespace, options) :
-      `${language}:${namespace}:${translationKey}`;
-  const fullCacheKey = `${language}:${cacheKey}`;
-  
-  // Проверяем кэш и возвращаем немедленно, если перевод найден
-  if (translationsCache[fullCacheKey]) {
-    log(`Cache hit for "${adjustedKey}" -> "${translationsCache[fullCacheKey]}"`);
-    
-    let result = translationsCache[fullCacheKey];
-    
-    // Заменяем {{count}} в переводе, если нужно
-    if (options.count !== undefined && result.includes('{{count}}')) {
-      result = result.replace(/\{\{count\}\}/g, options.count);
-    }
-    
-    return result;
-  }
-  
-  // Проверяем, не находится ли уже в процессе перевода
-  if (pendingTranslations[fullCacheKey]) {
-    log(`Translation already in progress for "${adjustedKey}", returning default value for now`);
-    return defaultValue;
-  }
-  
-  // Запускаем процесс асинхронного перевода,
-  // но возвращаем defaultValue сразу, поскольку t() должна быть синхронной
-  
-  // Запускаем умный поиск по пространствам имен
-  smartNamespaceSearch(adjustedKey, {
-    ...options,
-    defaultValue
-  }).then(smartTranslation => {
-    // Если найдено умным поиском
-    if (smartTranslation) {
-      // Сохраняем в кэш
-      translationsCache[fullCacheKey] = smartTranslation;
-      
-      // Если этот ключ используется на странице,
-      // обновляем все элементы с этим ключом
-      updateAllElementsWithKey(adjustedKey, {
-        translated: smartTranslation,
-        status: 'complete'
-      });
-      
-      log(`Updated elements after smart search for "${adjustedKey}"`);
-      return;
-    }
-    
-    // Если умный поиск не нашел перевод,
-    // используем обычный fetchTranslation (API)
-    
-    // Инициализируем запись в списке ожидания
-    pendingTranslations[fullCacheKey] = {
-      request: null,
-      elements: []
-    };
-    
-    // Получаем перевод через API
-    fetchTranslation(adjustedKey, defaultValue, options)
-      .then(translation => {
-        // Извлекаем переведенный текст из ответа
-        const translatedText = typeof translation === 'object' ? 
-                               translation.translated : translation;
-        
-        // Сохраняем в кэш
-        translationsCache[fullCacheKey] = translatedText;
-        
-        // Удаляем из списка ожидания
-        delete pendingTranslations[fullCacheKey];
-        
-        // Обновляем элементы на странице, если они используют этот ключ
-        if (translatedText !== defaultValue) {
-          updateAllElementsWithKey(adjustedKey, 
-            typeof translation === 'object' ? translation : { 
-              translated: translatedText, 
-              status: 'complete' 
-            }
-          );
-          log(`Updated elements after API translation for "${adjustedKey}"`);
-        }
-      })
-      .catch(error => {
-        logError(`Error translating "${adjustedKey}":`, error);
-        delete pendingTranslations[fullCacheKey];
-      });
-  }).catch(error => {
-    logError(`Error in smart search for "${adjustedKey}":`, error);
-    
-    // В случае ошибки умного поиска, пробуем обычный метод
-    pendingTranslations[fullCacheKey] = {
-      request: null,
-      elements: []
-    };
-    
-    fetchTranslation(adjustedKey, defaultValue, options)
-      .then(translation => {
-        // Такая же логика, как выше
-        const translatedText = typeof translation === 'object' ? 
-                               translation.translated : translation;
-        translationsCache[fullCacheKey] = translatedText;
-        delete pendingTranslations[fullCacheKey];
-        
-        if (translatedText !== defaultValue) {
-          updateAllElementsWithKey(adjustedKey, 
-            typeof translation === 'object' ? translation : { 
-              translated: translatedText, 
-              status: 'complete' 
-            }
-          );
-        }
-      })
-      .catch(() => {
-        delete pendingTranslations[fullCacheKey];
-      });
-  });
-  
-  // Возвращаем значение по умолчанию, пока перевод не загружен
-  return defaultValue;
-}
-
-/**
- * Вспомогательная функция для синхронной проверки,
- * существует ли перевод для ключа (быстрая проверка в кэше)
- * @param {string} key - Ключ перевода
- * @param {Object} options - Опции (ns, lng)
- * @returns {boolean} - true если перевод существует
- */
-function exists(key, options = {}) {
-  const namespace = options.ns || (compatibilityMode.enabled ? compatibilityMode.defaultNamespace : 'common');
-  const language = options.lng || getCurrentLanguage();
-  
-  // Для языка по умолчанию всегда возвращаем true
-  if (language === defaultLanguage) {
-    return true;
-  }
-  
-  // Формируем ключ для проверки в кэше
-  let translationKey = key;
-  
-  // Применяем правило добавления namespace при необходимости
-  if (!key.includes(':') && compatibilityMode.enabled) {
-    translationKey = `${namespace}:${key}`;
-  }
-  
-  // Извлекаем namespace из ключа, если он там есть
-  let finalNamespace = namespace;
-  if (translationKey.includes(':')) {
-    const parts = translationKey.split(':');
-    finalNamespace = parts[0];
-    translationKey = parts.slice(1).join(':');
-  }
-  
-  // Генерируем ключ кэша
-  const defaultValue = options.defaultValue || key.split('.').pop() || key;
-  const cacheKey = window.translationUtils ? 
-      window.translationUtils.generateTranslationKey(defaultValue, language, finalNamespace, options) :
-      `${language}:${finalNamespace}:${translationKey}`;
-  const fullCacheKey = `${language}:${cacheKey}`;
-  
-  // Проверяем наличие в кэше
-  return translationsCache.hasOwnProperty(fullCacheKey);
-}
   
   /**
    * Изменяем текущий язык
