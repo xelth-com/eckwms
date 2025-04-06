@@ -43,20 +43,24 @@ TableProcessor.prototype.beginTable = function (writer) {
 		const keepWithHeaderRows = tableNode.table.keepWithHeaderRows;
 
 		if (isPositiveInteger(keepWithHeaderRows)) {
-				this.rowsWithoutPageBreak += keepWithHeaderRows;
+			this.rowsWithoutPageBreak += keepWithHeaderRows;
 		}
 	}
 
 	this.dontBreakRows = tableNode.table.dontBreakRows || false;
 
-	if (this.rowsWithoutPageBreak) {
+	if (this.rowsWithoutPageBreak || this.dontBreakRows) {
 		writer.beginUnbreakableBlock();
+		// Draw the top border of the table
+		this.drawHorizontalLine(0, writer);
+		if (this.rowsWithoutPageBreak && this.dontBreakRows) {
+			// We just increase the value of transactionLevel
+			writer.beginUnbreakableBlock();
+		}
 	}
 
 	// update the border properties of all cells before drawing any lines
 	prepareCellBorders(this.tableNode.table.body);
-
-	this.drawHorizontalLine(0, writer);
 
 	function getTableInnerContentWidth() {
 		var width = 0;
@@ -156,7 +160,12 @@ TableProcessor.prototype.beginRow = function (rowIndex, writer) {
 
 	this.rowCallback = this.onRowBreak(rowIndex, writer);
 	writer.tracker.startTracking('pageChanged', this.rowCallback);
-	if (this.dontBreakRows) {
+	if (rowIndex == 0 && !this.dontBreakRows && !this.rowsWithoutPageBreak) {
+		// We store the 'y' to draw later and if necessary the top border of the table
+		this._tableTopBorderY = writer.context().y;
+		writer.context().moveDown(this.topLineWidth);
+	}
+	if (this.dontBreakRows && rowIndex > 0) {
 		writer.beginUnbreakableBlock();
 	}
 	this.rowTopY = writer.context().y;
@@ -167,7 +176,7 @@ TableProcessor.prototype.beginRow = function (rowIndex, writer) {
 	writer.context().moveDown(this.rowPaddingTop);
 };
 
-TableProcessor.prototype.drawHorizontalLine = function (lineIndex, writer, overrideY) {
+TableProcessor.prototype.drawHorizontalLine = function (lineIndex, writer, overrideY, moveDown = true, forcePage) {
 	var lineWidth = this.layout.hLineWidth(lineIndex, this.tableNode);
 	if (lineWidth) {
 		var style = this.layout.hLineStyle(lineIndex, this.tableNode);
@@ -266,7 +275,7 @@ TableProcessor.prototype.drawHorizontalLine = function (lineIndex, writer, overr
 						lineWidth: lineWidth,
 						dash: dash,
 						lineColor: borderColor
-					}, false, overrideY);
+					}, false, isNumber(overrideY), null, forcePage);
 					currentLine = null;
 					borderColor = null;
 					cellAbove = null;
@@ -276,7 +285,9 @@ TableProcessor.prototype.drawHorizontalLine = function (lineIndex, writer, overr
 			}
 		}
 
-		writer.context().moveDown(lineWidth);
+		if (moveDown) {
+			writer.context().moveDown(lineWidth);
+		}
 	}
 };
 
@@ -392,6 +403,15 @@ TableProcessor.prototype.endRow = function (rowIndex, writer, pageBreaks) {
 	ys[ys.length - 1].y1 = endingY;
 
 	var skipOrphanePadding = (ys[0].y1 - ys[0].y0 === this.rowPaddingTop);
+	if (rowIndex === 0 && !skipOrphanePadding && !this.rowsWithoutPageBreak && !this.dontBreakRows) {
+		// Draw the top border of the table
+		var pageTableStartedAt = null;
+		if (pageBreaks && pageBreaks.length > 0) {
+			// Get the page where table started at
+			pageTableStartedAt = pageBreaks[0].prevPage;
+		}
+		this.drawHorizontalLine(0, writer, this._tableTopBorderY, false, pageTableStartedAt);
+	}
 	for (var yi = (skipOrphanePadding ? 1 : 0), yl = ys.length; yi < yl; yi++) {
 		var willBreak = yi < ys.length - 1;
 		var rowBreakWithoutHeader = (yi > 0 && !this.headerRows);
@@ -409,6 +429,14 @@ TableProcessor.prototype.endRow = function (rowIndex, writer, pageBreaks) {
 			//TODO: buggy, availableHeight should be updated on every pageChanged event
 			// TableProcessor should be pageChanged listener, instead of processRow
 			this.reservedAtBottom = 0;
+		}
+
+		// Draw horizontal lines before the vertical lines so they are not overridden
+		if (willBreak && this.layout.hLineWhenBroken !== false) {
+			this.drawHorizontalLine(rowIndex + 1, writer, y2);
+		}
+		if (rowBreakWithoutHeader && this.layout.hLineWhenBroken !== false) {
+			this.drawHorizontalLine(rowIndex, writer, y1);
 		}
 
 		for (i = 0, l = xs.length; i < l; i++) {
@@ -476,7 +504,9 @@ TableProcessor.prototype.endRow = function (rowIndex, writer, pageBreaks) {
 							h: bgHeight,
 							lineWidth: 0,
 							color: fillColor,
-							fillOpacity: fillOpacity
+							fillOpacity: fillOpacity,
+							// mark if we are in an unbreakable block
+							_isFillColorFromUnbreakable: !!writer.transactionLevel
 						}, false, true, writer.context().backgroundLength[writer.context().page]);
 					}
 
@@ -494,13 +524,6 @@ TableProcessor.prototype.endRow = function (rowIndex, writer, pageBreaks) {
 					}
 				}
 			}
-		}
-
-		if (willBreak && this.layout.hLineWhenBroken !== false) {
-			this.drawHorizontalLine(rowIndex + 1, writer, y2);
-		}
-		if (rowBreakWithoutHeader && this.layout.hLineWhenBroken !== false) {
-			this.drawHorizontalLine(rowIndex, writer, y1);
 		}
 	}
 
@@ -540,7 +563,8 @@ TableProcessor.prototype.endRow = function (rowIndex, writer, pageBreaks) {
 	if (this.dontBreakRows) {
 		writer.tracker.auto('pageChanged',
 			function () {
-				if (!self.headerRows && self.layout.hLineWhenBroken !== false) {
+				if (rowIndex > 0 && !self.headerRows && self.layout.hLineWhenBroken !== false) {
+					// Draw the top border of the row after a page break
 					self.drawHorizontalLine(rowIndex, writer);
 				}
 			},
