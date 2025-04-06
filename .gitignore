@@ -1,6 +1,7 @@
 # Ignore base and storage directories
 base/
 storage/
+html/locales/
 html/storage/
 cache/
 .tmp.driveupload/
