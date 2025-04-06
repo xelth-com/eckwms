@@ -2,15 +2,14 @@
 // Полный файл обработчика сканирований, адаптированный из существующей логики SerialPort
 const { 
     findKnownCode, 
-    isBetDirect,
+    isBetDirect, 
+    betrugerUrlDecrypt, 
     disAct, 
     toAct, 
     isAct, 
     addEntryToProperty, 
     addUnicEntryToProperty 
 } = require('./dataInit');
-
-const { betrugerUrlDecrypt } = require('./encryption');
 
 // Глобальные буферы для активных элементов (переносим из прежней логики)
 let iTem = [];
