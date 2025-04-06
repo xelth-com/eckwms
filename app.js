@@ -27,6 +27,8 @@ const adminRoutes = require('./routes/admin');
 const authRoutes = require('./routes/auth');
 const translationApiRoutes = require('./routes/translation-api');
 const translationAdminRoutes = require('./routes/translation-admin');
+const mavenProxyRoutes = require('./routes/mavenProxy');
+const scanRoutes = require('./routes/scan');
 
 // Import middleware
 const { errorHandler, requestLogger } = require('./middleware');
@@ -78,6 +80,15 @@ app.use(helmet({
 }));
 
 
+// Add this right before the mavenProxyRoutes middleware
+app.use((req, res, next) => {
+    if (req.path.startsWith('/nexus')) {
+      console.log(`[DEBUG] Maven request received: ${req.method} ${req.path}`);
+      console.log(`[DEBUG] Headers: ${JSON.stringify(req.headers)}`);
+    }
+    next();
+  });
+app.use('/nexus', mavenProxyRoutes);
 
 
 // Initialize Passport
@@ -123,6 +134,7 @@ app.use(createHtmlTranslationInterceptor(i18next));
 app.use(createLanguageMiddleware());
 
 // Routes
+app.use('/api/scan', scanRoutes);
 app.use('/api', apiRoutes);
 app.use('/rma', rmaRoutes);
 app.use('/status', statusRoutes);
