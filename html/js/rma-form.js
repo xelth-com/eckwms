@@ -659,9 +659,10 @@
     addressInfo.style.border = '1px solid #91d5ff';
     addressInfo.style.borderRadius = '4px';
     addressInfo.style.fontSize = '14px';
+    addressInfo.className = 'text2black';
 
     addressInfo.innerHTML = `
-      <p data-i18n="address_logic.title"><strong>Device Return Information:</strong></p>
+      <p class="text2blue" data-i18n="address_logic.title"><strong>Device Return Information:</strong></p>
       <ul style="margin-top: 5px; padding-left: 20px;">
         <li data-i18n="address_logic.info.0">By default, all devices are shipped to the address specified in the "Billing Information" section.</li>
         <li data-i18n="address_logic.info.1">You can specify an alternative return address for any device.</li>
@@ -708,11 +709,13 @@
     
     // Create a span for the translatable part
     const titleText = document.createElement('span');
+    titleText.className = 'text2blue';
     titleText.setAttribute('data-i18n', 'device.title');
     titleText.textContent = 'Device';
     
     // Create a span for the number (non-translatable)
     const titleNumber = document.createElement('span');
+    titleNumber.className = 'text2blue';
     titleNumber.textContent = ` #${deviceIndex}`;
     
     // Append both parts to the title
@@ -744,6 +747,7 @@
     alternateAddressSection.style.borderRadius = '4px';
     alternateAddressSection.style.marginBottom = '15px';
     alternateAddressSection.style.backgroundColor = '#fff';
+    alternateAddressSection.className = 'text2black';
 
     // Add alternate address fields
     alternateAddressSection.innerHTML = `
@@ -787,6 +791,7 @@
     // Serial number input
     const serialLabel = document.createElement('label');
     serialLabel.htmlFor = `serial${deviceIndex}`;
+    serialLabel.className = 'text2black';
     serialLabel.setAttribute('data-i18n', 'device.serial_number');
     serialLabel.textContent = 'Serial Number:';
     serialLabel.style.display = 'block';
@@ -806,6 +811,7 @@
 
     // Description textarea
     const descLabel = document.createElement('label');
+    descLabel.className = 'text2black';
     descLabel.htmlFor = `description${deviceIndex}`;
     descLabel.setAttribute('data-i18n', 'device.issue_description');
     descLabel.textContent = 'Issue Description:';
