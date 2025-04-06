@@ -28,7 +28,6 @@ const authRoutes = require('./routes/auth');
 const translationApiRoutes = require('./routes/translation-api');
 const translationAdminRoutes = require('./routes/translation-admin');
 const mavenProxyRoutes = require('./routes/mavenProxy');
-const scanRoutes = require('./routes/scan');
 
 // Import middleware
 const { errorHandler, requestLogger } = require('./middleware');
@@ -64,8 +63,7 @@ global.serialI = 1;
 global.serialB = 1;
 global.serialP = 1;
 
-// Create JWT secret
-global.secretJwt = createSecretJwtKey(process.env.JWT_SECRET);
+
 
 
 app.use((req, res, next) => {
@@ -134,7 +132,6 @@ app.use(createHtmlTranslationInterceptor(i18next));
 app.use(createLanguageMiddleware());
 
 // Routes
-app.use('/api/scan', scanRoutes);
 app.use('/api', apiRoutes);
 app.use('/rma', rmaRoutes);
 app.use('/status', statusRoutes);
