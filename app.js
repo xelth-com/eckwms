@@ -29,6 +29,9 @@ const translationApiRoutes = require('./routes/translation-api');
 const translationAdminRoutes = require('./routes/translation-admin');
 const mavenProxyRoutes = require('./routes/mavenProxy');
 
+// NEW: Import scan routes
+const scanRoutes = require('./routes/scan');
+
 // Import middleware
 const { errorHandler, requestLogger } = require('./middleware');
 
@@ -139,6 +142,9 @@ app.use('/admin', adminRoutes);
 app.use('/auth', authRoutes);
 app.use('/api', translationApiRoutes);
 app.use('/translation-admin', translationAdminRoutes);
+
+// NEW: Add scan routes
+app.use('/api/scan', scanRoutes);
 
 // Main route for the application
 app.get('/', (req, res) => {

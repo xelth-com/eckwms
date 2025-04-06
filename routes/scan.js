@@ -1,72 +1,66 @@
 // routes/scan.js
-// Полный файл маршрута API для обработки сканирований с мобильного приложения
 const express = require('express');
 const router = express.Router();
 const { processScan } = require('../utils/scanHandler');
-const { verifyJWT } = require('../utils/encryption');
 
-// Middleware для проверки аутентификации (опционально)
-const authenticateDevice = (req, res, next) => {
+/**
+ * Process a scanned barcode
+ * POST /api/scan/process
+ */
+router.post('/process', async (req, res) => {
     try {
-        // Проверка наличия токена в заголовке (можно сделать опциональным на начальном этапе)
-        const token = req.headers.authorization?.split(' ')[1];
-        
-        if (token) {
-            req.user = verifyJWT(token, global.secretJwt);
-        }
-        
-        // Продолжаем выполнение даже без токена для обратной совместимости
-        next();
-    } catch (error) {
-        // Логируем ошибку, но все равно продолжаем для совместимости с устройствами без аутентификации
-        console.warn('Authentication error:', error.message);
-        next();
-    }
-};
-
-// Маршрут для обработки сканирования
-router.post('/process', authenticateDevice, async (req, res) => {
-    try {
-        const { barcode, deviceId } = req.body;
+        const { barcode, type } = req.body;
         
         if (!barcode) {
             return res.status(400).json({ 
                 success: false, 
-                message: 'No barcode provided' 
+                text: "Barcode is required"
             });
         }
         
-        console.log(`Scan received from device ${deviceId || 'unknown'}: ${barcode}`);
+        console.log(`Processing scan - Barcode: ${barcode}, Format Type: ${type}`);
         
-        // Обработка штрих-кода с использованием существующей логики
+        // Process the scan using our existing handler
         const result = await processScan(barcode, req.user);
         
-        res.json({
+        // Create response in the new format with text field
+        const response = {
             success: true,
-            data: result
-        });
+            text: result.message || "Scan processed successfully",
+            barcodeType: type || "UNKNOWN",
+            contentType: result.type || "unknown",
+            ...result.data,
+            buffers: result.buffers
+        };
+        
+        res.json(response);
     } catch (error) {
-        console.error('Error processing scan:', error);
+        console.error("Error processing scan:", error);
         res.status(500).json({
             success: false,
-            message: error.message || 'Error processing scan'
+            text: error.message || "Error processing scan"
         });
     }
 });
 
-// Получение информации о последних сканированиях (опционально)
-router.get('/recent', authenticateDevice, (req, res) => {
+/**
+ * Get recent scans
+ * GET /api/scan/recent
+ */
+router.get('/recent', async (req, res) => {
     try {
-        // Можно реализовать сохранение истории сканирований и возврат последних записей
-        // Это опциональная функциональность
+        // Get recent scans (implement this functionality)
+        // For now, return empty array
         res.json({
             success: true,
-            data: []  // Пустой массив на данном этапе
+            text: "Recent scans retrieved",
+            scans: [] // Array of recent scans
         });
     } catch (error) {
+        console.error("Error retrieving recent scans:", error);
         res.status(500).json({
             success: false,
-            message: error.message || 'Error fetching recent scans'
+            text: error.message || "Error retrieving recent scans"
         });
     }
 });

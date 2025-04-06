@@ -34,11 +34,8 @@ if (!jwtSecretHex) {
 const internalEncKey = createSecretKey(encKeyHex, 'hex');
 const internalJwtKey = createSecretKey(jwtSecretHex, 'hex');
 
-// Устанавливаем алгоритм шифрования
-// ВАЖНО: Ваш ключ ENC_KEY имеет длину 64 hex символа (32 байта),
-// что соответствует AES-256. Алгоритм 'aes-192-gcm' ожидает 24 байта.
-// Используем 'aes-256-gcm'.
-const algorithm = 'aes-256-gcm';
+
+const algorithm = 'aes-192-gcm';
 
 console.log('Модуль шифрования инициализирован с алгоритмом:', algorithm); // Лог для подтверждения
 
