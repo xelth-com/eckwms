@@ -98,6 +98,21 @@ const passportInstance = configPassport(global.secretJwt);
 app.use(passport.initialize());
 
 
+
+
+// Core middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(bodyParser.text({ type: 'text/html' }));
+
+app.use(requestLogger);
+
+// Initialize i18n AFTER static files
+app.use(initI18n());
+app.use(createHtmlTranslationInterceptor(i18next));
+// Add global middleware to set language in response headers with robust fallback
+app.use(createLanguageMiddleware());
+
 app.use((req, res, next) => {
     // Полный набор антикеширующих заголовков
     res.set({
@@ -120,19 +135,6 @@ app.use((req, res, next) => {
     maxAge: 0,             // Установить max-age в 0
     cacheControl: false    // Позволить нашему middleware контролировать Cache-Control
   }));
-
-// Core middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(bodyParser.text({ type: 'text/html' }));
-
-app.use(requestLogger);
-
-// Initialize i18n AFTER static files
-app.use(initI18n());
-app.use(createHtmlTranslationInterceptor(i18next));
-// Add global middleware to set language in response headers with robust fallback
-app.use(createLanguageMiddleware());
 
 // Routes
 app.use('/api', apiRoutes);

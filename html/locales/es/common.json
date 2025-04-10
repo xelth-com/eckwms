@@ -1,1 +1,46 @@
-﻿{}
+{
+  "footer": {
+    "legal": "Aviso Legal",
+    "privacy": "Política de Privacidad",
+    "terms": "Términos y Condiciones"
+  },
+  "links": {
+    "partner_portal": "Portal de Socios",
+    "title": "Enlaces Útiles:",
+    "homepage": "Página de Inicio M3 Móvil",
+    "technical_support": "Soporte Técnico",
+    "release_notes": "Notas de la Versión del SO",
+    "app_manual": "Guía del Manual de la Aplicación M3"
+  },
+  "service": {
+    "title": "Nuestros Centros de Servicio:"
+  },
+  "rma": {
+    "request_button": "Solicitud de Reparación RMA",
+    "status_check": "Para verificar el estado de la reparación, por favor ingrese nuestro número RMA o el número de serie del dispositivo.",
+    "form_info": "Para asegurarnos de que no se olvide nada, hemos creado un formulario RMA. Si completa este formulario e\n            incluye en su paquete, recibimos toda la información necesaria por adelantado y podemos reducir el tiempo\n            de procesamiento durante la recepción del paquete. ¡Gracias por su cooperación!",
+    "tracking_info": "En esta página, puede verificar el contenido de su envío, rastrear el estado de la reparación y actualizar los\n            detalles de pago o abordar otros problemas si es necesario. Los detalles de inicio de sesión también se\n            enviarán a la dirección de correo electrónico que proporcionó en el paquete.",
+    "process_info": "Una vez que recibamos su paquete, el contrato se considera concluido. Asignamos a su paquete un número RMA y\n            creamos una página dedicada para él. Puede acceder a esta página ingresando el número de seguimiento\n            proporcionado por su servicio de envío en nuestra página de inicio en el campo correspondiente (etiqueta\n            amarilla)."
+  },
+  "address": {
+    "example_email": "ejemplo@eck3.com",
+    "example_phone": "[+49 00 000000]",
+    "example_city": "08150 Ciudad Ejemplo",
+    "recipient": "Destinatario",
+    "example_street": "Calle Ejemplo 42",
+    "example_person": "[Atención. Max Mustermann]",
+    "example_company": "Ejemplo de Empresa",
+    "sender": "Remitente",
+    "reseller_note": "[Nombre del Revendedor]"
+  },
+  "welcome": {
+    "important_note": "Nota Importante:",
+    "title": "⚠️ Aviso Importante ⚠️",
+    "warranty_info": "Si tiene una reclamación de garantía o un acuerdo de paquete de servicio, por favor incluya el nombre del revendedor.",
+    "error_description": "Por favor, proporcione una descripción detallada del error, ya que esto aumenta significativamente las posibilidades de una reparación exitosa.",
+    "process": "El proceso es simple: envíe su dispositivo M3 Mobile a la siguiente dirección:",
+    "message": "El sitio web está cerrado. Por favor, use",
+    "note": "P.D. Puede usar el formulario para imprimir un PDF si el sitio web principal falla.",
+    "contract_info": "Al enviar el paquete, se establece un contrato de reparación entre usted (el remitente) y nosotros (el destinatario).  \nUsted cubre los costos de envío hacia nosotros, y nosotros cubrimos los costos de envío de regreso. La inspección y la estimación de costos son gratuitas."
+  }
+}

@@ -1,6 +1,9 @@
 {
   "footer": {
-    "copyright": "© 2025 M3 Mobile GmbH. Wszelkie prawa zastrzeżone."
+    "copyright": "© 2025 M3 Mobile GmbH. Wszelkie prawa zastrzeżone.",
+    "privacy": "Polityka Prywatności",
+    "legal": "Informacja Prawna",
+    "terms": "Regulamin"
   },
   "links": {
     "homepage": "Strona główna M3 Mobile",

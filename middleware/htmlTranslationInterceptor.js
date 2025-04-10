@@ -1,4 +1,4 @@
-// middleware/htmlTranslationInterceptor.js - Modified version with placeholder fix
+// middleware/htmlTranslationInterceptor.js - Оптимизированная версия для перехвата всех HTML-ответов
 const interceptor = require('express-interceptor');
 const { stripBOM } = require('../utils/bomUtils');
 const { checkCache, saveToCache } = require('../services/translationService');
@@ -32,14 +32,31 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
 
   return interceptor((req, res) => {
     return {
-      // Only intercept HTML responses
+      // УЛУЧШЕННАЯ ВЕРСИЯ: перехватываем все ответы, которые могут содержать HTML с i18n атрибутами
       isInterceptable: () => {
-        return /text\/html/.test(res.get('Content-Type')) ||
-          !res.get('Content-Type'); // Also catch responses without content type
+        // 1. Сначала проверяем стандартный случай (полный HTML)
+        if (/text\/html/.test(res.get('Content-Type')) || !res.get('Content-Type')) {
+          return true;
+        }
+
+        // 2. Для всех других типов ответов - также возвращаем true,
+        // чтобы интерсептор мог проверить содержимое
+        return true;
       },
 
       // This function is called after the response body is complete
       intercept: async (body, send) => {
+        // НОВАЯ ПРОВЕРКА: проверяем, содержит ли ответ HTML с i18n атрибутами
+        if (typeof body !== 'string' || 
+            !(body.includes('<') && body.includes('>')) ||
+            !(body.includes('data-i18n') || 
+              body.includes('data-i18n-attr') || 
+              body.includes('data-i18n-html'))) {
+          // Это не HTML с i18n атрибутами, пропускаем обработку
+          send(body);
+          return;
+        }
+
         // Get language from request (set by i18next-http-middleware)
         const language = req.language || req.i18n?.language ||
           (process.env.DEFAULT_LANGUAGE || 'en');

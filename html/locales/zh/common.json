@@ -8,7 +8,10 @@
     "title": "有用链接："
   },
   "footer": {
-    "copyright": "版权 © 2024 M3 Mobile GmbH。保留所有权利。  \n      条款与条件 · 隐私政策 · 法律声明"
+    "copyright": "版权 © 2024 M3 Mobile GmbH。保留所有权利。  \n      条款与条件 · 隐私政策 · 法律声明",
+    "legal": "法律声明",
+    "privacy": "隐私政策",
+    "terms": "条款与条件"
   },
   "service": {
     "title": "我们的服务中心："
