@@ -28,7 +28,7 @@ async function createRmaRequest(data) {
       houseNumber: data.houseNumber || null,
       postalCode: data.postalCode,
       city: data.city,
-      country: data.country || 'Germany',
+      country: data.country,
       email: data.email,
       invoiceEmail: data.invoiceEmail || null,
       phone: data.phone || null,

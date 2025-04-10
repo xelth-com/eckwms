@@ -80,7 +80,7 @@ router.post('/generate', (req, res) => {
     addressLine2: '',
     city: '', 
                   postalCode: '',
-                  country: 'Germany',
+                  country: '',
                   email: '',
     phone: '' 
   };
@@ -95,7 +95,7 @@ router.post('/generate', (req, res) => {
       addressLine2: req.user.addressLine2 || '',
       city: req.user.city || '',
       postalCode: req.user.postalCode || '',
-      country: req.user.country || 'Germany',
+      country: req.user.country || '',
       email: req.user.email || '',
       phone: req.user.phone || ''
     };

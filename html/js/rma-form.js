@@ -678,184 +678,188 @@
     }
   }
 
-  /**
-   * Add a new device entry to the RMA form with proper translation support
-   * @returns {HTMLElement} The created device entry element
-   */
-  function addDeviceEntry() {
-    deviceCount++;
-    const deviceIndex = deviceCount;
+/**
+ * Add a new device entry to the RMA form with proper translation support
+ * @returns {HTMLElement} The created device entry element
+ */
+function addDeviceEntry() {
+  deviceCount++;
+  const deviceIndex = deviceCount;
 
-    const deviceEntry = document.createElement('div');
-    deviceEntry.className = 'device-entry';
-    deviceEntry.dataset.index = deviceIndex;
-    deviceEntry.style.border = '1px solid #ddd';
-    deviceEntry.style.borderRadius = '4px';
-    deviceEntry.style.padding = '15px';
-    deviceEntry.style.marginBottom = '20px';
-    deviceEntry.style.backgroundColor = '#f9f9f9';
+  const deviceEntry = document.createElement('div');
+  deviceEntry.className = 'device-entry';
+  deviceEntry.dataset.index = deviceIndex;
+  deviceEntry.style.border = '1px solid #ddd';
+  deviceEntry.style.borderRadius = '4px';
+  deviceEntry.style.padding = '15px';
+  deviceEntry.style.marginBottom = '20px';
+  deviceEntry.style.backgroundColor = '#f9f9f9';
 
-    // Create device header with number
-    const deviceHeader = document.createElement('div');
-    deviceHeader.style.display = 'flex';
-    deviceHeader.style.justifyContent = 'space-between';
-    deviceHeader.style.alignItems = 'center';
-    deviceHeader.style.marginBottom = '15px';
+  // Create device header with number
+  const deviceHeader = document.createElement('div');
+  deviceHeader.style.display = 'flex';
+  deviceHeader.style.justifyContent = 'space-between';
+  deviceHeader.style.alignItems = 'center';
+  deviceHeader.style.marginBottom = '15px';
 
-    // Create title with separate span for the number
-    const deviceTitle = document.createElement('h4');
-    deviceTitle.style.margin = '0';
-    deviceTitle.style.color = '#1e2071';
+  // Create title with separate span for the number
+  const deviceTitle = document.createElement('h4');
+  deviceTitle.style.margin = '0';
+  deviceTitle.style.color = '#1e2071';
+  
+  // Create a span for the translatable part
+  const titleText = document.createElement('span');
+  titleText.className = 'text2blue';
+  titleText.setAttribute('data-i18n', 'device.title');
+  titleText.textContent = 'Device';
+  
+  // Create a span for the number (non-translatable)
+  const titleNumber = document.createElement('span');
+  titleNumber.className = 'text2blue';
+  titleNumber.textContent = ` #${deviceIndex}`;
+  
+  // Append both parts to the title
+  deviceTitle.appendChild(titleText);
+  deviceTitle.appendChild(titleNumber);
+
+  // Toggle button for alternate shipping address
+  const toggleButton = document.createElement('button');
+  toggleButton.type = 'button';
+  toggleButton.setAttribute('data-i18n', 'device.address_button');
+  toggleButton.textContent = 'Specify Different Return Address';
+  toggleButton.style.backgroundColor = '#eee';
+  toggleButton.style.border = '1px solid #ccc';
+  toggleButton.style.borderRadius = '4px';
+  toggleButton.style.padding = '5px 10px';
+  toggleButton.style.cursor = 'pointer';
+  toggleButton.dataset.deviceIndex = deviceIndex;
+
+  deviceHeader.appendChild(deviceTitle);
+  deviceHeader.appendChild(toggleButton);
+  deviceEntry.appendChild(deviceHeader);
+
+  // Create alternate shipping address section (initially hidden)
+  const alternateAddressSection = document.createElement('div');
+  alternateAddressSection.id = `alternate-address-${deviceIndex}`;
+  alternateAddressSection.style.display = 'none';
+  alternateAddressSection.style.padding = '10px';
+  alternateAddressSection.style.border = '1px solid #ddd';
+  alternateAddressSection.style.borderRadius = '4px';
+  alternateAddressSection.style.marginBottom = '15px';
+  alternateAddressSection.style.backgroundColor = '#fff';
+  alternateAddressSection.className = 'text2black';
+
+  // Add alternate address fields
+  alternateAddressSection.innerHTML = `
+    <h4 style="margin-top: 0; color: #1e2071;" data-i18n="device.alternate_address">Alternate Return Address</h4>
+    <p style="font-style: italic; margin-bottom: 10px;" data-i18n="device.address_info">Specify a different address for returning this device.</p>
     
-    // Create a span for the translatable part
-    const titleText = document.createElement('span');
-    titleText.className = 'text2blue';
-    titleText.setAttribute('data-i18n', 'device.title');
-    titleText.textContent = 'Device';
-    
-    // Create a span for the number (non-translatable)
-    const titleNumber = document.createElement('span');
-    titleNumber.className = 'text2blue';
-    titleNumber.textContent = ` #${deviceIndex}`;
-    
-    // Append both parts to the title
-    deviceTitle.appendChild(titleText);
-    deviceTitle.appendChild(titleNumber);
+    <label for="alt_company_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.company_name">Company Name:</b></label>
+    <input type="text" id="alt_company_${deviceIndex}" name="alt_company_${deviceIndex}" 
+           style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-    // Toggle button for alternate shipping address
-    const toggleButton = document.createElement('button');
-    toggleButton.type = 'button';
-    toggleButton.setAttribute('data-i18n', 'device.address_button');
-    toggleButton.textContent = 'Specify Different Return Address';
-    toggleButton.style.backgroundColor = '#eee';
-    toggleButton.style.border = '1px solid #ccc';
-    toggleButton.style.borderRadius = '4px';
-    toggleButton.style.padding = '5px 10px';
-    toggleButton.style.cursor = 'pointer';
-    toggleButton.dataset.deviceIndex = deviceIndex;
+    <label for="alt_person_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="form.contact_person">Contact Person:</label>
+    <input type="text" id="alt_person_${deviceIndex}" name="alt_person_${deviceIndex}" 
+           style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-    deviceHeader.appendChild(deviceTitle);
-    deviceHeader.appendChild(toggleButton);
-    deviceEntry.appendChild(deviceHeader);
+    <label for="alt_street_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.street">Street and House Number:</b></label>
+    <input type="text" id="alt_street_${deviceIndex}" name="alt_street_${deviceIndex}" 
+           style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-    // Create alternate shipping address section (initially hidden)
-    const alternateAddressSection = document.createElement('div');
-    alternateAddressSection.id = `alternate-address-${deviceIndex}`;
-    alternateAddressSection.style.display = 'none';
-    alternateAddressSection.style.padding = '10px';
-    alternateAddressSection.style.border = '1px solid #ddd';
-    alternateAddressSection.style.borderRadius = '4px';
-    alternateAddressSection.style.marginBottom = '15px';
-    alternateAddressSection.style.backgroundColor = '#fff';
-    alternateAddressSection.className = 'text2black';
+    <label for="alt_addressLine2_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="form.additional_address">Additional Address Line:</label>
+    <input type="text" id="alt_addressLine2_${deviceIndex}" name="alt_addressLine2_${deviceIndex}" 
+           style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-    // Add alternate address fields
-    alternateAddressSection.innerHTML = `
-      <h4 style="margin-top: 0; color: #1e2071;" data-i18n="device.alternate_address">Alternate Return Address</h4>
-      <p style="font-style: italic; margin-bottom: 10px;" data-i18n="device.address_info">Specify a different address for returning this device.</p>
-      
-      <label for="alt_company_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.company_name">Company Name:</b></label>
-      <input type="text" id="alt_company_${deviceIndex}" name="alt_company_${deviceIndex}" 
-             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+    <label for="alt_postalCode_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.postal_code">Postal Code:</b></label>
+    <input type="text" id="alt_postalCode_${deviceIndex}" name="alt_postalCode_${deviceIndex}" 
+           style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-      <label for="alt_person_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="form.contact_person">Contact Person:</label>
-      <input type="text" id="alt_person_${deviceIndex}" name="alt_person_${deviceIndex}" 
-             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+    <label for="alt_city_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.city">City:</b></label>
+    <input type="text" id="alt_city_${deviceIndex}" name="alt_city_${deviceIndex}" 
+           style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
 
-      <label for="alt_street_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.street">Street and House Number:</b></label>
-      <input type="text" id="alt_street_${deviceIndex}" name="alt_street_${deviceIndex}" 
-             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+    <label for="alt_country_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.country">Country:</b></label>
+    <input type="text" id="alt_country_${deviceIndex}" name="alt_country_${deviceIndex}" 
+           style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+  `;
 
-      <label for="alt_addressLine2_${deviceIndex}" style="display: block; margin-top: 10px;" data-i18n="form.additional_address">Additional Address Line:</label>
-      <input type="text" id="alt_addressLine2_${deviceIndex}" name="alt_addressLine2_${deviceIndex}" 
-             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+  deviceEntry.appendChild(alternateAddressSection);
 
-      <label for="alt_postalCode_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.postal_code">Postal Code:</b></label>
-      <input type="text" id="alt_postalCode_${deviceIndex}" name="alt_postalCode_${deviceIndex}" 
-             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+  // Create serial number and description section
+  const deviceDetailsSection = document.createElement('div');
 
-      <label for="alt_city_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.city">City:</b></label>
-      <input type="text" id="alt_city_${deviceIndex}" name="alt_city_${deviceIndex}" 
-             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
+  // Serial number input
+  const serialLabel = document.createElement('label');
+  serialLabel.htmlFor = `serial${deviceIndex}`;
+  serialLabel.className = 'text2black';
+  serialLabel.setAttribute('data-i18n', 'device.serial_number');
+  serialLabel.textContent = 'Serial Number:';
+  serialLabel.style.display = 'block';
+  serialLabel.style.marginTop = '10px';
+  serialLabel.style.fontWeight = 'bold';
 
-      <label for="alt_country_${deviceIndex}" style="display: block; margin-top: 10px;"><b data-i18n="form.country">Country:</b></label>
-      <input type="text" id="alt_country_${deviceIndex}" name="alt_country_${deviceIndex}" 
-             style="width: 95%; padding: 5px; font-size: 16px; background-color: #eee; margin-top: 5px;">
-    `;
+  const serialInput = document.createElement('input');
+  serialInput.type = 'text';
+  serialInput.id = `serial${deviceIndex}`;
+  serialInput.name = `serial${deviceIndex}`;
+  serialInput.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "device.serial_placeholder"}));
+  // Add default placeholder for fallback and better user experience
+  serialInput.setAttribute('placeholder', "Enter the serial number");
+  serialInput.style.width = '95%';
+  serialInput.style.padding = '5px';
+  serialInput.style.fontSize = '18px';
+  serialInput.style.backgroundColor = '#eee';
+  serialInput.style.marginTop = '5px';
 
-    deviceEntry.appendChild(alternateAddressSection);
+  // Description textarea
+  const descLabel = document.createElement('label');
+  descLabel.className = 'text2black';
+  descLabel.htmlFor = `description${deviceIndex}`;
+  descLabel.setAttribute('data-i18n', 'device.issue_description');
+  descLabel.textContent = 'Issue Description:';
+  descLabel.style.display = 'block';
+  descLabel.style.marginTop = '10px';
+  descLabel.style.fontWeight = 'bold';
 
-    // Create serial number and description section
-    const deviceDetailsSection = document.createElement('div');
+  const descTextarea = document.createElement('textarea');
+  descTextarea.id = `description${deviceIndex}`;
+  descTextarea.name = `description${deviceIndex}`;
+  descTextarea.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "device.description_placeholder"}));
+  // Add default placeholder for fallback and better user experience
+  descTextarea.setAttribute('placeholder', "Describe the problem with the device");
+  descTextarea.rows = 3;
+  descTextarea.style.width = '95%';
+  descTextarea.style.padding = '5px';
+  descTextarea.style.fontSize = '18px';
+  descTextarea.style.backgroundColor = '#eee';
+  descTextarea.style.marginTop = '5px';
 
-    // Serial number input
-    const serialLabel = document.createElement('label');
-    serialLabel.htmlFor = `serial${deviceIndex}`;
-    serialLabel.className = 'text2black';
-    serialLabel.setAttribute('data-i18n', 'device.serial_number');
-    serialLabel.textContent = 'Serial Number:';
-    serialLabel.style.display = 'block';
-    serialLabel.style.marginTop = '10px';
-    serialLabel.style.fontWeight = 'bold';
+  deviceDetailsSection.appendChild(serialLabel);
+  deviceDetailsSection.appendChild(serialInput);
+  deviceDetailsSection.appendChild(descLabel);
+  deviceDetailsSection.appendChild(descTextarea);
 
-    const serialInput = document.createElement('input');
-    serialInput.type = 'text';
-    serialInput.id = `serial${deviceIndex}`;
-    serialInput.name = `serial${deviceIndex}`;
-    serialInput.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "device.serial_placeholder"}));
-    serialInput.style.width = '95%';
-    serialInput.style.padding = '5px';
-    serialInput.style.fontSize = '18px';
-    serialInput.style.backgroundColor = '#eee';
-    serialInput.style.marginTop = '5px';
+  deviceEntry.appendChild(deviceDetailsSection);
 
-    // Description textarea
-    const descLabel = document.createElement('label');
-    descLabel.className = 'text2black';
-    descLabel.htmlFor = `description${deviceIndex}`;
-    descLabel.setAttribute('data-i18n', 'device.issue_description');
-    descLabel.textContent = 'Issue Description:';
-    descLabel.style.display = 'block';
-    descLabel.style.marginTop = '10px';
-    descLabel.style.fontWeight = 'bold';
+  // Add the complete device entry to the container
+  const devicesContainer = document.getElementById('devices-container');
+  if (devicesContainer) {
+    devicesContainer.appendChild(deviceEntry);
 
-    const descTextarea = document.createElement('textarea');
-    descTextarea.id = `description${deviceIndex}`;
-    descTextarea.name = `description${deviceIndex}`;
-    descTextarea.setAttribute('data-i18n-attr', JSON.stringify({"placeholder": "device.description_placeholder"}));
-    descTextarea.rows = 3;
-    descTextarea.style.width = '95%';
-    descTextarea.style.padding = '5px';
-    descTextarea.style.fontSize = '18px';
-    descTextarea.style.backgroundColor = '#eee';
-    descTextarea.style.marginTop = '5px';
-
-    deviceDetailsSection.appendChild(serialLabel);
-    deviceDetailsSection.appendChild(serialInput);
-    deviceDetailsSection.appendChild(descLabel);
-    deviceDetailsSection.appendChild(descTextarea);
-
-    deviceEntry.appendChild(deviceDetailsSection);
-
-    // Add the complete device entry to the container
-    const devicesContainer = document.getElementById('devices-container');
-    if (devicesContainer) {
-      devicesContainer.appendChild(deviceEntry);
-
-      // Translate the new element
-      if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
-        manuallyTranslateElement(deviceEntry);
-      }
+    // Translate the new element
+    if (window.i18n && window.i18n.isInitialized() && window.i18n.getCurrentLanguage() !== 'en') {
+      manuallyTranslateElement(deviceEntry);
     }
-
-    // Set up event listeners for this device entry
-    setupDeviceEventListeners(deviceIndex);
-
-    // Display address source info
-    updateAddressSourceInfo(deviceIndex);
-
-    return deviceEntry;
   }
+
+  // Set up event listeners for this device entry
+  setupDeviceEventListeners(deviceIndex);
+
+  // Display address source info
+  updateAddressSourceInfo(deviceIndex);
+
+  return deviceEntry;
+}
 
   /**
    * Updates the display of address source information
