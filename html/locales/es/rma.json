@@ -1,1 +1,26 @@
-﻿{}
+{
+  "form": {
+    "submit": "Enviar formulario",
+    "back": "Regresar",
+    "add_device": "Agregar otro dispositivo",
+    "device_info": "Información del dispositivo",
+    "phone": "Teléfono:",
+    "additional_address": "Línea de dirección adicional:",
+    "house_number": "Número de casa:",
+    "invoice_email": "Correo electrónico de la factura electrónica:",
+    "reseller_name": "En caso de garantía, por favor proporciona el nombre del revendedor:",
+    "contact_email": "Correo electrónico de contacto:",
+    "contact_info": "Información de contacto",
+    "country": "País:",
+    "city": "Ciudad:",
+    "postal_code": "Código postal:",
+    "contact_person": "Persona de contacto:",
+    "vat_number": "Número de IVA:",
+    "company_name": "Nombre de la empresa:",
+    "street": "Calle:",
+    "billing_info": "Información de facturación"
+  },
+  "device": {
+    "info_text": "Agrega dispositivos que necesitan ser reparados. Cada dispositivo puede ser enviado a una dirección diferente si es necesario."
+  }
+}

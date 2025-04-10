@@ -1,1 +1,26 @@
-﻿{}
+{
+  "form": {
+    "submit": "提交表单",
+    "back": "返回",
+    "country": "国家：",
+    "city": "城市：",
+    "add_device": "添加另一个设备",
+    "device_info": "设备信息",
+    "phone": "电话：",
+    "invoice_email": "电子发票邮箱：",
+    "contact_email": "联系邮箱：",
+    "contact_info": "联系信息",
+    "reseller_name": "如有保修，请提供经销商的名称：",
+    "postal_code": "邮政编码：",
+    "additional_address": "附加地址行：",
+    "house_number": "门牌号：",
+    "street": "街道：",
+    "contact_person": "联系人：",
+    "vat_number": "增值税号码：",
+    "company_name": "公司名称：",
+    "billing_info": "账单信息"
+  },
+  "device": {
+    "info_text": "添加需要维修的设备。如果需要，每个设备可以发送到不同的地址。"
+  }
+}
