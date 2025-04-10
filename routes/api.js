@@ -114,44 +114,6 @@ router.get('/item/:code/location', (req, res) => {
     res.json(item.loc || []);
 });
 
-// Translate text using OpenAI
-router.post('/translate', async (req, res) => {
-    try {
-        const { text, targetLang } = req.body;
-        
-        if (!text || !targetLang) {
-            return res.status(400).json({ error: 'Text and target language required' });
-        }
 
-        const translatedText = await translateText(text, targetLang);
-        res.json({ original: text, translated: translatedText, language: targetLang });
-    } catch (error) {
-        console.error("Translation error:", error);
-        res.status(500).json({ error: "Translation failed" });
-    }
-});
-
-
-
-// Helper function to translate text
-async function translateText(text, targetLang) {
-    try {
-        // Create a chat completion
-        const completion = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            store: true, // Store data if needed
-            messages: [
-                { role: "system", content: `You are a professional translator. Translate this to ${targetLang}.` },
-                { role: "user", content: text }
-            ]
-        });
-
-        // Extract the translated text from the response
-        return completion.choices[0].message.content.trim();
-    } catch (error) {
-        console.error("Translation error:", error);
-        throw new Error("Failed to translate text.");
-    }
-}
 
 module.exports = router;
