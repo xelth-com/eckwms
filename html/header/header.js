@@ -27,9 +27,10 @@ export async function init(container) {
   container.innerHTML = html;
 
   // Initialize components
+  applyButtonBackgrounds();
   initEventListeners();
   initMainMenuCards();
-  applyButtonBackgrounds();
+
 
   // Ensure only one language group is visible initially
   ensureOneLanguageGroupVisible();
@@ -112,14 +113,31 @@ function initEventListeners() {
  * Apply SVG backgrounds to buttons
  */
 function applyButtonBackgrounds() {
-  if (!window.backSvg2) return;
+  // Добавить проверку и ожидание 
+  const waitForBackSvg = () => {
+    return new Promise((resolve) => {
+      const checkSvg = () => {
+        if (window.backSvg2) {
+          resolve(window.backSvg2);
+        } else {
+          setTimeout(checkSvg, 50); // Повторять проверку каждые 50мс
+        }
+      };
+      checkSvg();
+    });
+  };
 
-  const backButtonImg = `url(data:image/svg+xml;charset=utf-8;base64,${btoa(window.backSvg2)})`;
-  window.backButtonImg = backButtonImg;
+  waitForBackSvg().then(backSvg2 => {
+    const backButtonImg = `url(data:image/svg+xml;charset=utf-8;base64,${btoa(backSvg2)})`;
+    window.backButtonImg = backButtonImg;
 
-  // Apply to all buttons
-  Array.from(document.getElementsByClassName("button")).forEach(element => {
-    element.style.backgroundImage = backButtonImg;
+    // Apply to all buttons
+    Array.from(document.getElementsByClassName("button")).forEach(element => {
+      element.style.backgroundImage = backButtonImg;
+    });
+
+    // Переинициализировать карточки меню после загрузки SVG
+    initMainMenuCards();
   });
 }
 
