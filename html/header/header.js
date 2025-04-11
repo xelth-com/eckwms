@@ -5,6 +5,7 @@
 
 import { loadCSS, loadTemplate } from '/core/module-loader.js';
 import { syncLanguageMasks, initLanguageSelector } from '/i18n/language-selector.js';
+import './menu-permissions.js';
 
 // Globals for menu state tracking
 window.waitForTransition = false;
@@ -662,6 +663,11 @@ function fixLanguageToggleCSS() {
 export function postInit() {
   // Fix language toggle button CSS
   fixLanguageToggleCSS();
+
+  // Инициализация разрешений меню
+  if (window.renderPermittedMenuItems) {
+    window.renderPermittedMenuItems();
+  }
 
   // Инициализируем кнопки языков с текущим языком на первой позиции
   initLanguageButtonsWithCurrentLanguage();

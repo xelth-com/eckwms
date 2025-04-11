@@ -127,6 +127,14 @@
   text-align: center;
   z-index: 100;
  }
+
+ #mainMenuButtons .mainMenu {
+  margin-right: 5px;
+}
+
+#mainMenuButtons .mainMenu:last-child {
+  margin-right: 0;
+}
  
  /* Language popup styles */
  .langPopup {

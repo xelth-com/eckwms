@@ -158,3 +158,15 @@ a:hover {
     display: none !important;
   }
 }
+
+
+.picBtn {
+  filter: drop-shadow(5px 10px 10px rgba(0, 0, 0, 0.73));
+  max-width: 100%;
+  transition: filter 1s cubic-bezier(0, 0.2, 0.9, 1.0);
+}
+
+.picBtn:hover {
+  cursor: zoom-in;
+  filter: drop-shadow(7px 12px 12px rgba(0, 0, 0, 0.85));
+}
