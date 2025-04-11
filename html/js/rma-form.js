@@ -709,13 +709,13 @@ function addDeviceEntry() {
   
   // Create a span for the translatable part
   const titleText = document.createElement('span');
-  titleText.className = 'text2blue';
+  titleText.classList.add('text2blue');
   titleText.setAttribute('data-i18n', 'device.title');
   titleText.textContent = 'Device';
   
   // Create a span for the number (non-translatable)
   const titleNumber = document.createElement('span');
-  titleNumber.className = 'text2blue';
+  titleNumber.classList.add('text2blue');
   titleNumber.textContent = ` #${deviceIndex}`;
   
   // Append both parts to the title
