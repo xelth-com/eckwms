@@ -1,1 +1,87 @@
-﻿{}
+{
+  "footer": {
+    "legal": "Juridiskais paziņojums",
+    "privacy": "Privātuma politika",
+    "terms": "Noteikumi un nosacījumi"
+  },
+  "chat": {
+    "topic1_link_title": "Informācija par tēmu 1...",
+    "topic2_link_title": "Informācija par tēmu 2...",
+    "show_all_link_title": "Parādīt visas diskusijas",
+    "topic4_link_title": "Informācija par tēmu 4...",
+    "topic3_link_title": "Informācija par tēmu 3...",
+    "show_all": "Parādīt visas diskusijas...",
+    "topic1": "Kā man integrēt jauno API?",
+    "title": "Pašreizējās tēmas čatā",
+    "topic3": "Atsauksmes par jauno skeneru funkciju",
+    "topic4": "Problēma ar printeri XY zem Android 13",
+    "topic2": "Lielo datu kopu veiktspējas optimizācija"
+  },
+  "feature": {
+    "eckwms_measure": {
+      "description": "Mēriet kartona izmērus viegli un ātri ar PDA un mūsu izdrukājamo koordinātu režģi.",
+      "image_alt": "EckWMS koordinātu režģis kartona mērīšanai",
+      "link_title": "Informācija par kartona mērīšanu"
+    },
+    "eckwms_main": {
+      "link_title": "Uzziniet vairāk par eckWMS",
+      "title": "Noderīgi rīki no eckWMS"
+    }
+  },
+  "common": {
+    "frankfurt_image_alt": "Frankfurte"
+  },
+  "home": {
+    "slogan": "Vienmēr koncentrējoties uz <span style=\"color: rgb(0, 100, 0);\">pamatcēloni",
+    "process": {
+      "step6": {
+        "title": "Statusa izsekošana:",
+        "status_link_text": "pašreizējais statuss"
+      },
+      "step5": {
+        "title": "Atgriešanas piegāde:",
+        "text": "Pēc veiksmīgas remonta pabeigšanas mēs nosūtīsim jūsu ierīci atpakaļ. Mēs sedzam atgriešanas piegādes izmaksas Vācijā."
+      },
+      "step4": {
+        "title": "Remonts pēc apstiprinājuma:",
+        "text": "Tiklīdz jūs apstiprināsiet izmaksu novērtējumu, mēs veiksim remontu profesionāli."
+      },
+      "step3": {
+        "title": "Ienākošā pārbaude un izmaksu novērtējums:",
+        "text": "Saņemot jūsu sūtījumu, jūsu RMA pieprasījums tiks aktivizēts. Mēs pārbaudīsim ierīci un aprakstīto kļūdu un izveidosim bezmaksas izmaksu novērtējumu remontam (izņemot atzītas Movfast garantijas gadījumus)."
+      },
+      "step1": {
+        "form_link_text": "Tiešsaistes RMA forma",
+        "title": "Aizpildiet RMA formu:"
+      },
+      "step2": {
+        "title": "Iepakojiet ierīci droši un nosūtiet:",
+        "text": "Nosūtiet savu defektīvo ierīci labi iepakotu, vēlams ar pabeigtas RMA formas kopiju, uz mūsu servisa adresi: pda.repair, Remonta serviss, Hamburgerstr. 16, 65760 Eschborn, Vācija. Jūs sedzat piegādes izmaksas uz mums."
+      },
+      "title": "Remonta process - vienkāršs un caurredzams"
+    },
+    "services": {
+      "paid": {
+        "title": "Neatkarīgs remonta serviss visām zīmola ierīcēm:",
+        "clientele": "Šo pakalpojumu var izmantot gan gala patērētāji, gan ražotāji, importētāji vai citi apkalpošanas centri.",
+        "description": "Mēs piedāvājam mūsu maksas remonta pakalpojumu PDA ierīcēm no visiem ražotājiem un zīmoliem. Neatkarīgi no tā, vai tas ir bojāts displejs, defekts skenēšanas dzinējs, akumulatora problēmas vai programmatūras kļūdas – mēs analizējam bojājumus un sniedzam jums caurredzamu izmaksu novērtējumu."
+      },
+      "warranty": {
+        "title": "Garantijas apstrāde (pašlaik tikai Movfast):",
+        "instruction": "Ja vēlaties veikt garantijas prasību par Movfast ierīci, lūdzu, noteikti norādiet sava pārdevēja vārdu RMA formā.",
+        "notice": "Lūdzu, ņemiet vērā: pašlaik mēs varam veikt garantijas remontus vai remontus saskaņā ar apkalpošanas līgumiem tikai Movfast zīmola ierīcēm."
+      },
+      "title": "Mūsu pakalpojumu piedāvājums"
+    },
+    "intro": {
+      "philosophy": "Atšķirībā no tīri apmaiņas programmām, mēs īpaši meklējam problēmas cēloni, lai piedāvātu ilgtspējīgu un izmaksu efektīvu risinājumu.",
+      "approach": "Mēs esam jūsu specializētais partneris ilgtspējīgai jūsu mobilās datu vākšanas ierīču remonta un vērtības saglabāšanai.",
+      "welcome": "Laipni lūdzam pda.repair, jūsu jaunais, neatkarīgais eksperts profesionālam remontam un tehniskajai atbalstam visiem PDA ierīču veidiem (mobilie datu termināļi, rokas termināļi)."
+    }
+  },
+  "rma": {
+    "status_placeholder": "Ievadiet RMA vai S/N...",
+    "request_button": "RMA remonta pieprasījums",
+    "status_check": "Lai pārbaudītu remonta statusu, lūdzu, ievadiet mūsu RMA numuru vai ierīces sērijas numuru."
+  }
+}

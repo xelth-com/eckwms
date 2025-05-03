@@ -8,7 +8,10 @@
     "title": "Užitečné Odkazy:"
   },
   "footer": {
-    "copyright": "Copyright © 2024 M3 Mobile GmbH. Všechna práva vyhrazena.  \n        Podmínky a Ujednání · Zásady Ochrany Osobních Údajů · Právní Upozornění"
+    "copyright": "Copyright © 2024 M3 Mobile GmbH. Všechna práva vyhrazena.  \n        Podmínky a Ujednání · Zásady Ochrany Osobních Údajů · Právní Upozornění",
+    "legal": "Právní oznámení",
+    "privacy": "Zásady ochrany osobních údajů",
+    "terms": "Podmínky a ujednání"
   },
   "service": {
     "title": "Naše Servisní Centra:"
@@ -18,7 +21,8 @@
     "status_check": "Pro kontrolu stavu opravy prosím zadejte naše RMA číslo nebo sériové číslo zařízení.",
     "form_info": "Abychom se ujistili, že nic není zapomenuto, vytvořili jsme formulář RMA. Pokud tento formulář vyplníte a přiložíte ho  \n                k vašemu balíčku, obdržíme všechny potřebné informace předem a můžeme zkrátit dobu zpracování  \n                během  \n                příjmu balíčku. Děkujeme za vaši spolupráci!",
     "tracking_info": "Na této stránce můžete zkontrolovat obsah vaší zásilky, sledovat stav opravy a aktualizovat platební  \n                údaje nebo řešit další problémy, pokud je to nutné. Přihlašovací údaje budou také zaslány na e-mailovou adresu, kterou  \n                jste uvedli na balíčku.",
-    "process_info": "Jakmile obdržíme váš balíček, smlouva je uzavřena. Přiřadíme vašemu balíčku číslo RMA a vytvoříme  \n                pro něj  \n                speciální stránku. Na tuto stránku se můžete dostat zadáním sledovacího čísla poskytnutého vaší  \n                přepravní  \n                službou na naší domovské stránce do odpovídajícího pole (žlutý štítek)."
+    "process_info": "Jakmile obdržíme váš balíček, smlouva je uzavřena. Přiřadíme vašemu balíčku číslo RMA a vytvoříme  \n                pro něj  \n                speciální stránku. Na tuto stránku se můžete dostat zadáním sledovacího čísla poskytnutého vaší  \n                přepravní  \n                službou na naší domovské stránce do odpovídajícího pole (žlutý štítek).",
+    "status_placeholder": "Zadejte RMA nebo S/N..."
   },
   "address": {
     "example_email": "example@eck3.com",
@@ -40,5 +44,81 @@
     "title": "⚠️ Důležité oznámení ⚠️",
     "process": "Proces je jednoduchý: pošlete své zařízení M3 Mobile na následující adresu:",
     "note": "P.S. Můžete použít formulář k tisku PDF, pokud hlavní webová stránka nebude dostupná."
+  },
+  "chat": {
+    "show_all": "Zobrazit všechny diskuse...",
+    "topic4": "Problém s tiskárnou XY pod Androidem 13",
+    "topic3": "Zpětná vazba na novou funkci skeneru",
+    "topic2": "Optimalizace výkonu pro velké datové sady",
+    "topic1": "Jak integrovat nové API?",
+    "title": "Aktuální témata v chatu",
+    "show_all_link_title": "Zobrazit všechny diskuse",
+    "topic4_link_title": "Podrobnosti k tématu 4...",
+    "topic3_link_title": "Podrobnosti k tématu 3...",
+    "topic2_link_title": "Podrobnosti k tématu 2...",
+    "topic1_link_title": "Podrobnosti k tématu 1..."
+  },
+  "home": {
+    "slogan": "Vždy se zaměřujeme na <span style=\"color: rgb(0, 100, 0);\">kořenovou příčinu",
+    "process": {
+      "step4": {
+        "title": "Oprava po schválení:",
+        "text": "Jakmile schválíte cenový odhad, provedeme opravu profesionálně."
+      },
+      "step6": {
+        "status_link_text": "aktuální stav",
+        "title": "Sledování stavu:"
+      },
+      "step5": {
+        "title": "Vrácení zboží:",
+        "text": "Po úspěšné opravě vám zařízení zašleme zpět. Náklady na vrácení zboží v rámci Německa hradíme."
+      },
+      "step1": {
+        "title": "Vyplňte formulář RMA:",
+        "form_link_text": "Online formulář RMA",
+        "text": "Abychom zajistili rychlé zpracování, prosím vyplňte náš <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a>. Podrobný popis chyby nám výrazně pomáhá při diagnostice a urychluje proces opravy."
+      },
+      "step3": {
+        "title": "Příchozí kontrola a odhad nákladů:",
+        "text": "Po obdržení vašeho balíčku bude aktivována vaše žádost o RMA. Zkontrolujeme zařízení a popsanou chybu a vytvoříme bezplatný cenový odhad na opravu (s výjimkou uznaných případů záruky Movfast)."
+      },
+      "step2": {
+        "title": "Zabalte zařízení bezpečně a odešlete:",
+        "text": "Odešlete své vadné zařízení dobře zabalené, ideálně s kopií vyplněného formuláře RMA, na naši servisní adresu: pda.repair, Oprava, Hamburgerstr. 16, 65760 Eschborn, Německo. Náklady na dopravu k nám hradíte vy."
+      },
+      "title": "Proces opravy - jednoduchý a transparentní"
+    },
+    "services": {
+      "warranty": {
+        "title": "Zpracování záruky (aktuálně pouze pro Movfast):",
+        "instruction": "Pokud chcete uplatnit záruku na zařízení Movfast, nezapomeňte uvést název vašeho prodejce ve formuláři RMA.",
+        "notice": "Vezměte prosím na vědomí: V současné době můžeme provádět pouze zárukové opravy nebo opravy na základě servisních smluv pro zařízení značky Movfast."
+      },
+      "paid": {
+        "clientele": "Tuto službu mohou využívat koncoví zákazníci i výrobci, dovozci nebo jiná servisní střediska.",
+        "title": "Nezávislá servisní služba pro všechny značky:",
+        "description": "Nabízíme naši placenou opravárenskou službu pro PDA zařízení všech výrobců a značek. Ať už se jedná o rozbitý displej, vadný skenovací modul, problémy s baterií nebo softwarové chyby – analyzujeme škody a poskytneme vám transparentní cenový odhad."
+      },
+      "title": "Naše nabídka služeb"
+    },
+    "intro": {
+      "approach": "Jsme vaším specializovaným partnerem pro udržitelné opravy a zachování hodnoty vašich mobilních zařízení pro sběr dat.",
+      "philosophy": "Na rozdíl od čistě výměnných programů se konkrétně zaměřujeme na příčinu problému, abychom nabídli trvalé a nákladově efektivní řešení.",
+      "welcome": "Vítejte na pda.repair, vašem novém, nezávislém expertu na profesionální opravy a technickou podporu pro všechny typy PDA zařízení (mobilní datové terminály, ruční terminály)."
+    }
+  },
+  "feature": {
+    "eckwms_main": {
+      "title": "Užitečné nástroje od eckWMS",
+      "link_title": "Zjistit více o eckWMS"
+    },
+    "eckwms_measure": {
+      "description": "Snadno a rychle změřte rozměry kartonu pomocí PDA a naší tisknutelné souřadnicové mřížky.",
+      "image_alt": "EckWMS souřadnicová mřížka pro měření kartonů",
+      "link_title": "Podrobnosti o měření kartonů"
+    }
+  },
+  "common": {
+    "frankfurt_image_alt": "Frankfurt"
   }
 }
