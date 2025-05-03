@@ -1,6 +1,9 @@
 {
   "footer": {
-    "copyright": "© 2025 M3 Mobile GmbH. Tous droits réservés."
+    "copyright": "© 2025 M3 Mobile GmbH. Tous droits réservés.",
+    "legal": "Mentions légales",
+    "privacy": "Politique de confidentialité",
+    "terms": "Conditions générales"
   },
   "links": {
     "homepage": "Page d'accueil M3 Mobile",
@@ -18,7 +21,8 @@
     "status_check": "Pour vérifier l'état de la réparation, veuillez entrer votre numéro RMA ou le numéro de série de l'appareil.",
     "form_info": "Pour s'assurer que rien n'est négligé, nous avons créé un formulaire RMA. En remplissant ce formulaire et en l'incluant avec votre colis, nous recevrons toutes les informations nécessaires à l'avance, ce qui aidera à réduire le temps de traitement lors de la réception du colis. Merci de votre coopération !",
     "tracking_info": "Sur cette page, vous pouvez vérifier le contenu de votre expédition, suivre l'état de la réparation et mettre à jour les détails de paiement ou résoudre d'autres problèmes si nécessaire. Les informations de connexion seront également envoyées à l'adresse e-mail que vous avez fournie avec le colis.",
-    "process_info": "Une fois que nous avons reçu votre colis, le contrat est conclu. Nous attribuons à votre colis un numéro RMA et créons une page dédiée pour celui-ci. Vous pouvez accéder à cette page en entrant le numéro de suivi fourni par votre service d'expédition dans le champ correspondant (étiquette jaune) sur notre page d'accueil."
+    "process_info": "Une fois que nous avons reçu votre colis, le contrat est conclu. Nous attribuons à votre colis un numéro RMA et créons une page dédiée pour celui-ci. Vous pouvez accéder à cette page en entrant le numéro de suivi fourni par votre service d'expédition dans le champ correspondant (étiquette jaune) sur notre page d'accueil.",
+    "status_placeholder": "Entrer RMA ou S/N..."
   },
   "address": {
     "example_email": "example@eck3.com",
@@ -55,5 +59,81 @@
     "fr": "Français",
     "de": "Allemand",
     "select": "Choisissez une langue"
+  },
+  "feature": {
+    "eckwms_measure": {
+      "image_alt": "Grille de coordonnées EckWMS pour la mesure des cartons",
+      "link_title": "Détails sur la mesure des cartons",
+      "description": "Mesurez facilement et rapidement les dimensions des cartons avec un PDA et notre grille de coordonnées imprimable."
+    },
+    "eckwms_main": {
+      "link_title": "En savoir plus sur eckWMS",
+      "title": "Outils Utiles de eckWMS"
+    }
+  },
+  "common": {
+    "frankfurt_image_alt": "Francfort"
+  },
+  "chat": {
+    "show_all_link_title": "Afficher toutes les discussions",
+    "topic4_link_title": "Détails sur le sujet 4...",
+    "topic3_link_title": "Détails sur le sujet 3...",
+    "topic2_link_title": "Détails sur le sujet 2...",
+    "topic1_link_title": "Détails sur le sujet 1...",
+    "show_all": "Afficher toutes les discussions...",
+    "topic4": "Problème avec l'imprimante XY sous Android 13",
+    "topic3": "Retour d'information sur la nouvelle fonction de scanner",
+    "topic2": "Optimisation des performances pour de grands ensembles de données",
+    "topic1": "Comment intégrer la nouvelle API ?",
+    "title": "Sujets Actuels dans le Chat"
+  },
+  "home": {
+    "process": {
+      "step1": {
+        "text": "Pour garantir un traitement rapide, veuillez remplir notre <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a>. Une description détaillée de l'erreur nous aide considérablement dans le diagnostic et accélère le processus de réparation.",
+        "form_link_text": "Formulaire RMA en Ligne",
+        "title": "Remplir le Formulaire RMA :"
+      },
+      "step6": {
+        "status_link_text": "statut actuel",
+        "title": "Suivi de Statut :"
+      },
+      "step5": {
+        "title": "Expédition de Retour :",
+        "text": "Après la réparation réussie, nous vous renverrons votre appareil. Nous prenons en charge les frais d'expédition de retour en Allemagne."
+      },
+      "step4": {
+        "title": "Réparation Après Approbation :",
+        "text": "Dès que vous approuvez l'estimation des coûts, nous procéderons à la réparation de manière professionnelle."
+      },
+      "step3": {
+        "title": "Inspection Entrante & Estimation des Coûts :",
+        "text": "Dès réception de votre colis, votre demande RMA sera activée. Nous vérifions l'appareil et l'erreur décrite et créons une estimation des coûts gratuite pour la réparation (sauf pour les cas de garantie Movfast reconnus)."
+      },
+      "step2": {
+        "title": "Emballer l'Appareil en Toute Sécurité et Envoyer :",
+        "text": "Envoyez votre appareil défectueux bien emballé, idéalement avec une copie du formulaire RMA rempli, à notre adresse de service : pda.repair, Service de Réparation, Hamburgerstr. 16, 65760 Eschborn, Allemagne. Vous supportez les frais d'expédition vers nous."
+      },
+      "title": "Le Processus de Réparation - Simple et Transparent"
+    },
+    "slogan": "Toujours se concentrer sur la <span style=\"color: rgb(0, 100, 0);\">cause profonde</span>, plutôt que sur de simples <span style=\"color: rgb(139, 0, 0);\">remplacements</span>.",
+    "services": {
+      "paid": {
+        "description": "Nous proposons notre service de réparation payant pour les appareils PDA de tous les fabricants et marques. Que ce soit un écran cassé, un moteur de scan défectueux, des problèmes de batterie ou des erreurs logicielles – nous analysons les dommages et vous fournissons une estimation des coûts transparente.",
+        "title": "Service de réparation indépendant pour toutes les marques :",
+        "clientele": "Ce service peut être utilisé par les clients finaux ainsi que par les fabricants, importateurs ou autres centres de service."
+      },
+      "warranty": {
+        "title": "Traitement de Garantie (actuellement seulement pour Movfast) :",
+        "instruction": "Si vous souhaitez faire une demande de garantie pour un appareil Movfast, veuillez indiquer le nom de votre revendeur dans le formulaire RMA.",
+        "notice": "Veuillez noter : Nous ne pouvons actuellement effectuer que des réparations sous garantie ou des réparations dans le cadre de contrats de service pour les appareils de la marque Movfast."
+      },
+      "title": "Notre Offre de Service"
+    },
+    "intro": {
+      "philosophy": "Contrairement aux programmes d'échange pur, nous recherchons spécifiquement la cause du problème afin d'offrir une solution durable et rentable.",
+      "approach": "Nous sommes votre partenaire spécialisé pour la réparation durable et la préservation de la valeur de vos appareils de collecte de données mobiles.",
+      "welcome": "Bienvenue sur pda.repair, votre nouvel expert indépendant pour la réparation professionnelle et le support technique pour tous types d'appareils PDA (Terminaux de données mobiles, Terminaux portables)."
+    }
   }
 }

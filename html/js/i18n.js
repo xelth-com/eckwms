@@ -62,30 +62,74 @@
   /**
    * Получает текущий язык из различных источников
    */
-  function getCurrentLanguage() {
-    // Мета-тег имеет наивысший приоритет (предоставлен сервером)
-    const metaLang = getLangFromMeta();
-    if (metaLang) return metaLang;
-    
-    // Проверяем атрибут HTML lang
-    const htmlLang = document.documentElement.lang;
-    if (htmlLang) return htmlLang;
-    
-    // Проверяем cookie
-    const cookieMatch = document.cookie.match(/i18next=([^;]+)/);
-    if (cookieMatch) return cookieMatch[1];
-    
-    // Проверяем localStorage
-    try {
-      const lsLang = localStorage.getItem('i18nextLng');
-      if (lsLang) return lsLang;
-    } catch (e) {
-      // Тихий перехват для ошибок localStorage
-    }
-    
-    // Возвращаем язык по умолчанию
-    return defaultLanguage;
+  /**
+  * Получает текущий язык из различных источников и НОРМАЛИЗУЕТ его
+  */
+ function getCurrentLanguage() {
+  let detectedLang = null;
+  let source = 'unknown';
+  const sourcesChecked = []; // Для логирования
+
+  // 1. Мета-тег
+  const metaLang = getLangFromMeta();
+  sourcesChecked.push(`Meta: ${metaLang}`);
+  if (metaLang) {
+      detectedLang = metaLang;
+      source = 'meta';
   }
+
+  // 2. Атрибут HTML lang
+  if (!detectedLang) {
+      const htmlLang = document.documentElement.lang;
+      sourcesChecked.push(`HTML: ${htmlLang}`);
+      if (htmlLang) {
+          detectedLang = htmlLang;
+          source = 'html';
+      }
+  }
+
+  // 3. Cookie
+  if (!detectedLang) {
+      const cookieMatch = document.cookie.match(/i18next=([^;]+)/);
+      const cookieLang = cookieMatch ? cookieMatch[1] : null;
+      sourcesChecked.push(`Cookie: ${cookieLang}`);
+      if (cookieLang) {
+          detectedLang = cookieLang;
+          source = 'cookie';
+      }
+  }
+  
+  // 4. LocalStorage
+  if (!detectedLang) {
+      try {
+          const lsLang = localStorage.getItem('i18nextLng');
+          sourcesChecked.push(`LocalStorage: ${lsLang}`);
+          if (lsLang) {
+              detectedLang = lsLang;
+              source = 'localStorage';
+          }
+      } catch (e) { sourcesChecked.push(`LocalStorage: Error`); }
+  }
+
+  // 5. Язык по умолчанию
+  if (!detectedLang) {
+      detectedLang = defaultLanguage;
+      source = 'default';
+      sourcesChecked.push(`Default: ${detectedLang}`);
+  }
+
+  // --- НОРМАЛИЗАЦИЯ ---
+  let normalizedLang = detectedLang;
+  if (detectedLang && typeof detectedLang === 'string' && detectedLang.includes('-')) {
+      normalizedLang = detectedLang.split('-')[0]; // Берем часть до дефиса
+      console.log(`[i18n Client] Normalizing ${detectedLang} (from ${source}) to ${normalizedLang}. Sources checked: [${sourcesChecked.join(', ')}]`);
+  } else {
+      console.log(`[i18n Client] Using language ${normalizedLang} (from ${source}). Sources checked: [${sourcesChecked.join(', ')}]`);
+  }
+  // --- КОНЕЦ НОРМАЛИЗАЦИИ ---
+
+  return normalizedLang; // Возвращаем ТОЛЬКО нормализованный язык
+}
 
   /**
    * Инициализация i18n с приоритизацией мета-тега

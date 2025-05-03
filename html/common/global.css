@@ -1,23 +1,23 @@
+/*html/common/global.css*/
 /* Global CSS Styles */
 
 /* Reset and base styles */
 :root {
   --fontSize: 20px;
   --lineHeight: 30px;
-  --textShadow1: -0.4px -0.6px 0.3px rgb(160, 160, 160, 0.6), 0.4px 0.6px 0.3px rgb(70, 70, 70, 0.6),
-    -0.8px -1.2px 3px rgb(215, 215, 215, 0.8), 1.6px 2.2px 4px rgb(0, 0, 0, 0.8),
-    -2.4px -3.3px 8px rgb(255, 255, 255), 3.2px 4.4px 5px rgb(255, 255, 255);
+  /* Переменная для сложной тени */
+  --text3-shadow: 0.2px 0.3px 0.3px rgb(255, 255, 255, 0.4), -0.4px -0.6px 0.6px rgb(0, 0, 0, 0.6), 0px 4px 3px rgb(225, 225, 225), 0px 6px 3px rgb(225, 225, 225), 0px 2px 3px rgb(225, 225, 225), 0px -2px 3px rgb(225, 225, 225), 2px 0px 3px rgb(225, 225, 225), -2px 0px 3px rgb(225, 225, 225), 0px -4px 4px rgb(225, 225, 225), 0px -6px 4px rgb(225, 225, 225), 0px -8px 4px rgb(225, 225, 225), 0px -10px 4px rgb(225, 225, 225), 0px -12px 4px rgb(225, 225, 225);
 }
 
 /* Base body styles */
 body {
-  font-style: oblique;
-  font-size: var(--fontSize);
-  line-height: var(--lineHeight);
-  font-family: "Comic Sans MS", sans-serif;
+  font-style: italic;
+  font-size: var(--fontSize);         /* 20px */
+  line-height: var(--lineHeight);    /* 30px */
+  font-family: "Comic Sans MS", sans-serif; /* Базовый шрифт ДЛЯ ОСНОВНОГО ТЕКСТА */
+  /* font-style: oblique; */ /* ЗАКОММЕНТИРОВАНО - вероятно, не нужно */
   background-color: #b0b0b0;
-  margin: 0;
-  padding: 0;
+  margin: 0; padding: 0;
 }
 
 /* Basic element resets */

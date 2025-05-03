@@ -26,14 +26,14 @@ const requestedTranslations = new Map();
 setInterval(() => {
   const now = Date.now();
   let cleaned = 0;
-  
+
   requestedTranslations.forEach((timestamp, key) => {
     if (now - timestamp > 300000) { // 5 minutes
       requestedTranslations.delete(key);
       cleaned++;
     }
   });
-  
+
   if (cleaned > 0) {
     console.log(`[i18n] Cleaned up ${cleaned} stale translation requests`);
   }
@@ -88,40 +88,40 @@ function optimizedMissingKeyHandler(lng, ns, key, fallbackValue, options, req) {
   // Get the primary language from the array or use the language if it's already a string
   const targetLanguage = Array.isArray(lng) ? lng[0] : lng;
   const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
-  
+
   // Make sure we have a valid target language that's not the default
   if (!targetLanguage || targetLanguage === defaultLanguage) {
     return;  // Skip processing for default language
   }
-  
+
   // If no fallback value provided, just use the key
   const textToTranslate = fallbackValue || key;
-  
+
   // Skip if already being processed or empty
   if (!textToTranslate || textToTranslate.trim() === '') {
     return;
   }
-  
+
   // Create a unique key to check for duplicates
   const uniqueKey = `${targetLanguage}:${ns}:${key}`;
-  
+
   // Skip if this key is already being processed
   if (processingKeys.has(uniqueKey)) {
     return;
   }
-  
+
   // Skip if this translation was already requested recently
   if (isAlreadyRequested(textToTranslate, targetLanguage, ns)) {
     return;
   }
-  
+
   try {
     // Mark that we're processing this key
     processingKeys.add(uniqueKey);
-    
+
     // Mark this translation as requested to prevent duplicates
     markAsRequested(textToTranslate, targetLanguage, ns);
-    
+
     // First check if it already exists in the cache
     // This avoids adding duplicates to the queue
     checkCache(textToTranslate, targetLanguage, ns)
@@ -131,10 +131,10 @@ function optimizedMissingKeyHandler(lng, ns, key, fallbackValue, options, req) {
           console.log(`[i18n] Missing key ${uniqueKey} found in cache, skipping translation`);
           return;
         }
-        
+
         // Log only if not in cache
         console.log(`[i18n] Missing translation: [${targetLanguage}] ${ns}:${key}`);
-        
+
         // Add to queue with relevant info
         translationQueue.enqueue({
           text: textToTranslate,
@@ -384,11 +384,11 @@ function initI18n(options = {}) {
   // FIXED PATH: Using html/locales instead of just locales
   const localesPath = path.join(process.cwd(), 'html', 'locales');
 
-// List of all supported languages
-const supportedLngs = [
-        'en', 'de', 'tr', 'pl', 'fr', 'it', 'es', 'ru', 'ar', 'zh', 'ro', 'hr', 'bg', 'hi', 'ja', 'ko', 'cs',
-        'nl', 'el', 'pt', 'he', 'hu', 'sv', 'da', 'fi', 'sk', 'lt', 'lv', 'et', 'sl', 'uk', 'sr', 'bs', 'no'
-      ];
+  // List of all supported languages
+  const supportedLngs = [
+    'en', 'de', 'tr', 'pl', 'fr', 'it', 'es', 'ru', 'ar', 'zh', 'ro', 'hr', 'bg', 'hi', 'ja', 'ko', 'cs',
+    'nl', 'el', 'pt', 'he', 'hu', 'sv', 'da', 'fi', 'sk', 'lt', 'lv', 'et', 'sl', 'uk', 'sr', 'bs', 'no'
+  ];
 
   // Namespaces list
   const namespaces = ['common', 'rma', 'dashboard', 'auth'];
@@ -418,11 +418,20 @@ const supportedLngs = [
         lookupSession: 'lang',
         caches: ['cookie'],
         cookieExpirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
-        cookieDomain: options.cookieDomain || undefined,
+        cookieDomain: options?.cookieDomain || undefined,
         // Add a callback to log the detected language in dev mode
         lookupFromRequest: (req) => {
           // This will run after language detection
-          const detectedLanguage = req.language;
+          // 1. Читаем исходный язык в новую константу rawDetectedLanguage. 
+          //    ВАЖНО: Добавляем полную цепочку fallback для надежности, 
+          //    так как просто req.language может быть undefined в этом месте.
+          const rawDetectedLanguage = req.language || req.i18n?.language || process.env.DEFAULT_LANGUAGE || 'en';
+
+          // 2. Нормализуем rawDetectedLanguage и присваиваем результат 
+          //    константе с ОРИГИНАЛЬНЫМ именем 'detectedLanguage'.
+          const detectedLanguage = (typeof rawDetectedLanguage === 'string' && rawDetectedLanguage.includes('-'))
+            ? rawDetectedLanguage.split('-')[0]
+            : rawDetectedLanguage;
           if (process.env.NODE_ENV === 'development') {
             let source = 'unknown';
             if (req.headers['app-language']) {
@@ -449,7 +458,16 @@ const supportedLngs = [
       },
       missingKeyHandler: (lng, ns, key, fallbackValue, options, req) => {
         // Get the primary language from the array or use the language if it's already a string
-        const targetLanguage = Array.isArray(lng) ? lng[0] : lng;
+        // 1. Сначала получаем первичный язык из параметра 'lng' 
+        //    (обрабатываем случай, если lng - массив)
+        const detectedLng = Array.isArray(lng) ? lng[0] : lng;
+
+        // 2. Теперь создаем НУЖНУЮ вам константу 'targetLanguage',
+        //    применяя нормализацию к 'detectedLng'
+        const targetLanguage = (typeof detectedLng === 'string' && detectedLng.includes('-'))
+          ? detectedLng.split('-')[0] // Берем 'de' из 'de-DE'
+          : detectedLng;            // Или оставляем 'de', 'en' как есть
+
         const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
 
         // Make sure we have a valid target language that's not the default

@@ -1,62 +1,165 @@
 {
-  "links": {
-    "homepage": "M3移动主页",
-    "partner_portal": "合作伙伴  \n                门户",
-    "technical_support": "技术支持",
-    "release_notes": "操作系统发布说明",
-    "app_manual": "M3应用手册指南",
-    "title": "有用链接："
+  "rma": {
+    "status_check": "要查询维修状态，请输入我们的 RMA 编号或设备序列号。",
+    "request_button": "RMA 维修请求",
+    "status_placeholder": "输入 RMA 或序列号..."
+  },
+  "home": {
+    "slogan": "专注<span style=\"color: rgb(0, 100, 0);\">故障根源</span>，而非简单快捷<span style=\"color: rgb(139, 0, 0);\">更换</span>。",
+    "intro": {
+      "welcome": "欢迎来到 pda.repair，您值得信赖的独立专家，为所有类型的 PDA 设备（移动数据终端、手持终端）提供专业的维修和技术支持。",
+      "approach": "我们是您专业的合作伙伴，致力于您的移动数据采集设备的可持续维修和保值。",
+      "philosophy": "不同于纯粹的换机计划，我们专注于查找问题根源，以提供持久且经济高效的解决方案。"
+    },
+    "services": {
+      "title": "我们的服务项目",
+      "paid": {
+        "title": "所有品牌的独立维修服务：",
+        "description": "我们为所有制造商和品牌的 PDA 设备提供付费维修服务。无论是屏幕破裂、扫描引擎故障、电池问题还是软件错误——我们都会分析损坏情况并为您提供透明的成本估算。",
+        "clientele": "最终客户以及制造商、进口商或其他服务中心均可使用此服务。"
+      },
+      "warranty": {
+        "title": "保修处理（目前仅限 Movfast）：",
+        "notice": "请注意：我们目前只能对 Movfast 品牌的设备进行保修期内维修或服务合同内维修。",
+        "instruction": "如果您希望为 Movfast 设备申请保修，请务必在 RMA 表格中注明您的经销商名称。"
+      }
+    },
+    "process": {
+      "title": "维修流程 - 简单透明",
+      "step1": {
+        "title": "填写 RMA 表格：",
+        "text": "为确保快速处理，请填写我们的在线 RMA 表格。详细的故障描述有助于我们诊断并加快维修过程。",
+        "form_link_text": "在线 RMA 表格"
+      },
+      "step2": {
+        "title": "安全包装并寄送设备：",
+        "text": "请将您有故障的设备妥善包装好，最好附上已填妥的 RMA 表格副本，寄往我们的服务地址：pda.repair, Repair Service, Hamburgerstr. 16, 65760 Eschborn, Germany。寄往我处的运费由您承担。"
+      },
+      "step3": {
+        "title": "收货检验和成本估算：",
+        "text": "收到您的包裹后，您的 RMA 请求将被激活。我们会检查设备和所描述的故障，并为您创建免费的维修成本估算（已确认的 Movfast 保修情况除外）。"
+      },
+      "step4": {
+        "title": "批准后维修：",
+        "text": "一旦您批准成本估算，我们将专业地进行维修。"
+      },
+      "step5": {
+        "title": "寄回设备：",
+        "text": "维修成功后，我们会将您的设备寄回给您。我们承担德国境内的回寄运费。"
+      },
+      "step6": {
+        "title": "状态跟踪：",
+        "text": "通过我们的网站，您可以随时使用 RMA 编号或设备序列号查询您维修的当前状态。",
+        "status_link_text": "当前状态"
+      }
+    }
+  },
+  "feature": {
+    "eckwms_main": {
+      "title": "来自 eckWMS 的实用工具",
+      "link_title": "了解有关 eckWMS 的更多信息"
+    },
+    "eckwms_measure": {
+      "description": "使用 PDA 和我们可打印的坐标网格，轻松快速地测量纸箱尺寸。",
+      "image_alt": "用于纸箱测量的 EckWMS 坐标网格",
+      "link_title": "关于纸箱测量的详细信息"
+    }
+  },
+  "chat": {
+    "title": "聊天中的当前话题",
+    "topic1": "如何集成新的 API？",
+    "topic1_link_title": "关于主题 1 的详细信息...",
+    "topic2": "大数据集的性能优化",
+    "topic2_link_title": "关于主题 2 的详细信息...",
+    "topic3": "关于新扫描器功能的反馈",
+    "topic3_link_title": "关于主题 3 的详细信息...",
+    "topic4": "Android 13 下打印机 XY 的问题",
+    "topic4_link_title": "关于主题 4 的详细信息...",
+    "show_all": "显示所有讨论...",
+    "show_all_link_title": "显示所有讨论"
+  },
+  "common": {
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "create": "创建",
+    "search": "搜索",
+    "filter": "筛选",
+    "view": "查看",
+    "download": "下载",
+    "upload": "上传",
+    "yes": "是",
+    "no": "否",
+    "ok": "确定",
+    "back": "返回",
+    "next": "下一步",
+    "submit": "提交",
+    "required": "必填",
+    "optional": "可选",
+    "loading": "加载中...",
+    "frankfurt_image_alt": "法兰克福"
+  },
+  "language": {
+    "select": "选择语言",
+    "de": "德语",
+    "en": "英语",
+    "fr": "法语",
+    "it": "意大利语",
+    "es": "西班牙语",
+    "pt": "葡萄牙语",
+    "nl": "荷兰语",
+    "da": "丹麦语",
+    "sv": "瑞典语",
+    "fi": "芬兰语",
+    "el": "希腊语",
+    "cs": "捷克语",
+    "pl": "波兰语",
+    "hu": "匈牙利语",
+    "sk": "斯洛伐克语",
+    "sl": "斯洛文尼亚语",
+    "et": "爱沙尼亚语",
+    "lv": "拉脱维亚语",
+    "lt": "立陶宛语",
+    "ro": "罗马尼亚语",
+    "bg": "保加利亚语",
+    "hr": "克罗地亚语",
+    "ga": "爱尔兰语",
+    "mt": "马耳他语",
+    "ru": "俄语",
+    "tr": "土耳其语",
+    "ar": "阿拉伯语",
+    "zh": "中文",
+    "uk": "乌克兰语",
+    "sr": "塞尔维亚语",
+    "he": "希伯来语",
+    "ko": "韩语",
+    "ja": "日语"
+  },
+  "error": {
+    "general": "发生错误",
+    "notFound": "找不到页面",
+    "serverError": "服务器错误",
+    "forbidden": "访问被拒绝",
+    "unauthorized": "未授权",
+    "validation": "验证错误",
+    "required": "此字段为必填项",
+    "invalidEmail": "无效的电子邮件地址",
+    "networkError": "网络错误"
+  },
+  "time": {
+    "now": "现在",
+    "today": "今天",
+    "yesterday": "昨天",
+    "tomorrow": "明天",
+    "days_ago": "{{count}} 天前",
+    "day_ago": "1 天前",
+    "in_days": "{{count}} 天后",
+    "in_day": "1 天后"
   },
   "footer": {
-    "copyright": "版权 © 2024 M3 Mobile GmbH。保留所有权利。  \n      条款与条件 · 隐私政策 · 法律声明",
     "legal": "法律声明",
     "privacy": "隐私政策",
     "terms": "条款与条件"
-  },
-  "service": {
-    "title": "我们的服务中心："
-  },
-  "rma": {
-    "request_button": "RMA维修请求",
-    "status_check": "要检查维修状态，请输入我们的RMA号码或设备序列号。",
-    "form_info": "为了确保没有遗漏，我们创建了一个RMA表格。如果您填写此表格并将其随包裹一起寄出，我们将提前收到所有必要的信息，从而减少包裹接收时的处理时间。感谢您的合作！",
-    "tracking_info": "在此页面上，您可以检查您的货物内容、跟踪维修状态，并在必要时更新付款信息或解决其他问题。登录信息也将发送到您在包裹上提供的电子邮件地址。",
-    "process_info": "一旦我们收到您的包裹，合同即告成立。我们将为您的包裹分配一个RMA号码，并为其创建一个专用页面。您可以通过在我们主页上相应的字段（黄色标签）输入运输服务提供的追踪号码来访问此页面。"
-  },
-  "address": {
-    "example_email": "example@eck3.com",
-    "example_phone": "[+49 00 000000]",
-    "example_city": "08150 示例城市",
-    "example_street": "示例街42号",
-    "example_person": "[收件人：马克斯·穆斯特曼]",
-    "example_company": "示例公司",
-    "sender": "发件人",
-    "reseller_note": "[经销商名称]",
-    "recipient": "收件人"
-  },
-  "welcome": {
-    "important_note": "重要提示：",
-    "warranty_info": "如果您有保修索赔或服务包协议，请提供经销商的名称。",
-    "error_description": "请提供详细的错误描述，因为这会显著增加成功维修的机会。",
-    "contract_info": "通过发送包裹，您（发件人）与我们（收件人）之间建立了维修合同。您承担寄送给我们的运费，我们承担退回运费。检查和费用估算是免费的。",
-    "message": "网站已关闭。请使用",
-    "title": "⚠️ 重要通知 ⚠️",
-    "process": "过程很简单：将您的 M3 Mobile 设备发送到以下地址：",
-    "note": "附言：如果主网站无法访问，您可以使用此表单打印 PDF。"
-  },
-  "language": {
-    "tr": "Türkçe",
-    "ko": "한국어",
-    "ja": "日本語",
-    "ar": "العربية",
-    "zh": "中文",
-    "ru": "Русский",
-    "nl": "Nederlands",
-    "pt": "Português",
-    "es": "Español",
-    "it": "Italiano",
-    "fr": "法语",
-    "de": "德语",
-    "select": "选择语言"
   }
 }

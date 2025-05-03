@@ -1,56 +1,82 @@
 {
-  "header": {
-    "welcome": "Willkommen",
-    "login": "Anmelden",
-    "register": "Registrieren",
-    "dashboard": "Dashboard",
-    "admin": "Admin",
-    "profile": "Profil",
-    "logout": "Abmelden"
-  },
-  "footer": {
-    "copyright": "© 2025 M3 Mobile GmbH. Alle Rechte vorbehalten.",
-    "terms": "Nutzungsbedingungen",
-    "privacy": "Datenschutz",
-    "legal": "Impressum",
-    "support": "Support",
-    "contact": "Kontakt"
-  },
-  "navigation": {
-    "home": "Startseite",
-    "about": "Über uns",
-    "services": "Dienstleistungen",
-    "products": "Produkte",
-    "status": "Status"
-  },
-  "address": {
-    "recipient": "Empfänger",
-    "sender": "Absender",
-    "example_company": "Beispiel Firma",
-    "example_person": "[z.Hd. Max Mustermann]",
-    "example_street": "Beispielstraße 42",
-    "example_city": "08150 Beispielstadt",
-    "example_phone": "[+49 00 000000]",
-    "example_email": "beispiel@eck3.com",
-    "reseller_note": "[Name des Händlers]"
-  },
   "rma": {
     "status_check": "Um den Reparaturstatus zu überprüfen, geben Sie bitte unsere RMA-Nummer oder die Seriennummer des Geräts ein.",
     "request_button": "RMA-Reparaturanfrage",
-    "process_info": "Sobald wir Ihr Paket erhalten, wird der Vertrag abgeschlossen. Wir weisen Ihrem Paket eine RMA-Nummer zu und erstellen eine eigene Seite dafür. Sie können auf diese Seite zugreifen, indem Sie die von Ihrem Versanddienstleister bereitgestellte Tracking-Nummer auf unserer Homepage im entsprechenden Feld (gelbes Etikett) eingeben.",
-    "tracking_info": "Auf dieser Seite können Sie den Inhalt Ihrer Sendung überprüfen, den Reparaturstatus verfolgen und Zahlungsdetails aktualisieren oder andere Probleme behandeln, falls erforderlich. Anmeldedaten werden auch an die von Ihnen im Paket angegebene E-Mail-Adresse gesendet.",
-    "form_info": "Damit nichts vergessen wird, haben wir ein RMA-Formular erstellt. Wenn Sie dieses Formular ausfüllen und Ihrem Paket beilegen, erhalten wir alle notwendigen Informationen im Voraus und können die Bearbeitungszeit bei der Paketannahme reduzieren. Vielen Dank für Ihre Mitarbeit!"
+    "status_placeholder": "RMA oder S/N eingeben..."
   },
-  "service": {
-    "title": "Unsere Service-Center:"
+  "home": {
+    "slogan": "Immer die <span style=\"color: rgb(0, 100, 0);\">Fehlerursache</span> im Fokus, statt nur schnellem <span style=\"color: rgb(139, 0, 0);\">Austausch</span>.",
+    "intro": {
+      "welcome": "Willkommen bei pda.repair, Ihrem neuen, unabhängigen Experten für die professionelle Reparatur und technische Unterstützung von PDA-Geräten (MDE, Handheld-Terminals) aller Art.",
+      "approach": "Wir sind Ihr spezialisierter Partner, wenn es um die nachhaltige Instandsetzung und Werterhaltung Ihrer mobilen Datenerfassungsgeräte geht.",
+      "philosophy": "Anders als bei reinen Austauschprogrammen suchen wir gezielt nach der Ursache des Problems, um eine langlebige und kosteneffiziente Lösung zu bieten."
+    },
+    "services": {
+      "title": "Unser Service-Angebot",
+      "paid": {
+        "title": "Unabhängiger Reparaturservice für alle Marken:",
+        "description": "Wir bieten unseren kostenpflichtigen Reparaturservice für PDA-Geräte aller Hersteller und Marken an. Egal ob Displaybruch, Scan-Engine-Defekt, Akkuprobleme oder Softwarefehler – wir analysieren den Schaden und unterbreiten Ihnen einen transparenten Kostenvoranschlag.",
+        "clientele": "Diesen Service können sowohl Endkunden, als auch Hersteller, Importeure oder andere Servicezentren in Anspruch nehmen."
+      },
+      "warranty": {
+        "title": "Garantieabwicklung (derzeit nur für Movfast):",
+        "notice": "Bitte beachten Sie: Garantiereparaturen oder Reparaturen im Rahmen von Serviceverträgen können wir derzeit nur für Geräte der Marke Movfast durchführen.",
+        "instruction": "Wenn Sie einen Garantieanspruch für ein Movfast-Gerät geltend machen möchten, geben Sie bitte unbedingt den Namen Ihres Händlers (Resellers) im RMA-Formular an."
+      }
+    },
+    "process": {
+      "title": "Der Reparaturprozess - Einfach und Transparent",
+      "step1": {
+        "title": "RMA-Formular ausfüllen:",
+        "text": "Um eine schnelle Bearbeitung zu gewährleisten, füllen Sie bitte unser Online-RMA-Formular aus. Eine detaillierte Fehlerbeschreibung hilft uns maßgeblich bei der Diagnose und beschleunigt den Reparaturprozess.",
+        "form_link_text": "Online-RMA-Formular"
+      },
+      "step2": {
+        "title": "Gerät sicher verpacken und senden:",
+        "text": "Senden Sie Ihr defektes Gerät gut verpackt, idealerweise mit einer Kopie des ausgefüllten RMA-Formulars, an unsere Serviceadresse: pda.repair, Reparaturservice, Hamburgerstr. 16, 65760 Eschborn, Deutschland. Die Kosten für den Versand zu uns tragen Sie."
+      },
+      "step3": {
+        "title": "Eingangsprüfung & Kostenvoranschlag:",
+        "text": "Nach Eingang Ihres Pakets wird Ihre RMA-Anfrage aktiviert. Wir prüfen das Gerät sowie den beschriebenen Fehler und erstellen einen kostenlosen Kostenvoranschlag für die Reparatur (ausgenommen bei anerkannten Movfast-Garantiefällen)."
+      },
+      "step4": {
+        "title": "Reparatur nach Freigabe:",
+        "text": "Sobald Sie den Kostenvoranschlag freigegeben haben, führen wir die Reparatur fachgerecht durch."
+      },
+      "step5": {
+        "title": "Rückversand:",
+        "text": "Nach erfolgreicher Reparatur senden wir Ihr Gerät an Sie zurück. Die Kosten für den Rückversand innerhalb Deutschlands übernehmen wir."
+      },
+      "step6": {
+        "title": "Statusverfolgung:",
+        "text": "Über unsere Webseite können Sie jederzeit den aktuellen Status Ihrer Reparatur anhand der RMA-Nummer oder der Seriennummer des Gerätes abfragen.",
+        "status_link_text": "aktuellen Status"
+      }
+    }
   },
-  "links": {
-    "title": "Nützliche Links:",
-    "app_manual": "M3 Anwendungshandbuch",
-    "release_notes": "Betriebssystem-Versionshinweise",
-    "technical_support": "Technischer Support",
-    "partner_portal": "Partner-Portal",
-    "homepage": "M3 Mobile Homepage"
+  "feature": {
+    "eckwms_main": {
+      "title": "Nützliche Tools von eckWMS",
+      "link_title": "Mehr über eckWMS erfahren"
+    },
+    "eckwms_measure": {
+      "description": "Messen Sie Kartonmaße einfach und schnell mit PDA und unserem ausdruckbaren Koordinatenraster.",
+      "image_alt": "EckWMS Koordinatenraster zur Kartonvermessung",
+      "link_title": "Details zur Kartonvermessung"
+    }
+  },
+  "chat": {
+    "title": "Aktuelle Themen im Chat",
+    "topic1": "Wie integriere ich die neue API?",
+    "topic1_link_title": "Details zu Thema 1...",
+    "topic2": "Performance-Optimierung bei großen Datenmengen",
+    "topic2_link_title": "Details zu Thema 2...",
+    "topic3": "Feedback zur neuen Scanner-Funktion",
+    "topic3_link_title": "Details zu Thema 3...",
+    "topic4": "Problem mit Drucker XY unter Android 13",
+    "topic4_link_title": "Details zu Thema 4...",
+    "show_all": "Alle Diskussionen anzeigen...",
+    "show_all_link_title": "Alle Diskussionen anzeigen"
   },
   "common": {
     "save": "Speichern",
@@ -71,7 +97,8 @@
     "submit": "Absenden",
     "required": "Erforderlich",
     "optional": "Optional",
-    "loading": "Wird geladen..."
+    "loading": "Wird geladen...",
+    "frankfurt_image_alt": "Frankfurt"
   },
   "language": {
     "select": "Sprache auswählen",
@@ -130,14 +157,9 @@
     "in_days": "In {{count}} Tagen",
     "in_day": "In einem Tag"
   },
-  "welcome": {
-    "important_note": "Wichtiger Hinweis:",
-    "warranty_info": "Wenn Sie einen Garantieanspruch oder eine Servicepaketvereinbarung haben, geben Sie bitte den Namen des Wiederverkäufers an.",
-    "message": "Die Website ist geschlossen. Bitte verwenden Sie",
-    "error_description": "Bitte geben Sie eine detaillierte Fehlerbeschreibung an, da dies die Chancen auf eine erfolgreiche\n                Reparatur erheblich erhöht.",
-    "title": "⚠️ Wichtiger Hinweis ⚠️",
-    "contract_info": "Durch das Versenden des Pakets wird ein Reparaturvertrag zwischen Ihnen (dem Absender) und uns (dem Empfänger) abgeschlossen. Sie tragen die Versandkosten zu uns, und wir übernehmen die Rücksendekosten. Die Inspektion und Kostenschätzung sind kostenlos.",
-    "process": "Der Prozess ist einfach: Senden Sie Ihr M3 Mobile-Gerät an die folgende Adresse:",
-    "note": "P.S. Sie können das Formular verwenden, um ein PDF zu drucken, falls die Hauptwebsite nicht erreichbar ist."
+  "footer": {
+    "legal": "Rechtshinweis",
+    "privacy": "Datenschutzerklärung",
+    "terms": "Allgemeine Geschäftsbedingungen"
   }
 }

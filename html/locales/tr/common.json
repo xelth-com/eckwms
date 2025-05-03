@@ -1,1 +1,88 @@
-﻿{}
+{
+  "footer": {
+    "legal": "Hukuki Bildirim",
+    "privacy": "Gizlilik Politikası",
+    "terms": "Şartlar ve Koşullar"
+  },
+  "common": {
+    "frankfurt_image_alt": "Frankfurt"
+  },
+  "chat": {
+    "show_all_link_title": "Tüm tartışmaları göster",
+    "topic4_link_title": "Konu 4 hakkında detaylar...",
+    "topic3_link_title": "Konu 3 hakkında detaylar...",
+    "topic2_link_title": "Konu 2 hakkında detaylar...",
+    "topic1_link_title": "Konu 1 hakkında detaylar...",
+    "title": "Sohbetteki Güncel Konular",
+    "show_all": "Tüm tartışmaları göster...",
+    "topic4": "Android 13 altında yazıcı XY ile ilgili sorun",
+    "topic3": "Yeni tarayıcı fonksiyonu hakkında geri bildirim",
+    "topic2": "Büyük veri setleri için performans optimizasyonu",
+    "topic1": "Yeni API'yi nasıl entegre ederim?"
+  },
+  "home": {
+    "process": {
+      "step1": {
+        "text": "Hızlı işlem sağlamak için lütfen <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a> formumuzu doldurun. Hatanın ayrıntılı bir tanımı, teşhiste bize önemli ölçüde yardımcı olur ve onarım sürecini hızlandırır.",
+        "form_link_text": "Çevrimiçi RMA Formu",
+        "title": "RMA Formunu Doldurun:"
+      },
+      "step4": {
+        "title": "Onay Sonrası Tamir:",
+        "text": "Maliyet tahminini onayladığınızda, tamiri profesyonel bir şekilde gerçekleştireceğiz."
+      },
+      "step5": {
+        "title": "İade Gönderimi:",
+        "text": "Başarılı tamirden sonra, cihazınızı size geri göndereceğiz. Almanya içindeki iade gönderim masraflarını biz karşılıyoruz."
+      },
+      "step6": {
+        "status_link_text": "mevcut durum",
+        "title": "Durum Takibi:"
+      },
+      "title": "Tamir Süreci - Basit ve Şeffaf",
+      "step3": {
+        "title": "Gelen Kontrol & Maliyet Tahmini:",
+        "text": "Paketinizi aldığımızda, RMA talebiniz aktif hale gelecektir. Cihazı ve belirtilen hatayı kontrol ederiz ve tamir için ücretsiz bir maliyet tahmini oluştururuz (tanınan Movfast garanti durumları hariç)."
+      },
+      "step2": {
+        "title": "Cihazı Güvenli Bir Şekilde Paketleyin ve Gönderin:",
+        "text": "Arızalı cihazınızı iyi paketlenmiş bir şekilde, tercihen doldurulmuş RMA formunun bir kopyası ile birlikte, servis adresimize gönderin: pda.repair, Tamir Servisi, Hamburgerstr. 16, 65760 Eschborn, Almanya. Bize gönderim masraflarını siz karşılıyorsunuz."
+      }
+    },
+    "slogan": "Her zaman <span style=\"color: rgb(0, 100, 0);\">kök neden</span> üzerine odaklanarak, sadece hızlı <span style=\"color: rgb(139, 0, 0);\">değişimlere</span> yönelmeyin.",
+    "services": {
+      "warranty": {
+        "notice": "Lütfen dikkat: Şu anda yalnızca Movfast markasına ait cihazlar için garanti tamirleri veya servis sözleşmeleri kapsamında tamirler gerçekleştirebiliyoruz.",
+        "title": "Garanti İşlemleri (şu anda yalnızca Movfast için):",
+        "instruction": "Eğer bir Movfast cihazı için garanti talebinde bulunmak istiyorsanız, lütfen RMA formunda satıcınızın adını belirtmeyi unutmayın."
+      },
+      "paid": {
+        "title": "Tüm Markalar için Bağımsız Tamir Servisi:",
+        "description": "Tüm üreticiler ve markalardan PDA cihazları için ücretli onarım hizmeti sunuyoruz. Kırık ekran, arızalı tarayıcı motoru, batarya sorunları veya yazılım hataları olsun – hasarı analiz ediyor ve size şeffaf bir maliyet tahmini sunuyoruz.",
+        "clientele": "Bu hizmet, son kullanıcılar kadar üreticiler, ithalatçılar veya diğer servis merkezleri tarafından da kullanılabilir."
+      },
+      "title": "Hizmet Teklifimiz"
+    },
+    "intro": {
+      "welcome": "pda.repair'e hoş geldiniz, tüm PDA cihazları (Mobil Veri Terminalleri, Taşınabilir Terminaller) için profesyonel onarım ve teknik destek konusunda bağımsız yeni uzmanınız.",
+      "philosophy": "Tamamen değişim programlarından farklı olarak, dayanıklı ve maliyet etkin bir çözüm sunmak için sorunun kaynağını özel olarak araştırıyoruz.",
+      "approach": "Mobil veri toplama cihazlarınızın sürdürülebilir onarımı ve değer korunumu için uzmanlaşmış ortağınızız."
+    }
+  },
+  "feature": {
+    "eckwms_measure": {
+      "image_alt": "Kartondan ölçüm için EckWMS koordinat ızgarası",
+      "link_title": "Karton ölçümü hakkında detaylar",
+      "description": "PDA ve yazdırılabilir koordinat ızgaramız ile karton boyutlarını kolayca ve hızlıca ölçün."
+    },
+    "eckwms_main": {
+      "link_title": "eckWMS hakkında daha fazla bilgi edinin",
+      "title": "eckWMS'ten Kullanışlı Araçlar"
+    }
+  },
+  "rma": {
+    "status_placeholder": "RMA veya S/N girin...",
+    "request_button": "RMA Tamir Talebi",
+    "status_check": "Tamir durumunu kontrol etmek için lütfen RMA numaramızı veya cihazın seri numarasını girin."
+  }
+}

@@ -1,66 +1,82 @@
 {
-  "header": {
-    "welcome": "환영합니다",
-    "login": "로그인",
-    "register": "회원가입",
-    "dashboard": "대시보드",
-    "admin": "관리자",
-    "profile": "프로필",
-    "logout": "로그아웃"
-  },
-  "footer": {
-    "copyright": "© 2025 M3 Mobile GmbH. 모든 권리 보유.",
-    "terms": "이용약관",
-    "privacy": "개인정보처리방침",
-    "legal": "법적 고지",
-    "support": "고객지원",
-    "contact": "연락처"
-  },
-  "navigation": {
-    "home": "홈",
-    "about": "회사 소개",
-    "services": "서비스",
-    "products": "제품",
-    "status": "상태"
-  },
-  "welcome": {
-    "title": "웹사이트에 오신 것을 환영합니다!",
-    "message": "M3 Mobile GmbH는 모회사로부터 M3 Mobile 기기의 가치를 유지하는 임무를 부여받았습니다. 저희의 목표는 모든 기기가 상황이나 손상에 관계없이 안정적으로 사용될 수 있도록 보장하는 것입니다. 기기의 수명을 보장하기 위해 보증 기간 동안 및 이후에도 포괄적인 서비스를 제공합니다.",
-    "process": "절차는 간단합니다: M3 Mobile 기기를 다음 주소로 보내주세요:",
-    "contract_info": "패키지를 발송함으로써 귀하(발송인)와 저희(수신인) 사이에 수리 계약이 체결됩니다. 귀하는 발송 비용을 부담하고, 저희는 반송 비용을 부담합니다. 검사 및 비용 견적은 무료입니다.",
-    "error_description": "성공적인 수리 가능성을 크게 높이기 위해 자세한 오류 설명을 제공해 주십시오.",
-    "important_note": "중요 사항:",
-    "warranty_info": "보증 청구 또는 서비스 팩 계약이 있는 경우, 판매자의 이름을 포함해 주십시오.",
-    "note": "P.S. 메인 웹사이트가 다운될 경우, 양식을 사용하여 PDF를 인쇄할 수 있습니다."
-  },
-  "address": {
-    "recipient": "수신인",
-    "sender": "발송인",
-    "example_company": "예시 회사",
-    "example_person": "[담당자: 홍길동]",
-    "example_street": "예시 거리 42",
-    "example_city": "08150 예시 도시",
-    "example_phone": "[+49 00 000000]",
-    "example_email": "example@eck3.com",
-    "reseller_note": "[판매자 이름]"
-  },
   "rma": {
-    "status_check": "수리 상태를 확인하려면 RMA 번호 또는 기기 일련번호를 입력하세요.",
+    "status_check": "수리 상태를 확인하려면 RMA 번호 또는 장치 일련 번호를 입력하십시오.",
     "request_button": "RMA 수리 요청",
-    "process_info": "패키지가 접수되면 계약이 체결됩니다. 패키지에 RMA 번호를 할당하고 전용 페이지를 생성합니다. 배송 서비스에서 제공한 추적 번호를 홈페이지의 해당 필드(노란색 라벨)에 입력하여 이 페이지에 접속할 수 있습니다.",
-    "tracking_info": "이 페이지에서 발송물의 내용을 확인하고, 수리 상태를 추적하고, 필요한 경우 결제 세부 정보를 업데이트하거나 다른 문제를 해결할 수 있습니다. 로그인 정보는 패키지에 제공한 이메일 주소로도 전송됩니다.",
-    "form_info": "빠짐없이 기재하기 위해 RMA 양식을 만들었습니다. 이 양식을 작성하여 패키지에 동봉하면, 저희는 필요한 모든 정보를 미리 받아 패키지 접수 시 처리 시간을 단축할 수 있습니다. 협조해 주셔서 감사합니다!"
+    "status_placeholder": "RMA 또는 S/N 입력..."
   },
-  "service": {
-    "title": "서비스 센터:"
+  "home": {
+    "slogan": "단순한 빠른 <span style=\"color: rgb(139, 0, 0);\">교체</span>가 아닌, 항상 고장의 <span style=\"color: rgb(0, 100, 0);\">근본 원인</span>에 집중.",
+    "intro": {
+      "welcome": "모든 종류의 PDA 장치(모바일 데이터 단말기, 핸드헬드 단말기)에 대한 전문 수리 및 기술 지원을 제공하는 새로운 독립 전문가, pda.repair에 오신 것을 환영합니다.",
+      "approach": "당사는 귀하의 모바일 데이터 수집 장치의 지속 가능한 수리 및 가치 보존을 위한 전문 파트너입니다.",
+      "philosophy": "단순 교환 프로그램과 달리, 당사는 문제의 원인을 구체적으로 파악하여 내구성 있고 비용 효율적인 솔루션을 제공합니다."
+    },
+    "services": {
+      "title": "서비스 안내",
+      "paid": {
+        "title": "모든 브랜드 대상 독립 수리 서비스:",
+        "description": "모든 제조사 및 브랜드의 PDA 장치에 대한 유상 수리 서비스를 제공합니다. 디스플레이 파손, 스캔 엔진 결함, 배터리 문제 또는 소프트웨어 오류 등 손상을 분석하고 투명한 비용 견적을 제공합니다.",
+        "clientele": "이 서비스는 최종 고객뿐만 아니라 제조업체, 수입업체 또는 기타 서비스 센터에서도 이용할 수 있습니다."
+      },
+      "warranty": {
+        "title": "보증 처리 (현재 Movfast만 해당):",
+        "notice": "참고: 현재 Movfast 브랜드 장치에 대해서만 보증 수리 또는 서비스 계약에 따른 수리를 수행할 수 있습니다.",
+        "instruction": "Movfast 장치에 대한 보증 청구를 원하시면 RMA 양식에 리셀러 이름을 반드시 기재해 주십시오."
+      }
+    },
+    "process": {
+      "title": "수리 절차 - 간단하고 투명하게",
+      "step1": {
+        "title": "RMA 양식 작성:",
+        "text": "신속한 처리를 위해 온라인 RMA 양식을 작성해 주십시오. 오류에 대한 자세한 설명은 진단에 큰 도움이 되며 수리 과정을 가속화합니다.",
+        "form_link_text": "온라인 RMA 양식"
+      },
+      "step2": {
+        "title": "장치를 안전하게 포장하여 발송:",
+        "text": "결함이 있는 장치를 안전하게 포장하여, 가급적 작성된 RMA 양식 사본과 함께 다음 서비스 주소로 보내주십시오: pda.repair, Repair Service, Hamburgerstr. 16, 65760 Eschborn, Germany. 당사로 보내는 배송 비용은 귀하가 부담합니다."
+      },
+      "step3": {
+        "title": "입고 검사 및 비용 견적:",
+        "text": "패키지 수령 시 RMA 요청이 활성화됩니다. 당사는 장치와 설명된 오류를 확인하고 수리에 대한 무료 비용 견적을 생성합니다 (인정된 Movfast 보증 사례 제외)."
+      },
+      "step4": {
+        "title": "승인 후 수리:",
+        "text": "비용 견적을 승인하시면 전문적으로 수리를 진행합니다."
+      },
+      "step5": {
+        "title": "반송:",
+        "text": "수리가 성공적으로 완료되면 장치를 다시 보내드립니다. 독일 내 반송 비용은 당사가 부담합니다."
+      },
+      "step6": {
+        "title": "상태 추적:",
+        "text": "웹사이트를 통해 언제든지 RMA 번호 또는 장치 일련 번호를 사용하여 수리 상태를 확인할 수 있습니다.",
+        "status_link_text": "현재 상태"
+      }
+    }
   },
-  "links": {
-    "title": "유용한 링크:",
-    "app_manual": "M3 애플리케이션 매뉴얼",
-    "release_notes": "운영체제 릴리스 노트",
-    "technical_support": "기술 지원",
-    "partner_portal": "파트너 포털",
-    "homepage": "M3 Mobile 홈페이지"
+  "feature": {
+    "eckwms_main": {
+      "title": "eckWMS의 유용한 도구",
+      "link_title": "eckWMS에 대해 더 알아보기"
+    },
+    "eckwms_measure": {
+      "description": "PDA와 인쇄 가능한 좌표 그리드를 사용하여 상자 치수를 쉽고 빠르게 측정하십시오.",
+      "image_alt": "상자 측정을 위한 EckWMS 좌표 그리드",
+      "link_title": "상자 측정 상세 정보"
+    }
+  },
+  "chat": {
+    "title": "채팅의 현재 주제",
+    "topic1": "새 API는 어떻게 통합합니까?",
+    "topic1_link_title": "주제 1 상세 정보...",
+    "topic2": "대용량 데이터 세트의 성능 최적화",
+    "topic2_link_title": "주제 2 상세 정보...",
+    "topic3": "새 스캐너 기능에 대한 피드백",
+    "topic3_link_title": "주제 3 상세 정보...",
+    "topic4": "Android 13에서 프린터 XY 문제",
+    "topic4_link_title": "주제 4 상세 정보...",
+    "show_all": "모든 토론 보기...",
+    "show_all_link_title": "모든 토론 보기"
   },
   "common": {
     "save": "저장",
@@ -80,8 +96,9 @@
     "next": "다음",
     "submit": "제출",
     "required": "필수",
-    "optional": "선택사항",
-    "loading": "로딩 중..."
+    "optional": "선택 사항",
+    "loading": "로드 중...",
+    "frankfurt_image_alt": "프랑크푸르트"
   },
   "language": {
     "select": "언어 선택",
@@ -123,11 +140,11 @@
     "general": "오류가 발생했습니다",
     "notFound": "페이지를 찾을 수 없습니다",
     "serverError": "서버 오류",
-    "forbidden": "접근 금지",
-    "unauthorized": "인증되지 않음",
+    "forbidden": "접근 거부됨",
+    "unauthorized": "권한 없음",
     "validation": "유효성 검사 오류",
     "required": "이 필드는 필수입니다",
-    "invalidEmail": "유효하지 않은 이메일 주소",
+    "invalidEmail": "잘못된 이메일 주소입니다",
     "networkError": "네트워크 오류"
   },
   "time": {
@@ -139,5 +156,10 @@
     "day_ago": "1일 전",
     "in_days": "{{count}}일 후",
     "in_day": "1일 후"
+  },
+  "footer": {
+    "legal": "법적 고지",
+    "privacy": "개인정보 처리방침",
+    "terms": "이용 약관"
   }
 }

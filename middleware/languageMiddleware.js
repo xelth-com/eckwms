@@ -11,9 +11,16 @@
 function createLanguageMiddleware() {
   return (req, res, next) => {
     // Получаем язык из разных источников с приоритетом
-    const language =  req.i18n?.language ||           // Затем язык, определенный i18n
-                    process.env.DEFAULT_LANGUAGE || // Затем язык из переменных окружения
-                    'en';                           // Дефолтный язык как последний вариант
+    // 1. Читаем исходный (потенциально не нормализованный) язык в rawLanguage
+    const rawLanguage = req.i18n?.language || 
+                        process.env.DEFAULT_LANGUAGE || 
+                        'en';
+
+    // 2. Нормализуем rawLanguage и присваиваем результат константе 'language'
+    const language = (typeof rawLanguage === 'string' && rawLanguage.includes('-')) 
+                     ? rawLanguage.split('-')[0] // Берем часть до дефиса ('de')
+                     : rawLanguage;           // Или оставляем как есть ('en', 'de')
+                      // Дефолтный язык как последний вариант
 
     console.log(`[i18n] Setting language in response: ${language} for path ${req.path}`);
     

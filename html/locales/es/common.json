@@ -20,7 +20,8 @@
     "status_check": "Para verificar el estado de la reparación, por favor ingrese nuestro número RMA o el número de serie del dispositivo.",
     "form_info": "Para asegurarnos de que no se olvide nada, hemos creado un formulario RMA. Si completa este formulario e\n            incluye en su paquete, recibimos toda la información necesaria por adelantado y podemos reducir el tiempo\n            de procesamiento durante la recepción del paquete. ¡Gracias por su cooperación!",
     "tracking_info": "En esta página, puede verificar el contenido de su envío, rastrear el estado de la reparación y actualizar los\n            detalles de pago o abordar otros problemas si es necesario. Los detalles de inicio de sesión también se\n            enviarán a la dirección de correo electrónico que proporcionó en el paquete.",
-    "process_info": "Una vez que recibamos su paquete, el contrato se considera concluido. Asignamos a su paquete un número RMA y\n            creamos una página dedicada para él. Puede acceder a esta página ingresando el número de seguimiento\n            proporcionado por su servicio de envío en nuestra página de inicio en el campo correspondiente (etiqueta\n            amarilla)."
+    "process_info": "Una vez que recibamos su paquete, el contrato se considera concluido. Asignamos a su paquete un número RMA y\n            creamos una página dedicada para él. Puede acceder a esta página ingresando el número de seguimiento\n            proporcionado por su servicio de envío en nuestra página de inicio en el campo correspondiente (etiqueta\n            amarilla).",
+    "status_placeholder": "Ingrese RMA o S/N..."
   },
   "address": {
     "example_email": "ejemplo@eck3.com",
@@ -42,5 +43,81 @@
     "message": "El sitio web está cerrado. Por favor, use",
     "note": "P.D. Puede usar el formulario para imprimir un PDF si el sitio web principal falla.",
     "contract_info": "Al enviar el paquete, se establece un contrato de reparación entre usted (el remitente) y nosotros (el destinatario).  \nUsted cubre los costos de envío hacia nosotros, y nosotros cubrimos los costos de envío de regreso. La inspección y la estimación de costos son gratuitas."
+  },
+  "chat": {
+    "show_all": "Mostrar todas las discusiones...",
+    "topic4": "Problema con la impresora XY en Android 13",
+    "topic3": "Comentarios sobre la nueva función de escáner",
+    "topic2": "Optimización del rendimiento para grandes conjuntos de datos",
+    "topic1": "¿Cómo integro la nueva API?",
+    "title": "Temas Actuales en el Chat",
+    "show_all_link_title": "Mostrar todas las discusiones",
+    "topic4_link_title": "Detalles sobre el tema 4...",
+    "topic3_link_title": "Detalles sobre el tema 3...",
+    "topic2_link_title": "Detalles sobre el tema 2...",
+    "topic1_link_title": "Detalles sobre el tema 1..."
+  },
+  "home": {
+    "slogan": "Siempre enfocándonos en la <span style=\"color: rgb(0, 100, 0);\">causa raíz",
+    "process": {
+      "step6": {
+        "status_link_text": "estado actual",
+        "title": "Seguimiento del Estado:"
+      },
+      "step4": {
+        "text": "Tan pronto como apruebe el presupuesto, realizaremos la reparación de manera profesional.",
+        "title": "Reparación Después de la Aprobación:"
+      },
+      "step1": {
+        "title": "Complete el Formulario RMA:",
+        "form_link_text": "Formulario RMA en Línea",
+        "text": "Para garantizar un procesamiento rápido, por favor complete nuestro <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a>. Una descripción detallada del error nos ayuda significativamente con el diagnóstico y acelera el proceso de reparación."
+      },
+      "step5": {
+        "title": "Envío de Devolución:",
+        "text": "Después de la reparación exitosa, le enviaremos su dispositivo de vuelta. Cubrimos los costos de envío de regreso dentro de Alemania."
+      },
+      "step3": {
+        "title": "Inspección de Entrada y Presupuesto:",
+        "text": "Al recibir su paquete, se activará su solicitud de RMA. Verificamos el dispositivo y el error descrito y creamos un presupuesto gratuito para la reparación (excepto en casos de garantía Movfast reconocidos)."
+      },
+      "step2": {
+        "title": "Empaque el Dispositivo de Forma Segura y Envíe:",
+        "text": "Envíe su dispositivo defectuoso bien empaquetado, idealmente con una copia del formulario RMA completado, a nuestra dirección de servicio: pda.repair, Servicio de Reparación, Hamburgerstr. 16, 65760 Eschborn, Alemania. Usted asume los costos de envío hacia nosotros."
+      },
+      "title": "El Proceso de Reparación - Simple y Transparente"
+    },
+    "services": {
+      "warranty": {
+        "title": "Procesamiento de Garantías (actualmente solo para Movfast):",
+        "instruction": "Si desea hacer una reclamación de garantía para un dispositivo Movfast, asegúrese de indicar el nombre de su revendedor en el formulario RMA.",
+        "notice": "Tenga en cuenta: Actualmente solo podemos realizar reparaciones de garantía o reparaciones bajo contratos de servicio para dispositivos de la marca Movfast."
+      },
+      "paid": {
+        "title": "Servicio de Reparación Independiente para Todas las Marcas:",
+        "clientele": "Este servicio puede ser utilizado tanto por clientes finales como por fabricantes, importadores u otros centros de servicio.",
+        "description": "Ofrecemos nuestro servicio de reparación de pago para dispositivos PDA de todos los fabricantes y marcas. Ya sea un display roto, un motor de escaneo defectuoso, problemas de batería o errores de software, analizamos el daño y le proporcionamos un presupuesto de costos transparente."
+      },
+      "title": "Nuestra Oferta de Servicio"
+    },
+    "intro": {
+      "philosophy": "A diferencia de los programas de intercambio puro, buscamos específicamente la causa del problema para ofrecer una solución duradera y rentable.",
+      "welcome": "Bienvenido a pda.repair, su nuevo experto independiente para reparación profesional y soporte técnico para todo tipo de dispositivos PDA (Terminales de Datos Móviles, Terminales Portátiles).",
+      "approach": "Somos su socio especializado para la reparación sostenible y la preservación del valor de sus dispositivos de recolección de datos móviles."
+    }
+  },
+  "feature": {
+    "eckwms_main": {
+      "title": "Herramientas Útiles de eckWMS",
+      "link_title": "Aprende más sobre eckWMS"
+    },
+    "eckwms_measure": {
+      "description": "Mida las dimensiones del cartón de manera fácil y rápida con un PDA y nuestra cuadrícula de coordenadas imprimible.",
+      "image_alt": "Rejilla de coordenadas EckWMS para medición de cartones",
+      "link_title": "Detalles sobre la medición de cartones"
+    }
+  },
+  "common": {
+    "frankfurt_image_alt": "Fráncfort"
   }
 }

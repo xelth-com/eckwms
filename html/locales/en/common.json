@@ -1,27 +1,82 @@
 {
-  "header": {
-    "welcome": "Welcome",
-    "login": "Login",
-    "register": "Register",
-    "dashboard": "Dashboard",
-    "admin": "Admin",
-    "profile": "Profile",
-    "logout": "Logout"
+  "rma": {
+    "status_check": "To check the repair status, please enter our RMA number or the device serial number.",
+    "request_button": "RMA Repair Request",
+    "status_placeholder": "Enter RMA or S/N..."
   },
-  "footer": {
-    "copyright": "© 2025 M3 Mobile GmbH. All rights reserved.",
-    "terms": "Terms & Conditions",
-    "privacy": "Privacy Policy",
-    "legal": "Legal Notice",
-    "support": "Support",
-    "contact": "Contact"
+  "home": {
+    "slogan": "Focusing on the root <span style=\"color: rgb(0, 100, 0);\">cause</span>, not just quick <span style=\"color: rgb(139, 0, 0);\">replacement</span>.",
+    "intro": {
+      "welcome": "Welcome to pda.repair, your new, independent expert for professional repair and technical support for all types of PDA devices (Mobile Data Terminals, Handheld Terminals).",
+      "approach": "We are your specialized partner for the sustainable repair and value preservation of your mobile data collection devices.",
+      "philosophy": "Unlike pure exchange programs, we specifically look for the cause of the problem to offer a durable and cost-effective solution."
+    },
+    "services": {
+      "title": "Our Service Offer",
+      "paid": {
+        "title": "Independent Repair Service for All Brands:",
+        "description": "We offer our paid repair service for PDA devices from all manufacturers and brands. Whether it's a broken display, defective scan engine, battery problems, or software errors – we analyze the damage and provide you with a transparent cost estimate.",
+        "clientele": "This service can be used by end customers as well as manufacturers, importers, or other service centers."
+      },
+      "warranty": {
+        "title": "Warranty Processing (currently only for Movfast):",
+        "notice": "Please note: We can currently only perform warranty repairs or repairs under service contracts for devices of the Movfast brand.",
+        "instruction": "If you wish to make a warranty claim for a Movfast device, please be sure to state the name of your reseller in the RMA form."
+      }
+    },
+    "process": {
+      "title": "The Repair Process - Simple and Transparent",
+      "step1": {
+        "title": "Fill out RMA Form:",
+        "text": "To ensure quick processing, please fill out our Online RMA Form. A detailed description of the error significantly helps us with diagnosis and speeds up the repair process.",
+        "form_link_text": "Online RMA Form"
+      },
+      "step2": {
+        "title": "Pack Device Securely and Send:",
+        "text": "Send your defective device well-packaged, ideally with a copy of the completed RMA form, to our service address: pda.repair, Repair Service, Hamburgerstr. 16, 65760 Eschborn, Germany. You bear the shipping costs to us."
+      },
+      "step3": {
+        "title": "Incoming Inspection & Cost Estimate:",
+        "text": "Upon receipt of your package, your RMA request will be activated. We check the device and the described error and create a free cost estimate for the repair (except for recognized Movfast warranty cases)."
+      },
+      "step4": {
+        "title": "Repair After Approval:",
+        "text": "As soon as you approve the cost estimate, we will carry out the repair professionally."
+      },
+      "step5": {
+        "title": "Return Shipping:",
+        "text": "After successful repair, we will send your device back to you. We cover the costs for return shipping within Germany."
+      },
+      "step6": {
+        "title": "Status Tracking:",
+        "text": "Via our website, you can check the current status of your repair at any time using the RMA number or the device's serial number.",
+        "status_link_text": "current status"
+      }
+    }
   },
-  "navigation": {
-    "home": "Home",
-    "about": "About",
-    "services": "Services",
-    "products": "Products",
-    "status": "Status"
+  "feature": {
+    "eckwms_main": {
+      "title": "Useful Tools from eckWMS",
+      "link_title": "Learn more about eckWMS"
+    },
+    "eckwms_measure": {
+      "description": "Measure carton dimensions easily and quickly with a PDA and our printable coordinate grid.",
+      "image_alt": "EckWMS coordinate grid for carton measurement",
+      "link_title": "Details on carton measurement"
+    }
+  },
+  "chat": {
+    "title": "Current Topics in Chat",
+    "topic1": "How do I integrate the new API?",
+    "topic1_link_title": "Details on topic 1...",
+    "topic2": "Performance optimization for large datasets",
+    "topic2_link_title": "Details on topic 2...",
+    "topic3": "Feedback on the new scanner function",
+    "topic3_link_title": "Details on topic 3...",
+    "topic4": "Problem with printer XY under Android 13",
+    "topic4_link_title": "Details on topic 4...",
+    "show_all": "Show all discussions...",
+    "show_all_link_title": "Show all discussions"
   },
   "common": {
     "save": "Save",
@@ -42,47 +97,45 @@
     "submit": "Submit",
     "required": "Required",
     "optional": "Optional",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "frankfurt_image_alt": "Frankfurt"
   },
   "language": {
-  "select": "Select Language",
-  "de": "German",
-  "en": "English",
-  "fr": "French",
-  "it": "Italian",
-  "es": "Spanish",
-  "pt": "Portuguese",
-  "nl": "Dutch",
-  "da": "Danish",
-  "sv": "Swedish",
-  "fi": "Finnish",
-  "el": "Greek",
-  "cs": "Czech",
-  "pl": "Polish",
-  "hu": "Hungarian",
-  "sk": "Slovak",
-  "sl": "Slovenian",
-  "et": "Estonian",
-  "lv": "Latvian",
-  "lt": "Lithuanian",
-  "ro": "Romanian",
-  "bg": "Bulgarian",
-  "hr": "Croatian",
-  "ga": "Irish",
-  "mt": "Maltese",
-  "ru": "Russian",
-  "tr": "Turkish",
-  "ar": "Arabic",
-  "zh": "Chinese",
-  "uk": "Ukrainian",
-  "sr": "Serbian",
-  "he": "Hebrew",
-  "ko": "Korean",
-  "ja": "Japanese",
-  "no": "Norwegian",
-  "bs": "Bosnian",
-  "hi": "Hindi"
-},
+    "select": "Select Language",
+    "de": "German",
+    "en": "English",
+    "fr": "French",
+    "it": "Italian",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "nl": "Dutch",
+    "da": "Danish",
+    "sv": "Swedish",
+    "fi": "Finnish",
+    "el": "Greek",
+    "cs": "Czech",
+    "pl": "Polish",
+    "hu": "Hungarian",
+    "sk": "Slovak",
+    "sl": "Slovenian",
+    "et": "Estonian",
+    "lv": "Latvian",
+    "lt": "Lithuanian",
+    "ro": "Romanian",
+    "bg": "Bulgarian",
+    "hr": "Croatian",
+    "ga": "Irish",
+    "mt": "Maltese",
+    "ru": "Russian",
+    "tr": "Turkish",
+    "ar": "Arabic",
+    "zh": "Chinese",
+    "uk": "Ukrainian",
+    "sr": "Serbian",
+    "he": "Hebrew",
+    "ko": "Korean",
+    "ja": "Japanese"
+  },
   "error": {
     "general": "An error occurred",
     "notFound": "Page not found",
@@ -103,43 +156,5 @@
     "day_ago": "1 day ago",
     "in_days": "In {{count}} days",
     "in_day": "In 1 day"
-  },
-  "links": {
-    "homepage": "M3 Mobile Homepage",
-    "partner_portal": "Partner Portal",
-    "technical_support": "Technical Support",
-    "release_notes": "OS Release Notes",
-    "app_manual": "M3 Application Manual Guide",
-    "title": "Useful Links:"
-  },
-  "service": {
-    "title": "Our Service Centers:"
-  },
-  "rma": {
-    "request_button": "RMA Repair Request",
-    "status_check": "To check the repair status, please enter your RMA number or the device's serial number.",
-    "form_info": "To ensure that nothing is overlooked, we have created an RMA form. By completing this form and including it with your package, we will receive all the necessary information in advance, which will help reduce processing time during package intake. Thank you for your cooperation!",
-    "tracking_info": "On this page, you can check the contents of your shipment, track the repair status, and update payment details or address any other issues if necessary. Login information will also be sent to the email address you provided with the package.",
-    "process_info": "Once we receive your package, the contract is concluded. We assign your package an RMA number and create a dedicated page for it. You can access this page by entering the tracking number provided by your shipping service in the corresponding field (yellow label) on our homepage."
-  },
-  "address": {
-    "example_email": "example@eck3.com",
-    "example_phone": "[+49 00 000 000]",
-    "example_city": "08150 Example City",
-    "example_street": "Example Street 42",
-    "example_person": "[Attention: Max Mustermann]",
-    "example_company": "Example Company",
-    "sender": "Sender",
-    "reseller_note": "[Name of the Reseller]",
-    "recipient": "Recipient"
-  },
-  "welcome": {
-    "important_note": "Important Note:",
-    "warranty_info": "If you have a warranty claim or a service pack agreement, please provide the name of the reseller.",
-    "error_description": "Please provide a detailed error description, as this greatly increases the likelihood of a successful repair.",
-    "contract_info": "By sending the package, a repair contract is established between you (the sender) and us (the recipient). You are responsible for the shipping costs to us, while we will cover the return shipping costs. Inspection and cost estimation are provided free of charge.",
-    "message": "The website is currently closed. Please use",
-    "title": "⚠️ Important Notice ⚠️",
-    "process": "The process is simple: send your M3 Mobile device to the address below:"
   }
 }

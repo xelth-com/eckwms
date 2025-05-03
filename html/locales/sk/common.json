@@ -1,1 +1,87 @@
-﻿{}
+{
+  "footer": {
+    "legal": "Právne oznámenie",
+    "privacy": "Zásady ochrany osobných údajov",
+    "terms": "Podmienky a pravidlá"
+  },
+  "common": {
+    "frankfurt_image_alt": "Frankfurt"
+  },
+  "chat": {
+    "show_all_link_title": "Zobraziť všetky diskusie",
+    "topic4_link_title": "Podrobnosti o téme 4...",
+    "topic3_link_title": "Podrobnosti o téme 3...",
+    "topic2_link_title": "Podrobnosti o téme 2...",
+    "topic1_link_title": "Podrobnosti o téme 1...",
+    "show_all": "Zobraziť všetky diskusie...",
+    "topic4": "Problém s tlačiarňou XY pod Androidom 13",
+    "topic3": "Spätná väzba na novú funkciu skenera",
+    "topic2": "Optimalizácia výkonu pre veľké dátové súbory",
+    "topic1": "Ako integrovať nové API?",
+    "title": "Aktuálne témy v chate"
+  },
+  "home": {
+    "slogan": "Vždy sa zameriavajúc na <span style=\"color: rgb(0, 100, 0);\">príčinu",
+    "process": {
+      "step6": {
+        "status_link_text": "aktuálny stav",
+        "title": "Sledovanie stavu:"
+      },
+      "step5": {
+        "title": "Návratová doprava:",
+        "text": "Po úspešnej oprave vám zariadenie zašleme späť. Náklady na spätnú prepravu v rámci Nemecka hradíme my."
+      },
+      "step4": {
+        "title": "Oprava po schválení:",
+        "text": "Hneď ako schválite cenovú ponuku, opravu vykonáme profesionálne."
+      },
+      "step3": {
+        "text": "Po prijatí vášho balíka bude vaša RMA žiadosť aktivovaná. Skontrolujeme zariadenie a popísanú chybu a vytvoríme bezplatnú cenovú ponuku na opravu (s výnimkou uznaných záruk Movfast).",
+        "title": "Prichádzajúca kontrola a odhad nákladov:"
+      },
+      "step2": {
+        "title": "Bezpečne zabaľte zariadenie a pošlite:",
+        "text": "Pošlite svoje chybný zariadenie dobre zabalené, ideálne s kópiou vyplneného formulára RMA, na našu servisnú adresu: pda.repair, Servisná služba, Hamburgerstr. 16, 65760 Eschborn, Nemecko. Náklady na dopravu k nám znášate vy."
+      },
+      "step1": {
+        "form_link_text": "Online formulár RMA",
+        "title": "Vyplňte formulár RMA:"
+      },
+      "title": "Proces opravy - jednoduchý a transparentný"
+    },
+    "services": {
+      "warranty": {
+        "title": "Spracovanie záruky (aktuálne iba pre Movfast):",
+        "notice": "Upozorňujeme: V súčasnosti môžeme vykonávať iba zárukové opravy alebo opravy na základe servisných zmlúv pre zariadenia značky Movfast.",
+        "instruction": "Ak chcete uplatniť záruku na zariadenie Movfast, nezabudnite uviesť meno vášho predajcu vo formulári RMA."
+      },
+      "paid": {
+        "clientele": "Túto službu môžu využívať koncoví zákazníci, ako aj výrobcovia, dovozcovia alebo iné servisné strediská.",
+        "title": "Nezávislá opravárenská služba pre všetky značky:",
+        "description": "Ponúkame našu platenú opravárenskú službu pre PDA zariadenia od všetkých výrobcov a značiek. Či už ide o rozbitý displej, chybný skenovací modul, problémy s batériou alebo softvérové chyby – analyzujeme poškodenie a poskytneme vám transparentný odhad nákladov."
+      },
+      "title": "Naša ponuka služieb"
+    },
+    "intro": {
+      "approach": "Sme váš špecializovaný partner pre udržateľnú opravu a zachovanie hodnoty vašich mobilných zariadení na zber dát.",
+      "philosophy": "Na rozdiel od čisto výmenných programov sa špecificky zameriavame na príčinu problému, aby sme ponúkli trvalé a nákladovo efektívne riešenie.",
+      "welcome": "Vitajte na pda.repair, vašom novom, nezávislom expertovi na profesionálnu opravu a technickú podporu pre všetky typy PDA zariadení (mobilné dátové terminály, prenosné terminály)."
+    }
+  },
+  "feature": {
+    "eckwms_measure": {
+      "image_alt": "EckWMS súradnicová mriežka pre meranie kartónov",
+      "link_title": "Podrobnosti o meraní kartónov",
+      "description": "Jednoducho a rýchlo zmerajte rozmery kartónu pomocou PDA a našej tlačenej súradnicovej mriežky."
+    },
+    "eckwms_main": {
+      "link_title": "Zistite viac o eckWMS",
+      "title": "Užitočné nástroje z eckWMS"
+    }
+  },
+  "rma": {
+    "status_placeholder": "Zadajte RMA alebo S/N...",
+    "request_button": "Žiadosť o opravu RMA",
+    "status_check": "Ak chcete skontrolovať stav opravy, zadajte naše číslo RMA alebo sériové číslo zariadenia."
+  }
+}

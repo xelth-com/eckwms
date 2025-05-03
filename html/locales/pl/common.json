@@ -43,5 +43,69 @@
     "title": "⚠️ Ważne Powiadomienie ⚠️",
     "process": "Proces jest prosty: wyślij swoje urządzenie M3 Mobile na poniższy adres:",
     "note": "P.S. Możesz użyć formularza, aby wydrukować PDF, jeśli główna strona internetowa przestanie działać."
+  },
+  "chat": {
+    "show_all": "Pokaż wszystkie dyskusje...",
+    "topic4": "Problem z drukarką XY w systemie Android 13",
+    "topic3": "Opinie na temat nowej funkcji skanera",
+    "topic2": "Optymalizacja wydajności dla dużych zbiorów danych",
+    "topic1": "Jak zintegrować nowe API?",
+    "title": "Bieżące tematy w czacie"
+  },
+  "home": {
+    "slogan": "Zawsze koncentrując się na <span style=\"color: rgb(0, 100, 0);\">przyczynie źródłowej",
+    "process": {
+      "step6": {
+        "status_link_text": "aktualny status",
+        "title": "Śledzenie statusu:"
+      },
+      "title": "Proces naprawy - prosty i przejrzysty",
+      "step5": {
+        "title": "Wysyłka zwrotna:",
+        "text": "Po pomyślnej naprawie odeślemy Twoje urządzenie z powrotem do Ciebie. Pokrywamy koszty wysyłki zwrotnej w Niemczech."
+      },
+      "step4": {
+        "title": "Naprawa po zatwierdzeniu:",
+        "text": "Gdy tylko zatwierdzisz kosztorys, przeprowadzimy naprawę profesjonalnie."
+      },
+      "step3": {
+        "title": "Inspekcja przychodząca i kosztorys:",
+        "text": "Po otrzymaniu Twojej paczki, Twoje zgłoszenie RMA zostanie aktywowane. Sprawdzimy urządzenie oraz opisany błąd i stworzymy darmowy kosztorys naprawy (z wyjątkiem uznanych przypadków gwarancyjnych Movfast)."
+      },
+      "step2": {
+        "title": "Bezpiecznie zapakuj urządzenie i wyślij:",
+        "text": "Wyślij swoje wadliwe urządzenie dobrze zapakowane, najlepiej z kopią wypełnionego formularza RMA, na nasz adres serwisowy: pda.repair, Serwis Naprawczy, Hamburgerstr. 16, 65760 Eschborn, Niemcy. Koszty wysyłki do nas ponosisz Ty."
+      },
+      "step1": {
+        "form_link_text": "Formularz RMA online",
+        "title": "Wypełnij formularz RMA:"
+      }
+    },
+    "services": {
+      "paid": {
+        "title": "Niezależna usługa naprawy dla wszystkich marek:",
+        "clientele": "Z tej usługi mogą korzystać zarówno klienci końcowi, jak i producenci, importerzy lub inne centra serwisowe.",
+        "description": "Oferujemy naszą płatną usługę naprawy dla urządzeń PDA wszystkich producentów i marek. Niezależnie od tego, czy chodzi o uszkodzony wyświetlacz, wadliwy silnik skanujący, problemy z baterią czy błędy oprogramowania – analizujemy uszkodzenia i przedstawiamy Ci przejrzystą wycenę kosztów."
+      },
+      "warranty": {
+        "title": "Przetwarzanie gwarancji (aktualnie tylko dla Movfast):",
+        "instruction": "Jeśli chcesz zgłosić roszczenie gwarancyjne dla urządzenia Movfast, upewnij się, że w formularzu RMA podasz nazwę swojego sprzedawcy.",
+        "notice": "Proszę zauważyć: Aktualnie możemy przeprowadzać naprawy gwarancyjne lub naprawy w ramach umów serwisowych tylko dla urządzeń marki Movfast."
+      },
+      "title": "Nasza oferta serwisowa"
+    },
+    "intro": {
+      "philosophy": "W przeciwieństwie do czysto programów wymiany, szczególnie szukamy przyczyny problemu, aby zaoferować trwałe i opłacalne rozwiązanie.",
+      "approach": "Jesteśmy Twoim specjalistycznym partnerem w zakresie zrównoważonej naprawy i zachowania wartości Twoich mobilnych urządzeń do zbierania danych.",
+      "welcome": "Witamy w pda.repair, Twoim nowym, niezależnym ekspercie w zakresie profesjonalnej naprawy i wsparcia technicznego dla wszystkich typów urządzeń PDA (Mobilne Terminale Danych, Terminale Ręczne)."
+    }
+  },
+  "feature": {
+    "eckwms_main": {
+      "title": "Przydatne narzędzia od eckWMS"
+    },
+    "eckwms_measure": {
+      "description": "Mierz wymiary kartonów łatwo i szybko za pomocą PDA i naszej drukowalnej siatki współrzędnych."
+    }
   }
 }

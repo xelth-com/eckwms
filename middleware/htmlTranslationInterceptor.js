@@ -47,21 +47,27 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
       // This function is called after the response body is complete
       intercept: async (body, send) => {
         // НОВАЯ ПРОВЕРКА: проверяем, содержит ли ответ HTML с i18n атрибутами
-        if (typeof body !== 'string' || 
-            !(body.includes('<') && body.includes('>')) ||
-            !(body.includes('data-i18n') || 
-              body.includes('data-i18n-attr') || 
-              body.includes('data-i18n-html'))) {
+        if (typeof body !== 'string' ||
+          !(body.includes('<') && body.includes('>')) ||
+          !(body.includes('data-i18n') ||
+            body.includes('data-i18n-attr') ||
+            body.includes('data-i18n-html'))) {
           // Это не HTML с i18n атрибутами, пропускаем обработку
           send(body);
           return;
         }
 
         // Get language from request (set by i18next-http-middleware)
-        const language = req.language || req.i18n?.language ||
-          (process.env.DEFAULT_LANGUAGE || 'en');
-        const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
+        // 1. Читаем исходный язык в константу с новым именем (например, rawLanguage)
+        const rawLanguage = req.language || req.i18n?.language || process.env.DEFAULT_LANGUAGE || 'en';
 
+        // 2. Выполняем нормализацию и присваиваем результат константе с ТЕМ ЖЕ ИМЕНЕМ, 
+        //    которое использовалось у вас дальше по коду (здесь для примера 'language').
+        //    Используем тернарный оператор для краткости.
+        const language = (typeof rawLanguage === 'string' && rawLanguage.includes('-'))
+          ? rawLanguage.split('-')[0] // Нормализованное значение ('de')
+          : rawLanguage;           // Исходное значение ('en', 'de', etc.)
+        const defaultLanguage = process.env.DEFAULT_LANGUAGE || 'en';
         // Request-specific tracking to prevent cyclic translation attempts
         const processedKeys = new Set();
 
@@ -88,8 +94,8 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
 
           // Remove data-i18n-attr attributes, keeping translated attributes
           processedBody = processedBody.replace(
-            /<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g,
-            (match, tag, attrsJson, restAttrs) => {
+            /<([^>]+)\s+data-i18n-attr=(["'])(.*?)\2([^>]*)>/g,
+            (match, tag, openingQuote, attrsJson, restAttrs) => {
               try {
                 return `<${tag}${restAttrs}>`;
               } catch (e) {
@@ -101,7 +107,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
 
           // Remove data-i18n-html attributes, keeping HTML content
           processedBody = processedBody.replace(
-            /<([^>]+)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/([^>]+)>/g,
+            /<(SPAN[^>]*)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/SPAN>/g,
             (match, tag1, key, attrs, content, tag2) => {
               return `<${tag1}${attrs}>${content}</${tag2}>`;
             }
@@ -328,13 +334,14 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
           // 2. Process attribute translations with data-i18n-attr with better placeholder handling
           const attrTranslationPromises = [];
           modifiedBody = modifiedBody.replace(
-            /<([^>]+)\s+data-i18n-attr=['"]([^'"]+)['"]([^>]*)>/g,
-            (match, tag, attrsJson, restAttrs) => {
+            /<([^>]+)\s+data-i18n-attr=(["'])(.*?)\2([^>]*)>/g,
+            (match, tag, openingQuote, attrsJson, restAttrs) => {
               try {
                 // Create a placeholder with unique ID
                 const placeholderId = `i18n_attr_placeholder_${attrTranslationPromises.length}`;
 
                 // Parse attributes JSON
+
                 const attrsMap = JSON.parse(attrsJson);
 
                 // Get current attribute values - IMPORTANT FIX: Add default fallback
@@ -351,10 +358,10 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                   // Extract current attribute value from element
                   const attrRegex = new RegExp(`${attr}="([^"]*)"`, 'i');
                   const attrMatch = match.match(attrRegex);
-                  
+
                   // Check if we need to handle special default case for placeholder
                   let defaultValue = '';
-                  
+
                   // IMPORTANT FIX: If attribute value is "null", try to use a reasonable default
                   if (!attrMatch || attrMatch[1] === 'null') {
                     // For placeholder attributes, use appropriate defaults based on element type
@@ -371,7 +378,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                   } else {
                     defaultValue = attrMatch[1];
                   }
-                  
+
                   currentAttrs[attr] = defaultValue;
                 }
 
@@ -391,7 +398,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
 
                       // Use the default value or "null" string itself as fallback
                       const currentValue = currentAttrs[attr];
-                      
+
                       // IMPORTANT FIX: Get default fallback value from i18next if possible
                       let defaultValue = currentValue;
                       if (currentValue === 'null' || !currentValue) {
@@ -403,12 +410,12 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                           });
                         }
                       }
-                      
+
                       // Use appropriate value for translation
-                      const valueToTranslate = (currentValue && currentValue !== 'null') 
-                                               ? currentValue 
-                                               : defaultValue;
-                                               
+                      const valueToTranslate = (currentValue && currentValue !== 'null')
+                        ? currentValue
+                        : defaultValue;
+
                       const [translation, untranslated] = await translateText(valueToTranslate, translationKey, namespace);
 
                       return {
@@ -422,7 +429,7 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
                     .then(translations => {
                       // Check if any attribute is untranslated
                       const anyUntranslated = translations.some(t => t.untranslated);
-                      
+
                       if (anyUntranslated) {
                         // If any attribute was untranslated, keep the original tag
                         return {
@@ -474,69 +481,77 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
             }
           );
 
-          // 3. Process HTML content translations with data-i18n-html
+          // 3. Обработка data-i18n-html (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
           const htmlTranslationPromises = [];
           modifiedBody = modifiedBody.replace(
-            /<([^>]+)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/([^>]+)>/g,
-            (match, tag1, key, attrs, content, tag2) => {
-              // Create a placeholder with unique ID
+            // Правильный Regex для SPAN
+            /<(SPAN[^>]*)\s+data-i18n-html="([^"]+)"([^>]*)>([\s\S]*?)<\/SPAN>/g,
+            // ---> ИСПРАВЛЕНИЕ: Правильные аргументы функции <---
+            (match, tagAttrsBefore, key, attrsAfter, content) => {
               const placeholderId = `i18n_html_placeholder_${htmlTranslationPromises.length}`;
+              const placeholder = ``;
 
-              // Extract namespace and key
+              // Извлечение namespace и ключа (key - это группа 2)
               let namespace = 'common';
               let translationKey = key;
-
               if (key.includes(':')) {
                 const parts = key.split(':');
                 namespace = parts[0];
                 translationKey = parts.slice(1).join(':');
               }
 
-              // Check for options in attributes
+              // ---> ИСПРАВЛЕНИЕ: Ищем опции в attrsAfter (группа 3) <---
               let options = {};
-              const optionsMatch = attrs.match(/data-i18n-options=['"]([^'"]+)['"]/);
+              const optionsMatch = attrsAfter.match(/data-i18n-options=['"]([^'"]+)['"]/);
               if (optionsMatch) {
                 try {
                   options = JSON.parse(optionsMatch[1]);
                 } catch (e) {
-                  console.error(`[i18n] Error parsing data-i18n-options for HTML: ${e.message}`);
+                  console.error(`[i18n] Error parsing options from attrsAfter: ${e.message}`);
                 }
               }
 
-              // Original content for comparison
+              // Оригинальный контент (content - это группа 4)
               const originalContent = content.trim();
 
-              // Add promise to translate HTML content
+              // Добавляем промис
               htmlTranslationPromises.push(
+                // translateText использует 'language' из внешней области видимости intercept
                 translateText(originalContent, translationKey, namespace, options)
                   .then(([translatedHtml, untranslated]) => {
                     if (untranslated) {
-                      // Keep original with data-i18n-html for untranslated content
-                      return {
-                        id: placeholderId,
-                        html: match
-                      };
+                      // Если не переведено, возвращаем весь оригинальный кусок HTML
+                      return { id: placeholderId, html: match };
                     } else {
-                      // Remove data-i18n-html for translated content
-                      return {
-                        id: placeholderId,
-                        html: `<${tag1}${attrs.replace(/\s+data-i18n-html="[^"]*"/, '')}>${translatedHtml}</${tag2}>`
-                      };
+                      // --- ИСПРАВЛЕНИЕ: Правильная сборка HTML ---
+                      // Очищаем attrsAfter (атрибуты ПОСЛЕ ключа) от опций
+                      const cleanAttrsAfter = attrsAfter.replace(/\s+data-i18n-options=['"][^'"]+['"]/, '');
+                      // Собираем: 
+                      // tagAttrsBefore (SPAN + атрибуты ДО ключа) 
+                      // + cleanAttrsAfter (атрибуты ПОСЛЕ ключа) 
+                      // + > 
+                      // + переведенный HTML 
+                      // + </SPAN> (закрываем явно)
+                      const finalHtml = `<${tagAttrsBefore}${cleanAttrsAfter}>${translatedHtml}</SPAN>`;
+                      // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
+                      // Лог для проверки (опционально)
+                      
+                        console.log(`--- [Corrected vFinal] Result for ${match}: CONSTRUCTED HTML: [${finalHtml}]`);
+                      
+                      return { id: placeholderId, html: finalHtml };
                     }
                   })
                   .catch(error => {
                     console.error(`[i18n] Error translating HTML for ${translationKey}:`, error);
-                    return {
-                      id: placeholderId,
-                      html: match // Keep original on error
-                    };
+                    return { id: placeholderId, html: match };
                   })
               );
 
-              // Return placeholder for now
+              // Возвращаем ПРАВИЛЬНЫЙ плейсхолдер
               return `<!--${placeholderId}-->`;
             }
-          );
+          ); // Конец replace для data-i18n-html
 
           // Wait for all translation promises to complete
           const allPromises = [

@@ -10,7 +10,7 @@ import { loadCSS } from '/core/module-loader.js';
  */
 export function init() {
   // Set page title
-  document.title = 'Eck - M3 Mobile GmbH';
+  document.title = 'PDA';
   
   // Set meta tags
   setMetaTags();

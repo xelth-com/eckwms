@@ -1,1 +1,88 @@
-﻿{}
+{
+  "footer": {
+    "legal": "Juridische Kennisgeving",
+    "privacy": "Privacybeleid",
+    "terms": "Algemene Voorwaarden"
+  },
+  "feature": {
+    "eckwms_main": {
+      "link_title": "Leer meer over eckWMS",
+      "title": "Nuttige tools van eckWMS"
+    },
+    "eckwms_measure": {
+      "image_alt": "EckWMS coördinatennet voor kartonmeting",
+      "link_title": "Details over kartonmeting",
+      "description": "Meet kartonafmetingen eenvoudig en snel met een PDA en ons afdrukbare coördinatennet."
+    }
+  },
+  "common": {
+    "frankfurt_image_alt": "Frankfurt"
+  },
+  "chat": {
+    "show_all_link_title": "Toon alle discussies",
+    "topic4_link_title": "Details over onderwerp 4...",
+    "topic3_link_title": "Details over onderwerp 3...",
+    "topic2_link_title": "Details over onderwerp 2...",
+    "topic1_link_title": "Details over onderwerp 1...",
+    "title": "Huidige onderwerpen in chat",
+    "show_all": "Toon alle discussies...",
+    "topic4": "Probleem met printer XY onder Android 13",
+    "topic3": "Feedback over de nieuwe scannerfunctie",
+    "topic2": "Prestatieoptimalisatie voor grote datasets",
+    "topic1": "Hoe integreer ik de nieuwe API?"
+  },
+  "home": {
+    "process": {
+      "step1": {
+        "text": "Om een snelle verwerking te garanderen, vul alstublieft ons <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a> in. Een gedetailleerde beschrijving van de fout helpt ons aanzienlijk bij de diagnose en versnelt het reparatieproces.",
+        "title": "Vul het RMA-formulier in:",
+        "form_link_text": "Online RMA-formulier"
+      },
+      "step6": {
+        "status_link_text": "huidige status",
+        "title": "Status Tracking:"
+      },
+      "step4": {
+        "text": "Zodra u de kostenraming goedkeurt, zullen wij de reparatie professioneel uitvoeren.",
+        "title": "Reparatie na goedkeuring:"
+      },
+      "step5": {
+        "title": "Retourverzending:",
+        "text": "Na een succesvolle reparatie sturen we uw apparaat weer naar u terug. Wij dekken de kosten voor retourverzending binnen Duitsland."
+      },
+      "step3": {
+        "title": "Binnenkomende inspectie & kostenraming:",
+        "text": "Bij ontvangst van uw pakket wordt uw RMA-verzoek geactiveerd. We controleren het apparaat en de beschreven fout en maken een gratis kostenraming voor de reparatie (behalve voor erkende Movfast-garantiegevallen)."
+      },
+      "step2": {
+        "title": "Verpak het apparaat veilig en stuur het op:",
+        "text": "Stuur uw defecte apparaat goed verpakt, bij voorkeur met een kopie van het ingevulde RMA-formulier, naar ons serviceadres: pda.repair, Reparatieservice, Hamburgerstr. 16, 65760 Eschborn, Duitsland. U draagt de verzendkosten naar ons."
+      },
+      "title": "Het reparatieproces - Eenvoudig en transparant"
+    },
+    "slogan": "Altijd gericht op de <span style=\"color: rgb(0, 100, 0);\">oorzaak</span>, in plaats van alleen maar snelle <span style=\"color: rgb(139, 0, 0);\">wisselingen</span>.",
+    "services": {
+      "paid": {
+        "title": "Onafhankelijke reparatieservice voor alle merken:",
+        "clientele": "Deze service kan worden gebruikt door eindklanten, evenals door fabrikanten, importeurs of andere servicecentra.",
+        "description": "We bieden onze betaalde reparatieservice aan voor PDA-apparaten van alle fabrikanten en merken. Of het nu gaat om een gebroken display, defecte scanengine, batterijproblemen of softwarefouten – we analyseren de schade en bieden u een transparante kostenraming."
+      },
+      "warranty": {
+        "title": "Garantieafhandeling (momenteel alleen voor Movfast):",
+        "instruction": "Als u een garantieclaim wilt indienen voor een Movfast-apparaat, vermeld dan alstublieft de naam van uw wederverkoper in het RMA-formulier.",
+        "notice": "Let op: We kunnen momenteel alleen garantieherstellingen of herstellingen onder servicecontracten uitvoeren voor apparaten van het merk Movfast."
+      },
+      "title": "Onze Service Aanbieding"
+    },
+    "intro": {
+      "approach": "Wij zijn uw gespecialiseerde partner voor de duurzame reparatie en waarde behoud van uw mobiele dataverzamelingsapparaten.",
+      "philosophy": "In tegenstelling tot pure omruilprogramma's zoeken we specifiek naar de oorzaak van het probleem om een duurzame en kosteneffectieve oplossing te bieden.",
+      "welcome": "Welkom bij pda.repair, uw nieuwe, onafhankelijke expert voor professionele reparatie en technische ondersteuning voor alle soorten PDA-apparaten (Mobiele Dataterminals, Handheld Terminals)."
+    }
+  },
+  "rma": {
+    "status_placeholder": "Voer RMA of S/N in...",
+    "request_button": "RMA Reparatieverzoek",
+    "status_check": "Om de reparatiestatus te controleren, voert u alstublieft ons RMA-nummer of het serienummer van het apparaat in."
+  }
+}

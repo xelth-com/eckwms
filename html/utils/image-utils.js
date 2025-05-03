@@ -274,60 +274,10 @@ export function applyRandomEffects() {
     });
   });
   
-  // Colorize buttons to complement stickers
-  colorizeButtons(stickers);
+
 }
 
-/**
- * Apply colors to all buttons
- * @param {Array} stickers - Array of sticker elements to reference their colors
- */
-function colorizeButtons(stickers) {
-  // Get all buttons
-  const buttons = document.querySelectorAll('.button');
-  console.log(`Found ${buttons.length} buttons to colorize`);
-  
-  if (buttons.length === 0) {
-    return;
-  }
-  
-  // Apply colors to each button
-  buttons.forEach((button, index) => {
-    // Check if button color is specified in HTML
-    const specifiedHue = parseInt(button.dataset.hue);
-    const specifiedSaturation = parseInt(button.dataset.saturation);
-    const specifiedLightness = parseInt(button.dataset.lightness);
-    
-    if (!isNaN(specifiedHue)) {
-      // Use specified color for the button
-      const saturation = !isNaN(specifiedSaturation) ? specifiedSaturation : 70;
-      const lightness = !isNaN(specifiedLightness) ? specifiedLightness : 40; // Darker
-      
-      button.style.backgroundColor = `hsla(${specifiedHue}, ${saturation}%, ${lightness}%, 0.5)`;
-      console.log(`Button ${index}: Using specified hue=${specifiedHue}, saturation=${saturation}%, lightness=${lightness}%`);
-    } else {
-      // Reference nearest sticker color if available
-      let referenceHue = 0;
-      if (stickers && stickers.length > 0) {
-        // Use color from sticker at same index or the last sticker
-        const refIndex = Math.min(index, stickers.length - 1);
-        const refSticker = stickers[refIndex];
-        
-        if (refSticker && refSticker.dataset.appliedHue) {
-          referenceHue = parseInt(refSticker.dataset.appliedHue);
-        }
-      }
-      
-      // Create a color different from the reference
-      const buttonHue = (referenceHue + 45 + Math.floor(Math.random() * 90)) % 360;
-      const saturation = !isNaN(specifiedSaturation) ? specifiedSaturation : 70;
-      const lightness = !isNaN(specifiedLightness) ? specifiedLightness : 40; // Darker buttons
-      
-      button.style.backgroundColor = `hsla(${buttonHue}, ${saturation}%, ${lightness}%, 0.5)`;
-      console.log(`Button ${index}: Applied hue=${buttonHue}, saturation=${saturation}%, lightness=${lightness}%`);
-    }
-  });
-}
+
 
 /**
  * Creates a mutation observer to apply effects to dynamically added content
@@ -431,8 +381,7 @@ function initDynamicContentObserver() {
           });
         });
         
-        // Update buttons to match new colors
-        colorizeButtons(allStickers);
+
       }
     }
   });

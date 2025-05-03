@@ -1,3 +1,4 @@
+/*content/home-content.css*/
 /* Styles for home content */
 
 /* Main layout */
@@ -31,9 +32,75 @@
   text-shadow: 0px 0px 1.5px rgb(0, 0, 0, 0.5);
 }
 
+/* Убираем ВСЕ отступы по умолчанию у блоков, которые будем использовать */
+ol,
+ul,
+p,
+h1,
+h2,
+h3,
+li,
+div
+
+/* Добавь сюда теги, которые используешь */
+  {
+  margin-top: 0;
+  margin-bottom: 0;
+  padding: 0;
+}
+
+/* Стиль для основного текста (.text3) */
 .text3 {
+  font-family: inherit;
+  /* Comic Sans MS */
+  font-weight: normal;
+  font-size: 1em;
+  /* 20px */
+  line-height: var(--lineHeight);
+  /* Строго 30px */
   color: rgb(0, 0, 0, 0.45);
-  text-shadow: 0.2px 0.3px 0.3px rgb(255, 255, 255, 0.4), -0.4px -0.6px 0.6px rgb(0, 0, 0, 0.6), 0px 4px 3px rgb(225, 225, 225), 0px 6px 3px rgb(225, 225, 225), 0px 2px 3px rgb(225, 225, 225), 0px -2px 3px rgb(225, 225, 225), 2px 0px 3px rgb(225, 225, 225), -2px 0px 3px rgb(225, 225, 225), 0px -4px 4px rgb(225, 225, 225), 0px -6px 4px rgb(225, 225, 225), 0px -8px 4px rgb(225, 225, 225), 0px -10px 4px rgb(225, 225, 225), 0px -12px 4px rgb(225, 225, 225);
+  text-shadow: var(--text3-shadow);
+}
+
+/* Классы для Заголовков (применяются к <p>) */
+.text3H1,
+.text3H2,
+.text3H3 {
+  font-family: Arial, sans-serif;
+  /* Arial */
+  text-shadow: var(--text3-shadow);
+  /* Та же тень */
+  margin-top: var(--lineHeight);
+  /* Отступ сверху = 30px */
+  margin-bottom: 0;
+  /* Отступ снизу = 0 */
+  padding: 0;
+  /* Убедимся, что нет паддингов */
+}
+
+/* Размеры шрифтов и ВЫСОТА СТРОКИ для заголовков */
+.text3H1 {
+
+  font-size: 1.2em;
+  /* 32px */
+  line-height: calc(var(--lineHeight) * 2);
+  /* ВЫСОТА СТРОКИ = 60px */
+}
+
+.text3H2 {
+  color: rgb(30, 32, 113, 0.8);
+  font-size: 1.1em;
+  /* 26px */
+  line-height: calc(var(--lineHeight) * 2);
+  /* !!! ВЫСОТА СТРОКИ = 60px !!! */
+}
+
+.text3H3 {
+  color: rgb(0, 0, 0, 0.6);
+  font-size: 1.0em;
+  /* 22px */
+  line-height: calc(var(--lineHeight) * 2);
+  /* ВЫСОТА СТРОКИ = 30px (ОСТАВЛЯЕМ) */
 }
 
 .text4 {
@@ -88,6 +155,27 @@
   box-shadow: 0px 13px 10px -10px rgba(0, 0, 0, .5), -11px 0px 10px -10px rgba(0, 0, 0, .5), 0px -10px 10px -10px rgba(0, 0, 0, .5), 11px 0px 10px -10px rgba(0, 0, 0, .5);
   border: 1px solid rgba(0, 0, 0, 0.35);
 }
+
+/* Ссылки внутри стикера с классом sticker-link-text */
+.sticker a.sticker-link-text {
+  text-decoration: none;
+  /* Убрать подчеркивание по умолчанию */
+  color: inherit;
+  /* Наследовать цвет от родителя */
+  cursor: pointer;
+}
+
+/* Стиль при наведении на эти ссылки */
+.sticker a.sticker-link-text:hover {
+  text-decoration: underline;
+  /* Добавить подчеркивание при наведении */
+}
+
+/* Можно также добавить стиль для изображения при наведении */
+.sticker a:hover img {
+  opacity: 0.85;
+}
+
 
 /* Form elements */
 input.textM3 {
