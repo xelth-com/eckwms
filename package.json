@@ -1,7 +1,7 @@
 {
   "name": "eckwms",
   "version": "1.0.0",
-  "description": "WMS project for e-commerce and service centers",
+  "description": "WMS project for e-commerce and service centers by Betruger",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
@@ -9,8 +9,28 @@
     "build": "webpack --mode production",
     "watch": "webpack --watch --mode development"
   },
-  "author": "Dmytro Surovtsev",
-  "license": "MIT",
+  "author": "Betruger Sp. z o.o. <contact@betruger.com>",
+  "contributors": [
+    "Dmytro Surovtsev <dmytro@betruger.com>"
+  ],
+  "license": "EUPL-1.2",
+  "homepage": "https://betruger.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/betruger/eckwms.git"
+  },
+  "bugs": {
+    "url": "https://github.com/betruger/eckwms/issues"
+  },
+  "keywords": [
+    "wms",
+    "warehouse",
+    "management",
+    "system",
+    "betruger",
+    "e-commerce",
+    "logistics"
+  ],
   "dependencies": {
     "bcrypt": "^5.1.1",
     "body-parser": "^1.20.2",
