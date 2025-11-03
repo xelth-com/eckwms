@@ -1,1 +1,87 @@
-﻿{}
+{
+  "common": {
+    "frankfurt_image_alt": "Frankfurt"
+  },
+  "chat": {
+    "show_all_link_title": "Prikaži sve rasprave",
+    "topic4_link_title": "Detalji o temi 4...",
+    "topic3_link_title": "Detalji o temi 3...",
+    "topic2_link_title": "Detalji o temi 2...",
+    "topic1_link_title": "Detalji o temi 1...",
+    "show_all": "Prikaži sve rasprave...",
+    "topic4": "Problem s printerom XY pod Androidom 13",
+    "topic3": "Povratne informacije o novoj funkciji skener",
+    "topic2": "Optimizacija performansi za velike skupove podataka",
+    "topic1": "Kako integrirati novi API?",
+    "title": "Trenutne teme u chatu"
+  },
+  "home": {
+    "slogan": "Uvijek se fokusirajući na <span style=\"color: rgb(0, 100, 0);\">uzrok</span>, umjesto samo na brze <span style=\"color: rgb(139, 0, 0);\">zamjene</span>.",
+    "process": {
+      "step1": {
+        "text": "Kako bismo osigurali brzu obradu, molimo vas da ispunite naš <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a>. Detaljan opis pogreške značajno nam pomaže u dijagnostici i ubrzava proces popravka.",
+        "form_link_text": "Online RMA obrazac",
+        "title": "Ispunite RMA obrazac:"
+      },
+      "step6": {
+        "status_link_text": "trenutni status",
+        "title": "Praćenje statusa:"
+      },
+      "step5": {
+        "title": "Povratna dostava:",
+        "text": "Nakon uspješnog popravka, vratit ćemo vaš uređaj natrag. Pokrivamo troškove povratne dostave unutar Njemačke."
+      },
+      "step4": {
+        "title": "Popravak nakon odobrenja:",
+        "text": "Čim odobrite procjenu troškova, profesionalno ćemo izvršiti popravak."
+      },
+      "step3": {
+        "title": "Ulazna inspekcija i procjena troškova:",
+        "text": "Po primitku vašeg paketa, vaša RMA zahtjev će biti aktiviran. Provjeravamo uređaj i opisanu grešku te izrađujemo besplatnu procjenu troškova za popravak (osim za priznate Movfast jamstvene slučajeve)."
+      },
+      "step2": {
+        "title": "Sigurno zapakirajte uređaj i pošaljite:",
+        "text": "Pošaljite svoj neispravni uređaj dobro upakiran, idealno s kopijom ispunjenog RMA obrasca, na našu adresu servisa: pda.repair, Servis za popravak, Hamburgerstr. 16, 65760 Eschborn, Njemačka. Vi snosite troškove dostave do nas."
+      },
+      "title": "Proces popravka - Jednostavno i transparentno"
+    },
+    "services": {
+      "warranty": {
+        "title": "Obrada jamstva (trenutno samo za Movfast):",
+        "instruction": "Ako želite podnijeti zahtjev za jamstvo za Movfast uređaj, molimo vas da u RMA obrascu navedete ime svog prodavača.",
+        "notice": "Napomena: Trenutno možemo obavljati samo popravke u okviru jamstva ili popravke prema servisnim ugovorima za uređaje marke Movfast."
+      },
+      "paid": {
+        "title": "Nezavisna usluga popravka za sve marke:",
+        "clientele": "Ovu uslugu mogu koristiti krajnji kupci, kao i proizvođači, uvoznici ili drugi servisni centri.",
+        "description": "Nudimo našu plaćenu uslugu popravka za PDA uređaje svih proizvođača i marki. Bilo da se radi o pokvarenom zaslonu, neispravnom skeneru, problemima s baterijom ili softverskim greškama – analiziramo štetu i pružamo vam transparentnu procjenu troškova."
+      },
+      "title": "Naša ponuda usluga"
+    },
+    "intro": {
+      "welcome": "Dobrodošli na pda.repair, vašeg novog, neovisnog stručnjaka za profesionalne popravke i tehničku podršku za sve vrste PDA uređaja (mobilni podatkovni terminali, prijenosni terminali).",
+      "philosophy": "Za razliku od čistih programa razmjene, posebno tražimo uzrok problema kako bismo ponudili dugotrajno i isplativo rješenje.",
+      "approach": "Mi smo vaš specijalizirani partner za održivu popravku i očuvanje vrijednosti vaših uređaja za prikupljanje mobilnih podataka."
+    }
+  },
+  "feature": {
+    "eckwms_measure": {
+      "image_alt": "EckWMS koordinatna mreža za mjerenje kartona",
+      "description": "Jednostavno i brzo izmjerite dimenzije kartona pomoću PDA uređaja i naše isprintane koordinatne mreže."
+    },
+    "eckwms_main": {
+      "link_title": "Saznajte više o eckWMS",
+      "title": "Korisni alati iz eckWMS"
+    }
+  },
+  "rma": {
+    "status_placeholder": "Unesite RMA ili S/N...",
+    "request_button": "Zahtjev za popravak RMA",
+    "status_check": "Za provjeru statusa popravka, unesite naš RMA broj ili serijski broj uređaja."
+  },
+  "footer": {
+    "legal": "Pravna obavijest",
+    "privacy": "Politika privatnosti",
+    "terms": "Uvjeti i odredbe"
+  }
+}

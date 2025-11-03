@@ -1,1 +1,26 @@
-﻿{}
+{
+  "form": {
+    "submit": "Űrlap benyújtása",
+    "back": "Vissza",
+    "add_device": "Új eszköz hozzáadása",
+    "city": "Város:",
+    "contact_person": "Kapcsolattartó:",
+    "country": "Ország:",
+    "device_info": "Eszközinformáció",
+    "phone": "Telefon:",
+    "invoice_email": "E-számla E-mail:",
+    "contact_email": "Kapcsolattartó Email:",
+    "contact_info": "Kapcsolattartási információk",
+    "reseller_name": "Garancia esetén kérjük, adja meg a viszonteladó nevét:",
+    "postal_code": "Irányítószám:",
+    "additional_address": "További cím sor:",
+    "house_number": "Házszám:",
+    "street": "Utca:",
+    "vat_number": "ÁFA szám:",
+    "company_name": "Cég neve:",
+    "billing_info": "Számlázási Információk"
+  },
+  "device": {
+    "info_text": "Adjon hozzá olyan eszközöket, amelyek javításra szorulnak. Minden eszköz különböző címre is elküldhető, ha szükséges."
+  }
+}

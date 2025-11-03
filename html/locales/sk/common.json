@@ -45,7 +45,8 @@
       },
       "step1": {
         "form_link_text": "Online formulár RMA",
-        "title": "Vyplňte formulár RMA:"
+        "title": "Vyplňte formulár RMA:",
+        "text": "Aby sme zabezpečili rýchle spracovanie, prosím, vyplňte náš <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a>. Podrobný popis chyby nám výrazne pomáha pri diagnostike a urýchľuje proces opravy."
       },
       "title": "Proces opravy - jednoduchý a transparentný"
     },

@@ -1,3 +1,5 @@
+// html/header/menu-permissions.js
+
 /**
  * Menu Permissions Module
  * Handles dynamic menu item visibility based on user roles and permissions
@@ -6,7 +8,19 @@
 // Configuration of menu items with their required permissions
 const MENU_ITEMS_CONFIG = [
     {
-        id: 'mainMenu1', // Был mainMenu1
+        id: 'mainMenu0',
+        requiredPermission: 'view_public_demo',
+        htmlContent: `
+        eckWMS
+        <div hidden>
+          <a href="/eckwms" style="display: block; padding: 20px; text-align: center; color: #1e2071; text-decoration: none; font-weight: bold;">
+            Live Scan Feed (Public Demo)
+          </a>
+        </div>
+      `
+    },
+    {
+        id: 'mainMenu1',
         requiredPermission: 'view_ranger2',
         htmlContent: `
         Ranger2
@@ -59,7 +73,7 @@ const MENU_ITEMS_CONFIG = [
         id: 'mainMenu6', // Был mainMenu7
         requiredPermission: 'view_sm20',
         htmlContent: `
-        SM20
+        ___
         <div hidden>
           <img class="picBtn" loading="lazy" height="300" src="storage/pics/SL20K.webp" onclick="myFetch('partsSL20K')" />
         </div>
@@ -69,7 +83,7 @@ const MENU_ITEMS_CONFIG = [
         id: 'mainMenu7', // Был mainMenu8
         requiredPermission: 'view_us20',
         htmlContent: `
-        US20
+        ___
         <div hidden>
           <img class="picBtn" loading="lazy" height="300" src="storage/pics/US20.webp" onclick="myFetch('partsUS20')" />
         </div>
@@ -79,7 +93,7 @@ const MENU_ITEMS_CONFIG = [
         id: 'mainMenu8', // Был mainMenu9
         requiredPermission: 'view_ul20',
         htmlContent: `
-        UL20
+        ___
         <div hidden>
           <img class="picBtn" loading="lazy" height="300" src="storage/pics/ul20.webp" onclick="myFetch('partsUL20')" />
         </div>
@@ -105,6 +119,7 @@ function userHasPermission(permission) {
     // In a real application, this would come from user's role/permissions
     // Example implementation - replace with actual permission logic
     const mockUserPermissions = [
+        'view_public_demo',
         'view_ranger2',
         'view_ranger2k',
         'view_accessories',

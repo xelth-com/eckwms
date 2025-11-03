@@ -1,1 +1,108 @@
-﻿{}
+{
+  "legal": {
+    "copyright_title": "Copyright",
+    "disclaimer_links_title": "Responsabilità per i Link",
+    "disclaimer_content_title": "Responsabilità per i Contenuti",
+    "disclaimer_title": "Dichiarazione di non responsabilità",
+    "disclaimer_legal_note": "[NOTA: Clausola standard, farla revisionare da un avvocato.]",
+    "copyright_text": "I contenuti e le opere create dagli operatori del sito su queste pagine sono soggetti alla legge sul copyright tedesca. La riproduzione, elaborazione, distribuzione e qualsiasi tipo di sfruttamento al di fuori dei limiti del copyright richiedono il consenso scritto del rispettivo autore o creatore. I download e le copie di questa pagina sono consentiti solo per uso privato e non commerciale. Nella misura in cui il contenuto di questa pagina non è stato creato dall'operatore, i diritti d'autore di terzi sono rispettati. In particolare, il contenuto di terzi è contrassegnato come tale. Se doveste comunque venire a conoscenza di una violazione del copyright, vi preghiamo di informarci di conseguenza. Una volta ricevuta la segnalazione di violazioni, rimuoveremo immediatamente tali contenuti.",
+    "disclaimer_links_text": "La nostra offerta contiene link a siti web esterni di terzi, sui cui contenuti non abbiamo alcuna influenza. Pertanto, non possiamo assumerci alcuna responsabilità per questo contenuto esterno. Il rispettivo fornitore o operatore delle pagine è sempre responsabile per il contenuto delle pagine collegate. Le pagine collegate sono state controllate per possibili violazioni legali al momento del collegamento. Contenuti illegali non erano riconoscibili al momento del collegamento. Tuttavia, un controllo permanente dei contenuti delle pagine collegate non è ragionevole senza prove concrete di una violazione. Una volta ricevuta la segnalazione di violazioni, rimuoveremo immediatamente tali link.",
+    "vat_title": "Partita IVA:",
+    "dispute_eu_title": "Risoluzione delle controversie nell'UE:",
+    "dispute_consumer_legal_note": "[NOTA: Questa dichiarazione riguardante la disponibilità a partecipare DEVE essere revisionata da un avvocato!]",
+    "dispute_consumer_text": "Non siamo disposti né obbligati a partecipare a procedure di risoluzione delle controversie davanti a un collegio arbitrale per i consumatori.",
+    "disclaimer_content_text": "In qualità di fornitore di servizi, siamo responsabili dei nostri contenuti su queste pagine secondo § 7 comma 1 TMG e le leggi generali. Tuttavia, secondo i §§ 8-10 TMG, noi come fornitori di servizi non siamo obbligati a monitorare le informazioni di terzi trasmesse o memorizzate né a indagare su circostanze che indicano attività illegali. Gli obblighi di rimuovere o bloccare l'uso delle informazioni secondo le leggi generali rimangono inalterati. Tuttavia, la responsabilità in questo senso è possibile solo dal momento in cui si acquisisce conoscenza di una specifica violazione della legge. Una volta ricevuta la segnalazione di violazioni corrispondenti, rimuoveremo immediatamente questo contenuto.",
+    "contact_email_label": "E-Mail:",
+    "dispute_consumer_title": "Risoluzione delle controversie per i consumatori / Collegio arbitrale universale:",
+    "contact_phone": "Telefono:",
+    "contact_title": "Contatto:",
+    "responsible_title": "Responsabile per il contenuto secondo § 18 comma 2 MStV:",
+    "title": "Avviso legale",
+    "section1_title": "Informazioni ai sensi del § 5 TMG (Legge tedesca sui media telematici):"
+  },
+  "footer": {
+    "legal": "Avviso legale",
+    "terms": "Termini e Condizioni",
+    "privacy": "Informativa sulla privacy"
+  },
+  "common": {
+    "frankfurt_image_alt": "Francoforte"
+  },
+  "chat": {
+    "show_all_link_title": "Mostra tutte le discussioni",
+    "topic4_link_title": "Dettagli sull'argomento 4...",
+    "topic3_link_title": "Dettagli sull'argomento 3...",
+    "topic2_link_title": "Dettagli sull'argomento 2...",
+    "topic1_link_title": "Dettagli sull'argomento 1...",
+    "show_all": "Mostra tutte le discussioni...",
+    "topic4": "Problema con la stampante XY su Android 13",
+    "topic3": "Feedback sulla nuova funzione dello scanner",
+    "topic2": "Ottimizzazione delle prestazioni per grandi set di dati",
+    "topic1": "Come posso integrare la nuova API?",
+    "title": "Argomenti attuali nella chat"
+  },
+  "home": {
+    "process": {
+      "step1": {
+        "text": "Per garantire un'elaborazione rapida, si prega di compilare il nostro <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a>. Una descrizione dettagliata dell'errore ci aiuta notevolmente nella diagnosi e accelera il processo di riparazione.",
+        "form_link_text": "Modulo RMA Online",
+        "title": "Compila il Modulo RMA:"
+      },
+      "step6": {
+        "status_link_text": "stato attuale",
+        "title": "Tracciamento dello stato:"
+      },
+      "step5": {
+        "title": "Spedizione di ritorno:",
+        "text": "Dopo la riparazione riuscita, ti rimanderemo il dispositivo. Copriamo i costi per la spedizione di ritorno all'interno della Germania."
+      },
+      "step4": {
+        "title": "Riparazione dopo approvazione:",
+        "text": "Non appena approvi il preventivo, procederemo alla riparazione in modo professionale."
+      },
+      "step3": {
+        "title": "Ispezione in entrata e preventivo:",
+        "text": "Al ricevimento del tuo pacco, la tua richiesta RMA sarà attivata. Controlliamo il dispositivo e l'errore descritto e creiamo un preventivo gratuito per la riparazione (eccetto per i casi di garanzia Movfast riconosciuti)."
+      },
+      "step2": {
+        "title": "Imballa il dispositivo in modo sicuro e invialo:",
+        "text": "Invia il tuo dispositivo difettoso ben imballato, idealmente con una copia del modulo RMA compilato, al nostro indirizzo di servizio: pda.repair, Servizio Riparazioni, Hamburgerstr. 16, 65760 Eschborn, Germania. Le spese di spedizione verso di noi sono a tuo carico."
+      },
+      "title": "Il Processo di Riparazione - Semplice e Trasparente"
+    },
+    "slogan": "Concentrandosi sempre sulla <span style=\"color: rgb(0, 100, 0);\">causa principale</span>, invece di semplici <span style=\"color: rgb(139, 0, 0);\">sostituzioni</span> rapide.",
+    "services": {
+      "warranty": {
+        "notice": "Si prega di notare: attualmente possiamo eseguire solo riparazioni in garanzia o riparazioni sotto contratti di servizio per dispositivi della marca Movfast.",
+        "instruction": "Se desideri presentare un reclamo in garanzia per un dispositivo Movfast, assicurati di indicare il nome del tuo rivenditore nel modulo RMA.",
+        "title": "Elaborazione della Garanzia (attualmente solo per Movfast):"
+      },
+      "paid": {
+        "title": "Servizio di Riparazione Indipendente per Tutti i Marchi:",
+        "clientele": "Questo servizio può essere utilizzato sia dai clienti finali che dai produttori, importatori o altri centri di assistenza.",
+        "description": "Offriamo il nostro servizio di riparazione a pagamento per dispositivi PDA di tutti i produttori e marchi. Che si tratti di un display rotto, di un motore di scansione difettoso, di problemi con la batteria o di errori software – analizziamo il danno e ti forniamo un preventivo dei costi trasparente."
+      },
+      "title": "La Nostra Offerta di Servizio"
+    },
+    "intro": {
+      "philosophy": "A differenza dei programmi di scambio puri, cerchiamo specificamente la causa del problema per offrire una soluzione durevole ed economica.",
+      "approach": "Siamo il vostro partner specializzato per la riparazione sostenibile e la preservazione del valore dei vostri dispositivi di raccolta dati mobili.",
+      "welcome": "Benvenuti su pda.repair, il vostro nuovo esperto indipendente per la riparazione professionale e il supporto tecnico per tutti i tipi di dispositivi PDA (Terminali di Raccolta Dati Mobili, Terminali Portatili)."
+    }
+  },
+  "feature": {
+    "eckwms_measure": {
+      "image_alt": "Griglia di coordinate EckWMS per la misurazione dei cartoni",
+      "description": "Misura facilmente e rapidamente le dimensioni dei cartoni con un PDA e la nostra griglia di coordinate stampabile."
+    },
+    "eckwms_main": {
+      "link_title": "Scopri di più su eckWMS",
+      "title": "Strumenti utili di eckWMS"
+    }
+  },
+  "rma": {
+    "status_placeholder": "Inserisci RMA o S/N...",
+    "request_button": "Richiesta di riparazione RMA",
+    "status_check": "Per controllare lo stato della riparazione, inserisci il nostro numero RMA o il numero di serie del dispositivo."
+  }
+}

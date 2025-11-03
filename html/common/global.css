@@ -1,11 +1,14 @@
 /*html/common/global.css*/
+
 /* Global CSS Styles */
 
 /* Reset and base styles */
 :root {
   --fontSize: 20px;
   --lineHeight: 30px;
-  /* Переменная для сложной тени */
+  /* Тень для объемного текста */
+  --mainMenu-shadow: -0.4px -0.6px 0.3px rgb(160, 160, 160, 0.6), 0.4px 0.6px 0.3px rgb(70, 70, 70, 0.6), -0.8px -1.2px 3px rgb(215, 215, 215, 0.8), 1.6px 2.2px 4px rgb(0, 0, 0, 0.8), -2.4px -3.3px 8px rgb(255, 255, 255), 3.2px 4.4px 5px rgb(255, 255, 255);
+
   --text3-shadow: 0.2px 0.3px 0.3px rgb(255, 255, 255, 0.4), -0.4px -0.6px 0.6px rgb(0, 0, 0, 0.6), 0px 4px 3px rgb(225, 225, 225), 0px 6px 3px rgb(225, 225, 225), 0px 2px 3px rgb(225, 225, 225), 0px -2px 3px rgb(225, 225, 225), 2px 0px 3px rgb(225, 225, 225), -2px 0px 3px rgb(225, 225, 225), 0px -4px 4px rgb(225, 225, 225), 0px -6px 4px rgb(225, 225, 225), 0px -8px 4px rgb(225, 225, 225), 0px -10px 4px rgb(225, 225, 225), 0px -12px 4px rgb(225, 225, 225);
 }
 
@@ -14,8 +17,7 @@ body {
   font-style: italic;
   font-size: var(--fontSize);         /* 20px */
   line-height: var(--lineHeight);    /* 30px */
-  font-family: "Comic Sans MS", sans-serif; /* Базовый шрифт ДЛЯ ОСНОВНОГО ТЕКСТА */
-  /* font-style: oblique; */ /* ЗАКОММЕНТИРОВАНО - вероятно, не нужно */
+  font-family: "Comic Sans MS", sans-serif;
   background-color: #b0b0b0;
   margin: 0; padding: 0;
 }
@@ -170,3 +172,89 @@ a:hover {
   cursor: zoom-in;
   filter: drop-shadow(7px 12px 12px rgba(0, 0, 0, 0.85));
 }
+
+/* ========= СТИЛИ ДЛЯ ТЕКСТА НА ФОНЕ ========== */
+
+/* Основной стиль "стены" (светлый текст с тенью) */
+.wall-text {
+  font-family: Arial, sans-serif;
+  color: #eee;
+  text-shadow: var(--mainMenu-shadow);
+  /* font-weight: bold; <-- УБРАЛИ ЖИРНОСТЬ ИЗ БАЗЫ */
+  text-align: justify;
+  opacity: 0.85;
+  padding: 1em;
+}
+
+/* Заголовки внутри .wall-text остаются яркими и жирными */
+.wall-text h1,
+.wall-text h2,
+.wall-text h3 {
+  color: #fff;
+  text-align: left;
+  border-bottom: none;
+  text-shadow: var(--mainMenu-shadow), 0 0 5px rgba(255, 255, 255, 0.2);
+  font-weight: bold; /* <<< ВОЗВРАЩАЕМ ЖИРНОСТЬ ДЛЯ ЗАГОЛОВКОВ */
+}
+
+/* Списки внутри .wall-text */
+.wall-text ul {
+  list-style-position: inside;
+  padding-left: 0;
+}
+
+.wall-text li {
+  margin-bottom: 0.8em;
+}
+
+/* Ссылки внутри .wall-text */
+.wall-text a {
+    color: #d1d1ff;
+    text-decoration: underline;
+    text-shadow: var(--mainMenu-shadow);
+}
+
+.wall-text a:hover {
+    color: #ffffff;
+}
+
+/* --- НОВЫЙ СТИЛЬ для "нормального" текста на стене --- */
+.wall-text-normal {
+  font-family: Arial, sans-serif; /* Обычный шрифт */
+  font-weight: normal; /* Убираем жирность */
+  color: rgba(0, 0, 0, 0.7); /* Темно-серый цвет, как у .text2black */
+  text-shadow: var(--mainMenu-shadow); /* Легкая тень для читаемости */
+  text-align: justify;
+  line-height: 1.6; /* Стандартный line-height для обычного текста */
+  opacity: 1; /* Убираем прозрачность */
+  margin-bottom: 1em; /* Добавляем стандартный отступ для абзацев */
+}
+
+/* Стили для ссылок внутри .wall-text-normal */
+.wall-text-normal a {
+  color: #1e2071; /* Стандартный цвет ссылки */
+  text-decoration: underline;
+  text-shadow: var(--mainMenu-shadow); /* Убираем тень у ссылок */
+}
+
+.wall-text-normal a:hover {
+  color: #161a5e;
+}
+
+/* Стили для <strong> внутри .wall-text-normal */
+.wall-text-normal strong {
+   font-weight: bold; /* Убедимся, что strong остается жирным */
+   color: inherit; /* Наследуем цвет текста */
+}
+
+/* Стили для специфичных <strong> (примечания) */
+.wall-text-normal strong[style*="color: red"] {
+  display: block;
+  margin-top: 0.5em;
+  font-size: 0.9em;
+  font-weight: bold; /* Делаем примечание менее заметным */
+  color: #d9534f; /* Красный цвет */
+  text-shadow: var(--mainMenu-shadow);
+}
+
+/* ================================================== */

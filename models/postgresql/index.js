@@ -28,10 +28,20 @@ db.sequelize = sequelize;
 // Import models
 db.UserAuth = require('./UserAuth')(sequelize, Sequelize);
 db.RmaRequest = require('./RmaRequest')(sequelize, Sequelize);
-db.TranslationCache = require('./TranslationCache')(sequelize, Sequelize); // Добавили импорт TranslationCache
+db.TranslationCache = require('./TranslationCache')(sequelize, Sequelize);
+db.Scan = require('./Scan')(sequelize, Sequelize);
+db.EckwmsInstance = require('./EckwmsInstance')(sequelize, Sequelize);
+db.RegisteredDevice = require('./RegisteredDevice')(sequelize, Sequelize);
 
 // Define relationships
 db.UserAuth.hasMany(db.RmaRequest, { foreignKey: 'userId' });
 db.RmaRequest.belongsTo(db.UserAuth, { foreignKey: 'userId' });
+
+// EckWMS relationships
+db.EckwmsInstance.hasMany(db.Scan, { foreignKey: 'instance_id' });
+db.Scan.belongsTo(db.EckwmsInstance, { foreignKey: 'instance_id' });
+
+db.EckwmsInstance.hasMany(db.RegisteredDevice, { foreignKey: 'instance_id' });
+db.RegisteredDevice.belongsTo(db.EckwmsInstance, { foreignKey: 'instance_id' });
 
 module.exports = db;
