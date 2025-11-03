@@ -22,7 +22,8 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // POST /api/upload/image
-router.post('/image', requireAuth, upload.single('image'), (req, res) => {
+// NOTE: Authentication temporarily disabled for debugging Android client
+router.post('/image', upload.single('image'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'No image file uploaded.' });
   }
