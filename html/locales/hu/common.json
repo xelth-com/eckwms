@@ -1,1 +1,87 @@
-﻿{}
+{
+  "chat": {
+    "show_all_link_title": "Minden megbeszélés megjelenítése",
+    "topic4_link_title": "Részletek a 4. témáról...",
+    "topic3_link_title": "Részletek a 3. témáról...",
+    "topic2_link_title": "Részletek a 2. témáról...",
+    "topic1_link_title": "Részletek az 1. témáról...",
+    "show_all": "Minden megbeszélés megjelenítése...",
+    "topic4": "Probléma az XY nyomtatóval Android 13 alatt",
+    "topic3": "Visszajelzés az új szkenner funkcióról",
+    "topic2": "Teljesítményoptimalizálás nagy adathalmazon",
+    "topic1": "Hogyan integráljam az új API-t?",
+    "title": "Jelenlegi témák a csevegésben"
+  },
+  "common": {
+    "frankfurt_image_alt": "Frankfurt"
+  },
+  "home": {
+    "process": {
+      "step1": {
+        "text": "A gyors feldolgozás érdekében kérjük, töltse ki a <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a> űrlapunkat. A hiba részletes leírása jelentősen segít a diagnózisban és felgyorsítja a javítási folyamatot.",
+        "form_link_text": "Online RMA Űrlap",
+        "title": "Töltse Ki az RMA Űrlapot:"
+      },
+      "step6": {
+        "status_link_text": "jelenlegi állapot",
+        "title": "Állapotkövetés:"
+      },
+      "step5": {
+        "title": "Visszaküldési Szállítás:",
+        "text": "A sikeres javítás után visszaküldjük Önnek a készülékét. A visszaküldési szállítás költségeit Németországon belül átvállaljuk."
+      },
+      "step4": {
+        "title": "Javítás Jóváhagyás után:",
+        "text": "Amint jóváhagyja a költségbecslést, professzionálisan elvégezzük a javítást."
+      },
+      "step3": {
+        "title": "Beérkezési Ellenőrzés és Költségbecslés:",
+        "text": "A csomagja beérkezésekor az RMA kérelme aktiválódik. Ellenőrizzük a készüléket és a leírt hibát, és ingyenes költségbecslést készítünk a javításra (kivéve az elismert Movfast garanciális eseteket)."
+      },
+      "step2": {
+        "title": "Csomagolja be a Készüléket Biztonságosan és Küldje El:",
+        "text": "Kérjük, jól becsomagolva, lehetőleg a kitöltött RMA űrlap másolatával együtt küldje el hibás készülékét a szolgáltatási címünkre: pda.repair, Javító Szolgálat, Hamburgerstr. 16, 65760 Eschborn, Németország. A szállítási költségeket Ön viseli."
+      },
+      "title": "A Javítási Folyamat - Egyszerű és Átlátható"
+    },
+    "slogan": "Mindig a <span style=\"color: rgb(0, 100, 0);\">gyökérokra</span> összpontosítva, ahelyett, hogy csak gyors <span style=\"color: rgb(139, 0, 0);\">cserékre</span> támaszkodnánk.",
+    "services": {
+      "warranty": {
+        "title": "Garancia kezelés (jelenleg csak a Movfast esetében):",
+        "instruction": "Ha garanciális igényt szeretne benyújtani egy Movfast eszközre, kérjük, feltétlenül tüntesse fel viszonteladója nevét az RMA űrlapon.",
+        "notice": "Kérjük, vegye figyelembe: Jelenleg csak a Movfast márkájú eszközök garanciális javítását vagy szervizszerződés keretében történő javítását tudjuk elvégezni."
+      },
+      "paid": {
+        "title": "Független javító szolgáltatás minden márkához:",
+        "clientele": "Ezt a szolgáltatást végfelhasználók, valamint gyártók, importőrök vagy egyéb szervizközpontok is igénybe vehetik.",
+        "description": "Fizetős javító szolgáltatásunkat minden gyártó és márka PDA eszközeihez kínáljuk. Legyen szó törött kijelzőről, hibás szkenner motorral, akkumulátor problémákról vagy szoftverhibákról – elemezzük a kárt, és átlátható költségbecslést adunk Önnek."
+      },
+      "title": "Szolgáltatásaink"
+    },
+    "intro": {
+      "welcome": "Üdvözöljük a pda.repair-nél, az Ön új, független szakértőjénél, aki professzionális javítást és műszaki támogatást nyújt minden típusú PDA eszközhöz (Mobil Adat Terminálok, Kézi Terminálok).",
+      "approach": "Mi vagyunk az Ön szakosodott partnere a mobil adatgyűjtő eszközök fenntartható javításában és értékmegőrzésében.",
+      "philosophy": "A tiszta csereprogramokkal ellentétben mi kifejezetten a probléma okát keressük, hogy tartós és költséghatékony megoldást kínálhassunk."
+    }
+  },
+  "feature": {
+    "eckwms_measure": {
+      "image_alt": "EckWMS koordináta rács a kartondimenziók méréséhez",
+      "description": "Mérje meg a kartondimenziókat könnyedén és gyorsan egy PDA-val és nyomtatható koordináta rácsunkkal."
+    },
+    "eckwms_main": {
+      "link_title": "Tudjon meg többet az eckWMS-ről",
+      "title": "Hasznos eszközök az eckWMS-től"
+    }
+  },
+  "rma": {
+    "status_placeholder": "Adja meg az RMA-t vagy a S/N-t...",
+    "request_button": "RMA Javítási Kérelem",
+    "status_check": "A javítás állapotának ellenőrzéséhez kérjük, adja meg RMA számunkat vagy a készülék sorozatszámát."
+  },
+  "footer": {
+    "privacy": "Adatvédelmi nyilatkozat",
+    "legal": "Jogi nyilatkozat",
+    "terms": "Általános Szerződési Feltételek"
+  }
+}

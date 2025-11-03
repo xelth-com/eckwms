@@ -1,10 +1,19 @@
+<!-- html/index.html -->
 <!DOCTYPE html>
-<html>
+<html lang="en"> <!-- Язык будет установлен динамически i18n.js -->
 <head>
-  <!-- Include the head module -->
-  <script src="/core/head.js" type="module"></script>
+<!-- Инициализация <head> происходит здесь через head.js -->
+<script src="/core/head.js" type="module"></script>
+<!-- head.js добавит:
+- Базовые мета-теги (viewport, charset, theme-color, etc.)
+- Фавиконки
+- Язык и направление в <html>
+- Глобальные стили (/common/global.css)
+- Стили i18n (/i18n/i18n.css)
+- Скрипты translationUtils.js и i18n.js
+-->
+<!-- Ссылки на CSS модулей страниц здесь НЕ НУЖНЫ -->
 </head>
-
 <body>
   <!-- Header module -->
   <div id="header-container"></div>
@@ -27,29 +36,151 @@
   <!-- Utilities container (hidden) -->
   <div id="utils-container" style="display: none;"></div>
 
-  <!-- Core module loader script -->
-  <script type="module">
-    import { loadModule } from '/core/module-loader.js';
+<!-- Основной скрипт инициализации и маршрутизации (ИСПРАВЛЕННЫЙ ПОРЯДОК) -->
+<script type="module">
+  import { loadModule } from '/core/module-loader.js';
 
-    // Load the essential modules
-    document.addEventListener('DOMContentLoaded', async () => {
-      // Load SVG definitions first (they're needed by other components)
-      await loadModule('svg-defs', '/svg/svg-defs.js', 'svg-defs-container');
-      
-      // Load image utilities with a valid container
-      await loadModule('image-utils', '/utils/image-utils.js', 'utils-container');  
-      
-      // Load core components
-      await loadModule('header', '/header/header.js', 'header-container');
-      await loadModule('main-content', '/content/home-content.js', 'main-content-container');
-      await loadModule('footer', '/footer/footer.js', 'footer-container');
-      await loadModule('side-menu', '/navigation/side-menu.js', 'side-menu-container');
-      
-      // Initialize translation system after components are loaded
-      if (window.i18n && typeof window.i18n.init === 'function') {
-        window.i18n.init();
+  // Определяем ID основных контейнеров
+  const headerContainerId = 'header-container';
+  const contentContainerId = 'main-content-container';
+  const footerContainerId = 'footer-container';
+  const sideMenuContainerId = 'side-menu-container';
+  const svgContainerId = 'svg-defs-container';
+  const utilsContainerId = 'utils-container';
+
+  /**
+   * Загружает основные компоненты макета СТРОГО ПОСЛЕДОВАТЕЛЬНО
+   * для обеспечения доступности SVG перед зависимыми модулями.
+   */
+  async function loadLayoutSequentially() {
+    console.log('[Initializer] Loading layout modules sequentially...');
+    try {
+      // 1. СНАЧАЛА ЗАГРУЖАЕМ И ЖДЕМ SVG DEFINITIONS
+      console.log('[Initializer] Loading SVG Definitions...');
+      const svgModule = await loadModule('svg-defs', '/svg/svg-defs.js', svgContainerId);
+      if (!svgModule) throw new Error("SVG Definitions module failed to load.");
+      console.log('[Initializer] SVG Definitions loaded and initialized.');
+
+      // 2. ЗАГРУЖАЕМ IMAGE UTILS (если они нужны до хедера/меню)
+      console.log('[Initializer] Loading Image Utils...');
+      await loadModule('image-utils', '/utils/image-utils.js', utilsContainerId);
+      console.log('[Initializer] Image Utils loaded.');
+
+      // 3. ТЕПЕРЬ ПАРАЛЛЕЛЬНО ЗАГРУЖАЕМ ОСТАЛЬНЫЕ КОМПОНЕНТЫ МАКЕТА
+      console.log('[Initializer] Loading Header, Footer, SideMenu...');
+      const results = await Promise.allSettled([
+        loadModule('header', '/header/header.js', headerContainerId),
+        loadModule('footer', '/footer/footer.js', footerContainerId),
+        loadModule('side-menu', '/navigation/side-menu.js', sideMenuContainerId)
+      ]);
+
+      // Проверяем результаты (как раньше)
+      let allEssentialLoaded = true;
+      results.forEach((result, index) => {
+        const moduleName = ['header', 'footer', 'side-menu'][index];
+        if (result.status === 'rejected' || (result.status === 'fulfilled' && result.value === null)) {
+          console.error(`[Initializer] CRITICAL: Essential layout module "${moduleName}" failed.`);
+          allEssentialLoaded = false;
+        } else if (result.status === 'fulfilled') {
+          // console.log(`[Initializer] Layout module "${moduleName}" loaded.`);
+        }
+      });
+
+      if (!allEssentialLoaded) {
+        throw new Error("Essential layout module loading failed.");
       }
-    });
-  </script>
+
+      console.log('[Initializer] Layout modules loading sequence finished.');
+
+    } catch (error) {
+       console.error("Error during layout loading:", error);
+       const contentContainer = document.getElementById(contentContainerId);
+       if (contentContainer) {
+           contentContainer.innerHTML = `<p style="color: red; text-align: center; padding: 20px;">Error loading essential site components. Please try refreshing.</p>`;
+       }
+       throw error; // Прерываем дальнейшую инициализацию
+    }
+  }
+
+  /**
+   * Обрабатывает изменение маршрута (хэша URL) и загружает нужный контентный модуль.
+   * (Эта функция остается без изменений по сравнению с предыдущим ответом)
+   */
+  async function handleRouteChange() {
+      const contentContainer = document.getElementById(contentContainerId);
+      if (!contentContainer) {
+          console.error(`[Router] Content container #${contentContainerId} not found!`);
+          return;
+      }
+      const hash = window.location.hash.substring(1) || '/home';
+      console.log('[Router] Handling route change for:', hash);
+      contentContainer.innerHTML = '<div class="loading-indicator" style="margin: 50px auto; display: block;"></div>';
+      let moduleName = 'Unknown';
+      let modulePath = '';
+      switch (hash) {
+          case '/about-eckwms': moduleName = 'AboutEckwms'; modulePath = '/about-eckwms/about-eckwms.js'; break;
+          case '/legal': moduleName = 'LegalNotice'; modulePath = '/legal/legal.js'; break;
+          case '/privacy': moduleName = 'PrivacyPolicy'; modulePath = '/privacy/privacy.js'; break;
+          case '/terms': moduleName = 'TermsConditions'; modulePath = '/terms/terms.js'; break;
+          case '/home': default: moduleName = 'HomeContent'; modulePath = '/content/home-content.js'; if (hash !== '/home' && hash !== '') { history.replaceState(null, '', '#/home'); } break;
+      }
+      try {
+          const loadedModule = await loadModule(moduleName, modulePath, contentContainerId);
+          if (loadedModule === null) console.warn(`[Router] Module "${moduleName}" for route "${hash}" did not load correctly.`);
+          else console.log(`[Router] Module "${moduleName}" loaded for route "${hash}".`);
+      } catch (error) {
+          console.error(`[Router] CRITICAL error during module loading for route "${hash}":`, error);
+          contentContainer.innerHTML = `<p style="color: red;">Critical error loading page content.</p>`;
+      }
+  }
+
+  /**
+   * Главная функция инициализации фронтенда
+   */
+  async function initializeFrontend() {
+    console.log('[Initializer] Initializing Frontend Application...');
+    try {
+        // 1. Загрузить основные компоненты макета ПОСЛЕДОВАТЕЛЬНО
+        await loadLayoutSequentially(); // Используем новую функцию
+
+        // 2. Настроить слушатель маршрутизации
+        window.addEventListener('hashchange', handleRouteChange);
+
+        // 3. Обработать начальный маршрут ПОСЛЕ инициализации i18n
+        const waitForI18n = new Promise((resolve) => {
+            if (window.i18n && window.i18n.isInitialized && window.i18n.isInitialized()) {
+                resolve();
+            } else {
+                document.addEventListener('i18n:initialized', resolve, { once: true });
+                setTimeout(() => {
+                    if (!window.i18n || !window.i18n.isInitialized()) resolve(); // Продолжаем даже если таймаут
+                }, 3000);
+            }
+        });
+        await waitForI18n;
+        console.log("[Initializer] Proceeding with initial route handling after i18n check.");
+        handleRouteChange(); // Загружаем контент для текущего URL
+
+        console.log('[Initializer] Frontend Initialization Sequence Complete.');
+    } catch (layoutError) {
+        console.error("[Initializer] Failed to initialize frontend due to critical layout errors:", layoutError);
+    }
+  }
+
+  // --- Глобальная функция навигации (без изменений) ---
+  function navigateTo(hashPath) {
+      const path = hashPath.startsWith('#/') ? hashPath : (hashPath.startsWith('/') ? '#' + hashPath : '#/' + hashPath);
+      if (window.location.hash !== path) { window.location.hash = path; }
+      else { handleRouteChange(); }
+  }
+  window.navigateTo = navigateTo;
+
+  // --- Запуск всей инициализации ---
+  if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initializeFrontend);
+  } else {
+      initializeFrontend();
+  }
+</script>
 </body>
 </html>

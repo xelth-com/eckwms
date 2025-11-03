@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>eckWMS Live Scan Feed</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f2f5; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 900px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #1e2071; text-align: center; }
+        #scan-feed { margin-top: 20px; }
+        .scan-item { background: #fff; border: 1px solid #ddd; padding: 15px; margin-bottom: 10px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; }
+        .scan-item .barcode { font-weight: bold; font-family: monospace; font-size: 1.1em; }
+        .scan-item .meta { font-size: 0.9em; color: #666; text-align: right; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>eckWMS Live Scan Feed (Public Demo)</h1>
+        <div id="scan-feed">
+            <p>Waiting for new scans...</p>
+        </div>
+    </div>
+    <script src="/js/eckwms-feed.js?v=2"></script>
+</body>
+</html>

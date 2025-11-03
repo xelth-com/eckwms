@@ -28,11 +28,15 @@ const adminRoutes = require('./routes/admin');
 const authRoutes = require('./routes/auth');
 const translationApiRoutes = require('./routes/translation-api');
 const translationAdminRoutes = require('./routes/translation-admin');
+const eckwmsRoutes = require('./routes/eckwms');
 // Убрал mavenProxyRoutes, так как сказали, что он нерелевантен для проксирования сайта
 // const mavenProxyRoutes = require('./routes/mavenProxy'); // Если все же нужен, верни
 
 // NEW: Import scan routes
 const scanRoutes = require('./routes/scan');
+
+// NEW: Import upload routes
+const uploadRoutes = require('./routes/upload');
 
 // Import middleware
 const { errorHandler, requestLogger } = require('./middleware');
@@ -159,10 +163,12 @@ app.use('/admin', adminRoutes); // Возможно, стоит защитить
 app.use('/auth', authRoutes);
 app.use('/api', translationApiRoutes); // Дублируется '/api', убедись, что нет конфликтов
 app.use('/translation-admin', requireAdmin, translationAdminRoutes); // Защищено админкой
+app.use('/eckwms', eckwmsRoutes);
+app.use('/api/upload', uploadRoutes);
 // app.use('/nexus', mavenProxyRoutes); // Если нужен Maven Proxy, верни
 
-// NEW: Add scan routes
-app.use('/api/scan', scanRoutes); // Возможно, требует аутентификации? app.use('/api/scan', requireAuth, scanRoutes);
+// Legacy scan routes removed - use /eckwms/api/scan instead with the new intelligent buffer architecture
+// app.use('/api/scan', scanRoutes);
 
 // --- Основной маршрут для SPA ---
 app.get('/', (req, res) => {

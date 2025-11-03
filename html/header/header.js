@@ -1,4 +1,5 @@
 /**
+ * html/header/header.js
  * Header Module
  * Contains site logo, language selector, and main navigation menu
  */
@@ -107,8 +108,8 @@ function initEventListeners() {
         resetMenuTimer();
         window.i18n.changeLanguage(langCode);
       } else if (langCode && window.setLanguage) { // Поддержка старого window.setLanguage на всякий случай
-         resetMenuTimer();
-         window.setLanguage(langCode);
+        resetMenuTimer();
+        window.setLanguage(langCode);
       }
     });
   });
@@ -177,10 +178,10 @@ function initializeLanguagesList() {
   // Определяем глобальный список языков, если он еще не существует
   if (!window.allAvailableLanguages || window.allAvailableLanguages.length === 0) {
 
-      window.allAvailableLanguages = [
-        'en', 'de', 'tr', 'pl', 'fr', 'it', 'es', 'ru', 'ar', 'zh', 'ro', 'hr', 'bg', 'hi', 'ja', 'ko', 'cs',
-        'nl', 'el', 'pt', 'he', 'hu', 'sv', 'da', 'fi', 'sk', 'lt', 'lv', 'et', 'sl', 'uk', 'sr', 'bs', 'no'
-      ];
+    window.allAvailableLanguages = [
+      'en', 'de', 'tr', 'pl', 'fr', 'it', 'es', 'ru', 'ar', 'zh', 'ro', 'hr', 'bg', 'hi', 'ja', 'ko', 'cs',
+      'nl', 'el', 'pt', 'he', 'hu', 'sv', 'da', 'fi', 'sk', 'lt', 'lv', 'et', 'sl', 'uk', 'sr', 'bs', 'no'
+    ];
 
     console.log(`Инициализирован список из ${window.allAvailableLanguages.length} языков`);
   }
@@ -198,21 +199,21 @@ function initLanguageButtonsWithCurrentLanguage() {
   // Пытаемся получить язык из ГЛОБАЛЬНОГО i18n объекта
   let currentLanguage = 'en'; // Язык по умолчанию
   if (window.i18n && typeof window.i18n.getCurrentLanguage === 'function') {
-      try {
-          currentLanguage = window.i18n.getCurrentLanguage();
-          // Обработка случая, если функция вернула null/undefined
-          if (!currentLanguage) {
-              console.warn('window.i18n.getCurrentLanguage() вернула null/undefined, используется "en".');
-              currentLanguage = 'en';
-          }
-      } catch (error) {
-          console.error('Ошибка при вызове window.i18n.getCurrentLanguage():', error, 'Используется "en".');
-          currentLanguage = 'en'; // Убедимся, что язык по умолчанию установлен при ошибке
+    try {
+      currentLanguage = window.i18n.getCurrentLanguage();
+      // Обработка случая, если функция вернула null/undefined
+      if (!currentLanguage) {
+        console.warn('window.i18n.getCurrentLanguage() вернула null/undefined, используется "en".');
+        currentLanguage = 'en';
       }
+    } catch (error) {
+      console.error('Ошибка при вызове window.i18n.getCurrentLanguage():', error, 'Используется "en".');
+      currentLanguage = 'en'; // Убедимся, что язык по умолчанию установлен при ошибке
+    }
   } else {
-      // Сообщение об ошибке, если i18n или функция недоступны
-      console.error('window.i18n или window.i18n.getCurrentLanguage недоступны! Используется язык по умолчанию "en".');
-      // currentLanguage уже 'en'
+    // Сообщение об ошибке, если i18n или функция недоступны
+    console.error('window.i18n или window.i18n.getCurrentLanguage недоступны! Используется язык по умолчанию "en".');
+    // currentLanguage уже 'en'
   }
   // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
@@ -424,10 +425,10 @@ export function showMenu(menuType) {
 
       // Special handling for main menu to show language menu
       if (menuType === "mainMenu" && langMenu) {
-         // Убираем display: none !important, если он был установлен при открытии
-         langMenu.style.removeProperty('display');
-         // Показываем langMenu как inline-block (или flex, если нужно)
-         langMenu.style.display = "inline-block"; // Или 'flex' в зависимости от CSS
+        // Убираем display: none !important, если он был установлен при открытии
+        langMenu.style.removeProperty('display');
+        // Показываем langMenu как inline-block (или flex, если нужно)
+        langMenu.style.display = "inline-block"; // Или 'flex' в зависимости от CSS
       }
 
       window.waitForTransition = false;
@@ -439,14 +440,14 @@ export function showMenu(menuType) {
 
     // Hide language menu *before* showing main menu buttons
     if (menuType === "mainMenu" && langMenu) {
-       // Устанавливаем display: none !important, чтобы переопределить стили
-       langMenu.style.setProperty('display', 'none', 'important');
+      // Устанавливаем display: none !important, чтобы переопределить стили
+      langMenu.style.setProperty('display', 'none', 'important');
     }
     buttonsElement.style.display = "inline-block";
 
     // Reset transition lock after a short delay to allow animations to start
     setTimeout(() => {
-        window.waitForTransition = false;
+      window.waitForTransition = false;
     }, 50); // Small delay
   }
 
@@ -527,15 +528,15 @@ export function mainMenuCardOpen(mainMenuNumber) {
     }
     // Keep track of the lowest z-index card *that is not currently assigned* (mmn === 'empty' or '')
     if (!foundExisting && (!element.mmn || element.mmn === 'empty') && (zmin >= z)) {
-       zmin = z;
-       i = index;
+      zmin = z;
+      i = index;
     }
   });
 
   // If already showing this menu, just ensure its z-index is highest and return
   if (equal) {
-     cards[i].el.style.zIndex = `${zmax + 1}`;
-     return;
+    cards[i].el.style.zIndex = `${zmax + 1}`;
+    return;
   }
 
   // --- Card Reuse/Assignment Logic ---
@@ -586,17 +587,17 @@ export function mainMenuCardOpen(mainMenuNumber) {
 
   // Adjust if card goes off-screen
   if (left + cardRect.width > window.innerWidth) {
-      left = window.innerWidth - cardRect.width - 10; // Adjust with padding
+    left = window.innerWidth - cardRect.width - 10; // Adjust with padding
   }
   if (left < 0) {
-      left = 10;
+    left = 10;
   }
   if (top + cardRect.height > window.innerHeight) {
-      top = window.innerHeight - cardRect.height - 10;
+    top = window.innerHeight - cardRect.height - 10;
   }
-   if (top < 0) {
-      top = 10;
-   }
+  if (top < 0) {
+    top = 10;
+  }
 
   cardToUse.el.style.left = `${left}px`;
   cardToUse.el.style.top = `${top}px`;
@@ -604,8 +605,8 @@ export function mainMenuCardOpen(mainMenuNumber) {
 
   // Use requestAnimationFrame for smoother transition start
   requestAnimationFrame(() => {
-      cardToUse.el.style.opacity = "1";
-      cardToUse.el.style.filter = "blur(0px)";
+    cardToUse.el.style.opacity = "1";
+    cardToUse.el.style.filter = "blur(0px)";
   });
 }
 
@@ -622,23 +623,23 @@ export function mainMenuCardClose(mainMenuNumber) {
 
   cards.forEach((element) => {
     if (element.mmn === mainMenuNumber) {
-       // Clear any pending close timeouts for this card
-       clearTimeout(element.timeoutId);
-       clearTimeout(element.timeoutId1);
+      // Clear any pending close timeouts for this card
+      clearTimeout(element.timeoutId);
+      clearTimeout(element.timeoutId1);
 
-       // Start fade out timeout
-       element.timeoutId = setTimeout(() => {
-         element.el.style.opacity = "0";
-         element.el.style.filter = "blur(10px)";
+      // Start fade out timeout
+      element.timeoutId = setTimeout(() => {
+        element.el.style.opacity = "0";
+        element.el.style.filter = "blur(10px)";
 
-         // Set timeout to hide the element after fade out transition
-         element.timeoutId1 = setTimeout(() => {
-           element.el.style.display = "none";
-           element.mmn = "empty"; // Mark as empty *after* hiding
-           element.el.onmouseenter = null; // Clean up listeners
-           element.el.onmouseleave = null;
-         }, 500); // Should match transition duration in CSS
-       }, 1000); // Delay before starting fade out
+        // Set timeout to hide the element after fade out transition
+        element.timeoutId1 = setTimeout(() => {
+          element.el.style.display = "none";
+          element.mmn = "empty"; // Mark as empty *after* hiding
+          element.el.onmouseenter = null; // Clean up listeners
+          element.el.onmouseleave = null;
+        }, 500); // Should match transition duration in CSS
+      }, 1000); // Delay before starting fade out
     }
   });
 }
@@ -691,8 +692,8 @@ function fixLanguageToggleCSS() {
   `;
   // Check if style already exists to prevent duplicates
   if (!document.getElementById('header-lang-fixes')) {
-      styleElement.id = 'header-lang-fixes';
-      document.head.appendChild(styleElement);
+    styleElement.id = 'header-lang-fixes';
+    document.head.appendChild(styleElement);
   }
 }
 
@@ -719,9 +720,9 @@ export function postInit() {
     // Assuming the one from language-selector.js is preferred if initLanguageSelector exists
     // Otherwise, use the global one if available
     if (typeof syncLanguageMasks !== 'function') { // check if imported one exists
-         window.syncLanguageMasks(); // use global one from i18n.js
+      window.syncLanguageMasks(); // use global one from i18n.js
     } else {
-         syncLanguageMasks(); // use imported one
+      syncLanguageMasks(); // use imported one
     }
   }
 
@@ -759,7 +760,7 @@ export function postInit() {
       const menuButtons = document.getElementById("mainMenuButtons");
       // Check menuUsed flag inside timeout as well
       if (menuButtons && menuButtons.style.display === "none" && !window.menuUsed) {
-           showMenu("mainMenu");
+        showMenu("mainMenu");
       }
     }
   }, 30000);

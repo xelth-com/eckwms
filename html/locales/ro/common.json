@@ -1,1 +1,87 @@
-﻿{}
+{
+  "common": {
+    "frankfurt_image_alt": "Frankfurt"
+  },
+  "chat": {
+    "show_all_link_title": "Arată toate discuțiile",
+    "topic4_link_title": "Detalii despre subiectul 4...",
+    "topic3_link_title": "Detalii despre subiectul 3...",
+    "topic2_link_title": "Detalii despre subiectul 2...",
+    "topic1_link_title": "Detalii despre subiectul 1...",
+    "show_all": "Arată toate discuțiile...",
+    "topic4": "Problemă cu imprimanta XY sub Android 13",
+    "topic3": "Feedback despre noua funcție a scannerului",
+    "topic2": "Optimizarea performanței pentru seturi mari de date",
+    "topic1": "Cum integrez noul API?",
+    "title": "Subiecte curente în chat"
+  },
+  "home": {
+    "process": {
+      "step1": {
+        "text": "Pentru a asigura o procesare rapidă, vă rugăm să completați formularul nostru <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a>. O descriere detaliată a erorii ne ajută semnificativ în diagnosticare și accelerează procesul de reparare.",
+        "form_link_text": "Formular RMA Online",
+        "title": "Completați formularul RMA:"
+      },
+      "step6": {
+        "status_link_text": "stare curentă",
+        "title": "Urmărirea Stării:"
+      },
+      "step5": {
+        "title": "Expedierea Întoarcerii:",
+        "text": "După reparația cu succes, vă vom trimite dispozitivul înapoi. Acoperim costurile pentru expedierea de retur în Germania."
+      },
+      "step4": {
+        "title": "Reparație După Aprobat:",
+        "text": "De îndată ce aprobați estimarea costurilor, vom efectua reparația profesional."
+      },
+      "step3": {
+        "text": "La primirea pachetului dumneavoastră, cererea dumneavoastră RMA va fi activată. Verificăm dispozitivul și eroarea descrisă și creăm o estimare gratuită a costurilor pentru reparație (cu excepția cazurilor de garanție recunoscute Movfast).",
+        "title": "Inspecția Incoming & Estimarea Costurilor:"
+      },
+      "step2": {
+        "title": "Ambalați dispozitivul în siguranță și trimiteți-l:",
+        "text": "Trimiteți dispozitivul dumneavoastră defect, bine ambalat, ideal cu o copie a formularului RMA completat, la adresa noastră de service: pda.repair, Serviciul de Reparare, Hamburgerstr. 16, 65760 Eschborn, Germania. Dumneavoastră suportați costurile de transport către noi."
+      },
+      "title": "Procesul de Reparare - Simplu și Transparent"
+    },
+    "slogan": "Concentrându-ne întotdeauna pe <span style=\"color: rgb(0, 100, 0);\">cauza principală</span>, în loc de simple <span style=\"color: rgb(139, 0, 0);\">schimburi</span> rapide.",
+    "services": {
+      "warranty": {
+        "title": "Procesarea Garanției (în prezent doar pentru Movfast):",
+        "instruction": "Dacă doriți să faceți o cerere de garanție pentru un dispozitiv Movfast, vă rugăm să specificați numele revânzătorului dvs. în formularul RMA.",
+        "notice": "Vă rugăm să rețineți: În prezent, putem efectua doar reparații în garanție sau reparații în baza contractelor de service pentru dispozitivele mărcii Movfast."
+      },
+      "paid": {
+        "clientele": "Acest serviciu poate fi utilizat atât de clienți finali, cât și de producători, importatori sau alte centre de service.",
+        "title": "Serviciu de Reparare Independent pentru Toate Mărci:",
+        "description": "Oferim serviciul nostru de reparare contra cost pentru dispozitive PDA de la toți producătorii și brandurile. Fie că este vorba despre un display spart, un motor de scanare defect, probleme cu bateria sau erori de software – analizăm daunele și vă oferim o estimare de costuri transparentă."
+      },
+      "title": "Oferta Noastră de Servicii"
+    },
+    "intro": {
+      "philosophy": "Spre deosebire de programele de schimb pur, căutăm în mod specific cauza problemei pentru a oferi o soluție durabilă și rentabilă.",
+      "approach": "Suntem partenerul dumneavoastră specializat pentru repararea durabilă și păstrarea valorii dispozitivelor dumneavoastră mobile de colectare a datelor.",
+      "welcome": "Bine ați venit la pda.repair, expertul dumneavoastră nou, independent, pentru repararea profesională și suportul tehnic pentru toate tipurile de dispozitive PDA (Terminale Mobile de Date, Terminale Portabile)."
+    }
+  },
+  "feature": {
+    "eckwms_measure": {
+      "image_alt": "Grila de coordonate EckWMS pentru măsurarea cartonului",
+      "description": "Măsurați dimensiunile cartonului ușor și rapid cu un PDA și grila noastră de coordonate imprimabilă."
+    },
+    "eckwms_main": {
+      "link_title": "Aflați mai multe despre eckWMS",
+      "title": "Instrumente utile din eckWMS"
+    }
+  },
+  "rma": {
+    "status_placeholder": "Introduceți RMA sau S/N...",
+    "request_button": "Cerere de reparare RMA",
+    "status_check": "Pentru a verifica starea reparației, vă rugăm să introduceți numărul nostru RMA sau numărul de serie al dispozitivului."
+  },
+  "footer": {
+    "legal": "Notificare legală",
+    "privacy": "Politica de confidențialitate",
+    "terms": "Termeni și condiții"
+  }
+}

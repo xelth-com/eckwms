@@ -21,7 +21,8 @@
     "status_check": "Aby sprawdzić status naprawy, proszę wprowadzić numer RMA lub numer seryjny urządzenia.",
     "form_info": "Aby upewnić się, że nic nie zostanie pominięte, stworzyliśmy formularz RMA. Wypełniając ten formularz i dołączając go do swojej paczki, otrzymamy wszystkie niezbędne informacje z wyprzedzeniem, co pomoże skrócić czas przetwarzania podczas przyjmowania paczki. Dziękujemy za współpracę!",
     "tracking_info": "Na tej stronie możesz sprawdzić zawartość swojej przesyłki, śledzić status naprawy oraz zaktualizować dane płatności lub zgłosić inne problemy, jeśli zajdzie taka potrzeba. Informacje logowania zostaną również wysłane na adres e-mail, który podałeś wraz z paczką.",
-    "process_info": "Po otrzymaniu Twojej paczki umowa zostaje zawarta. Przypisujemy Twojej paczce numer RMA i tworzymy dedykowaną stronę dla niej. Możesz uzyskać dostęp do tej strony, wpisując numer śledzenia podany przez Twoją usługę wysyłkową w odpowiednim polu (żółta etykieta) na naszej stronie głównej."
+    "process_info": "Po otrzymaniu Twojej paczki umowa zostaje zawarta. Przypisujemy Twojej paczce numer RMA i tworzymy dedykowaną stronę dla niej. Możesz uzyskać dostęp do tej strony, wpisując numer śledzenia podany przez Twoją usługę wysyłkową w odpowiednim polu (żółta etykieta) na naszej stronie głównej.",
+    "status_placeholder": "Wprowadź RMA lub S/N..."
   },
   "address": {
     "example_email": "example@eck3.com",
@@ -50,7 +51,12 @@
     "topic3": "Opinie na temat nowej funkcji skanera",
     "topic2": "Optymalizacja wydajności dla dużych zbiorów danych",
     "topic1": "Jak zintegrować nowe API?",
-    "title": "Bieżące tematy w czacie"
+    "title": "Bieżące tematy w czacie",
+    "show_all_link_title": "Pokaż wszystkie dyskusje",
+    "topic4_link_title": "Szczegóły dotyczące tematu 4...",
+    "topic3_link_title": "Szczegóły dotyczące tematu 3...",
+    "topic2_link_title": "Szczegóły dotyczące tematu 2...",
+    "topic1_link_title": "Szczegóły dotyczące tematu 1..."
   },
   "home": {
     "slogan": "Zawsze koncentrując się na <span style=\"color: rgb(0, 100, 0);\">przyczynie źródłowej",
@@ -78,7 +84,8 @@
       },
       "step1": {
         "form_link_text": "Formularz RMA online",
-        "title": "Wypełnij formularz RMA:"
+        "title": "Wypełnij formularz RMA:",
+        "text": "Aby zapewnić szybkie przetwarzanie, prosimy o wypełnienie naszego <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a>. Szczegółowy opis błędu znacznie pomaga nam w diagnozie i przyspiesza proces naprawy."
       }
     },
     "services": {
@@ -102,10 +109,15 @@
   },
   "feature": {
     "eckwms_main": {
-      "title": "Przydatne narzędzia od eckWMS"
+      "title": "Przydatne narzędzia od eckWMS",
+      "link_title": "Dowiedz się więcej o eckWMS"
     },
     "eckwms_measure": {
-      "description": "Mierz wymiary kartonów łatwo i szybko za pomocą PDA i naszej drukowalnej siatki współrzędnych."
+      "description": "Mierz wymiary kartonów łatwo i szybko za pomocą PDA i naszej drukowalnej siatki współrzędnych.",
+      "image_alt": "Siatka współrzędnych EckWMS do pomiaru kartonów"
     }
+  },
+  "common": {
+    "frankfurt_image_alt": "Frankfurt"
   }
 }

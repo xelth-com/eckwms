@@ -1,1 +1,87 @@
-﻿{}
+{
+  "common": {
+    "frankfurt_image_alt": "Frankfurt"
+  },
+  "chat": {
+    "show_all_link_title": "Rodyti visas diskusijas",
+    "topic4_link_title": "Informacija apie temą 4...",
+    "topic3_link_title": "Informacija apie temą 3...",
+    "topic2_link_title": "Informacija apie temą 2...",
+    "topic1_link_title": "Informacija apie temą 1...",
+    "show_all": "Rodyti visas diskusijas...",
+    "topic4": "Problema su spausdintuvu XY po Android 13",
+    "topic3": "Atsiliepimai apie naują skenerio funkciją",
+    "topic2": "Veiklos optimizavimas dideliems duomenų rinkiniais",
+    "topic1": "Kaip integruoti naują API?",
+    "title": "Dabartinės temos pokalbyje"
+  },
+  "home": {
+    "process": {
+      "step1": {
+        "text": "Norėdami užtikrinti greitą apdorojimą, prašome užpildyti mūsų <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a>. Išsami klaidos aprašymas labai padeda mums diagnozuoti ir pagreitina remonto procesą.",
+        "form_link_text": "Internetinė RMA forma",
+        "title": "Užpildykite RMA formą:"
+      },
+      "step6": {
+        "status_link_text": "dabartinis statusas",
+        "title": "Statuso sekimas:"
+      },
+      "step5": {
+        "title": "Grąžinimo siuntimas:",
+        "text": "Sėkmingai remontavus, mes grąžinsime jūsų įrenginį. Mes apmokame grąžinimo siuntimo išlaidas Vokietijoje."
+      },
+      "step4": {
+        "title": "Remontas po patvirtinimo:",
+        "text": "Kai tik patvirtinsite kainų įvertinimą, mes profesionaliai atliksime remontą."
+      },
+      "step3": {
+        "title": "Atvykstamoji inspekcija ir kainų įvertinimas:",
+        "text": "Gavę jūsų siuntinį, jūsų RMA prašymas bus aktyvuotas. Mes patikrinsime įrenginį ir aprašytą klaidą bei parengsime nemokamą remonto kainų įvertinimą (išskyrus pripažintas Movfast garantijos atvejus)."
+      },
+      "step2": {
+        "text": "Siųskite savo defektinį įrenginį gerai supakuotą, pageidautina su užpildyto RMA formos kopija, į mūsų aptarnavimo adresą: pda.repair, Remonto tarnyba, Hamburgerstr. 16, 65760 Eschborn, Vokietija. Jūs apmokate siuntimo išlaidas mums.",
+        "title": "Saugiai supakuokite įrenginį ir siųskite:"
+      },
+      "title": "Remonto Procesas - Paprastas ir Aiškus"
+    },
+    "slogan": "Visada koncentruojamės į <span style=\"color: rgb(0, 100, 0);\">pagrindinę priežastį</span>, o ne tik į greitus <span style=\"color: rgb(139, 0, 0);\">keitimą</span>.",
+    "services": {
+      "title": "Mūsų paslaugų pasiūlymas",
+      "warranty": {
+        "title": "Garantijos tvarkymas (šiuo metu tik Movfast):",
+        "instruction": "Jei norite pateikti garantinį reikalavimą Movfast įrenginiui, būtinai nurodykite savo perpardavėjo pavadinimą RMA formoje.",
+        "notice": "Prašome atkreipti dėmesį: Šiuo metu galime atlikti garantinius remontus arba remontus pagal paslaugų sutartis tik Movfast prekės ženklo įrenginiams."
+      },
+      "paid": {
+        "clientele": "Šia paslauga gali naudotis tiek galutiniai vartotojai, tiek gamintojai, importuotojai ar kiti paslaugų centrai.",
+        "description": "Mes siūlome savo mokamą remonto paslaugą PDA įrenginiams iš visų gamintojų ir prekių ženklų. Nesvarbu, ar tai būtų sulūžęs ekranas, defektinis skenavimo variklis, baterijos problemos ar programinės įrangos klaidos – mes analizuojame žalą ir pateikiame jums aiškią kainų estimaciją.",
+        "title": "Nepriklausoma remonto paslauga visoms prekėms:"
+      }
+    },
+    "intro": {
+      "philosophy": "Skirtingai nuo grynųjų mainų programų, mes konkrečiai ieškome problemos priežasties, kad galėtume pasiūlyti patvarų ir ekonomišką sprendimą.",
+      "approach": "Mes esame jūsų specializuotas partneris, užtikrinantis tvarų jūsų mobiliosios duomenų rinkimo įrangos remontą ir vertės išsaugojimą.",
+      "welcome": "Sveiki atvykę į pda.repair, jūsų naują, nepriklausomą ekspertą profesionaliam remontui ir techninei pagalbai visų tipų PDA įrenginiams (mobiliesiems duomenų terminalams, nešiojamiesiems terminalams)."
+    }
+  },
+  "feature": {
+    "eckwms_measure": {
+      "image_alt": "EckWMS koordinatėse tinklas kartonų matavimui",
+      "description": "Lengvai ir greitai išmatuokite kartono matmenis naudodami PDA ir mūsų spausdinamą koordinačių tinklą."
+    },
+    "eckwms_main": {
+      "link_title": "Sužinokite daugiau apie eckWMS",
+      "title": "Naudingi įrankiai iš eckWMS"
+    }
+  },
+  "rma": {
+    "status_placeholder": "Įveskite RMA arba S/N...",
+    "request_button": "RMA remonto prašymas",
+    "status_check": "Norėdami patikrinti remonto statusą, prašome įvesti mūsų RMA numerį arba įrenginio serijos numerį."
+  },
+  "footer": {
+    "privacy": "Privatumo politika",
+    "legal": "Teisinis pranešimas",
+    "terms": "Sąlygos ir nuostatos"
+  }
+}

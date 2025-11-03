@@ -1,1 +1,87 @@
-﻿{}
+{
+  "common": {
+    "frankfurt_image_alt": "Frankfurt"
+  },
+  "chat": {
+    "show_all_link_title": "Vis alle diskussioner",
+    "topic4_link_title": "Detaljer om emne 4...",
+    "topic3_link_title": "Detaljer om emne 3...",
+    "topic2_link_title": "Detaljer om emne 2...",
+    "topic1_link_title": "Detaljer om emne 1...",
+    "show_all": "Vis alle diskussioner...",
+    "topic4": "Problem med printer XY under Android 13",
+    "topic3": "Feedback på den nye scannerfunktion",
+    "topic2": "Ydelsesoptimering for store datasæt",
+    "topic1": "Hvordan integrerer jeg den nye API?",
+    "title": "Aktuelle emner i chatten"
+  },
+  "home": {
+    "process": {
+      "step1": {
+        "text": "For at sikre hurtig behandling, bedes du udfylde vores <a href='{{rmaFormLink}}'><!--i18n_placeholder_12--></a>. En detaljeret beskrivelse af fejlen hjælper os betydeligt med diagnosen og fremskynder reparationsprocessen.",
+        "form_link_text": "Online RMA-formular",
+        "title": "Udfyld RMA-formular:"
+      },
+      "step6": {
+        "status_link_text": "aktuel status",
+        "title": "Statusopdatering:"
+      },
+      "step5": {
+        "title": "Returfragt:",
+        "text": "Efter en vellykket reparation sender vi din enhed tilbage til dig. Vi dækker omkostningerne til returfragt inden for Tyskland."
+      },
+      "step4": {
+        "title": "Reparation efter godkendelse:",
+        "text": "Så snart du godkender omkostningsoverslaget, vil vi udføre reparationen professionelt."
+      },
+      "step3": {
+        "title": "Indgående inspektion & omkostningsoverslag:",
+        "text": "Ved modtagelse af din pakke aktiveres din RMA-anmodning. Vi tjekker enheden og den beskrevne fejl og laver et gratis omkostningsoverslag for reparationen (undtagen anerkendte Movfast garantisager)."
+      },
+      "step2": {
+        "title": "Pak enheden sikkert og send:",
+        "text": "Send din defekte enhed godt pakket, ideelt set med en kopi af den udfyldte RMA-formular, til vores serviceadresse: pda.repair, Reparationstjeneste, Hamburgerstr. 16, 65760 Eschborn, Tyskland. Du bærer fragtomkostningerne til os."
+      },
+      "title": "Reparationsprocessen - Enkel og Gennemsigtig"
+    },
+    "slogan": "Altid fokusere på <span style=\"color: rgb(0, 100, 0);\">årsagen</span>, i stedet for blot hurtige <span style=\"color: rgb(139, 0, 0);\">udskiftninger</span>.",
+    "intro": {
+      "approach": "Vi er din specialiserede partner for bæredygtig reparation og værdiopbevaring af dine mobile datainsamlingsenheder.",
+      "philosophy": "I modsætning til rene bytteprogrammer søger vi specifikt efter årsagen til problemet for at tilbyde en holdbar og omkostningseffektiv løsning.",
+      "welcome": "Velkommen til pda.repair, din nye, uafhængige ekspert inden for professionel reparation og teknisk support for alle typer PDA-enheder (Mobile Data Terminals, Handheld Terminals)."
+    },
+    "services": {
+      "warranty": {
+        "instruction": "Hvis du ønsker at gøre krav på garanti for en Movfast-enhed, skal du sørge for at angive navnet på din forhandler i RMA-formularen.",
+        "notice": "Bemærk: Vi kan i øjeblikket kun udføre garantireparationer eller reparationer under serviceaftaler for enheder af mærket Movfast.",
+        "title": "Garantihåndtering (i øjeblikket kun for Movfast):"
+      },
+      "title": "Vores serviceudbud",
+      "paid": {
+        "title": "Uafhængig reparationsservice for alle mærker:",
+        "clientele": "Denne service kan bruges af slutkunder såvel som producenter, importører eller andre servicecentre.",
+        "description": "Vi tilbyder vores betalte reparationsservice for PDA-enheder fra alle producenter og mærker. Uanset om det er en defekt skærm, en defekt scanner, batteriproblemer eller softwarefejl – vi analyserer skaden og giver dig et gennemsigtigt prisoverslag."
+      }
+    }
+  },
+  "feature": {
+    "eckwms_measure": {
+      "image_alt": "EckWMS koordinatnet til kassemåling",
+      "description": "Mål kartondimensioner nemt og hurtigt med en PDA og vores printbare koordinatgitter."
+    },
+    "eckwms_main": {
+      "link_title": "Lær mere om eckWMS",
+      "title": "Nyttige værktøjer fra eckWMS"
+    }
+  },
+  "rma": {
+    "status_placeholder": "Indtast RMA eller S/N...",
+    "request_button": "RMA reparationsanmodning",
+    "status_check": "For at tjekke reparationsstatus, indtast venligst vores RMA-nummer eller enhedens serienummer."
+  },
+  "footer": {
+    "legal": "Juridisk Meddelelse",
+    "terms": "Vilkår og Betingelser",
+    "privacy": "Fortrolighedspolitik"
+  }
+}
