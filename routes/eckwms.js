@@ -1,7 +1,7 @@
 // routes/eckwms.js
 const express = require('express');
 const router = express.Router();
-const crypto = require('crypto');
+const crc32 = require('buffer-crc32');
 const path = require('path');
 const { Scan, EckwmsInstance, RegisteredDevice } = require('../models/postgresql');
 
@@ -45,13 +45,11 @@ const authenticateApiKey = async (req, res, next) => {
 };
 
 /**
- * Calculate SHA256 checksum for payload
+ * Calculate CRC32 checksum for payload
  */
 function calculateChecksum(payload) {
-  return crypto
-    .createHash('sha256')
-    .update(JSON.stringify(payload))
-    .digest('hex');
+  const buffer = Buffer.from(JSON.stringify(payload));
+  return crc32.unsigned(buffer).toString(16).padStart(8, '0');
 }
 
 /**
