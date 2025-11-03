@@ -164,7 +164,7 @@ app.use('/auth', authRoutes);
 app.use('/api', translationApiRoutes); // Дублируется '/api', убедись, что нет конфликтов
 app.use('/translation-admin', requireAdmin, translationAdminRoutes); // Защищено админкой
 app.use('/eckwms', eckwmsRoutes);
-app.use('/api/upload', uploadRoutes);
+app.use('/eckwms/api/upload', uploadRoutes);
 // app.use('/nexus', mavenProxyRoutes); // Если нужен Maven Proxy, верни
 
 // Legacy scan routes removed - use /eckwms/api/scan instead with the new intelligent buffer architecture
