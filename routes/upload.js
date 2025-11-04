@@ -40,7 +40,7 @@ router.post('/image', upload.single('image'), (req, res) => {
       const buffer = fs.readFileSync(req.file.path);
       const calculatedChecksum = crc32.unsigned(buffer).toString(16).padStart(8, '0');
 
-      if (calculatedChecksum !== imageChecksum) {
+      if (calculatedChecksum.toLowerCase() !== imageChecksum.toLowerCase()) {
         console.error(`[Upload] Checksum mismatch for ${req.file.filename}. Client: ${imageChecksum}, Server: ${calculatedChecksum}`);
         // Delete the corrupted file
         fs.unlinkSync(req.file.path);
