@@ -12189,3 +12189,6 @@ dist/
 .tmp.driveupload/66127
 .tmp.driveupload/66129
 .tmp.driveupload/66131
+
+# Added by eck-snapshot to ignore metadata directory
+.eck/
