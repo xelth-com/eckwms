@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const path = require('path');
-const { generateJWT, betrugerUrlEncrypt, betrugerCrc } = require('../utils/encryption');
+const { generateJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../shared/utils/encryption');
 const { splitStreetAndHouseNumber, splitPostalCodeAndCity, convertToSerialDescriptionArray } = require('../utils/formatUtils');
 const { generatePdfRma } = require('../utils/pdfGenerator');
 const { writeLargeMapToFile } = require('../utils/fileUtils');
