@@ -32,6 +32,7 @@ db.TranslationCache = require('./TranslationCache')(sequelize, Sequelize);
 db.Scan = require('./Scan')(sequelize, Sequelize);
 db.EckwmsInstance = require('./EckwmsInstance')(sequelize, Sequelize);
 db.RegisteredDevice = require('./RegisteredDevice')(sequelize, Sequelize);
+db.PublicData = require('./PublicData')(sequelize, Sequelize);
 
 // Define relationships
 db.UserAuth.hasMany(db.RmaRequest, { foreignKey: 'userId' });
