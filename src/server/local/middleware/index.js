@@ -1,5 +1,5 @@
 // middleware/index.js
-const { verifyJWT } = require('../utils/encryption');
+const { verifyJWT } = require('../../shared/utils/encryption');
 
 /**
  * Middleware to check if a user is authenticated

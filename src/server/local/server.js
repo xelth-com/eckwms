@@ -8,7 +8,7 @@ const { resolve } = require('path');
 const app = express();
 const bodyParser = require('body-parser');
 const helmet = require('helmet');
-const { createSecretJwtKey } = require('./utils/encryption'); // Убедись, что это используется правильно или удали, если ключи создаются внутри utils/encryption.js
+const { createSecretJwtKey } = require('../../shared/utils/encryption'); // Убедись, что это используется правильно или удали, если ключи создаются внутри utils/encryption.js
 const { appendFile } = require('fs/promises');
 // Убрал 'express-session' и 'connect-pg-simple' т.к. JWT используется для auth API
 const passport = require('passport');
@@ -184,7 +184,7 @@ app.get('/jwt/:token', (req, res) => {
     res.setHeader('Content-Type', 'text/html');
     try {
         // Используй verifyJWT из твоего модуля encryption, а не из временного require
-        const { verifyJWT } = require('./utils/encryption'); // Предполагается, что она экспортирована
+        const { verifyJWT } = require('../../shared/utils/encryption'); // Предполагается, что она экспортирована
         const payload = verifyJWT(token); // Используем секрет, заданный глобально
 
         if (!payload) {
@@ -240,6 +240,72 @@ app.post('/', async (req, res) => {
         console.error("Error in main POST handler:", error);
         res.status(500).send('Server error: ' + error.message);
     }
+});
+
+// --- Internal API endpoint for global server ---
+// This endpoint provides public-safe data for items/boxes/orders
+app.get('/api/internal/public-data/:id', (req, res) => {
+    const { id } = req.params;
+
+    console.log(`[Local Server] Internal API request for ID: ${id}`);
+
+    try {
+        // Check if ID exists in any of the legacy global maps
+        let data = null;
+        let type = null;
+
+        // Check items
+        if (global.items && global.items.has(id)) {
+            const item = global.items.get(id);
+            type = 'item';
+            data = {
+                id: id,
+                type: type,
+                model: item.mod || 'Unknown',
+                status: item.status || 'Unknown',
+                timestamp: item.timestamp || new Date().toISOString()
+            };
+        }
+        // Check boxes
+        else if (global.boxes && global.boxes.has(id)) {
+            const box = global.boxes.get(id);
+            type = 'box';
+            data = {
+                id: id,
+                type: type,
+                status: box.status || 'Unknown',
+                timestamp: box.timestamp || new Date().toISOString()
+            };
+        }
+        // Check orders
+        else if (global.orders && global.orders.has(id)) {
+            const order = global.orders.get(id);
+            type = 'order';
+            data = {
+                id: id,
+                type: type,
+                status: order.status || 'Unknown',
+                timestamp: order.timestamp || new Date().toISOString()
+            };
+        }
+
+        if (data) {
+            console.log(`[Local Server] Found ${type} with ID: ${id}`);
+            return res.json(data);
+        } else {
+            console.log(`[Local Server] No data found for ID: ${id}`);
+            return res.status(404).json({
+                error: 'Item not found',
+                message: 'No information available for this code.'
+            });
+        }
+    } catch (error) {
+        console.error('[Local Server] Error in internal API:', error);
+        return res.status(500).json({
+            error: 'Internal server error',
+            message: 'An error occurred while retrieving information.'
+        });
+    }
 });
 
 // --- Обработчик ошибок (должен быть последним) ---
@@ -334,7 +400,7 @@ async function initialize() {
         });
 
         // 4. Запуск сервера
-        const PORT = process.env.PORT || 3000;
+        const PORT = process.env.LOCAL_SERVER_PORT || process.env.PORT || 3000;
         app.listen(PORT, () => {
             console.log(`eckwms server running on port ${PORT} in ${process.env.NODE_ENV} mode.`);
             writeLog('Server started successfully.'); // Лог успешного запуска

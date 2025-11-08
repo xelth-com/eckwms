@@ -1,7 +1,7 @@
 // routes/api.js
 const express = require('express');
 const router = express.Router();
-const { verifyJWT } = require('../utils/encryption');
+const { verifyJWT } = require('../../shared/utils/encryption');
 const { prettyPrintObject, maskObjectFields } = require('../utils/formatUtils');
 const { findKnownCode, isBetDirect } = require('../utils/dataInit');
 const OpenAI = require("openai");

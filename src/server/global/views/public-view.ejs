@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>eckWMS - Item Information</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 2rem auto;
+            padding: 2rem;
+            background-color: #242424;
+            border: 1px solid #333;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        header {
+            text-align: center;
+            padding-bottom: 2rem;
+            border-bottom: 2px solid #333;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            color: #4a9eff;
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: #888;
+            font-size: 0.9rem;
+        }
+
+        .error {
+            background-color: #3d1f1f;
+            border: 1px solid #8b2e2e;
+            border-left: 4px solid #ff4444;
+            padding: 1.5rem;
+            border-radius: 8px;
+            color: #ffaaaa;
+        }
+
+        .error h2 {
+            color: #ff6666;
+            margin-bottom: 0.5rem;
+        }
+
+        .data-section {
+            background-color: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .data-section h2 {
+            color: #5ab9ea;
+            font-size: 1.4rem;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #3a3a3a;
+        }
+
+        .data-row {
+            display: flex;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid #333;
+        }
+
+        .data-row:last-child {
+            border-bottom: none;
+        }
+
+        .data-label {
+            font-weight: 600;
+            color: #aaa;
+            min-width: 150px;
+            flex-shrink: 0;
+        }
+
+        .data-value {
+            color: #e0e0e0;
+            word-break: break-word;
+        }
+
+        .json-display {
+            background-color: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            border-radius: 6px;
+            padding: 1rem;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+        }
+
+        pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            margin-top: auto;
+            color: #666;
+            font-size: 0.85rem;
+        }
+
+        .logo {
+            color: #4a9eff;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>eckWMS</h1>
+            <p class="subtitle">Public Item Information</p>
+        </header>
+
+        <% if (data.error) { %>
+            <div class="error">
+                <h2>Error</h2>
+                <p><%= data.error %></p>
+            </div>
+        <% } else { %>
+            <div class="data-section">
+                <h2>Item Details</h2>
+
+                <% if (data.id) { %>
+                    <div class="data-row">
+                        <div class="data-label">ID:</div>
+                        <div class="data-value"><%= data.id %></div>
+                    </div>
+                <% } %>
+
+                <% if (data.type) { %>
+                    <div class="data-row">
+                        <div class="data-label">Type:</div>
+                        <div class="data-value"><%= data.type %></div>
+                    </div>
+                <% } %>
+
+                <% if (data.status) { %>
+                    <div class="data-row">
+                        <div class="data-label">Status:</div>
+                        <div class="data-value"><%= data.status %></div>
+                    </div>
+                <% } %>
+
+                <% if (data.timestamp) { %>
+                    <div class="data-row">
+                        <div class="data-label">Timestamp:</div>
+                        <div class="data-value"><%= new Date(data.timestamp).toLocaleString() %></div>
+                    </div>
+                <% } %>
+            </div>
+
+            <% if (process.env.NODE_ENV === 'development') { %>
+                <div class="data-section">
+                    <h2>Debug Information</h2>
+                    <div class="json-display">
+                        <pre><%= JSON.stringify(data, null, 2) %></pre>
+                    </div>
+                </div>
+            <% } %>
+        <% } %>
+
+        <footer>
+            <p>&copy; 2025 <span class="logo">eckWMS</span>. All rights reserved.</p>
+        </footer>
+    </div>
+</body>
+</html>

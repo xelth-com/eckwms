@@ -1,12 +1,12 @@
 // routes/admin.js
 const express = require('express');
 const router = express.Router();
-const { verifyJWT, betrugerUrlEncrypt, betrugerCrc } = require('../utils/encryption');
+const { verifyJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../shared/utils/encryption');
 const { addUnicEntryToProperty, addEntryToProperty } = require('../utils/dataInit');
 const { generatePdfRma, betrugerPrintCodesPdf } = require('../utils/pdfGenerator');
 const path = require('path');
 const crc32 = require('buffer-crc32');
-const { base32table } = require('../utils/encryption');
+const { base32table } = require('../../shared/utils/encryption');
 
 // Admin authentication middleware
 const authenticateAdmin = (req, res, next) => {

@@ -4,8 +4,10 @@
   "description": "WMS project for e-commerce and service centers",
   "main": "src/server/local/server.js",
   "scripts": {
-    "start": "node src/server/local/server.js",
-    "dev": "nodemon src/server/local/server.js",
+    "start:local": "node src/server/local/server.js",
+    "start:global": "node src/server/global/server.js",
+    "dev:local": "nodemon src/server/local/server.js",
+    "dev:global": "nodemon src/server/global/server.js",
     "build": "webpack --mode production",
     "watch": "webpack --watch --mode development"
   },
@@ -17,6 +19,7 @@
     "buffer-crc32": "^1.0.0",
     "connect-pg-simple": "^10.0.0",
     "dotenv": "^16.4.7",
+    "ejs": "^3.1.10",
     "express": "^4.18.2",
     "express-interceptor": "^1.2.0",
     "express-session": "^1.18.1",
