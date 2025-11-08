@@ -2,10 +2,10 @@
   "name": "eckwms",
   "version": "1.0.0",
   "description": "WMS project for e-commerce and service centers",
-  "main": "app.js",
+  "main": "src/server/local/server.js",
   "scripts": {
-    "start": "node app.js",
-    "dev": "nodemon app.js",
+    "start": "node src/server/local/server.js",
+    "dev": "nodemon src/server/local/server.js",
     "build": "webpack --mode production",
     "watch": "webpack --watch --mode development"
   },
