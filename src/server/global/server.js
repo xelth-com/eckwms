@@ -1,108 +1,87 @@
-// eckWMS Global Server
-// Public-facing server that proxies API requests and serves public information pages
-
 require('dotenv').config({ path: require('path').resolve(__dirname, '../../../.env') });
 const express = require('express');
 const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const { betrugerUrlDecrypt } = require('../../shared/utils/encryption');
+const db = require('../../shared/models/postgresql');
 
 const app = express();
 const PORT = process.env.GLOBAL_SERVER_PORT || 8080;
 const LOCAL_SERVER_URL = process.env.LOCAL_SERVER_INTERNAL_URL || 'http://localhost:3000';
+const INTERNAL_API_KEY = process.env.GLOBAL_SERVER_API_KEY || 'a_super_secret_key_for_internal_sync';
 
-// Setup view engine for public pages
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
-
-// Middleware for parsing JSON
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// Logging middleware
-app.use((req, res, next) => {
-    console.log(`[Global Server] ${req.method} ${req.url}`);
-    next();
+// --- API Proxy Middleware (for Android client fallback) ---
+app.use('/api/proxy', createProxyMiddleware({ target: LOCAL_SERVER_URL, changeOrigin: true, pathRewrite: { '^/api/proxy': '' }, logLevel: 'debug' }));
+
+// --- Internal Sync API (for local server to push data) ---
+const internalApiAuth = (req, res, next) => {
+  if (req.get('X-Internal-Api-Key') !== INTERNAL_API_KEY) {
+    return res.status(403).json({ error: 'Forbidden: Invalid internal API key' });
+  }
+  next();
+};
+
+app.post('/api/internal/sync', internalApiAuth, async (req, res) => {
+  const { id, type, data } = req.body;
+  if (!id || !type || !data) {
+    return res.status(400).json({ error: 'Invalid sync data' });
+  }
+  try {
+    await db.PublicData.upsert({ id, type, data });
+    console.log(`[Global Server] Synced data for ${type} ID: ${id}`);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('[Global Server] Error during data sync:', error.message);
+    res.status(500).json({ error: 'Failed to sync data' });
+  }
 });
 
-// API Proxy Middleware
-// Forwards requests from mobile clients to the internal local server
-app.use('/api/proxy', createProxyMiddleware({
-    target: LOCAL_SERVER_URL,
-    changeOrigin: true,
-    pathRewrite: { '^/api/proxy': '' }, // Remove /api/proxy prefix before forwarding
-    logLevel: process.env.NODE_ENV === 'development' ? 'debug' : 'info',
-    onError: (err, req, res) => {
-        console.error('[Global Server] Proxy error:', err.message);
-        if (res && !res.headersSent) {
-            res.status(502).json({
-                error: 'Proxy Error',
-                message: 'Could not connect to local server.'
-            });
-        }
-    }
-}));
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'ok',
-        server: 'global',
-        timestamp: new Date().toISOString()
-    });
-});
-
-// Public Code Route
-// Displays public information for scanned QR codes
+// --- Public QR Code Route (reads from own DB) ---
 app.get('/:code', async (req, res) => {
-    const { code } = req.params;
+  const { code } = req.params;
+  if (code === 'favicon.ico') return res.status(204).end();
 
-    // Skip common browser requests
-    if (code === 'favicon.ico') {
-        return res.status(404).end();
+  const decryptedId = betrugerUrlDecrypt(`ECK1.COM/${code}M3`);
+  if (!decryptedId) {
+    return res.status(404).render('public-view', { data: { error: 'Code not valid or expired.' } });
+  }
+
+  try {
+    const publicData = await db.PublicData.findByPk(decryptedId);
+    if (!publicData) {
+      return res.status(404).render('public-view', { data: { error: 'Information not yet available or code is invalid.' } });
     }
-
-    console.log(`[Global Server] Processing code: ${code}`);
-
-    // Decrypt the code to get the internal ID
-    const decryptedId = betrugerUrlDecrypt(`ECK1.COM/${code}M3`);
-
-    if (!decryptedId) {
-        console.log(`[Global Server] Invalid or expired code: ${code}`);
-        return res.status(404).render('public-view', {
-            data: { error: 'Code not valid or expired.' }
-        });
-    }
-
-    console.log(`[Global Server] Decrypted ID: ${decryptedId}`);
-
-    try {
-        // Fetch public data from local server's internal API
-        const response = await fetch(`${LOCAL_SERVER_URL}/api/internal/public-data/${decryptedId}`);
-
-        if (!response.ok) {
-            throw new Error(`Local server returned status ${response.status}`);
-        }
-
-        const data = await response.json();
-        res.render('public-view', { data });
-    } catch (error) {
-        console.error('[Global Server] Error fetching public data:', error.message);
-        res.status(500).render('public-view', {
-            data: { error: 'Error retrieving information. Please try again later.' }
-        });
-    }
+    res.render('public-view', { data: { id: publicData.id, type: publicData.type, ...publicData.data } });
+  } catch (error) {
+    console.error('[Global Server] Error fetching public data from DB:', error);
+    res.status(500).render('public-view', { data: { error: 'Error retrieving information.' } });
+  }
 });
 
-// Start server
-app.listen(PORT, () => {
-    console.log(`\n========================================`);
-    console.log(`eckWMS Global Server`);
-    console.log(`========================================`);
-    console.log(`Running on port: ${PORT}`);
-    console.log(`Proxying API requests to: ${LOCAL_SERVER_URL}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`========================================\n`);
-});
+// --- Server Initialization ---
+async function startServer() {
+  try {
+    await db.sequelize.authenticate();
+    console.log('[Global Server] PostgreSQL connection established.');
+    await db.sequelize.sync({ alter: process.env.NODE_ENV === 'development' });
+    console.log('[Global Server] Models synchronized.');
 
-module.exports = app;
+    app.listen(PORT, () => {
+      console.log(`\n========================================`);
+      console.log(`eckWMS Global Server`);
+      console.log(`========================================`);
+      console.log(`Running on port: ${PORT}`);
+      console.log(`Proxying API requests to: ${LOCAL_SERVER_URL}`);
+      console.log(`========================================\n`);
+    });
+  } catch (error) {
+    console.error('[Global Server] FAILED to start:', error);
+    process.exit(1);
+  }
+}
+
+startServer();

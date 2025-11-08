@@ -4,6 +4,7 @@ const router = express.Router();
 const { verifyJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../shared/utils/encryption');
 const { addUnicEntryToProperty, addEntryToProperty } = require('../utils/dataInit');
 const { generatePdfRma, betrugerPrintCodesPdf } = require('../utils/pdfGenerator');
+const { syncPublicData } = require('../services/globalSyncService');
 const path = require('path');
 const crc32 = require('buffer-crc32');
 const { base32table } = require('../../shared/utils/encryption');
@@ -157,9 +158,12 @@ router.post('/items', (req, res) => {
     if (global.classes.has(classCode)) {
         addUnicEntryToProperty(global.classes, classCode, ['i', itemSN], 'down');
     }
-    
-    res.status(201).json({ 
-        id: itemSN, 
+
+    // Sync public data to global server
+    syncPublicData({ id: itemSN, type: 'item', data: { classCode: newItem.cl, createdAt: newItem.sn[1] } });
+
+    res.status(201).json({
+        id: itemSN,
         serialNumber: itemSN.startsWith('i7') ? itemSN.slice(-7) : itemSN,
         createdAt: newItem.sn[1]
     });
@@ -176,9 +180,12 @@ router.post('/boxes', (req, res) => {
     
     // Add to boxes collection
     global.boxes.set(boxSN, newBox);
-    
-    res.status(201).json({ 
-        id: boxSN, 
+
+    // Sync public data to global server
+    syncPublicData({ id: boxSN, type: 'box', data: { createdAt: newBox.sn[1] } });
+
+    res.status(201).json({
+        id: boxSN,
         serialNumber: boxSN.replace(/^b0+/, ''),
         createdAt: newBox.sn[1]
     });
