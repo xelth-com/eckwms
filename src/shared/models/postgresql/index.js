@@ -25,7 +25,7 @@ const db = {};
 db.Sequelize = Sequelize;
 db.sequelize = sequelize;
 
-// Import models
+// Import WMS Core models
 db.UserAuth = require('./UserAuth')(sequelize, Sequelize);
 db.RmaRequest = require('./RmaRequest')(sequelize, Sequelize);
 db.TranslationCache = require('./TranslationCache')(sequelize, Sequelize);
@@ -34,15 +34,22 @@ db.EckwmsInstance = require('./EckwmsInstance')(sequelize, Sequelize);
 db.RegisteredDevice = require('./RegisteredDevice')(sequelize, Sequelize);
 db.PublicData = require('./PublicData')(sequelize, Sequelize);
 
-// Define relationships
+// Import InBody Driver models (optional - only if needed for integration)
+db.RepairOrder = require('./RepairOrder')(sequelize, Sequelize);
+
+// Define relationships - WMS Core
 db.UserAuth.hasMany(db.RmaRequest, { foreignKey: 'userId' });
 db.RmaRequest.belongsTo(db.UserAuth, { foreignKey: 'userId' });
 
-// EckWMS relationships
+// EckWMS Instance relationships
 db.EckwmsInstance.hasMany(db.Scan, { foreignKey: 'instance_id' });
 db.Scan.belongsTo(db.EckwmsInstance, { foreignKey: 'instance_id' });
 
 db.EckwmsInstance.hasMany(db.RegisteredDevice, { foreignKey: 'instance_id' });
 db.RegisteredDevice.belongsTo(db.EckwmsInstance, { foreignKey: 'instance_id' });
+
+// InBody Driver relationships - Scan to RepairOrder
+db.Scan.hasMany(db.RepairOrder, { foreignKey: 'scan_id', as: 'repairOrders' });
+db.RepairOrder.belongsTo(db.Scan, { foreignKey: 'scan_id', as: 'scan' });
 
 module.exports = db;
