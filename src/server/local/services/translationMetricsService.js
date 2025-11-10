@@ -1,5 +1,5 @@
 // services/translationMetricsService.js
-const { TranslationCache } = require('../../shared/models/postgresql');
+const { TranslationCache } = require('../../../shared/models/postgresql');
 const { Sequelize, Op } = require('sequelize');
 
 // Получение статистики по использованию переводов

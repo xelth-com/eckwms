@@ -13,9 +13,9 @@ const openai = new OpenAI({
 // Import only if DB connection exists
 let TranslationCache;
 try {
-  const { sequelize } = require('../../shared/models/postgresql');
+  const { sequelize } = require('../../../shared/models/postgresql');
   if (sequelize) {
-    TranslationCache = require('../../shared/models/postgresql').TranslationCache;
+    TranslationCache = require('../../../shared/models/postgresql').TranslationCache;
   }
 } catch (error) {
   console.warn('PostgreSQL not configured for translation cache. Using memory cache only.');

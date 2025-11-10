@@ -4,7 +4,7 @@ const LocalStrategy = require('passport-local').Strategy;
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const JwtStrategy = require('passport-jwt').Strategy;
 const ExtractJwt = require('passport-jwt').ExtractJwt;
-const { UserAuth } = require('../../shared/models/postgresql');
+const { UserAuth } = require('../../../shared/models/postgresql');
 const bcrypt = require('bcrypt'); // Если не используется здесь, можно удалить
 const { Buffer } = require('node:buffer'); // Импортируем Buffer
 

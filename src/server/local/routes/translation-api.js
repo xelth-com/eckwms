@@ -9,9 +9,9 @@ const { Queue } = require('../utils/queue');
 // PostgreSQL model for translation caching
 let TranslationCache;
 try {
-  const { sequelize } = require('../../shared/models/postgresql');
+  const { sequelize } = require('../../../shared/models/postgresql');
   if (sequelize) {
-    TranslationCache = require('../../shared/models/postgresql').TranslationCache;
+    TranslationCache = require('../../../shared/models/postgresql').TranslationCache;
   }
 } catch (error) {
   console.warn('PostgreSQL not configured for translation error logging');

@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const passport = require('passport');
-const { UserAuth, RmaRequest } = require('../../shared/models/postgresql');
+const { UserAuth, RmaRequest } = require('../../../shared/models/postgresql');
 const { requireAdmin, requireAuth } = require('../middleware/auth');
 const { Sequelize } = require('sequelize');
 

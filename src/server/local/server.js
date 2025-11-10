@@ -38,6 +38,9 @@ const scanRoutes = require('./routes/scan');
 // NEW: Import upload routes
 const uploadRoutes = require('./routes/upload');
 
+// NEW: Import setup routes for device pairing
+const setupRoutes = require('./routes/setup');
+
 // Import middleware
 const { errorHandler, requestLogger } = require('./middleware');
 
@@ -165,6 +168,7 @@ app.use('/api', translationApiRoutes); // Дублируется '/api', убе�
 app.use('/translation-admin', requireAdmin, translationAdminRoutes); // Защищено админкой
 app.use('/eckwms', eckwmsRoutes);
 app.use('/eckwms/api/upload', uploadRoutes);
+app.use('/api/internal', setupRoutes); // Device pairing endpoints
 // app.use('/nexus', mavenProxyRoutes); // Если нужен Maven Proxy, верни
 
 // Legacy scan routes removed - use /eckwms/api/scan instead with the new intelligent buffer architecture

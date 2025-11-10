@@ -1,5 +1,5 @@
 // utils/htmlParser.js
-const { verifyJWT, betrugerCrc } = require('./encryption');
+const { verifyJWT, betrugerCrc } = require('../../../shared/utils/encryption');
 const { formatUnixTimestamp, prettyPrintObject, maskObjectFields } = require('./formatUtils');
 const { findKnownCode, isBetDirect } = require('./dataInit');
 

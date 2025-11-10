@@ -13,7 +13,7 @@ const {
 } = require('./dataInit');
 
 // Import encryption utils
-const { betrugerUrlDecrypt } = require('./encryption');
+const { betrugerUrlDecrypt } = require('../../../shared/utils/encryption');
 
 // Global buffers for active elements
 let iTem = [];

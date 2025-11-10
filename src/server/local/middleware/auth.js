@@ -1,7 +1,7 @@
 // middleware/auth.js
 const passport = require('passport');
 const jwt = require('jsonwebtoken');
-const { UserAuth } = require('../../shared/models/postgresql');
+const { UserAuth } = require('../../../shared/models/postgresql');
 
 // JWT Authentication middleware for protected routes
 exports.requireAuth = passport.authenticate('jwt', { session: false });

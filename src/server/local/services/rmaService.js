@@ -1,6 +1,6 @@
 // services/rmaService.js
-const { RmaRequest } = require('../../shared/models/postgresql');
-const { betrugerCrc } = require('../../shared/utils/encryption');
+const { RmaRequest } = require('../../../shared/models/postgresql');
+const { betrugerCrc } = require('../../../shared/utils/encryption');
 
 /**
  * Создает новый RMA-запрос
