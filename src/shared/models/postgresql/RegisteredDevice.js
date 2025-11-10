@@ -6,7 +6,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     instance_id: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,  // Made optional for standalone instances
       references: {
         model: 'eckwms_instances',
         key: 'id'

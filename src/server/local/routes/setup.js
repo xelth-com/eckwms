@@ -59,7 +59,7 @@ router.post('/register-device', async (req, res) => {
       defaults: {
         publicKey: devicePublicKey,
         deviceName: deviceName || null,
-        isActive: true
+        is_active: true
       }
     });
 
@@ -67,7 +67,7 @@ router.post('/register-device', async (req, res) => {
       // If device already exists, update its public key and name
       device.publicKey = devicePublicKey;
       device.deviceName = deviceName || device.deviceName;
-      device.isActive = true;
+      device.is_active = true;
       await device.save();
       console.log(`[Device Registration] Re-registered device: ${deviceId}`);
       return res.status(200).json({ success: true, message: 'Device re-registered successfully.' });
@@ -82,8 +82,8 @@ router.post('/register-device', async (req, res) => {
   }
 });
 
-// Endpoint for the admin UI to check the global server's status
-router.get('/global-server-status', requireAdmin, async (req, res) => {
+// Endpoint for the admin UI to check the global server's status (public - no auth required)
+router.get('/global-server-status', async (req, res) => {
   const globalServerUrl = process.env.GLOBAL_SERVER_URL;
   if (!globalServerUrl) {
     return res.json({ status: 'offline', error: 'GLOBAL_SERVER_URL not configured in .env' });

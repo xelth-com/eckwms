@@ -40,6 +40,11 @@ app.post('/api/internal/sync', internalApiAuth, async (req, res) => {
   }
 });
 
+// --- Health Check Endpoint ---
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // --- Public QR Code Route (reads from own DB) ---
 app.get('/:code', async (req, res) => {
   const { code } = req.params;
