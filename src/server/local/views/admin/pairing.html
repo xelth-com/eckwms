@@ -35,5 +35,16 @@
     </div>
 
     <script src="/js/admin_pairing.js"></script>
+    <script>
+        // Check if user is authenticated on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const token = localStorage.getItem('auth_token');
+            if (!token) {
+                // No token found - redirect to login
+                alert('Please login first to access this page');
+                window.location.href = '/auth/login';
+            }
+        });
+    </script>
 </body>
 </html>

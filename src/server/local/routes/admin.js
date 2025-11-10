@@ -31,18 +31,18 @@ const authenticateAdmin = (req, res, next) => {
     }
 };
 
-// Apply authentication middleware to all admin routes
-router.use(authenticateAdmin);
+// Serve the device pairing page (no auth required - auth handled client-side)
+router.get('/pairing', (req, res) => {
+    res.sendFile(path.join(__dirname, '../views/admin/pairing.html'));
+});
 
-// Admin dashboard
+// Admin dashboard (no auth required - auth handled client-side)
 router.get('/dashboard', (req, res) => {
     res.sendFile(path.join(__dirname, '../html/admin-dashboard.html'));
 });
 
-// Serve the device pairing page
-router.get('/pairing', (req, res) => {
-    res.sendFile(path.join(__dirname, '../views/admin/pairing.html'));
-});
+// Apply authentication middleware to all API routes (not HTML pages)
+router.use(authenticateAdmin);
 
 // Get all items with issues
 router.get('/items/issues', (req, res) => {
