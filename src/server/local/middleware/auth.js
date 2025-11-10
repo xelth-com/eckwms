@@ -2,6 +2,10 @@
 const passport = require('passport');
 const jwt = require('jsonwebtoken');
 const { UserAuth } = require('../../../shared/models/postgresql');
+const { Buffer } = require('node:buffer');
+
+// JWT Secret Key (read once and prepare for signing)
+const jwtSecretBuffer = Buffer.from(process.env.JWT_SECRET, 'hex');
 
 // JWT Authentication middleware for protected routes
 exports.requireAuth = passport.authenticate('jwt', { session: false });
@@ -14,25 +18,25 @@ exports.optionalAuth = (req, res, next) => {
   })(req, res, next);
 };
 
-// Generate access and refresh tokens
+// Generate access and refresh tokens using the 'jsonwebtoken' library
 exports.generateTokens = (user) => {
   const accessToken = jwt.sign(
-    { 
-      userId: user.id, 
-      email: user.email, 
+    {
+      id: user.id, // Use 'id' to match passport's expectation
+      email: user.email,
       role: user.role,
       userType: user.userType
     },
-    global.secretJwt,
+    jwtSecretBuffer,
     { expiresIn: '1h' }
   );
 
   const refreshToken = jwt.sign(
-    { userId: user.id },
-    global.secretJwt,
+    { id: user.id },
+    jwtSecretBuffer,
     { expiresIn: '90d' }
   );
-  
+
   return { accessToken, refreshToken };
 };
 
@@ -40,22 +44,21 @@ exports.generateTokens = (user) => {
 exports.refreshToken = async (req, res) => {
   try {
     const { refreshToken } = req.body;
-    
+
     if (!refreshToken) {
       return res.status(400).json({ error: 'Refresh token required' });
     }
-    
-    const payload = jwt.verify(refreshToken, global.secretJwt);
 
-    const user = await UserAuth.findByPk(payload.userId);
-    
+    const payload = jwt.verify(refreshToken, jwtSecretBuffer);
+
+    const user = await UserAuth.findByPk(payload.id);
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
-    // Generate new tokens
+
     const tokens = exports.generateTokens(user);
-    
+
     res.json(tokens);
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
@@ -67,21 +70,19 @@ exports.refreshToken = async (req, res) => {
 
 // Admin authorization middleware
 exports.requireAdmin = (req, res, next) => {
-  // First authenticate
   passport.authenticate('jwt', { session: false }, (err, user, info) => {
     if (err) {
       return next(err);
     }
-    
+
     if (!user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
-    
-    // Check if user is admin
+
     if (user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin access required' });
     }
-    
+
     req.user = user;
     next();
   })(req, res, next);
@@ -89,21 +90,19 @@ exports.requireAdmin = (req, res, next) => {
 
 // Company user authorization middleware
 exports.requireCompany = (req, res, next) => {
-  // First authenticate
   passport.authenticate('jwt', { session: false }, (err, user, info) => {
     if (err) {
       return next(err);
     }
-    
+
     if (!user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
-    
-    // Check if user is company or admin
+
     if (user.userType !== 'company' && user.role !== 'admin') {
       return res.status(403).json({ error: 'Company access required' });
     }
-    
+
     req.user = user;
     next();
   })(req, res, next);
@@ -115,15 +114,15 @@ exports.requireOwnershipOrAdmin = (resourceField) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
-    
+
     if (req.user.role === 'admin') {
       return next();
     }
-    
+
     if (req[resourceField] && req[resourceField].userId === req.user.id) {
       return next();
     }
-    
+
     res.status(403).json({ error: 'You do not have permission to access this resource' });
   };
 };
