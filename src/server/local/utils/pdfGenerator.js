@@ -1,7 +1,6 @@
 // utils/pdfGenerator.js
 const PdfPrinter = require('pdfmake');
-const { betrugerCrc } = require('./encryption');
-const { base32table } = require('./encryption');
+const { betrugerCrc, base32table } = require('../../../shared/utils/encryption');
 const fs = require('fs');
 const path = require('path');
 

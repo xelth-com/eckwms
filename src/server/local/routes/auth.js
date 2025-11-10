@@ -5,7 +5,7 @@ const path = require('path');
 const jwt = require('jsonwebtoken');
 const passport = require('passport');
 const { generateTokens, refreshToken, requireAdmin, optionalAuth, requireAuth } = require('../middleware/auth');
-const { UserAuth, RmaRequest } = require('../../shared/models/postgresql');
+const { UserAuth, RmaRequest } = require('../../../shared/models/postgresql');
 const { Sequelize } = require('sequelize');
 
 // Serve HTML login page

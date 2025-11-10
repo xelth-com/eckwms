@@ -1,13 +1,13 @@
 // routes/admin.js
 const express = require('express');
 const router = express.Router();
-const { verifyJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../shared/utils/encryption');
+const { verifyJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../../shared/utils/encryption');
 const { addUnicEntryToProperty, addEntryToProperty } = require('../utils/dataInit');
 const { generatePdfRma, betrugerPrintCodesPdf } = require('../utils/pdfGenerator');
 const { syncPublicData } = require('../services/globalSyncService');
 const path = require('path');
 const crc32 = require('buffer-crc32');
-const { base32table } = require('../../shared/utils/encryption');
+const { base32table } = require('../../../shared/utils/encryption');
 
 // Admin authentication middleware
 const authenticateAdmin = (req, res, next) => {
@@ -37,6 +37,11 @@ router.use(authenticateAdmin);
 // Admin dashboard
 router.get('/dashboard', (req, res) => {
     res.sendFile(path.join(__dirname, '../html/admin-dashboard.html'));
+});
+
+// Serve the device pairing page
+router.get('/pairing', (req, res) => {
+    res.sendFile(path.join(__dirname, '../views/admin/pairing.html'));
 });
 
 // Get all items with issues

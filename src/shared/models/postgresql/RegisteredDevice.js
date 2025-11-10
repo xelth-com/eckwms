@@ -16,6 +16,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       defaultValue: true
     },
+    publicKey: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      comment: 'Base64-encoded Ed25519 public key for this device'
+    },
     deviceName: {
       type: DataTypes.STRING,
       allowNull: true

@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const crc32 = require('buffer-crc32');
 const path = require('path');
-const { Scan, EckwmsInstance, RegisteredDevice } = require('../../shared/models/postgresql');
+const { Scan, EckwmsInstance, RegisteredDevice } = require('../../../shared/models/postgresql');
 
 const PUBLIC_API_KEY = 'public-demo-key-for-eckwms-app';
 

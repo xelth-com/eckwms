@@ -2,14 +2,14 @@
 const express = require('express');
 const router = express.Router();
 const path = require('path');
-const { generateJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../shared/utils/encryption');
+const { generateJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../../shared/utils/encryption');
 const { splitStreetAndHouseNumber, splitPostalCodeAndCity, convertToSerialDescriptionArray } = require('../utils/formatUtils');
 const { generatePdfRma } = require('../utils/pdfGenerator');
 const { writeLargeMapToFile } = require('../utils/fileUtils');
 const { resolve } = require('path');
 const fs = require('fs');
 const { optionalAuth, requireAuth } = require('../middleware/auth');
-const { UserAuth, RmaRequest } = require('../../shared/models/postgresql');
+const { UserAuth, RmaRequest } = require('../../../shared/models/postgresql');
 const { createRmaRequest } = require('../services/rmaService');
 
 // Apply optional authentication to all RMA routes
