@@ -1,0 +1,63 @@
+{
+  "workflowName": "Manual Restock Order",
+  "version": "1.0",
+  "initialState": {
+    "restockTable": []
+  },
+  "steps": [
+    {
+      "stepId": "1",
+      "action": "scanAndEdit",
+      "variable": "currentItem",
+      "ui": {
+        "title": "Scan Part",
+        "instruction": "Scan a part's barcode to add it to the order list."
+      },
+      "params": {
+        "listVariable": "restockTable",
+        "keyField": "barcode"
+      }
+    },
+    {
+      "stepId": "2",
+      "action": "promptInput",
+      "variable": "userInput",
+      "ui": {
+        "title": "Enter Quantity or Note",
+        "instruction": "For item {{currentItem.barcode}}:\nEnter a number for quantity, or text for a note."
+      }
+    },
+    {
+      "stepId": "3",
+      "action": "updateTable",
+      "params": {
+        "listVariable": "restockTable",
+        "itemVariable": "currentItem",
+        "inputVariable": "userInput"
+      }
+    },
+    {
+      "stepId": "4",
+      "action": "loop",
+      "condition": "user_choice",
+      "ui": {
+        "prompt": "Scan another part?"
+      },
+      "goto": "1"
+    },
+    {
+      "stepId": "5",
+      "action": "createDocument",
+      "ui": {
+        "title": "Submitting Order",
+        "instruction": "Sending restock order to the server..."
+      },
+      "params": {
+        "endpoint": "/api/documents",
+        "documentType": "ManualRestockOrder",
+        "content": "{{restockTable}}",
+        "format": "csv"
+      }
+    }
+  ]
+}

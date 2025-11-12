@@ -5,6 +5,7 @@ const { verifyJWT } = require('../../../shared/utils/encryption');
 const { prettyPrintObject, maskObjectFields } = require('../utils/formatUtils');
 const { findKnownCode, isBetDirect } = require('../utils/dataInit');
 const OpenAI = require("openai");
+const { processDocument } = require('../services/documentService');
 
 // Initialize OpenAI
 const openai = new OpenAI({
@@ -114,6 +115,25 @@ router.get('/item/:code/location', (req, res) => {
     res.json(item.loc || []);
 });
 
+// Generic endpoint for submitting documents from workflows
+router.post('/documents', authenticateJWT, async (req, res) => {
+  const { type, payload, format } = req.body;
 
+  if (!type || !payload) {
+    return res.status(400).json({ error: 'Document type and payload are required.' });
+  }
+
+  try {
+    const result = await processDocument(type, payload);
+    res.status(201).json({
+      success: true,
+      message: `Document '${type}' processed successfully.`,
+      result
+    });
+  } catch (error) {
+    console.error(`[API /documents] Error processing document type '${type}':`, error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 module.exports = router;

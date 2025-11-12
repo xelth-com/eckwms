@@ -179,6 +179,11 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'html', 'index.html'));
 });
 
+
+// Health check endpoint for client connectivity testing
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', server: 'local' });
+});
 // --- Маршрут для JWT верификации (пример, возможно, не нужен) ---
 // Если используется только для отладки, можно удалить или защитить.
 // Сейчас он использует глобальные переменные, что не идеально.
