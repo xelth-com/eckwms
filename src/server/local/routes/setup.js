@@ -5,14 +5,19 @@ const nacl = require('tweetnacl');
 const { Buffer } = require('node:buffer');
 const { requireAdmin } = require('../middleware/auth');
 const { RegisteredDevice } = require('../../../shared/models/postgresql');
+const { getLocalIpAddresses } = require('../utils/networkUtils');
 
 // Endpoint to generate a pairing QR code (requires admin authentication)
 router.get('/pairing-qr', requireAdmin, async (req, res) => {
   try {
+    const port = process.env.LOCAL_SERVER_PORT || 3000;
+    const localIps = getLocalIpAddresses();
+    const local_server_urls = localIps.map(ip => `http://${ip}:${port}`);
+
     const pairingData = {
       type: 'eckwms-pairing-request',
       version: '1.0',
-      local_server_url: process.env.LOCAL_SERVER_INTERNAL_URL || 'http://localhost:3000',
+      local_server_urls: local_server_urls,
       global_server_url: process.env.GLOBAL_SERVER_URL || 'http://localhost:8080',
       server_public_key: process.env.SERVER_PUBLIC_KEY
     };
