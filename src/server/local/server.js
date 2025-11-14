@@ -19,6 +19,7 @@ const { requireAdmin } = require('./middleware/auth'); // Middleware auth
 const i18next = require('i18next');
 const createHtmlTranslationInterceptor = require('./middleware/htmlTranslationInterceptor');
 const { createProxyMiddleware } = require('http-proxy-middleware'); // <-- ДОБАВЛЕНО для NodeBB прокси
+const { collectAndReportDiagnostics } = require('./utils/startupDiagnostics');
 
 // Import routes
 const apiRoutes = require('./routes/api');
@@ -413,6 +414,11 @@ async function initialize() {
         app.listen(PORT, () => {
             console.log(`eckwms server running on port ${PORT} in ${process.env.NODE_ENV} mode.`);
             writeLog('Server started successfully.'); // Лог успешного запуска
+
+            // Report diagnostics to global server on startup
+            if (process.env.NODE_ENV !== 'development-no-sync') { // Add a flag to disable sync for simple testing
+                collectAndReportDiagnostics();
+            }
         });
 
     } catch (err) {

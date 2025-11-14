@@ -17,6 +17,7 @@ router.get('/pairing-qr', requireAdmin, async (req, res) => {
     const pairingData = {
       type: 'eckwms-pairing-request',
       version: '1.0',
+      instance_id: process.env.INSTANCE_ID,
       local_server_urls: local_server_urls,
       global_server_url: process.env.GLOBAL_SERVER_URL || 'http://localhost:8080',
       server_public_key: process.env.SERVER_PUBLIC_KEY
