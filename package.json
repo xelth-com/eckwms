@@ -9,7 +9,8 @@
     "dev:local": "nodemon src/server/local/server.js",
     "dev:global": "nodemon src/server/global/server.js",
     "build": "webpack --mode production",
-    "watch": "webpack --watch --mode development"
+    "watch": "webpack --watch --mode development",
+    "generate:id": "node scripts/generate-instance-id.js"
   },
   "author": "Dmytro Surovtsev",
   "license": "MIT",
@@ -46,7 +47,8 @@
     "react-dom": "^19.0.0",
     "sequelize": "^6.37.6",
     "serialport": "^12.0.0",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@babel/core": "^7.26.10",
