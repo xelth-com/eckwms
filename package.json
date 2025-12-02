@@ -10,7 +10,8 @@
     "dev:global": "nodemon src/server/global/server.js",
     "build": "webpack --mode production",
     "watch": "webpack --watch --mode development",
-    "generate:id": "node scripts/generate-instance-id.js"
+    "generate:id": "node scripts/generate-instance-id.js",
+    "db:dump": "dotenv -- bash -c 'PGPASSWORD=$PG_PASSWORD pg_dump -U $PG_USERNAME -h $PG_HOST -d $PG_DATABASE --no-owner --no-privileges --exclude-schema=support_graph | gzip > eckwms_backup_$(date +%Y-%m-%d_%H-%M).sql.gz'"
   },
   "author": "Dmytro Surovtsev",
   "license": "MIT",
@@ -55,6 +56,7 @@
     "@babel/preset-env": "^7.26.9",
     "@babel/preset-react": "^7.26.3",
     "babel-loader": "^10.0.0",
+    "dotenv-cli": "^11.0.0",
     "nodemon": "^3.1.0",
     "webpack": "^5.98.0",
     "webpack-cli": "^6.0.1"
