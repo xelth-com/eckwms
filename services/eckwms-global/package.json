@@ -1,0 +1,28 @@
+{
+  "name": "@eckwms/global-service",
+  "version": "1.0.0",
+  "description": "Standalone Global Discovery Service for eckWMS - Instance management and public QR codes",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["eckwms", "microservice", "discovery", "qr-code"],
+  "author": "eckWMS Team",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "pg": "^8.11.3",
+    "sequelize": "^6.35.2",
+    "dotenv": "^16.3.1",
+    "http-proxy-middleware": "^2.0.6",
+    "ejs": "^3.1.10"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
