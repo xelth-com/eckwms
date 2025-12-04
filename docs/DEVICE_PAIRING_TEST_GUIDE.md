@@ -59,7 +59,7 @@ npm run start:local
 ```
 PostgreSQL connection established successfully.
 PostgreSQL models synchronized.
-eckwms server running on port 3000 in development mode.
+eckwms server running on port 3100 in development mode.
 ```
 
 **Терминал 2** - Глобальный сервер:
@@ -73,7 +73,7 @@ npm run start:global
 eckWMS Global Server
 ========================================
 Running on port: 8080
-Proxying API requests to: http://localhost:3000
+Proxying API requests to: http://localhost:3100
 ========================================
 ```
 
@@ -81,7 +81,7 @@ Proxying API requests to: http://localhost:3000
 
 1. Откройте браузер и перейдите на:
    ```
-   http://localhost:3000/auth/login
+   http://localhost:3100/auth/login
    ```
 
 2. Войдите используя учетные данные администратора
@@ -92,7 +92,7 @@ Proxying API requests to: http://localhost:3000
 
 1. Перейдите на страницу подключения устройств:
    ```
-   http://localhost:3000/admin/pairing
+   http://localhost:3100/admin/pairing
    ```
 
 2. **Проверка статуса глобального сервера**
@@ -108,7 +108,7 @@ Proxying API requests to: http://localhost:3000
      {
        "type": "eckwms-pairing-request",
        "version": "1.0",
-       "local_server_url": "http://localhost:3000",
+       "local_server_url": "http://localhost:3100",
        "global_server_url": "http://localhost:8080",
        "server_public_key": "..."
      }
@@ -126,13 +126,13 @@ curl http://localhost:8080/health
 
 **Проверка статуса через локальный сервер:**
 ```bash
-curl -H "Authorization: Bearer YOUR_JWT_TOKEN" http://localhost:3000/api/internal/global-server-status
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" http://localhost:3100/api/internal/global-server-status
 ```
 Ответ: `{"status":"online"}`
 
 **Генерация QR кода через API:**
 ```bash
-curl -H "Authorization: Bearer YOUR_JWT_TOKEN" http://localhost:3000/api/internal/pairing-qr
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" http://localhost:3100/api/internal/pairing-qr
 ```
 Ответ: `{"success":true,"qr_code_data_url":"data:image/png;base64,..."}`
 
@@ -149,7 +149,7 @@ curl -H "Authorization: Bearer YOUR_JWT_TOKEN" http://localhost:3000/api/interna
 
 3. **Обновите .env файл** (если тестируете с реального устройства):
    ```env
-   LOCAL_SERVER_INTERNAL_URL=http://192.168.1.10:3000
+   LOCAL_SERVER_INTERNAL_URL=http://192.168.1.10:3100
    GLOBAL_SERVER_URL=http://192.168.1.10:8080
    ```
 

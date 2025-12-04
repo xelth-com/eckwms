@@ -16,7 +16,7 @@ The entire system is designed for maximum reliability and performance. The Andro
 
 The Android application must provide a settings screen where the user can configure two separate URLs:
 
--   **`LOCAL_SERVER_URL`**: The IP address and port of the server running on the local network (e.g., `http://192.168.1.100:3000`).
+-   **`LOCAL_SERVER_URL`**: The IP address and port of the server running on the local network (e.g., `http://192.168.1.100:3100`).
 -   **`GLOBAL_SERVER_URL`**: The public domain and port of the globally accessible server (e.g., `http://your-domain.com:8080`).
 
 ## 3. Key API Endpoints & Payloads

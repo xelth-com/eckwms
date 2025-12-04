@@ -10,7 +10,7 @@ const { getLocalIpAddresses } = require('../utils/networkUtils');
 // Endpoint to generate a pairing QR code (requires admin authentication)
 router.get('/pairing-qr', requireAdmin, async (req, res) => {
   try {
-    const port = process.env.LOCAL_SERVER_PORT || 3000;
+    const port = process.env.LOCAL_SERVER_PORT || 3100;
     const localIps = getLocalIpAddresses();
     const local_server_urls = localIps.map(ip => `http://${ip}:${port}`);
 
@@ -19,7 +19,7 @@ router.get('/pairing-qr', requireAdmin, async (req, res) => {
       version: '1.0',
       instance_id: process.env.INSTANCE_ID,
       local_server_urls: local_server_urls,
-      global_server_url: process.env.GLOBAL_SERVER_URL || 'http://localhost:8080',
+      global_server_url: process.env.GLOBAL_SERVER_URL,
       server_public_key: process.env.SERVER_PUBLIC_KEY
     };
 
