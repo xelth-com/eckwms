@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MovFast USB Debugging Setup Guide for Ubuntu | MovFast Solutions</title>
+
+    <!-- Meta tags для людей -->
+    <meta name="description" content="Complete guide to fix ADB connection issues with MovFast devices on Ubuntu Linux. Step-by-step troubleshooting for 'no permissions' error.">
+    <meta name="keywords" content="MovFast, Ubuntu, ADB, USB debugging, Linux, MediaTek, troubleshooting">
+    <meta name="author" content="MovFast Solutions">
+
+    <!-- OpenGraph для соц. сетей -->
+    <meta property="og:title" content="MovFast Ubuntu ADB Setup Guide">
+    <meta property="og:description" content="Fix MovFast USB debugging issues on Ubuntu Linux in 5 minutes">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://movfast-solutions.com/docs/ubuntu-adb-setup">
+
+    <!-- Schema.org JSON-LD для AI и поисковиков -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      "headline": "MovFast USB Debugging Setup Guide for Ubuntu Linux",
+      "description": "Complete guide to fix ADB connection issues with MovFast devices on Ubuntu Linux",
+      "author": {
+        "@type": "Organization",
+        "name": "MovFast Solutions",
+        "url": "https://movfast-solutions.com"
+      },
+      "datePublished": "2025-12-03",
+      "dateModified": "2025-12-03",
+      "image": "https://movfast-solutions.com/images/ubuntu-guide-cover.jpg",
+      "publisher": {
+        "@type": "Organization",
+        "name": "MovFast Solutions",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://movfast-solutions.com/logo.png"
+        }
+      },
+      "mainEntity": {
+        "@type": "HowTo",
+        "name": "Fix MovFast ADB Connection on Ubuntu",
+        "description": "Step-by-step guide to resolve USB debugging issues",
+        "estimatedCost": {
+          "@type": "MonetaryAmount",
+          "currency": "USD",
+          "value": "0"
+        },
+        "totalTime": "PT5M",
+        "tool": [
+          {
+            "@type": "HowToTool",
+            "name": "Terminal (bash/zsh)"
+          },
+          {
+            "@type": "HowToTool",
+            "name": "ADB (Android Debug Bridge)"
+          }
+        ],
+        "supply": [
+          {
+            "@type": "HowToSupply",
+            "name": "MovFast device with USB debugging enabled"
+          },
+          {
+            "@type": "HowToSupply",
+            "name": "USB cable"
+          }
+        ],
+        "step": [
+          {
+            "@type": "HowToStep",
+            "position": 1,
+            "name": "Identify Your Device",
+            "text": "Check if Ubuntu detects the device at the USB level by running the lsusb command.",
+            "url": "https://movfast-solutions.com/docs/ubuntu-adb-setup#step1",
+            "itemListElement": [
+              {
+                "@type": "HowToDirection",
+                "text": "Open terminal and run: lsusb"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Look for: ID 0e8d:201c MediaTek Inc. Ranger2"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Note the vendor ID (0e8d in this case)"
+              }
+            ]
+          },
+          {
+            "@type": "HowToStep",
+            "position": 2,
+            "name": "Create USB Permission Rules",
+            "text": "Create a udev rule to grant Ubuntu permission to access your MovFast device.",
+            "url": "https://movfast-solutions.com/docs/ubuntu-adb-setup#step2",
+            "itemListElement": [
+              {
+                "@type": "HowToDirection",
+                "text": "Run: sudo nano /etc/udev/rules.d/51-android.rules"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Add line: SUBSYSTEM==\"usb\", ATTR{idVendor}==\"0e8d\", MODE=\"0666\", GROUP=\"plugdev\""
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Save with Ctrl+O, Enter, then Ctrl+X"
+              }
+            ]
+          },
+          {
+            "@type": "HowToStep",
+            "position": 3,
+            "name": "Apply the Rules",
+            "text": "Reload the USB device rules to activate the new permissions.",
+            "url": "https://movfast-solutions.com/docs/ubuntu-adb-setup#step3",
+            "itemListElement": [
+              {
+                "@type": "HowToDirection",
+                "text": "Run: sudo chmod a+r /etc/udev/rules.d/51-android.rules"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Run: sudo udevadm control --reload-rules"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Run: sudo service udev restart"
+              }
+            ]
+          },
+          {
+            "@type": "HowToStep",
+            "position": 4,
+            "name": "Restart ADB Server",
+            "text": "Restart the Android Debug Bridge to recognize new permissions.",
+            "url": "https://movfast-solutions.com/docs/ubuntu-adb-setup#step4",
+            "itemListElement": [
+              {
+                "@type": "HowToDirection",
+                "text": "Run: adb kill-server"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Run: adb start-server"
+              }
+            ]
+          },
+          {
+            "@type": "HowToStep",
+            "position": 5,
+            "name": "Configure Device USB Mode",
+            "text": "Set the correct USB mode on your MovFast device to activate ADB interface.",
+            "url": "https://movfast-solutions.com/docs/ubuntu-adb-setup#step5",
+            "itemListElement": [
+              {
+                "@type": "HowToDirection",
+                "text": "Disconnect and reconnect USB cable"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "On device: swipe down notification panel"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Tap 'USB charging' or 'USB options'"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Select 'File Transfer (MTP)' or 'PTP (Camera)'"
+              }
+            ]
+          },
+          {
+            "@type": "HowToStep",
+            "position": 6,
+            "name": "Authorize the Computer",
+            "text": "Allow USB debugging on your MovFast device to save the computer's RSA key.",
+            "url": "https://movfast-solutions.com/docs/ubuntu-adb-setup#step6",
+            "itemListElement": [
+              {
+                "@type": "HowToDirection",
+                "text": "Wait for 'Allow USB debugging?' dialog on device"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Check 'Always allow from this computer'"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Tap OK"
+              }
+            ]
+          },
+          {
+            "@type": "HowToStep",
+            "position": 7,
+            "name": "Verify Connection",
+            "text": "Confirm that the device is detected and authorized by ADB.",
+            "url": "https://movfast-solutions.com/docs/ubuntu-adb-setup#step7",
+            "itemListElement": [
+              {
+                "@type": "HowToDirection",
+                "text": "Run: adb devices"
+              },
+              {
+                "@type": "HowToDirection",
+                "text": "Expected output: MT15AEM24120007    device"
+              }
+            ]
+          }
+        ]
+      },
+      "about": {
+        "@type": "Product",
+        "name": "MovFast Industrial Scanner",
+        "brand": {
+          "@type": "Brand",
+          "name": "MovFast"
+        },
+        "operatingSystem": "Android"
+      }
+    }
+    </script>
+
+    <!-- Для AI ботов: указание на API -->
+    <link rel="alternate" type="application/json" href="/api/docs/movfast-ubuntu-adb">
+    <link rel="alternate" type="text/markdown" href="/docs/MovFast-Ubuntu-ADB-Setup-Guide.md">
+
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        pre {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .step {
+            margin: 30px 0;
+            padding: 20px;
+            border-left: 4px solid #007acc;
+            background: #f9f9f9;
+        }
+        .api-access {
+            background: #e8f4f8;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>MovFast USB Debugging Setup Guide for Ubuntu</h1>
+
+    <div class="api-access">
+        <strong>🤖 For AI/Bots:</strong> This documentation is also available via API:
+        <ul>
+            <li>JSON: <code>/api/docs/movfast-ubuntu-adb</code></li>
+            <li>Steps: <code>/api/docs/movfast-ubuntu-adb/steps</code></li>
+            <li>Search: <code>/api/docs/search?q=ubuntu</code></li>
+            <li>Raw Markdown: <code>/docs/MovFast-Ubuntu-ADB-Setup-Guide.md</code></li>
+        </ul>
+    </div>
+
+    <section>
+        <h2>Problem Description</h2>
+        <p>When connecting your MovFast device to Ubuntu Linux via USB, the Android Debug Bridge (ADB) may fail to detect the device...</p>
+    </section>
+
+    <section id="step1" class="step">
+        <h3>Step 1: Identify Your Device</h3>
+        <p>Check if Ubuntu detects the device at the USB level:</p>
+        <pre><code>lsusb</code></pre>
+        <p><strong>Expected output:</strong></p>
+        <pre><code>Bus 001 Device 011: ID 0e8d:201c MediaTek Inc. Ranger2</code></pre>
+    </section>
+
+    <!-- Остальные шаги... -->
+
+    <footer>
+        <p><small>Last updated: December 2025 | For AI: This page includes Schema.org HowTo markup and API endpoints for programmatic access.</small></p>
+    </footer>
+</body>
+</html>
