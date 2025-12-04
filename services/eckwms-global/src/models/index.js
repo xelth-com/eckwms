@@ -171,6 +171,13 @@ db.Scan = sequelize.define(
       allowNull: true,
       comment: 'Device that performed the scan'
     },
+    status: {
+      type: DataTypes.ENUM('buffered', 'confirmed'),
+      defaultValue: 'buffered',
+      allowNull: false,
+      index: true,
+      comment: 'Sync status: buffered (waiting for local pull) or confirmed (pulled by local server)'
+    },
     timestamp: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,
