@@ -5,9 +5,7 @@
   "main": "src/server/local/server.js",
   "scripts": {
     "start:local": "node src/server/local/server.js",
-    "start:global": "node src/server/global/server.js",
     "dev:local": "nodemon src/server/local/server.js",
-    "dev:global": "nodemon src/server/global/server.js",
     "build": "webpack --mode production",
     "watch": "webpack --watch --mode development",
     "generate:id": "node scripts/generate-instance-id.js",

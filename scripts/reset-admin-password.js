@@ -32,9 +32,9 @@ async function resetPassword() {
     console.log('📧 Email:    admin@example.com');
     console.log('🔑 Password: admin123');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-    console.log('🌐 Login URL: http://localhost:3000/auth/login\n');
+    console.log('🌐 Login URL: http://localhost:3100/auth/login\n');
     console.log('📝 Steps to login:');
-    console.log('   1. Open http://localhost:3000/auth/login in browser');
+    console.log('   1. Open http://localhost:3100/auth/login in browser');
     console.log('   2. Enter email: admin@example.com');
     console.log('   3. Enter password: admin123');
     console.log('   4. Click Login\n');

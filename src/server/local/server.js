@@ -410,7 +410,7 @@ async function initialize() {
         });
 
         // 4. Запуск сервера
-        const PORT = process.env.LOCAL_SERVER_PORT || process.env.PORT || 3000;
+        const PORT = process.env.LOCAL_SERVER_PORT || process.env.PORT || 3100;
         app.listen(PORT, () => {
             console.log(`eckwms server running on port ${PORT} in ${process.env.NODE_ENV} mode.`);
             writeLog('Server started successfully.'); // Лог успешного запуска

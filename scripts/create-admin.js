@@ -53,7 +53,7 @@ async function createAdmin() {
     console.log('📧 Email:    admin@eckwms.local');
     console.log('🔑 Password: admin123');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-    console.log('🌐 Login URL: http://localhost:3000/auth/login\n');
+    console.log('🌐 Login URL: http://localhost:3100/auth/login\n');
 
     await db.sequelize.close();
     process.exit(0);

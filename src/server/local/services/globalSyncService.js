@@ -4,7 +4,7 @@ const GLOBAL_SERVER_API_KEY = process.env.GLOBAL_SERVER_API_KEY;
 
 async function syncPublicData(data) {
   if (!GLOBAL_SERVER_API_ENDPOINT || !GLOBAL_SERVER_API_KEY) {
-    console.warn('[SyncService] Global server endpoint or API key not configured. Skipping sync.');
+    console.warn('[SyncService] GLOBAL_SERVER_API_ENDPOINT or GLOBAL_SERVER_API_KEY not configured. Remote sync disabled.');
     return;
   }
   try {
