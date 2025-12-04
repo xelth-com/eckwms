@@ -50,15 +50,11 @@ module.exports = {
       env: {
         PORT: 8080,
         NODE_ENV: 'production',
-        GLOBAL_SERVER_API_KEY: process.env.GLOBAL_SERVER_API_KEY || 'change_me_in_production',
-        PG_HOST: process.env.PG_HOST || 'localhost',
-        PG_PORT: process.env.PG_PORT || 5432,
-        PG_DATABASE: process.env.PG_DATABASE || 'eckwms',
-        PG_USERNAME: process.env.PG_USERNAME || 'wms_user',
-        PG_PASSWORD: process.env.PG_PASSWORD || 'change_me',
-        ENC_KEY: process.env.ENC_KEY || 'your_encryption_key',
-        GLOBAL_SERVER_URL: process.env.GLOBAL_SERVER_URL || 'https://pda.repair',
+        GLOBAL_SERVER_API_KEY: 'eckwms_global_internal_key_2025',
+        ENC_KEY: '2f8cffbfb357cb957a427fc6669d6f92100fdd471d1ed2d2',
+        GLOBAL_SERVER_URL: 'https://pda.repair',
         LOCAL_SERVER_PORT: 3000
+        // Database variables intentionally omitted - service runs in stub mode without DB
       },
       env_development: {
         NODE_ENV: 'development',
