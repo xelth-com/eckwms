@@ -24,6 +24,7 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 // LOCAL IMPORTS (no relative paths to parent directories)
 const db = require('./models');
 const { betrugerUrlDecrypt, validateApiKey } = require('./utils/encryption');
+const { runRetentionPolicy } = require('./services/retentionService');
 
 const app = express();
 const PORT = process.env.PORT || process.env.GLOBAL_SERVER_PORT || 8080;
@@ -452,6 +453,15 @@ const gracefulShutdown = async (signal) => {
 
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+// Schedule Retention Policy (Run every hour)
+// In production, this might be better handled by a separate worker or system cron
+setInterval(() => {
+  runRetentionPolicy();
+}, 60 * 60 * 1000);
+
+// Run once on startup after a short delay
+setTimeout(runRetentionPolicy, 10000);
 
 // Start the server
 startServer();
