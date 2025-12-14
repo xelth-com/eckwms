@@ -311,7 +311,53 @@ eckRouter.post('/api/internal/sync', internalApiAuth, async (req, res) => {
 });
 
 /**
- * 7. Public QR Code Page
+ * 8. Device Registration Endpoint
+ * Registers a device with Ed25519 signature verification
+ *
+ * POST /ECK/API/DEVICE/REGISTER
+ * Body: { deviceId, deviceName, devicePublicKey, signature }
+ */
+eckRouter.post('/API/DEVICE/REGISTER', async (req, res) => {
+  const { deviceId, deviceName, devicePublicKey, signature } = req.body;
+
+  if (!deviceId || !devicePublicKey || !signature) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  try {
+    const nacl = require('tweetnacl');
+    const message = JSON.stringify({ deviceId, devicePublicKey });
+    const signatureBytes = Buffer.from(signature, 'base64');
+    const messageBytes = Buffer.from(message, 'utf8');
+    const publicKeyBytes = Buffer.from(devicePublicKey, 'base64');
+
+    if (!nacl.sign.detached.verify(messageBytes, signatureBytes, publicKeyBytes)) {
+      return res.status(403).json({ error: 'Invalid signature' });
+    }
+
+    const [device, created] = await db.RegisteredDevice.findOrCreate({
+      where: { deviceId },
+      defaults: { publicKey: devicePublicKey, deviceName, is_active: true }
+    });
+
+    if (!created) {
+      device.publicKey = devicePublicKey;
+      device.deviceName = deviceName || device.deviceName;
+      device.is_active = true;
+      await device.save();
+    }
+
+    console.log(`[eckWMS] Device registered: ${deviceId} (${deviceName || 'unnamed'})`);
+
+    res.status(201).json({ success: true, message: 'Device registered' });
+  } catch (error) {
+    console.error('[eckWMS] Registration error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * 9. Public QR Code Page
  * Serves public-facing QR code information pages
  *
  * GET /ECK/:code

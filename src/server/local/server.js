@@ -167,8 +167,8 @@ app.use('/admin', adminRoutes); // Возможно, стоит защитить
 app.use('/auth', authRoutes);
 app.use('/api', translationApiRoutes); // Дублируется '/api', убедись, что нет конфликтов
 app.use('/translation-admin', requireAdmin, translationAdminRoutes); // Защищено админкой
-app.use('/eckwms', eckwmsRoutes);
-app.use('/eckwms/api/upload', uploadRoutes);
+app.use('/ECK', eckwmsRoutes);
+app.use('/ECK/api/upload', uploadRoutes);
 app.use('/api/internal', setupRoutes); // Device pairing endpoints
 // app.use('/nexus', mavenProxyRoutes); // Если нужен Maven Proxy, верни
 
