@@ -60,10 +60,10 @@ router.get('/', (req, res) => {
 });
 
 /**
- * GET /api/scans
+ * GET /API/SCANS
  * Public endpoint: Get recent scans from the public demo account only
  */
-router.get('/api/scans', async (req, res) => {
+router.get('/API/SCANS', async (req, res) => {
   try {
     const publicInstance = await EckwmsInstance.findOne({
       where: { api_key: PUBLIC_API_KEY }
@@ -94,11 +94,11 @@ router.get('/api/scans', async (req, res) => {
 });
 
 /**
- * POST /api/scan
+ * POST /API/SCAN
  * Receive scan data from device and buffer it with a checksum
  * For public API key: deviceId is anonymized for privacy
  */
-router.post('/api/scan', authenticateApiKey, async (req, res) => {
+router.post('/API/SCAN', authenticateApiKey, async (req, res) => {
   try {
     const { payload, deviceId, priority, type } = req.body;
 
@@ -145,13 +145,13 @@ router.post('/api/scan', authenticateApiKey, async (req, res) => {
 });
 
 /**
- * GET /api/pull
+ * GET /API/PULL
  * Pull buffered scan data for the authenticated client instance
  * Optional query params:
  *   - limit: number of scans to pull (default: 100)
  *   - priority_min: minimum priority to pull (default: -infinity)
  */
-router.get('/api/pull', authenticateApiKey, async (req, res) => {
+router.get('/API/PULL', authenticateApiKey, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 100, 1000);
     const priorityMinParam = req.query.priority_min ? parseInt(req.query.priority_min) : null;
@@ -212,11 +212,11 @@ router.get('/api/pull', authenticateApiKey, async (req, res) => {
 });
 
 /**
- * POST /api/confirm
+ * POST /API/CONFIRM
  * Confirm receipt of pulled scans and trigger cleanup
  * Expects: { scan_ids: [id1, id2, ...] }
  */
-router.post('/api/confirm', authenticateApiKey, async (req, res) => {
+router.post('/API/CONFIRM', authenticateApiKey, async (req, res) => {
   try {
     const { scan_ids } = req.body;
 
@@ -266,6 +266,51 @@ router.post('/api/confirm', authenticateApiKey, async (req, res) => {
       success: false,
       error: 'Server error while confirming scans'
     });
+  }
+});
+
+/**
+ * POST /API/DEVICE/REGISTER
+ * Device Registration Endpoint
+ * Registers a device with Ed25519 signature verification
+ */
+router.post('/API/DEVICE/REGISTER', async (req, res) => {
+  const { deviceId, deviceName, devicePublicKey, signature } = req.body;
+  const nacl = require('tweetnacl');
+  const { Buffer } = require('node:buffer');
+
+  if (!deviceId || !devicePublicKey || !signature) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  try {
+    const message = JSON.stringify({ deviceId, devicePublicKey });
+    const signatureBytes = Buffer.from(signature, 'base64');
+    const messageBytes = Buffer.from(message, 'utf8');
+    const publicKeyBytes = Buffer.from(devicePublicKey, 'base64');
+
+    if (!nacl.sign.detached.verify(messageBytes, signatureBytes, publicKeyBytes)) {
+      return res.status(403).json({ error: 'Invalid signature' });
+    }
+
+    const [device, created] = await RegisteredDevice.findOrCreate({
+      where: { deviceId },
+      defaults: { publicKey: devicePublicKey, deviceName, is_active: true }
+    });
+
+    if (!created) {
+      device.publicKey = devicePublicKey;
+      device.deviceName = deviceName || device.deviceName;
+      device.is_active = true;
+      await device.save();
+    }
+
+    console.log(`[eckWMS] Device registered: ${deviceId} (${deviceName || 'unnamed'})`);
+
+    res.status(201).json({ success: true, message: 'Device registered' });
+  } catch (error) {
+    console.error('[eckWMS] Registration error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

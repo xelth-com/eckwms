@@ -15,15 +15,14 @@ router.get('/pairing-qr', requireAdmin, async (req, res) => {
     const local_server_urls = localIps.map(ip => `http://${ip}:${port}`);
 
     const pairingData = {
-      type: 'eckwms-pairing-request',
+      type: 'eckwms-pairing',
       version: '1.0',
-      instance_id: process.env.INSTANCE_ID,
-      local_server_urls: local_server_urls,
-      global_server_url: process.env.GLOBAL_SERVER_URL,
-      server_public_key: process.env.SERVER_PUBLIC_KEY
+      // Hardcoded uppercase URL for QR Alphanumeric mode optimization
+      serverUrl: 'HTTPS://PDA.REPAIR/ECK',
+      serverPublicKey: process.env.SERVER_PUBLIC_KEY
     };
 
-    if (!pairingData.server_public_key) {
+    if (!pairingData.serverPublicKey) {
       return res.status(500).json({ error: 'Server public key is not configured.' });
     }
 
