@@ -8,25 +8,35 @@ const { RegisteredDevice } = require('../../../shared/models/postgresql');
 const { getLocalIpAddresses } = require('../utils/networkUtils');
 
 // Endpoint to generate a pairing QR code (requires admin authentication)
+// Uses ECK-P1-ALPHA v1.1 protocol: ECK$1$COMPACTUUID$PUBKEY_HEX$URL (Uppercase Alphanumeric Mode)
 router.get('/pairing-qr', requireAdmin, async (req, res) => {
   try {
-    const port = process.env.LOCAL_SERVER_PORT || 3100;
-    const localIps = getLocalIpAddresses();
-    const local_server_urls = localIps.map(ip => `http://${ip}:${port}`);
+    const instanceId = process.env.INSTANCE_ID;
+    const serverPublicKey = process.env.SERVER_PUBLIC_KEY;
+    const globalServerUrl = process.env.GLOBAL_SERVER_URL || 'HTTPS://PDA.REPAIR';
 
-    const pairingData = {
-      type: 'eckwms-pairing',
-      version: '1.0',
-      // Hardcoded uppercase URL for QR Alphanumeric mode optimization
-      serverUrl: 'HTTPS://PDA.REPAIR/ECK',
-      serverPublicKey: process.env.SERVER_PUBLIC_KEY
-    };
-
-    if (!pairingData.serverPublicKey) {
+    if (!serverPublicKey) {
       return res.status(500).json({ error: 'Server public key is not configured.' });
     }
 
-    const qrCodeDataUrl = await qrcode.toDataURL(JSON.stringify(pairingData));
+    if (!instanceId) {
+      return res.status(500).json({ error: 'Instance ID is not configured. Run: npm run generate:id' });
+    }
+
+    // Compact UUID: Remove dashes and convert to uppercase for QR density
+    const compactUuid = instanceId.replace(/-/g, '').toUpperCase();
+
+    // Convert base64 public key to HEX uppercase for QR Alphanumeric mode
+    const publicKeyBuffer = Buffer.from(serverPublicKey, 'base64');
+    const publicKeyHex = publicKeyBuffer.toString('hex').toUpperCase();
+
+    // Force URL to uppercase for QR Alphanumeric mode
+    const globalUrlUppercase = globalServerUrl.toUpperCase();
+
+    // ECK-P1-ALPHA v1.1 format: ECK$1$COMPACTUUID$PUBKEY_HEX$URL (fully uppercase)
+    const pairingString = `ECK$1$${compactUuid}$${publicKeyHex}$${globalUrlUppercase}`;
+
+    const qrCodeDataUrl = await qrcode.toDataURL(pairingString);
 
     res.json({
       success: true,
