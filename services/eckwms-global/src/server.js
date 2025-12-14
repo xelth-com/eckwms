@@ -202,7 +202,7 @@ eckRouter.post('/api/internal/register-instance', internalApiAuth, async (req, r
 });
 
 /**
- * 5. Get Instance Info Endpoint
+ * 5. Get Instance Info Endpoint (Internal - Protected)
  * Retrieves information about a registered instance
  *
  * GET /ECK/api/internal/get-instance-info/:id
@@ -266,6 +266,86 @@ eckRouter.get('/api/internal/get-instance-info/:id', internalApiAuth, async (req
     });
   } catch (error) {
     console.error('[eckWMS] Instance info error:', error.message);
+    res.status(500).json({
+      error: 'Failed to retrieve instance info',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * 5b. Get Instance Info Endpoint (Public - For Device Pairing)
+ * Public endpoint for Android devices to discover instance connection details
+ *
+ * POST /ECK/API/INTERNAL/GET-INSTANCE-INFO
+ * Body: { instance_id: "xxx-yyy-zzz" }
+ * No authentication required - used during initial pairing
+ */
+eckRouter.post('/API/INTERNAL/GET-INSTANCE-INFO', async (req, res) => {
+  const { instance_id } = req.body;
+
+  if (!instance_id) {
+    return res.status(400).json({
+      error: 'Missing required field',
+      message: 'instance_id is required in request body'
+    });
+  }
+
+  try {
+    console.log(`[eckWMS] Public instance discovery request for: ${instance_id}`);
+
+    const instance = await db.EckwmsInstance.findByPk(instance_id);
+
+    if (!instance) {
+      return res.status(404).json({
+        error: 'Instance not found',
+        message: `No instance registered with ID: ${instance_id}`
+      });
+    }
+
+    // Build connection candidates
+    const candidates = [];
+
+    // Priority 1: Local IPs
+    if (instance.localIps && instance.localIps.length > 0) {
+      instance.localIps.forEach(ip => {
+        candidates.push({
+          url: `http://${ip}:${process.env.LOCAL_SERVER_PORT || 3000}`,
+          type: 'LOCAL_LAN',
+          priority: 1,
+          reason: 'Reported by server as local IP'
+        });
+      });
+    }
+
+    // Priority 2: Public IP
+    if (instance.publicIp) {
+      candidates.push({
+        url: `http://${instance.publicIp}:${process.env.LOCAL_SERVER_PORT || 3000}`,
+        type: 'PUBLIC_IP',
+        priority: 2,
+        reason: 'Public IP of the instance'
+      });
+    }
+
+    // Priority 3: Global proxy fallback
+    candidates.push({
+      url: `${process.env.GLOBAL_SERVER_URL || 'https://pda.repair'}/ECK/proxy`,
+      type: 'GLOBAL_PROXY',
+      priority: 3,
+      reason: 'Global proxy - guaranteed fallback'
+    });
+
+    res.status(200).json({
+      instanceId: instance.id,
+      name: instance.name,
+      tier: instance.tier,
+      serverPublicKey: instance.serverPublicKey,
+      connectionCandidates: candidates,
+      lastSeen: instance.lastSeen
+    });
+  } catch (error) {
+    console.error('[eckWMS] Public instance discovery error:', error.message);
     res.status(500).json({
       error: 'Failed to retrieve instance info',
       message: error.message
