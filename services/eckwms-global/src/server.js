@@ -152,7 +152,7 @@ const internalApiAuth = (req, res, next) => {
  * Body: { instanceId, serverPublicKey, localIps, tracerouteToGlobal }
  */
 eckRouter.post('/api/internal/register-instance', internalApiAuth, async (req, res) => {
-  const { instanceId, serverPublicKey, localIps, tracerouteToGlobal } = req.body;
+  const { instanceId, serverPublicKey, localIps, tracerouteToGlobal, port } = req.body;
 
   if (!instanceId) {
     return res.status(400).json({
@@ -172,7 +172,7 @@ eckRouter.post('/api/internal/register-instance', internalApiAuth, async (req, r
       defaults: {
         id: instanceId,
         name: `Instance ${instanceId.substring(0, 8)}`,
-        server_url: `http://${publicIp}:${process.env.LOCAL_SERVER_PORT || 3000}`,
+        server_url: `http://${publicIp}:${port || 3100}`,
         api_key: `key_${instanceId.substring(0, 16)}`,
         tier: 'free'
       }
@@ -183,6 +183,7 @@ eckRouter.post('/api/internal/register-instance', internalApiAuth, async (req, r
     instance.localIps = localIps || [];
     instance.tracerouteToGlobal = tracerouteToGlobal || null;
     instance.serverPublicKey = serverPublicKey || null;
+    if (port) instance.server_url = `http://${publicIp}:${port}`;
     instance.lastSeen = new Date();
     await instance.save();
 
@@ -226,11 +227,20 @@ eckRouter.get('/api/internal/get-instance-info/:id', internalApiAuth, async (req
     // Build connection candidates
     const candidates = [];
 
+    // Extract port from saved server_url
+    let targetPort = 3100;
+    try {
+      if (instance.server_url) {
+        const urlObj = new URL(instance.server_url);
+        if (urlObj.port) targetPort = urlObj.port;
+      }
+    } catch (e) { console.error('Error parsing port from server_url', e); }
+
     // Priority 1: Local IPs
     if (instance.localIps && instance.localIps.length > 0) {
       instance.localIps.forEach(ip => {
         candidates.push({
-          url: `http://${ip}:${process.env.LOCAL_SERVER_PORT || 3000}`,
+          url: `http://${ip}:${targetPort}`,
           type: 'LOCAL_LAN',
           priority: 1,
           reason: 'Reported by server as local IP'
@@ -241,7 +251,7 @@ eckRouter.get('/api/internal/get-instance-info/:id', internalApiAuth, async (req
     // Priority 2: Public IP
     if (instance.publicIp) {
       candidates.push({
-        url: `http://${instance.publicIp}:${process.env.LOCAL_SERVER_PORT || 3000}`,
+        url: `http://${instance.publicIp}:${targetPort}`,
         type: 'PUBLIC_IP',
         priority: 2,
         reason: 'Public IP of the instance'
@@ -261,7 +271,7 @@ eckRouter.get('/api/internal/get-instance-info/:id', internalApiAuth, async (req
       name: instance.name,
       tier: instance.tier,
       serverPublicKey: instance.serverPublicKey,
-      connectionCandidates: candidates,
+      candidates: candidates,
       lastSeen: instance.lastSeen
     });
   } catch (error) {
@@ -306,11 +316,20 @@ eckRouter.post('/API/INTERNAL/GET-INSTANCE-INFO', async (req, res) => {
     // Build connection candidates
     const candidates = [];
 
+    // Extract port from saved server_url
+    let targetPort = 3100;
+    try {
+      if (instance.server_url) {
+        const urlObj = new URL(instance.server_url);
+        if (urlObj.port) targetPort = urlObj.port;
+      }
+    } catch (e) { console.error('Error parsing port from server_url', e); }
+
     // Priority 1: Local IPs
     if (instance.localIps && instance.localIps.length > 0) {
       instance.localIps.forEach(ip => {
         candidates.push({
-          url: `http://${ip}:${process.env.LOCAL_SERVER_PORT || 3000}`,
+          url: `http://${ip}:${targetPort}`,
           type: 'LOCAL_LAN',
           priority: 1,
           reason: 'Reported by server as local IP'
@@ -321,7 +340,7 @@ eckRouter.post('/API/INTERNAL/GET-INSTANCE-INFO', async (req, res) => {
     // Priority 2: Public IP
     if (instance.publicIp) {
       candidates.push({
-        url: `http://${instance.publicIp}:${process.env.LOCAL_SERVER_PORT || 3000}`,
+        url: `http://${instance.publicIp}:${targetPort}`,
         type: 'PUBLIC_IP',
         priority: 2,
         reason: 'Public IP of the instance'
@@ -341,7 +360,7 @@ eckRouter.post('/API/INTERNAL/GET-INSTANCE-INFO', async (req, res) => {
       name: instance.name,
       tier: instance.tier,
       serverPublicKey: instance.serverPublicKey,
-      connectionCandidates: candidates,
+      candidates: candidates,
       lastSeen: instance.lastSeen
     });
   } catch (error) {

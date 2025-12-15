@@ -23,11 +23,13 @@ async function collectAndReportDiagnostics() {
         executeCommand(`traceroute ${globalServerDomain}`)
     ]);
 
+    const port = process.env.LOCAL_SERVER_PORT || process.env.PORT || 3100;
     const diagnosticsPayload = {
         instanceId: process.env.INSTANCE_ID,
         serverPublicKey: process.env.SERVER_PUBLIC_KEY,
         localIps: localIps,
-        tracerouteToGlobal: traceroute
+        tracerouteToGlobal: traceroute,
+        port: port
     };
 
     console.log('[Diagnostics] Payload collected:', JSON.stringify(diagnosticsPayload, null, 2));
