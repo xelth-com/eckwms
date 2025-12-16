@@ -38,6 +38,9 @@ app.set('views', path.join(__dirname, '../views'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Trust Nginx proxy headers (X-Forwarded-For, X-Real-IP)
+app.set('trust proxy', 1);
+
 // Request logging
 app.use((req, res, next) => {
   console.log(`[eckWMS] ${req.method} ${req.path}`);
@@ -60,7 +63,7 @@ const eckRouter = express.Router();
  * 1. Health Check Endpoint
  * Provides service health status for monitoring
  */
-eckRouter.get('/health', async (req, res) => {
+eckRouter.get('/HEALTH', async (req, res) => {
   try {
     const dbHealth = db && db.sequelize ? await db.sequelize.authenticate().then(() => 'connected').catch(() => 'disconnected') : 'not-configured';
 
@@ -86,7 +89,12 @@ eckRouter.get('/health', async (req, res) => {
  * Forwards requests to local eckWMS instances
  * Required header: X-eckWMS-Target-Url
  */
-eckRouter.use('/proxy', (req, res, next) => {
+eckRouter.use('/PROXY', (req, res, next) => {
+  // Allow health checks to pass without proxy headers
+  if (req.path === '/HEALTH' || req.path === '/HEALTH/') {
+    return res.json({ status: 'ok', service: 'eckWMS Global Proxy', mode: 'proxy' });
+  }
+
   const target = req.headers['x-eckwms-target-url'];
 
   if (!target) {
@@ -103,7 +111,7 @@ eckRouter.use('/proxy', (req, res, next) => {
   const proxyMiddleware = createProxyMiddleware({
     target: target,
     changeOrigin: true,
-    pathRewrite: { '^/ECK/proxy': '' },
+    pathRewrite: { '^/ECK/PROXY': '' },
     logLevel: process.env.NODE_ENV === 'development' ? 'debug' : 'warn',
     onError: (err, req, res) => {
       console.error('[eckWMS] Proxy error:', err.message);
@@ -147,11 +155,11 @@ const internalApiAuth = (req, res, next) => {
  * 4. Instance Registration Endpoint
  * Registers a new eckWMS instance
  *
- * POST /ECK/api/internal/register-instance
+ * POST /ECK/API/INTERNAL/REGISTER-INSTANCE
  * Headers: X-Internal-Api-Key
  * Body: { instanceId, serverPublicKey, localIps, tracerouteToGlobal }
  */
-eckRouter.post('/api/internal/register-instance', internalApiAuth, async (req, res) => {
+eckRouter.post('/API/INTERNAL/REGISTER-INSTANCE', internalApiAuth, async (req, res) => {
   const { instanceId, serverPublicKey, localIps, tracerouteToGlobal, port } = req.body;
 
   if (!instanceId) {
@@ -161,7 +169,8 @@ eckRouter.post('/api/internal/register-instance', internalApiAuth, async (req, r
     });
   }
 
-  const publicIp = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+  const publicIp = req.ip;
+  console.log(`[eckWMS] IP Detection: req.ip=${req.ip}, x-forwarded-for=${req.headers['x-forwarded-for']}`);
 
   try {
     console.log(`[eckWMS] Instance registration - ID: ${instanceId}, IP: ${publicIp}`);
@@ -206,10 +215,10 @@ eckRouter.post('/api/internal/register-instance', internalApiAuth, async (req, r
  * 5. Get Instance Info Endpoint (Internal - Protected)
  * Retrieves information about a registered instance
  *
- * GET /ECK/api/internal/get-instance-info/:id
+ * GET /ECK/API/INTERNAL/GET-INSTANCE-INFO/:id
  * Headers: X-Internal-Api-Key
  */
-eckRouter.get('/api/internal/get-instance-info/:id', internalApiAuth, async (req, res) => {
+eckRouter.get('/API/INTERNAL/GET-INSTANCE-INFO/:id', internalApiAuth, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -260,7 +269,7 @@ eckRouter.get('/api/internal/get-instance-info/:id', internalApiAuth, async (req
 
     // Priority 3: Global proxy fallback
     candidates.push({
-      url: `${process.env.GLOBAL_SERVER_URL || 'https://pda.repair'}/ECK/proxy`,
+      url: `${process.env.GLOBAL_SERVER_URL || 'https://pda.repair'}/ECK/PROXY`,
       type: 'GLOBAL_PROXY',
       priority: 3,
       reason: 'Global proxy - guaranteed fallback'
@@ -349,7 +358,7 @@ eckRouter.post('/API/INTERNAL/GET-INSTANCE-INFO', async (req, res) => {
 
     // Priority 3: Global proxy fallback
     candidates.push({
-      url: `${process.env.GLOBAL_SERVER_URL || 'https://pda.repair'}/ECK/proxy`,
+      url: `${process.env.GLOBAL_SERVER_URL || 'https://pda.repair'}/ECK/PROXY`,
       type: 'GLOBAL_PROXY',
       priority: 3,
       reason: 'Global proxy - guaranteed fallback'
@@ -376,11 +385,11 @@ eckRouter.post('/API/INTERNAL/GET-INSTANCE-INFO', async (req, res) => {
  * 6. Internal Data Sync Endpoint
  * Syncs data between instances and global server
  *
- * POST /ECK/api/internal/sync
+ * POST /ECK/API/INTERNAL/SYNC
  * Headers: X-Internal-Api-Key
  * Body: { id, type, data }
  */
-eckRouter.post('/api/internal/sync', internalApiAuth, async (req, res) => {
+eckRouter.post('/API/INTERNAL/SYNC', internalApiAuth, async (req, res) => {
   const { id, type, data } = req.body;
 
   if (!id || !type || !data) {
@@ -465,7 +474,7 @@ eckRouter.get('/:code', async (req, res) => {
   const { code } = req.params;
 
   // Ignore favicon and reserved paths
-  if (['favicon.ico', 'health', 'proxy', 'api'].includes(code.toLowerCase()) || code.startsWith('api/')) {
+  if (['favicon.ico', 'HEALTH', 'PROXY', 'API'].includes(code.toUpperCase()) || code.toUpperCase().startsWith('API/')) {
     return res.status(404).send();
   }
 
@@ -514,12 +523,12 @@ app.get('/', (req, res) => {
     status: 'running',
     documentation: 'https://docs.pda.repair/eckwms',
     endpoints: {
-      health: 'GET /ECK/health',
+      health: 'GET /ECK/HEALTH',
       publicQr: 'GET /ECK/:code',
-      registerInstance: 'POST /ECK/api/internal/register-instance (requires X-Internal-Api-Key)',
-      getInstanceInfo: 'GET /ECK/api/internal/get-instance-info/:id (requires X-Internal-Api-Key)',
-      proxy: 'POST /ECK/proxy (requires X-eckWMS-Target-Url header)',
-      sync: 'POST /ECK/api/internal/sync (requires X-Internal-Api-Key)'
+      registerInstance: 'POST /ECK/API/INTERNAL/REGISTER-INSTANCE (requires X-Internal-Api-Key)',
+      getInstanceInfo: 'GET /ECK/API/INTERNAL/GET-INSTANCE-INFO/:id (requires X-Internal-Api-Key)',
+      proxy: 'POST /ECK/PROXY (requires X-eckWMS-Target-Url header)',
+      sync: 'POST /ECK/API/INTERNAL/SYNC (requires X-Internal-Api-Key)'
     }
   });
 });
@@ -569,7 +578,7 @@ async function startServer() {
     // Start Express server
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`\n[eckWMS] ✓ Server running on http://0.0.0.0:${PORT}`);
-      console.log(`[eckWMS] ✓ Health check: http://localhost:${PORT}/ECK/health`);
+      console.log(`[eckWMS] ✓ Health check: http://localhost:${PORT}/ECK/HEALTH`);
       console.log(`[eckWMS] ✓ API endpoints: http://localhost:${PORT}/ECK/*`);
       console.log('\n');
     });
