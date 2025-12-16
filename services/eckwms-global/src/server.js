@@ -257,15 +257,9 @@ eckRouter.get('/API/INTERNAL/GET-INSTANCE-INFO/:id', internalApiAuth, async (req
       });
     }
 
-    // Priority 2: Public IP
-    if (instance.publicIp) {
-      candidates.push({
-        url: `http://${instance.publicIp}:${targetPort}`,
-        type: 'PUBLIC_IP',
-        priority: 2,
-        reason: 'Public IP of the instance'
-      });
-    }
+    // Priority 2: Public IP (Disabled)
+    // We do not expose port 3100 directly to the internet for security reasons.
+    // Clients should use the Global Proxy (Priority 3) instead.
 
     // Priority 3: Global proxy fallback
     candidates.push({
@@ -346,15 +340,9 @@ eckRouter.post('/API/INTERNAL/GET-INSTANCE-INFO', async (req, res) => {
       });
     }
 
-    // Priority 2: Public IP
-    if (instance.publicIp) {
-      candidates.push({
-        url: `http://${instance.publicIp}:${targetPort}`,
-        type: 'PUBLIC_IP',
-        priority: 2,
-        reason: 'Public IP of the instance'
-      });
-    }
+    // Priority 2: Public IP (Disabled)
+    // Direct access to local ports via public IP is blocked by firewall.
+    // We rely on the Nginx Proxy.
 
     // Priority 3: Global proxy fallback
     candidates.push({
