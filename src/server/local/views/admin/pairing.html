@@ -21,16 +21,27 @@
         <h1>Device Pairing Center</h1>
 
         <h2>1. Generate Pairing QR Code</h2>
-        <p>Click the button below to generate a new QR code. Scan this code with a new eckwms-movfast device to securely pair it with the server.</p>
-        <button id="generate-qr-btn">Generate New QR Code</button>
+        <p>Scan this code with a new device to pair it with the server.</p>
+
+        <div style="margin-bottom: 15px;">
+            <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                <input type="checkbox" id="vip-mode-check">
+                <span><strong>VIP Mode (Auto-Approve)</strong> - Device will be active immediately (token valid 24h)</span>
+            </label>
+        </div>
+
+        <button id="generate-qr-btn">Generate QR Code</button>
         <div id="qr-container">
             <p>QR code will appear here...</p>
             <img id="qr-code-img" src="" alt="Pairing QR Code" style="display:none;"/>
         </div>
 
         <h2>2. System Status</h2>
-        <div id="status-box">
-            Checking status...
+        <div id="status-box">Checking status...</div>
+
+        <h2 style="margin-top: 40px;">3. Device Management</h2>
+        <div id="devices-list">
+            Loading devices...
         </div>
     </div>
 

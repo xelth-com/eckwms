@@ -44,6 +44,66 @@ router.get('/dashboard', (req, res) => {
 // Apply authentication middleware to all API routes (not HTML pages)
 router.use(authenticateAdmin);
 
+// --- Device Management API ---
+
+// Get list of all registered devices
+router.get('/devices', async (req, res) => {
+    try {
+        // Import DB model inside handler to ensure connection exists
+        const { RegisteredDevice } = require('../../../shared/models/postgresql');
+
+        const devices = await RegisteredDevice.findAll({
+            order: [
+                ['status', 'DESC'], // Pending first (alphabetically Pending > Active)
+                ['updatedAt', 'DESC']
+            ]
+        });
+        res.json(devices);
+    } catch (error) {
+        console.error('Error fetching devices:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update device status (Approve/Block)
+router.post('/devices/:id/status', async (req, res) => {
+    try {
+        const { RegisteredDevice } = require('../../../shared/models/postgresql');
+        const { status } = req.body;
+        const { id } = req.params;
+
+        if (!['active', 'pending', 'blocked'].includes(status)) {
+            return res.status(400).json({ error: 'Invalid status' });
+        }
+
+        const device = await RegisteredDevice.findByPk(id);
+        if (!device) {
+            return res.status(404).json({ error: 'Device not found' });
+        }
+
+        device.status = status;
+        await device.save();
+
+        res.json({ success: true, device });
+    } catch (error) {
+        console.error('Error updating device:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete device
+router.delete('/devices/:id', async (req, res) => {
+    try {
+        const { RegisteredDevice } = require('../../../shared/models/postgresql');
+        const deleted = await RegisteredDevice.destroy({
+            where: { deviceId: req.params.id }
+        });
+        res.json({ success: !!deleted });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get all items with issues
 router.get('/items/issues', (req, res) => {
     const itemsWithIssues = [];
