@@ -21,7 +21,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            const response = await fetch('/api/internal/pairing-qr', {
+            const isVip = document.getElementById('vip-mode-check').checked;
+            const url = isVip ? '/api/internal/pairing-qr?type=vip' : '/api/internal/pairing-qr';
+
+            const response = await fetch(url, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -71,3 +74,100 @@ document.addEventListener('DOMContentLoaded', () => {
     checkGlobalServerStatus();
     setInterval(checkGlobalServerStatus, 15000); // Check every 15 seconds
 });
+
+// --- Device Management Logic ---
+
+async function loadDevices() {
+    const container = document.getElementById('devices-list');
+    const token = localStorage.getItem('auth_token');
+
+    try {
+        const response = await fetch('/admin/api/devices', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const devices = await response.json();
+
+        if (devices.length === 0) {
+            container.innerHTML = '<p>No devices registered yet.</p>';
+            return;
+        }
+
+        let html = `
+            <table class="device-table">
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Device ID / Name</th>
+                        <th>Last Seen</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        devices.forEach(device => {
+            const statusClass = `badge-${device.status}`;
+            const name = device.deviceName || 'Unknown Device';
+            const lastSeen = new Date(device.updatedAt).toLocaleString();
+
+            let actions = '';
+            if (device.status === 'pending') {
+                actions += `<button onclick="updateStatus('${device.deviceId}', 'active')" class="btn-action btn-approve">✅ Approve</button>`;
+            }
+            if (device.status === 'active') {
+                actions += `<button onclick="updateStatus('${device.deviceId}', 'blocked')" class="btn-action btn-block">⛔ Block</button>`;
+            }
+            if (device.status === 'blocked') {
+                actions += `<button onclick="updateStatus('${device.deviceId}', 'active')" class="btn-action btn-approve">🔄 Unblock</button>`;
+            }
+            actions += `<button onclick="deleteDevice('${device.deviceId}')" class="btn-action btn-delete">🗑️</button>`;
+
+            html += `
+                <tr>
+                    <td><span class="badge ${statusClass}">${device.status}</span></td>
+                    <td>
+                        <strong>${device.deviceId.substring(0, 16)}...</strong><br>
+                        <small>${name}</small>
+                    </td>
+                    <td>${lastSeen}</td>
+                    <td>${actions}</td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+
+    } catch (error) {
+        container.innerHTML = `<p style="color:red">Error loading devices: ${error.message}</p>`;
+    }
+}
+
+// Make functions available globally for onclick handlers
+window.updateStatus = async (id, status) => {
+    if (!confirm(`Change status to ${status}?`)) return;
+    const token = localStorage.getItem('auth_token');
+    await fetch(`/admin/api/devices/${id}/status`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status })
+    });
+    loadDevices(); // Refresh table
+};
+
+window.deleteDevice = async (id) => {
+    if (!confirm('Delete this device permanently?')) return;
+    const token = localStorage.getItem('auth_token');
+    await fetch(`/admin/api/devices/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
+    loadDevices(); // Refresh table
+};
+
+// Load devices on startup and refresh every 10s
+loadDevices();
+setInterval(loadDevices, 10000);

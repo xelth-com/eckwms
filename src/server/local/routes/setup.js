@@ -11,6 +11,7 @@ const { verifyJWT } = require('../../../shared/utils/encryption');
 // Endpoint to generate a pairing QR code (requires admin authentication)
 // Uses ECK-P1-ALPHA v1.1 protocol: ECK$1$COMPACTUUID$PUBKEY_HEX$URL (Uppercase Alphanumeric Mode)
 router.get('/pairing-qr', requireAdmin, async (req, res) => {
+  const { type } = req.query; // Check if type=vip
   try {
     const instanceId = process.env.INSTANCE_ID;
     const serverPublicKey = process.env.SERVER_PUBLIC_KEY;
@@ -30,12 +31,22 @@ router.get('/pairing-qr', requireAdmin, async (req, res) => {
     // Convert base64 public key to HEX uppercase for QR Alphanumeric mode
     const publicKeyBuffer = Buffer.from(serverPublicKey, 'base64');
     const publicKeyHex = publicKeyBuffer.toString('hex').toUpperCase();
-
-    // Force URL to uppercase for QR Alphanumeric mode
     const globalUrlUppercase = globalServerUrl.toUpperCase();
 
-    // ECK-P1-ALPHA v1.1 format: ECK$1$COMPACTUUID$PUBKEY_HEX$URL (fully uppercase)
-    const pairingString = `ECK$1$${compactUuid}$${publicKeyHex}$${globalUrlUppercase}`;
+    let pairingString = `ECK$1$${compactUuid}$${publicKeyHex}$${globalUrlUppercase}`;
+
+    // Generate VIP Token if requested
+    if (type === 'vip') {
+        const { generateJWT } = require('../../../shared/utils/encryption');
+        const tokenPayload = {
+            type: 'invite',
+            iat: Math.floor(Date.now() / 1000),
+            exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours valid
+        };
+        const inviteToken = generateJWT(tokenPayload);
+        // Append token as 6th argument
+        pairingString += `$${inviteToken}`;
+    }
 
     const qrCodeDataUrl = await qrcode.toDataURL(pairingString);
 
