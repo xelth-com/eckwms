@@ -47,7 +47,7 @@ router.use(authenticateAdmin);
 // --- Device Management API ---
 
 // Get list of all registered devices
-router.get('/devices', async (req, res) => {
+router.get('/api/devices', async (req, res) => {
     try {
         // Import DB model inside handler to ensure connection exists
         const { RegisteredDevice } = require('../../../shared/models/postgresql');
@@ -66,7 +66,7 @@ router.get('/devices', async (req, res) => {
 });
 
 // Update device status (Approve/Block)
-router.post('/devices/:id/status', async (req, res) => {
+router.post('/api/devices/:id/status', async (req, res) => {
     try {
         const { RegisteredDevice } = require('../../../shared/models/postgresql');
         const { status } = req.body;
@@ -92,7 +92,7 @@ router.post('/devices/:id/status', async (req, res) => {
 });
 
 // Delete device
-router.delete('/devices/:id', async (req, res) => {
+router.delete('/api/devices/:id', async (req, res) => {
     try {
         const { RegisteredDevice } = require('../../../shared/models/postgresql');
         const deleted = await RegisteredDevice.destroy({
