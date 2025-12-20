@@ -2,57 +2,285 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Device Pairing Center</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Pairing Center | eckWMS</title>
     <style>
-        body { font-family: sans-serif; background-color: #f4f4f9; color: #333; margin: 20px; }
-        .container { max-width: 800px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1, h2 { color: #1e2071; }
-        #qr-container { margin-top: 20px; padding: 20px; border: 1px dashed #ccc; min-height: 200px; display: flex; justify-content: center; align-items: center; }
-        #qr-code-img { max-width: 200px; max-height: 200px; }
-        #status-box { margin-top: 20px; padding: 15px; border-radius: 5px; font-weight: bold; }
-        .status-online { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .status-offline { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        button { background-color: #1e2071; color: white; padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
-        button:hover { background-color: #161a5e; }
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1E1E1E;
+            --text-main: #E0E0E0;
+            --text-secondary: #A0A0A0;
+            --accent-blue: #3B82F6;
+            --accent-hover: #2563EB;
+            --success: #10B981;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --border: #333333;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: var(--text-main);
+            margin-bottom: 25px;
+            font-size: 1.8rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 15px;
+        }
+
+        h2 {
+            color: var(--accent-blue);
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        /* Grid Layout for Top Section */
+        .top-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        @media (min-width: 768px) {
+            .top-grid {
+                grid-template-columns: 2fr 1fr;
+            }
+        }
+
+        /* Cards */
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+        }
+
+        /* QR Section */
+        #qr-container {
+            margin-top: 20px;
+            padding: 20px;
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            min-height: 250px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: #000;
+        }
+
+        #qr-code-img {
+            max-width: 100%;
+            max-height: 250px;
+            border: 5px solid white; /* Better contrast for scanning */
+            border-radius: 4px;
+        }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            padding: 10px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+        }
+
+        button {
+            background-color: var(--accent-blue);
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background 0.2s;
+            width: 100%;
+        }
+
+        button:hover {
+            background-color: var(--accent-hover);
+        }
+
+        /* Status Box */
+        .status-box {
+            padding: 15px;
+            border-radius: 8px;
+            font-weight: bold;
+            text-align: center;
+            margin-top: 10px;
+        }
+        .status-online {
+            background-color: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+        .status-offline {
+            background-color: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+            border: 1px solid var(--danger);
+        }
+
+        /* Device Table */
+        .table-responsive {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .device-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 600px;
+        }
+
+        .device-table th {
+            text-align: left;
+            padding: 15px;
+            background-color: #252525;
+            color: var(--text-secondary);
+            font-weight: 600;
+            border-bottom: 2px solid var(--border);
+        }
+
+        .device-table td {
+            padding: 15px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+
+        .device-table tr:hover {
+            background-color: rgba(255,255,255,0.03);
+        }
+
+        /* Badges */
+        .badge {
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+        .badge-active { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+        .badge-pending { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+        .badge-blocked { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+
+        /* Action Buttons */
+        .btn-action {
+            padding: 6px 12px;
+            font-size: 0.85rem;
+            width: auto;
+            margin-right: 5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .btn-approve { background-color: #059669; }
+        .btn-approve:hover { background-color: #047857; }
+
+        .btn-block { background-color: #991b1b; }
+        .btn-block:hover { background-color: #7f1d1d; }
+
+        .btn-delete {
+            background-color: transparent;
+            border: 1px solid #444;
+            color: #888;
+        }
+        .btn-delete:hover {
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+
+        small {
+            color: var(--text-secondary);
+            display: block;
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Device Pairing Center</h1>
+        <h1>📡 Device Pairing Center</h1>
 
-        <h2>1. Generate Pairing QR Code</h2>
-        <p>Scan this code with a new device to pair it with the server.</p>
+        <div class="top-grid">
 
-        <div style="margin-bottom: 15px;">
-            <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-                <input type="checkbox" id="vip-mode-check">
-                <span><strong>VIP Mode (Auto-Approve)</strong> - Device will be active immediately (token valid 24h)</span>
-            </label>
+            <div class="card">
+                <h2>1. Add New Device</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 20px;">Generate a QR code to pair a new scanner terminal.</p>
+
+                <div class="controls">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="vip-mode-check" style="width: 20px; height: 20px;">
+                        <div>
+                            <div style="font-weight: bold; color: var(--warning);">VIP Mode (Auto-Approve)</div>
+                            <div style="font-size: 0.85rem; color: var(--text-secondary);">Device skips quarantine (Token valid 24h)</div>
+                        </div>
+                    </label>
+                    <button id="generate-qr-btn">Generate Pairing QR</button>
+                </div>
+
+                <div id="qr-container">
+                    <span style="color: #666;">QR code will appear here...</span>
+                    <img id="qr-code-img" src="" alt="Pairing QR Code" style="display:none;"/>
+                </div>
+            </div>
+
+
+            <div class="card">
+                <h2>2. System Health</h2>
+                <p style="color: var(--text-secondary);">Connection status to Global Server:</p>
+                <div id="status-box" class="status-box">
+                    Checking status...
+                </div>
+                <div style="margin-top: 20px; font-size: 0.9rem; color: var(--text-secondary);">
+                    <p>ℹ️ <strong>Pending:</strong> Device registered, needs approval.</p>
+                    <p>ℹ️ <strong>Active:</strong> Device fully authorized.</p>
+                </div>
+            </div>
         </div>
 
-        <button id="generate-qr-btn">Generate QR Code</button>
-        <div id="qr-container">
-            <p>QR code will appear here...</p>
-            <img id="qr-code-img" src="" alt="Pairing QR Code" style="display:none;"/>
-        </div>
 
-        <h2>2. System Status</h2>
-        <div id="status-box">Checking status...</div>
-
-        <h2 style="margin-top: 40px;">3. Device Management</h2>
-        <div id="devices-list">
-            Loading devices...
+        <div class="card">
+            <h2>3. Managed Devices</h2>
+            <div id="devices-list" class="table-responsive">
+                <div style="text-align: center; padding: 20px; color: var(--text-secondary);">Loading devices...</div>
+            </div>
         </div>
     </div>
 
     <script src="/js/admin_pairing.js"></script>
     <script>
-        // Check if user is authenticated on page load
+        // Auth Check
         window.addEventListener('DOMContentLoaded', () => {
             const token = localStorage.getItem('auth_token');
             if (!token) {
-                // No token found - redirect to login
-                alert('Please login first to access this page');
                 window.location.href = '/auth/login';
             }
         });

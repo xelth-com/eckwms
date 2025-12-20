@@ -5,31 +5,10 @@ const { verifyJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../../shared/
 const { addUnicEntryToProperty, addEntryToProperty } = require('../utils/dataInit');
 const { generatePdfRma, betrugerPrintCodesPdf } = require('../utils/pdfGenerator');
 const { syncPublicData } = require('../services/globalSyncService');
+const { requireAdmin } = require('../middleware/auth');
 const path = require('path');
 const crc32 = require('buffer-crc32');
 const { base32table } = require('../../../shared/utils/encryption');
-
-// Admin authentication middleware
-const authenticateAdmin = (req, res, next) => {
-    try {
-        const token = req.headers.authorization?.split(' ')[1];
-        
-        if (!token) {
-            return res.status(401).json({ error: 'Authentication required' });
-        }
-        
-        const user = verifyJWT(token, global.secretJwt);
-        
-        if (user.a !== 'p') {
-            return res.status(403).json({ error: 'Admin access required' });
-        }
-        
-        req.user = user;
-        next();
-    } catch (error) {
-        return res.status(403).json({ error: 'Invalid or expired token' });
-    }
-};
 
 // Serve the device pairing page (no auth required - auth handled client-side)
 router.get('/pairing', (req, res) => {
@@ -42,7 +21,7 @@ router.get('/dashboard', (req, res) => {
 });
 
 // Apply authentication middleware to all API routes (not HTML pages)
-router.use(authenticateAdmin);
+router.use(requireAdmin);
 
 // --- Device Management API ---
 
