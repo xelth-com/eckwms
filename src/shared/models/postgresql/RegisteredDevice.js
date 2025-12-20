@@ -16,6 +16,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       defaultValue: true
     },
+    status: {
+      type: DataTypes.ENUM('active', 'pending', 'blocked'),
+      defaultValue: 'pending',
+      allowNull: false
+    },
     publicKey: {
       type: DataTypes.TEXT,
       allowNull: false,

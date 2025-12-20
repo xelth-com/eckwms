@@ -6,6 +6,7 @@ const { Buffer } = require('node:buffer');
 const { requireAdmin } = require('../middleware/auth');
 const { RegisteredDevice } = require('../../../shared/models/postgresql');
 const { getLocalIpAddresses } = require('../utils/networkUtils');
+const { verifyJWT } = require('../../../shared/utils/encryption');
 
 // Endpoint to generate a pairing QR code (requires admin authentication)
 // Uses ECK-P1-ALPHA v1.1 protocol: ECK$1$COMPACTUUID$PUBKEY_HEX$URL (Uppercase Alphanumeric Mode)
@@ -51,7 +52,7 @@ router.get('/pairing-qr', requireAdmin, async (req, res) => {
 
 // Endpoint for a device to register itself with the server
 router.post('/register-device', async (req, res) => {
-  const { deviceId, deviceName, devicePublicKey, signature } = req.body;
+  const { deviceId, deviceName, devicePublicKey, signature, inviteToken } = req.body;
 
   if (!deviceId || !devicePublicKey || !signature) {
     return res.status(400).json({ error: 'deviceId, devicePublicKey, and signature are required.' });
@@ -68,13 +69,31 @@ router.post('/register-device', async (req, res) => {
       return res.status(403).json({ error: 'Invalid signature. Device registration failed.' });
     }
 
+    // Determine initial status based on Invite Token
+    let initialStatus = 'pending';
+    if (inviteToken) {
+      try {
+        const tokenPayload = verifyJWT(inviteToken);
+        // Check if it's a valid invite token (you can add more logic here later like expiration or limits)
+        if (tokenPayload && tokenPayload.type === 'invite') {
+           initialStatus = 'active';
+           console.log(`[Device Registration] Valid invite token used. Status set to ACTIVE.`);
+        } else {
+           console.warn(`[Device Registration] Invalid or expired invite token. Status set to PENDING.`);
+        }
+      } catch (e) {
+        console.error('[Device Registration] Token verification failed:', e);
+      }
+    }
+
     // Signature is valid, store the device
     const [device, created] = await RegisteredDevice.findOrCreate({
       where: { deviceId: deviceId },
       defaults: {
         publicKey: devicePublicKey,
         deviceName: deviceName || null,
-        is_active: true
+        is_active: true,
+        status: initialStatus
       }
     });
 
@@ -83,13 +102,17 @@ router.post('/register-device', async (req, res) => {
       device.publicKey = devicePublicKey;
       device.deviceName = deviceName || device.deviceName;
       device.is_active = true;
+      // Only upgrade status if a valid token is provided, never downgrade existing active status
+      if (initialStatus === 'active') {
+          device.status = 'active';
+      }
       await device.save();
-      console.log(`[Device Registration] Re-registered device: ${deviceId}`);
-      return res.status(200).json({ success: true, message: 'Device re-registered successfully.' });
+      console.log(`[Device Registration] Re-registered device: ${deviceId} (Status: ${device.status})`);
+      return res.status(200).json({ success: true, message: 'Device re-registered successfully.', status: device.status });
     }
 
-    console.log(`[Device Registration] New device registered: ${deviceId}`);
-    res.status(201).json({ success: true, message: 'Device registered successfully.' });
+    console.log(`[Device Registration] New device registered: ${deviceId} (Status: ${initialStatus})`);
+    res.status(201).json({ success: true, message: 'Device registered successfully.', status: initialStatus });
 
   } catch (error) {
     console.error('Error registering device:', error);
