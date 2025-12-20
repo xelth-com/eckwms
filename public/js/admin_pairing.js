@@ -85,7 +85,18 @@ async function loadDevices() {
         const response = await fetch('/admin/api/devices', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
+
+        if (response.status === 401 || response.status === 403) {
+            console.warn('Auth failed, redirecting to login');
+            window.location.href = '/auth/login';
+            return;
+        }
+
         const devices = await response.json();
+
+        if (!Array.isArray(devices)) {
+             throw new Error(devices.error || 'Invalid server response (not an array)');
+        }
 
         if (devices.length === 0) {
             container.innerHTML = '<p>No devices registered yet.</p>';
