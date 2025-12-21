@@ -2,18 +2,23 @@
 // Complete implementation with fixes for URL handling and missing imports
 
 // Import required functions from other modules
-const { 
-    findKnownCode, 
-    isBetDirect, 
-    disAct, 
-    toAct, 
-    isAct, 
-    addEntryToProperty, 
-    addUnicEntryToProperty 
+const {
+    findKnownCode,
+    isBetDirect,
+    disAct,
+    toAct,
+    isAct,
+    addEntryToProperty,
+    addUnicEntryToProperty
 } = require('./dataInit');
 
 // Import encryption utils
 const { betrugerUrlDecrypt } = require('../../../shared/utils/encryption');
+
+// Import AI components for Hybrid Identification
+const geminiService = require('../services/geminiService');
+const { searchInventoryTool, linkCodeTool } = require('../tools/inventoryTools');
+const { AGENT_SYSTEM_PROMPT } = require('../prompts/agentPrompt');
 
 // Global buffers for active elements
 let iTem = [];
@@ -307,7 +312,7 @@ async function handleUserBarcode(betTemp) {
 }
 
 /**
- * Handles unknown barcode
+ * Handles unknown barcode using AI-powered Hybrid Identification
  */
 async function handleUnknownBarcode(barcode) {
     const result = {
@@ -317,58 +322,151 @@ async function handleUnknownBarcode(barcode) {
             barcode
         }
     };
-    
+
+    // Step 1: Check if it's a class first (legacy behavior preserved)
+    const cla = global.classes.get(barcode);
+
     if (iTem.length) {
         // Item buffer is not empty
-        const cla = global.classes.get(barcode);
-        
         if (cla) {
             // Barcode is a class
             Object.setPrototypeOf(global.items.get(disAct(iTem[iTem.length - 1])), cla);
             global.items.get(disAct(iTem[iTem.length - 1])).cl = barcode;
-            
+
             result.message = `Class '${barcode}' applied to item`;
             result.type = 'class';
             result.data.class = barcode;
         } else {
-            // Barcode is not a class, add it to brc array
-            const itemKey = disAct(iTem[iTem.length - 1]);
-            if (!Object.hasOwn(global.items.get(itemKey), 'brc')) {
-                global.items.get(itemKey).brc = [];
+            // Barcode is unknown - invoke AI for Hybrid Identification
+            console.log(`[AI] Analyzing unknown barcode: ${barcode}`);
+
+            try {
+                const aiContext = buildAIContext(barcode, iTem, bOx);
+                const aiResponse = await geminiService.generateWithTools(
+                    aiContext,
+                    [searchInventoryTool, linkCodeTool],
+                    { systemInstruction: AGENT_SYSTEM_PROMPT }
+                );
+
+                console.log(`[AI] Response:`, aiResponse.text);
+
+                // For now, fall back to legacy behavior after AI analysis
+                // AI will have called search_inventory and possibly link_code
+                const itemKey = disAct(iTem[iTem.length - 1]);
+                if (!Object.hasOwn(global.items.get(itemKey), 'brc')) {
+                    global.items.get(itemKey).brc = [];
+                }
+                global.items.get(itemKey).brc.push(barcode);
+
+                result.message = aiResponse.text || `AI analyzed: '${barcode}' added to item`;
+                result.type = 'item_barcode';
+                result.data.aiAnalysis = aiResponse.text;
+
+                await writeLog(`${barcode} => ${itemKey} [AI]`);
+            } catch (aiError) {
+                console.error('[AI] Error during barcode analysis:', aiError);
+                // Fall back to legacy behavior
+                const itemKey = disAct(iTem[iTem.length - 1]);
+                if (!Object.hasOwn(global.items.get(itemKey), 'brc')) {
+                    global.items.get(itemKey).brc = [];
+                }
+                global.items.get(itemKey).brc.push(barcode);
+
+                result.message = `Barcode '${barcode}' added to item (AI unavailable)`;
+                result.type = 'item_barcode';
+
+                await writeLog(`${barcode} => ${itemKey}`);
             }
-            global.items.get(itemKey).brc.push(barcode);
-            
-            result.message = `Barcode '${barcode}' added to item's barcodes`;
-            result.type = 'item_barcode';
-            
-            await writeLog(`${barcode} => ${itemKey}`);
         }
     } else if (bOx.length) {
         // Item buffer is empty, but box buffer is not
         const boxKey = disAct(bOx[bOx.length - 1]);
-        if (!Object.hasOwn(global.boxes.get(boxKey), 'brc')) {
-            global.boxes.get(boxKey).brc = [];
+
+        // Invoke AI for box barcodes too
+        console.log(`[AI] Analyzing unknown barcode for box: ${barcode}`);
+
+        try {
+            const aiContext = buildAIContext(barcode, iTem, bOx);
+            const aiResponse = await geminiService.generateWithTools(
+                aiContext,
+                [searchInventoryTool, linkCodeTool],
+                { systemInstruction: AGENT_SYSTEM_PROMPT }
+            );
+
+            console.log(`[AI] Response:`, aiResponse.text);
+
+            if (!Object.hasOwn(global.boxes.get(boxKey), 'brc')) {
+                global.boxes.get(boxKey).brc = [];
+            }
+            global.boxes.get(boxKey).brc.push(barcode);
+
+            result.message = aiResponse.text || `AI analyzed: '${barcode}' added to box`;
+            result.type = 'box_barcode';
+            result.data.aiAnalysis = aiResponse.text;
+
+            await writeLog(`${barcode} => ${boxKey} [AI]`);
+        } catch (aiError) {
+            console.error('[AI] Error during box barcode analysis:', aiError);
+            // Fall back to legacy behavior
+            if (!Object.hasOwn(global.boxes.get(boxKey), 'brc')) {
+                global.boxes.get(boxKey).brc = [];
+            }
+            global.boxes.get(boxKey).brc.push(barcode);
+
+            result.message = `Barcode '${barcode}' added to box (AI unavailable)`;
+            result.type = 'box_barcode';
+
+            await writeLog(`${barcode} => ${boxKey}`);
         }
-        global.boxes.get(boxKey).brc.push(barcode);
-        
-        result.message = `Barcode '${barcode}' added to box's barcodes`;
-        result.type = 'box_barcode';
-        
-        await writeLog(`${barcode} => ${boxKey}`);
     } else {
         // Both buffers are empty
-        const cl = global.classes.get(barcode);
-        
-        if (cl) {
+        if (cla) {
             result.message = `Class '${barcode}' found but no items in buffer`;
             result.type = 'class';
             result.data.class = barcode;
         } else {
-            result.message = `Unknown barcode '${barcode}'`;
+            // Invoke AI even without context
+            console.log(`[AI] Analyzing barcode without context: ${barcode}`);
+
+            try {
+                const aiContext = `I scanned a code: "${barcode}". There are no items or boxes in the buffer. What is this code?`;
+                const aiResponse = await geminiService.generateWithTools(
+                    aiContext,
+                    [searchInventoryTool, linkCodeTool],
+                    { systemInstruction: AGENT_SYSTEM_PROMPT }
+                );
+
+                result.message = aiResponse.text || `Unknown barcode '${barcode}'`;
+                result.data.aiAnalysis = aiResponse.text;
+            } catch (aiError) {
+                console.error('[AI] Error during standalone barcode analysis:', aiError);
+                result.message = `Unknown barcode '${barcode}'`;
+            }
         }
     }
-    
+
     return result;
+}
+
+/**
+ * Build context string for AI analysis
+ */
+function buildAIContext(barcode, itemBuffer, boxBuffer) {
+    let context = `A worker scanned: "${barcode}"\n\n`;
+
+    if (itemBuffer.length > 0) {
+        context += `Current item buffer: [${itemBuffer.join(', ')}]\n`;
+        context += `Active item: ${disAct(itemBuffer[itemBuffer.length - 1])}\n`;
+    }
+
+    if (boxBuffer.length > 0) {
+        context += `Current box buffer: [${boxBuffer.join(', ')}]\n`;
+        context += `Active box: ${disAct(boxBuffer[boxBuffer.length - 1])}\n`;
+    }
+
+    context += `\nWhat is this code? Should I search for it in inventory or link it to the current item/box?`;
+
+    return context;
 }
 
 /**
