@@ -37,6 +37,10 @@ db.PublicData = require('./PublicData')(sequelize, Sequelize);
 // Import InBody Driver models (optional - only if needed for integration)
 db.RepairOrder = require('./RepairOrder')(sequelize, Sequelize);
 
+// RBAC Models
+db.Role = require('./Role')(sequelize, Sequelize);
+db.Permission = require('./Permission')(sequelize, Sequelize);
+
 // Define relationships - WMS Core
 db.UserAuth.hasMany(db.RmaRequest, { foreignKey: 'userId' });
 db.RmaRequest.belongsTo(db.UserAuth, { foreignKey: 'userId' });
@@ -51,5 +55,17 @@ db.RegisteredDevice.belongsTo(db.EckwmsInstance, { foreignKey: 'instance_id' });
 // InBody Driver relationships - Scan to RepairOrder
 db.Scan.hasMany(db.RepairOrder, { foreignKey: 'scan_id', as: 'repairOrders' });
 db.RepairOrder.belongsTo(db.Scan, { foreignKey: 'scan_id', as: 'scan' });
+
+// RBAC Relationships
+db.Role.belongsToMany(db.Permission, {
+  through: { model: 'role_permissions', timestamps: false },
+  foreignKey: 'role_id'
+});
+db.Permission.belongsToMany(db.Role, {
+  through: { model: 'role_permissions', timestamps: false },
+  foreignKey: 'permission_id'
+});
+db.RegisteredDevice.belongsTo(db.Role, { foreignKey: 'role_id' });
+db.Role.hasMany(db.RegisteredDevice, { foreignKey: 'role_id' });
 
 module.exports = db;

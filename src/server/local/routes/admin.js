@@ -93,6 +93,44 @@ router.delete('/api/devices/:id', async (req, res) => {
     }
 });
 
+// Assign Role to Device and Push Permissions
+router.post('/api/devices/:id/role', async (req, res) => {
+    try {
+        const { RegisteredDevice, Role, Permission } = require('../../../shared/models/postgresql');
+        const { roleId } = req.body;
+        const deviceId = req.params.id;
+
+        const device = await RegisteredDevice.findByPk(deviceId);
+        if (!device) return res.status(404).json({ error: 'Device not found' });
+
+        const role = await Role.findByPk(roleId, {
+            include: [{ model: Permission }]
+        });
+        if (!role) return res.status(404).json({ error: 'Role not found' });
+
+        device.role_id = roleId;
+        await device.save();
+
+        // Extract permission slugs for the device
+        const permissions = role.Permissions.map(p => p.slug);
+
+        // --- REAL-TIME PUSH: ROLE UPDATE ---
+        if (global.sendToDevice) {
+            global.sendToDevice(deviceId, 'ROLE_UPDATE', {
+                role: role.name,
+                permissions: permissions, // Send full list so device can work offline
+                timestamp: Date.now()
+            });
+        }
+        // -----------------------------------
+
+        res.json({ success: true, device, role: role.name, permissions });
+    } catch (error) {
+        console.error('Error assigning role:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get all items with issues
 router.get('/items/issues', (req, res) => {
     const itemsWithIssues = [];

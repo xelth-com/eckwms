@@ -172,6 +172,7 @@ app.use('/translation-admin', requireAdmin, translationAdminRoutes); // Защи
 app.use('/ECK', eckwmsRoutes);
 app.use('/ECK/api/upload', uploadRoutes);
 app.use('/api/internal', setupRoutes); // Device pairing endpoints
+app.use('/api/rbac', require('./routes/rbac')); // RBAC Management API
 // app.use('/nexus', mavenProxyRoutes); // Если нужен Maven Proxy, верни
 
 // Legacy scan routes removed - use /eckwms/api/scan instead with the new intelligent buffer architecture

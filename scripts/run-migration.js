@@ -67,7 +67,7 @@ async function runMigration(migrationFile) {
 }
 
 // Get migration file from command line argument or use default
-const migrationFile = process.argv[2] || '003-add-device-status.sql';
+const migrationFile = process.argv[2] || '004-add-dynamic-rbac.sql';
 
 console.log('\n' + '='.repeat(60));
 console.log('  ECKWMS Database Migration Tool');
