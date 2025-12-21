@@ -131,6 +131,36 @@ router.post('/api/devices/:id/role', async (req, res) => {
     }
 });
 
+// Push Dynamic UI Layout to Device
+router.post('/api/devices/:id/layout', async (req, res) => {
+    try {
+        const deviceId = req.params.id;
+        const { layout } = req.body;
+
+        if (!layout) return res.status(400).json({ error: 'Layout JSON required' });
+
+        // --- REAL-TIME PUSH: UI LAYOUT ---
+        if (global.sendToDevice) {
+            const sent = global.sendToDevice(deviceId, 'LAYOUT_UPDATE', {
+                layout: layout,
+                timestamp: Date.now()
+            });
+
+            if (sent) {
+                return res.json({ success: true, message: 'Layout pushed to device' });
+            } else {
+                return res.status(404).json({ error: 'Device not connected via WebSocket' });
+            }
+        }
+        // -----------------------------------
+
+        res.status(503).json({ error: 'WebSocket service unavailable' });
+    } catch (error) {
+        console.error('Error pushing layout:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get all items with issues
 router.get('/items/issues', (req, res) => {
     const itemsWithIssues = [];
