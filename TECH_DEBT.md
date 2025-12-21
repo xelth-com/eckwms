@@ -1,9 +1,9 @@
 # Technical Debt & Limitations
 
-## SDUI Engine (Android)
-- **Components**: Currently supports only `Text`, `Button`, `Card`, `Spacing`. Needs `TextInput`, `Image`, `Dropdown`.
-- **State Management**: Dynamic UI is stateless. Form inputs are not yet sent back to the server automatically.
-- **Navigation**: Simple back stack. No support for complex navigation graphs within JSON.
+## Android Client (Critical)
+- **Protocol Lag**: The server now speaks a rich AI protocol (`ai_interaction`), but the Android client only understands basic success/fail messages. **Priority: High**.
+- **SDUI Components**: Currently supports only basic text/buttons. Needs input fields for AI questions.
 
-## RBAC
-- **Permission Granularity**: Permissions are checked only at UI entry points. Need deeper integration into API endpoints.
+## AI / Server
+- **Prompt Tuning**: The `agentPrompt.js` is V1. Needs refinement based on real-world usage data.
+- **Tool Error Handling**: If the database is locked, the AI might hallucinate success. Needs better error propagation from tools.

@@ -350,6 +350,9 @@ async function handleUnknownBarcode(barcode) {
 
                 console.log(`[AI] Response:`, aiResponse.text);
 
+                // Parse AI response for structured client interaction
+                const aiInteraction = parseAIResponse(aiResponse.text, aiResponse.iterations);
+
                 // For now, fall back to legacy behavior after AI analysis
                 // AI will have called search_inventory and possibly link_code
                 const itemKey = disAct(iTem[iTem.length - 1]);
@@ -358,9 +361,10 @@ async function handleUnknownBarcode(barcode) {
                 }
                 global.items.get(itemKey).brc.push(barcode);
 
-                result.message = aiResponse.text || `AI analyzed: '${barcode}' added to item`;
+                result.message = aiInteraction.summary || `AI analyzed: '${barcode}' added to item`;
                 result.type = 'item_barcode';
                 result.data.aiAnalysis = aiResponse.text;
+                result.data.ai_interaction = aiInteraction;
 
                 await writeLog(`${barcode} => ${itemKey} [AI]`);
             } catch (aiError) {
@@ -395,14 +399,18 @@ async function handleUnknownBarcode(barcode) {
 
             console.log(`[AI] Response:`, aiResponse.text);
 
+            // Parse AI response for structured client interaction
+            const aiInteraction = parseAIResponse(aiResponse.text, aiResponse.iterations);
+
             if (!Object.hasOwn(global.boxes.get(boxKey), 'brc')) {
                 global.boxes.get(boxKey).brc = [];
             }
             global.boxes.get(boxKey).brc.push(barcode);
 
-            result.message = aiResponse.text || `AI analyzed: '${barcode}' added to box`;
+            result.message = aiInteraction.summary || `AI analyzed: '${barcode}' added to box`;
             result.type = 'box_barcode';
             result.data.aiAnalysis = aiResponse.text;
+            result.data.ai_interaction = aiInteraction;
 
             await writeLog(`${barcode} => ${boxKey} [AI]`);
         } catch (aiError) {
@@ -436,8 +444,12 @@ async function handleUnknownBarcode(barcode) {
                     { systemInstruction: AGENT_SYSTEM_PROMPT }
                 );
 
-                result.message = aiResponse.text || `Unknown barcode '${barcode}'`;
+                // Parse AI response for structured client interaction
+                const aiInteraction = parseAIResponse(aiResponse.text, aiResponse.iterations);
+
+                result.message = aiInteraction.summary || `Unknown barcode '${barcode}'`;
                 result.data.aiAnalysis = aiResponse.text;
+                result.data.ai_interaction = aiInteraction;
             } catch (aiError) {
                 console.error('[AI] Error during standalone barcode analysis:', aiError);
                 result.message = `Unknown barcode '${barcode}'`;
@@ -467,6 +479,60 @@ function buildAIContext(barcode, itemBuffer, boxBuffer) {
     context += `\nWhat is this code? Should I search for it in inventory or link it to the current item/box?`;
 
     return context;
+}
+
+/**
+ * Parse AI response and determine interaction type
+ * @param {string} aiText - The AI's response text
+ * @param {number} iterations - Number of tool calls made
+ * @returns {Object} Structured interaction data for the client
+ */
+function parseAIResponse(aiText, iterations = 0) {
+    const interaction = {
+        type: 'info', // 'info', 'question', 'confirmation', 'action_taken'
+        message: aiText,
+        requiresResponse: false,
+        suggestedActions: [],
+        toolCallsMade: iterations
+    };
+
+    // Detect if AI is asking a question
+    const hasQuestion = aiText.includes('?');
+    const questionKeywords = ['should i', 'do you want', 'would you like', 'is this', 'are you'];
+    const isAsking = questionKeywords.some(keyword => aiText.toLowerCase().includes(keyword));
+
+    if (hasQuestion && isAsking) {
+        interaction.type = 'question';
+        interaction.requiresResponse = true;
+        interaction.suggestedActions = ['yes', 'no', 'cancel'];
+    }
+
+    // Detect if AI took action
+    const actionKeywords = ['linked', 'created', 'associated', 'added'];
+    const tookAction = actionKeywords.some(keyword => aiText.toLowerCase().includes(keyword));
+
+    if (tookAction && iterations > 0) {
+        interaction.type = 'action_taken';
+        interaction.requiresResponse = false;
+    }
+
+    // Detect if AI needs confirmation
+    const confirmKeywords = ['confirm', 'verify', 'check', 'make sure'];
+    const needsConfirm = confirmKeywords.some(keyword => aiText.toLowerCase().includes(keyword));
+
+    if (needsConfirm && hasQuestion) {
+        interaction.type = 'confirmation';
+        interaction.requiresResponse = true;
+        interaction.suggestedActions = ['confirm', 'cancel'];
+    }
+
+    // Extract short summary (first sentence or first 100 chars)
+    const firstSentence = aiText.split(/[.!?]/)[0];
+    interaction.summary = firstSentence.length > 100
+        ? firstSentence.substring(0, 97) + '...'
+        : firstSentence;
+
+    return interaction;
 }
 
 /**

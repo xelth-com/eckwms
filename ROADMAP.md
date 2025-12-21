@@ -1,27 +1,30 @@
 # eckWMS Project Roadmap
 
 ## 🟢 Phase 1: Connectivity & Transport (COMPLETED)
-- [x] **Hybrid Transport Layer**: WebSocket (Fast) + HTTP (Reliable) implemented.
-- [x] **Self-Healing**: Android client automatically re-registers if keys/db mismatch.
-- [x] **Deduplication**: Server handles duplicate messages from hybrid transport.
-- [x] **Real-Time Push**: Server can push commands to specific devices.
+- [x] **Hybrid Transport Layer**: WebSocket (Fast) + HTTP (Reliable).
+- [x] **Self-Healing**: Android client auto-registration.
+- [x] **Deduplication**: Server handles duplicate messages.
 
-## 🟢 Phase 2: Role-Based Access Control (RBAC) (COMPLETED)
-- [x] **Database Schema**: Roles, Permissions, RolePermissions tables created.
-- [x] **Dynamic API**: Agent can create roles and assign permissions programmatically.
-- [x] **Instant Sync**: Changing a role instantly updates Android UI via WebSocket.
-- [x] **Offline Support**: Permissions are persisted locally on the device.
+## 🟢 Phase 2: Role-Based Access Control (COMPLETED)
+- [x] **Dynamic Roles**: Database schema and API.
+- [x] **Instant Sync**: WebSocket push for permissions.
 
-## 🟢 Phase 3: AI-Driven Interface (SDUI) (COMPLETED)
-- [x] **Dynamic UI Engine**: Android renders native UI from JSON layouts.
-- [x] **Real-Time Layout Push**: Server can change app interface instantly via WebSocket.
-- [x] **Hybrid Wiring**: `LAYOUT_UPDATE` events trigger ViewModel updates.
+## 🟢 Phase 3: AI-Driven Interface (COMPLETED)
+- [x] **Dynamic UI Engine**: Server Driven UI (SDUI).
+- [x] **Layout Push**: Real-time interface updates.
 
-## 🟡 Phase 4: Business Logic & Workflows (NEXT)
-- [ ] **AI Workflow Generation**: Allow Agent to generate task-specific UIs dynamically.
-- [ ] **Action Handling**: Connect Dynamic UI buttons (e.g., 'start_scan') to actual hardware triggers.
-- [ ] **Input Feedback**: Allow Dynamic UI to send form data back to the Agent.
+## 🟢 Phase 4: Server-Side AI Agent (COMPLETED)
+- [x] **Gemini Integration**: Service upgraded to @google/genai.
+- [x] **Inventory Tools**: Search and Link tools created.
+- [x] **Persistent Memory**: `product_aliases` table implemented.
+- [x] **Context Awareness**: Agent distinguishes Receiving vs Internal Ops.
+- [x] **Feedback Loop**: `ai_interaction` protocol defined for client.
 
-## 🔵 Phase 5: Production Readiness
-- [ ] **Logging**: Centralized logging for all devices.
-- [ ] **Security**: Audit of API endpoints and WebSocket auth.
+## 🟡 Phase 5: Android Client AI Integration (NEXT)
+- [ ] **Protocol Implementation**: Handle `ai_interaction` JSON in `ScanRecoveryViewModel`.
+- [ ] **UI Components**: Build QuestionDialog, ConfirmationDialog, SuccessToast.
+- [ ] **Interactivity**: Wire buttons to send responses back to server.
+
+## 🔵 Phase 6: Production Readiness
+- [ ] **Logging**: Centralized logging (ELK/Loki).
+- [ ] **Security Audit**: API endpoints and WebSocket auth.
