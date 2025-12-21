@@ -40,6 +40,7 @@ db.RepairOrder = require('./RepairOrder')(sequelize, Sequelize);
 // RBAC Models
 db.Role = require('./Role')(sequelize, Sequelize);
 db.Permission = require('./Permission')(sequelize, Sequelize);
+db.RolePermission = require('./RolePermission')(sequelize, Sequelize);
 
 // Define relationships - WMS Core
 db.UserAuth.hasMany(db.RmaRequest, { foreignKey: 'userId' });
@@ -58,11 +59,11 @@ db.RepairOrder.belongsTo(db.Scan, { foreignKey: 'scan_id', as: 'scan' });
 
 // RBAC Relationships
 db.Role.belongsToMany(db.Permission, {
-  through: { model: 'role_permissions', timestamps: false },
+  through: db.RolePermission,
   foreignKey: 'role_id'
 });
 db.Permission.belongsToMany(db.Role, {
-  through: { model: 'role_permissions', timestamps: false },
+  through: db.RolePermission,
   foreignKey: 'permission_id'
 });
 db.RegisteredDevice.belongsTo(db.Role, { foreignKey: 'role_id' });
