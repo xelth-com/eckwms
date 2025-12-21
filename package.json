@@ -14,6 +14,7 @@
   "author": "Dmytro Surovtsev",
   "license": "MIT",
   "dependencies": {
+    "@google/genai": "^1.34.0",
     "bcrypt": "^5.1.1",
     "body-parser": "^1.20.2",
     "buffer-crc32": "^1.0.0",
@@ -23,6 +24,7 @@
     "express": "^4.18.2",
     "express-interceptor": "^1.2.0",
     "express-session": "^1.18.1",
+    "googleapis": "^169.0.0",
     "helmet": "^7.1.0",
     "http-proxy-middleware": "^3.0.5",
     "i18next": "^24.2.3",
