@@ -70,7 +70,7 @@ router.post('/register-device', async (req, res) => {
   }
 
   try {
-    // Verify the signature to ensure the request is from the device that owns the public key
+    // Verify the signature
     const message = JSON.stringify({ deviceId, devicePublicKey });
     const signatureBytes = Buffer.from(signature, 'base64');
     const messageBytes = Buffer.from(message, 'utf8');
@@ -80,50 +80,63 @@ router.post('/register-device', async (req, res) => {
       return res.status(403).json({ error: 'Invalid signature. Device registration failed.' });
     }
 
-    // Determine initial status based on Invite Token
-    let initialStatus = 'pending';
+    // Determine requested status based on Invite Token
+    let requestedStatus = 'pending';
     if (inviteToken) {
       try {
         const tokenPayload = verifyJWT(inviteToken);
-        // Check if it's a valid invite token (you can add more logic here later like expiration or limits)
         if (tokenPayload && tokenPayload.type === 'invite') {
-           initialStatus = 'active';
-           console.log(`[Device Registration] Valid invite token used. Status set to ACTIVE.`);
-        } else {
-           console.warn(`[Device Registration] Invalid or expired invite token. Status set to PENDING.`);
+           requestedStatus = 'active';
+           console.log(`[Device Registration] Valid invite token used. Requested status: ACTIVE.`);
         }
       } catch (e) {
         console.error('[Device Registration] Token verification failed:', e);
       }
     }
 
-    // Signature is valid, store the device
-    const [device, created] = await RegisteredDevice.findOrCreate({
-      where: { deviceId: deviceId },
-      defaults: {
+    // Find existing device first
+    const existingDevice = await RegisteredDevice.findOne({ where: { deviceId } });
+
+    if (existingDevice) {
+      // SMART LOGIC: Preserve existing status to prevent lockout
+      let newStatus = existingDevice.status;
+
+      // Only upgrade to active if it was pending AND we have a valid token
+      if (existingDevice.status === 'pending' && requestedStatus === 'active') {
+          newStatus = 'active';
+      }
+
+      // If device was somehow deleted/unregistered but ID remains (edge case), or we want to force update info
+      existingDevice.publicKey = devicePublicKey;
+      existingDevice.deviceName = deviceName || existingDevice.deviceName;
+      existingDevice.is_active = true;
+      existingDevice.status = newStatus;
+
+      await existingDevice.save();
+
+      console.log(`[Device Registration] Existing device updated: ${deviceId}. Status kept as: ${newStatus}`);
+      return res.status(200).json({
+          success: true,
+          message: 'Device registration updated.',
+          status: newStatus
+      });
+    }
+
+    // New Device
+    const newDevice = await RegisteredDevice.create({
+        deviceId,
         publicKey: devicePublicKey,
         deviceName: deviceName || null,
         is_active: true,
-        status: initialStatus
-      }
+        status: requestedStatus
     });
 
-    if (!created) {
-      // If device already exists, update its public key and name
-      device.publicKey = devicePublicKey;
-      device.deviceName = deviceName || device.deviceName;
-      device.is_active = true;
-      // Only upgrade status if a valid token is provided, never downgrade existing active status
-      if (initialStatus === 'active') {
-          device.status = 'active';
-      }
-      await device.save();
-      console.log(`[Device Registration] Re-registered device: ${deviceId} (Status: ${device.status})`);
-      return res.status(200).json({ success: true, message: 'Device re-registered successfully.', status: device.status });
-    }
-
-    console.log(`[Device Registration] New device registered: ${deviceId} (Status: ${initialStatus})`);
-    res.status(201).json({ success: true, message: 'Device registered successfully.', status: initialStatus });
+    console.log(`[Device Registration] NEW device registered: ${deviceId}. Status: ${requestedStatus}`);
+    res.status(201).json({
+        success: true,
+        message: 'Device registered successfully.',
+        status: requestedStatus
+    });
 
   } catch (error) {
     console.error('Error registering device:', error);
