@@ -2,12 +2,24 @@
 const express = require('express');
 const router = express.Router();
 const { processScan } = require('../utils/scanHandler');
+const { isDuplicate } = require('../utils/messageDeduplicator');
 
 // Endpoint for processing scanned barcodes
 router.post('/process', async (req, res) => {
     try {
-        const { barcode, type, deviceId } = req.body;
-        
+        const { barcode, type, deviceId, msgId } = req.body;
+
+        // Check for duplicate message
+        if (msgId && isDuplicate(msgId)) {
+            console.log(`[HTTP] Duplicate message ${msgId} detected, returning acknowledgment`);
+            return res.status(200).json({
+                success: true,
+                duplicate: true,
+                msgId: msgId,
+                text: 'Message already processed'
+            });
+        }
+
         if (!barcode) {
             return res.status(400).json({
                 success: false,
@@ -15,7 +27,7 @@ router.post('/process', async (req, res) => {
             });
         }
 
-        console.log(`Processing scan request for barcode: ${barcode}, type: ${type}, device: ${deviceId}`);
+        console.log(`Processing scan request for barcode: ${barcode}, type: ${type}, device: ${deviceId}, msgId: ${msgId}`);
         
         // Process the scan using the scanHandler utility
         const result = await processScan(barcode);
@@ -25,6 +37,7 @@ router.post('/process', async (req, res) => {
         // Format the response for the mobile app
         const response = {
             success: true,
+            msgId: msgId,
             contentType: result.type,
             text: result.message,
             data: result.data,
