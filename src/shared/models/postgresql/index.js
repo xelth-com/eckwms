@@ -33,6 +33,7 @@ db.Scan = require('./Scan')(sequelize, Sequelize);
 db.EckwmsInstance = require('./EckwmsInstance')(sequelize, Sequelize);
 db.RegisteredDevice = require('./RegisteredDevice')(sequelize, Sequelize);
 db.PublicData = require('./PublicData')(sequelize, Sequelize);
+db.ProductAlias = require('./ProductAlias')(sequelize, Sequelize);
 
 // Import InBody Driver models (optional - only if needed for integration)
 db.RepairOrder = require('./RepairOrder')(sequelize, Sequelize);

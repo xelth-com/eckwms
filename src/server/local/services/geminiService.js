@@ -184,6 +184,165 @@ class GeminiService {
             systemInstruction: "You are a helpful assistant that responds accurately and concisely. If the user asks for JSON, provide only the valid JSON object and nothing else."
         });
     }
+
+    /**
+     * Generate with function calling support
+     * @param {string} userMessage - The user's message
+     * @param {Array} tools - Array of tool definitions with {name, description, parameters, execute}
+     * @param {Object} options - Additional options (systemInstruction, temperature, etc.)
+     * @returns {Promise<Object>} - Object with text, toolCalls, and execution results
+     */
+    async generateWithTools(userMessage, tools = [], options = {}) {
+        if (!this.isAvailable()) {
+            return {
+                text: 'AI Service not configured',
+                error: true
+            };
+        }
+
+        const models = this.getPrioritizedModels();
+
+        // Convert tools to Gemini format
+        const functionDeclarations = tools.map(tool => ({
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters
+        }));
+
+        for (const [index, modelConfig] of models.entries()) {
+            try {
+                let contents = [{ role: 'user', parts: [{ text: userMessage }] }];
+                let maxIterations = 5; // Prevent infinite loops
+                let iteration = 0;
+                let finalResponse = null;
+
+                while (iteration < maxIterations) {
+                    iteration++;
+
+                    const requestConfig = {
+                        model: modelConfig.name,
+                        systemInstruction: options.systemInstruction || "You are a helpful AI assistant.",
+                        contents: contents,
+                        generationConfig: {
+                            temperature: options.temperature || modelConfig.temperature
+                        }
+                    };
+
+                    // Add tools if provided
+                    if (functionDeclarations.length > 0) {
+                        requestConfig.tools = [{
+                            functionDeclarations: functionDeclarations
+                        }];
+                    }
+
+                    const result = await this.client.models.generateContent(requestConfig);
+
+                    if (!result.candidates || result.candidates.length === 0) {
+                        throw new Error('No candidates in response');
+                    }
+
+                    const candidate = result.candidates[0];
+                    const content = candidate.content;
+
+                    // Check if the response contains function calls
+                    const functionCalls = content.parts.filter(part => part.functionCall);
+
+                    if (functionCalls.length > 0) {
+                        // Execute function calls
+                        const functionResponses = [];
+
+                        for (const fc of functionCalls) {
+                            const toolName = fc.functionCall.name;
+                            const toolArgs = fc.functionCall.args;
+                            const tool = tools.find(t => t.name === toolName);
+
+                            console.log(`[Gemini] Tool call: ${toolName} with args:`, toolArgs);
+
+                            let functionResponse;
+                            if (tool && tool.execute) {
+                                try {
+                                    const executionResult = await tool.execute(toolArgs);
+                                    functionResponse = {
+                                        name: toolName,
+                                        response: executionResult
+                                    };
+                                } catch (execError) {
+                                    console.error(`[Gemini] Tool execution error:`, execError);
+                                    functionResponse = {
+                                        name: toolName,
+                                        response: { error: execError.message }
+                                    };
+                                }
+                            } else {
+                                functionResponse = {
+                                    name: toolName,
+                                    response: { error: 'Tool not found' }
+                                };
+                            }
+
+                            functionResponses.push(functionResponse);
+                        }
+
+                        // Add assistant's function call to history
+                        contents.push({
+                            role: 'model',
+                            parts: functionCalls.map(fc => ({ functionCall: fc.functionCall }))
+                        });
+
+                        // Add function responses to history
+                        contents.push({
+                            role: 'user',
+                            parts: functionResponses.map(fr => ({
+                                functionResponse: fr
+                            }))
+                        });
+
+                        // Continue the loop to get AI's next response
+                        continue;
+                    }
+
+                    // No function calls, extract text response
+                    const textParts = content.parts.filter(part => part.text);
+                    if (textParts.length > 0) {
+                        finalResponse = textParts.map(part => part.text).join('');
+                        break;
+                    }
+
+                    // If we get here with no text and no function calls, something's wrong
+                    throw new Error('Response contained neither text nor function calls');
+                }
+
+                if (!finalResponse) {
+                    throw new Error('Max iterations reached without final response');
+                }
+
+                return {
+                    text: finalResponse,
+                    iterations: iteration
+                };
+
+            } catch (error) {
+                console.error(`[Gemini] Tool model ${modelConfig.name} failed:`, error.message);
+
+                if (index === models.length - 1) {
+                    const geminiErrorInfo = handleGeminiError(error, {
+                        language: 'en',
+                        includeRetryInfo: true
+                    });
+
+                    return {
+                        text: geminiErrorInfo.userMessage,
+                        error: true
+                    };
+                }
+            }
+        }
+
+        return {
+            text: 'Failed to generate response with tools',
+            error: true
+        };
+    }
 }
 
 module.exports = new GeminiService();
