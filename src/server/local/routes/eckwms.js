@@ -102,6 +102,19 @@ router.post('/API/SCAN', authenticateApiKey, async (req, res) => {
   try {
     const { payload, deviceId, priority, type } = req.body;
 
+    // STRICT SECURITY CHECK: Validate Device Status
+    if (deviceId && !req.isPublicMode) {
+      const device = await RegisteredDevice.findOne({ where: { deviceId } });
+      if (!device) {
+        console.warn(`[Security] Blocked scan from unknown device: ${deviceId}`);
+        return res.status(403).json({ success: false, error: 'Device not registered', code: 'DEVICE_NOT_FOUND' });
+      }
+      if (device.status !== 'active') {
+        console.warn(`[Security] Blocked scan from ${device.status} device: ${deviceId}`);
+        return res.status(403).json({ success: false, error: `Device is ${device.status}`, code: 'DEVICE_BLOCKED' });
+      }
+    }
+
     console.log(`[eckWMS] Raw request body:`, JSON.stringify(req.body));
 
     if (!payload) {
@@ -311,6 +324,42 @@ router.post('/API/DEVICE/REGISTER', async (req, res) => {
   } catch (error) {
     console.error('[eckWMS] Registration error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /API/DEVICE/:deviceId/STATUS
+ * Lightweight endpoint for devices to poll their authorization status
+ * No authentication required - devices need to check their status even when blocked
+ */
+router.get('/API/DEVICE/:deviceId/STATUS', async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const device = await RegisteredDevice.findOne({
+      where: { deviceId },
+      attributes: ['status', 'is_active', 'deviceName']
+    });
+
+    if (!device) {
+      // Device was deleted from admin panel
+      return res.json({
+        status: 'unregistered',
+        active: false,
+        message: 'Device not found in system'
+      });
+    }
+
+    res.json({
+      status: device.status, // active, pending, blocked
+      active: device.is_active,
+      name: device.deviceName || 'Unnamed Device'
+    });
+  } catch (error) {
+    console.error('[eckWMS] Status check error:', error);
+    res.status(500).json({
+      error: 'Internal error',
+      status: 'error'
+    });
   }
 });
 
