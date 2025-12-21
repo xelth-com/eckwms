@@ -63,6 +63,16 @@ router.post('/api/devices/:id/status', async (req, res) => {
         device.status = status;
         await device.save();
 
+        // --- REAL-TIME PUSH NOTIFICATION ---
+        if (global.sendToDevice) {
+            global.sendToDevice(device.deviceId, 'STATUS_UPDATE', {
+                status: status,
+                active: status === 'active',
+                timestamp: Date.now()
+            });
+        }
+        // -----------------------------------
+
         res.json({ success: true, device });
     } catch (error) {
         console.error('Error updating device:', error);

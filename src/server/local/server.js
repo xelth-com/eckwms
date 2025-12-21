@@ -427,6 +427,26 @@ async function initialize() {
         const wss = new WebSocket.Server({ server });
         console.log('[WebSocket] WebSocket server initialized for hybrid transport');
 
+        // Global registry of connected devices
+        global.deviceConnections = new Map();
+
+        // Global helper to send push notifications
+        global.sendToDevice = (deviceId, type, payload = {}) => {
+            const ws = global.deviceConnections.get(deviceId);
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                try {
+                    const message = JSON.stringify({ type, ...payload });
+                    ws.send(message);
+                    console.log(`[WebSocket] Push sent to ${deviceId}: ${type}`);
+                    return true;
+                } catch (err) {
+                    console.error(`[WebSocket] Error sending to ${deviceId}:`, err);
+                }
+            }
+            console.log(`[WebSocket] Failed to push to ${deviceId}: Device not connected or socket closed`);
+            return false;
+        };
+
         wss.on('connection', (ws, req) => {
             const clientIp = req.socket.remoteAddress;
             console.log(`[WebSocket] New client connected from ${clientIp}`);
@@ -435,7 +455,23 @@ async function initialize() {
                 try {
                     // Parse incoming message
                     const data = JSON.parse(message.toString());
-                    console.log(`[WebSocket] Received message:`, data);
+                    // console.log(`[WebSocket] Received message:`, data); // Reduce log noise
+
+                    // --- DEVICE HANDSHAKE ---
+                    if (data.type === 'DEVICE_IDENTIFY' && data.deviceId) {
+                        global.deviceConnections.set(data.deviceId, ws);
+                        ws.deviceId = data.deviceId; // Attach ID to socket instance for cleanup
+                        console.log(`[WebSocket] Device IDENTIFIED and mapped: ${data.deviceId}`);
+
+                        // Send immediate confirmation
+                        ws.send(JSON.stringify({
+                            type: 'ACK',
+                            msgId: data.msgId,
+                            message: 'Server: Identity confirmed'
+                        }));
+                        return;
+                    }
+                    // ------------------------
 
                     // Extract msgId for deduplication
                     const { msgId, barcode, type, deviceId } = data;
@@ -499,6 +535,10 @@ async function initialize() {
             });
 
             ws.on('close', () => {
+                if (ws.deviceId && global.deviceConnections) {
+                    global.deviceConnections.delete(ws.deviceId);
+                    console.log(`[WebSocket] Unmapped device ${ws.deviceId}`);
+                }
                 console.log(`[WebSocket] Client disconnected from ${clientIp}`);
             });
 
