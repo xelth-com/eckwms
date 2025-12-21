@@ -12192,3 +12192,6 @@ dist/
 
 # Added by eck-snapshot to ignore metadata directory
 .eck/
+
+# Google Cloud Credentials
+google-credentials.json
