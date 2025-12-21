@@ -20,6 +20,8 @@ const i18next = require('i18next');
 const createHtmlTranslationInterceptor = require('./middleware/htmlTranslationInterceptor');
 const { createProxyMiddleware } = require('http-proxy-middleware'); // <-- ДОБАВЛЕНО для NodeBB прокси
 const { collectAndReportDiagnostics } = require('./utils/startupDiagnostics');
+const WebSocket = require('ws');
+const { isDuplicate } = require('./utils/messageDeduplicator');
 
 // Import routes
 const apiRoutes = require('./routes/api');
@@ -411,7 +413,7 @@ async function initialize() {
 
         // 4. Запуск сервера
         const PORT = process.env.LOCAL_SERVER_PORT || process.env.PORT || 3100;
-        app.listen(PORT, () => {
+        const server = app.listen(PORT, () => {
             console.log(`eckwms server running on port ${PORT} in ${process.env.NODE_ENV} mode.`);
             writeLog('Server started successfully.'); // Лог успешного запуска
 
@@ -420,6 +422,96 @@ async function initialize() {
                 collectAndReportDiagnostics();
             }
         });
+
+        // 5. Initialize WebSocket server for hybrid transport
+        const wss = new WebSocket.Server({ server });
+        console.log('[WebSocket] WebSocket server initialized for hybrid transport');
+
+        wss.on('connection', (ws, req) => {
+            const clientIp = req.socket.remoteAddress;
+            console.log(`[WebSocket] New client connected from ${clientIp}`);
+
+            ws.on('message', async (message) => {
+                try {
+                    // Parse incoming message
+                    const data = JSON.parse(message.toString());
+                    console.log(`[WebSocket] Received message:`, data);
+
+                    // Extract msgId for deduplication
+                    const { msgId, barcode, type, deviceId } = data;
+
+                    // Check for duplicate
+                    if (isDuplicate(msgId)) {
+                        console.log(`[WebSocket] Duplicate message ${msgId}, sending acknowledgment`);
+                        ws.send(JSON.stringify({
+                            success: true,
+                            duplicate: true,
+                            msgId: msgId,
+                            text: 'Message already processed'
+                        }));
+                        return;
+                    }
+
+                    // Process the scan using the same handler as HTTP endpoint
+                    const { processScan } = require('./utils/scanHandler');
+                    const result = await processScan(barcode);
+
+                    // Format response similar to HTTP endpoint
+                    const response = {
+                        success: true,
+                        msgId: msgId,
+                        contentType: result.type,
+                        text: result.message,
+                        data: result.data,
+                        buffers: result.buffers,
+                        device: deviceId,
+                        type: type || 'unknown',
+                        images: [
+                            'https://pda.repair/storage/pics/BK10.webp',
+                            'https://pda.repair/storage/pics/SL20.webp',
+                            'https://pda.repair/storage/pics/SM20.webp'
+                        ]
+                    };
+
+                    // Add specific images based on barcode type
+                    if (barcode && barcode.length === 7 && /^\d+$/.test(barcode)) {
+                        response.images.push('https://pda.repair/storage/pics/OX10.webp');
+                        response.images.push('https://pda.repair/storage/pics/US20.webp');
+                    } else if (barcode && barcode.startsWith('b')) {
+                        response.images.push('https://pda.repair/storage/pics/sm15.webp');
+                        response.images.push('https://pda.repair/storage/pics/ul20.webp');
+                    } else if (barcode && barcode.startsWith('RMA')) {
+                        response.images.push('https://pda.repair/storage/pics/frankfurt.avif');
+                        response.images.push('https://pda.repair/storage/pics/SEN_8281.avif');
+                    }
+
+                    // Send response back to client
+                    ws.send(JSON.stringify(response));
+                    console.log(`[WebSocket] Sent response for message ${msgId}`);
+
+                } catch (error) {
+                    console.error('[WebSocket] Error processing message:', error);
+                    ws.send(JSON.stringify({
+                        success: false,
+                        text: `Server error: ${error.message}`
+                    }));
+                }
+            });
+
+            ws.on('close', () => {
+                console.log(`[WebSocket] Client disconnected from ${clientIp}`);
+            });
+
+            ws.on('error', (error) => {
+                console.error('[WebSocket] WebSocket error:', error);
+            });
+
+            // Send welcome message
+            ws.send(JSON.stringify({
+                success: true,
+                text: 'Connected to eckwms WebSocket server'
+            }));
+        });
 
     } catch (err) {
         console.error('FATAL ERROR: Failed to initialize application:', err);
