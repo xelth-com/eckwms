@@ -166,7 +166,7 @@ const betrugerUrlDecrypt = (betrugerUrl) => {
         // Basic format checks (adjust lengths based on actual expected format)
         // Original code checks for length 76. Let's keep it for now.
         if (typeof betrugerUrl !== 'string' || betrugerUrl.length !== 76 ||
-            betrugerUrl.substring(74, 76) !== 'M3' || // What is 'M3'? A marker?
+            betrugerUrl.substring(74, 76) !== 'IB' || // InBody suffix validation
             !betrugerUrl.substring(0, 9).match(/^ECK[123]\.COM\//)) { // Use ^ for start anchor
             // console.warn('Invalid betrugerUrl format or prefix/suffix mismatch.');
             return false;

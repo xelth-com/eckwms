@@ -558,6 +558,72 @@ async function writeLog(str) {
     }
 }
 
+/**
+ * Process AI response from user (feedback loop)
+ * @param {string} barcode - The original barcode that triggered the AI question
+ * @param {string} userResponse - User's response ('yes', 'no', etc.)
+ * @param {string} deviceId - Device identifier
+ * @returns {object} Result of processing the AI response
+ */
+async function processAiResponse(barcode, userResponse, deviceId = null) {
+    const result = {
+        type: 'ai_response',
+        message: '',
+        data: {
+            barcode,
+            userResponse,
+            deviceId
+        }
+    };
+
+    try {
+        console.log(`[AI Response] Processing user response: "${userResponse}" for barcode: ${barcode}`);
+
+        // Build context with user's response and current buffer state
+        let context = `The user scanned: "${barcode}"\n\n`;
+        context += `I asked the user a question about this barcode, and they responded: "${userResponse}"\n\n`;
+
+        if (iTem.length > 0) {
+            context += `Current item buffer: [${iTem.join(', ')}]\n`;
+            context += `Active item: ${disAct(iTem[iTem.length - 1])}\n`;
+        }
+
+        if (bOx.length > 0) {
+            context += `Current box buffer: [${bOx.join(', ')}]\n`;
+            context += `Active box: ${disAct(bOx[bOx.length - 1])}\n`;
+        }
+
+        context += `\nBased on their response, should I proceed with the action? If they said "yes" or confirmed, please execute the appropriate tool (search_inventory or link_code). If they said "no", acknowledge and explain what I'm NOT doing.`;
+
+        // Call AI with tools
+        const aiResponse = await geminiService.generateWithTools(
+            context,
+            [searchInventoryTool, linkCodeTool],
+            { systemInstruction: AGENT_SYSTEM_PROMPT }
+        );
+
+        console.log(`[AI Response] AI processed user response:`, aiResponse.text);
+
+        // Parse AI response
+        const aiInteraction = parseAIResponse(aiResponse.text, aiResponse.iterations);
+
+        result.message = aiInteraction.summary || aiResponse.text;
+        result.data.aiAnalysis = aiResponse.text;
+        result.data.ai_interaction = aiInteraction;
+        result.data.toolsExecuted = aiResponse.iterations > 0;
+
+        await writeLog(`AI Response: ${barcode} => "${userResponse}" [${aiResponse.iterations} tools executed]`);
+
+        return result;
+    } catch (error) {
+        console.error('[AI Response] Error processing user response:', error);
+        result.type = 'error';
+        result.message = `Error processing AI response: ${error.message}`;
+        return result;
+    }
+}
+
 module.exports = {
-    processScan
+    processScan,
+    processAiResponse
 };

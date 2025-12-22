@@ -474,6 +474,39 @@ async function initialize() {
                     }
                     // ------------------------
 
+                    // --- AI RESPONSE HANDLER ---
+                    if (data.type === 'AI_RESPONSE') {
+                        const { barcode, response, interactionId, deviceId } = data;
+                        console.log(`[WebSocket] AI Response received: barcode=${barcode}, response="${response}", deviceId=${deviceId}`);
+
+                        try {
+                            const { processAiResponse } = require('./utils/scanHandler');
+                            const result = await processAiResponse(barcode, response, deviceId);
+
+                            // Send response back
+                            ws.send(JSON.stringify({
+                                success: true,
+                                type: 'AI_RESPONSE_RESULT',
+                                msgId: data.msgId,
+                                interactionId: interactionId,
+                                result: result,
+                                timestamp: new Date().toISOString()
+                            }));
+
+                            console.log(`[WebSocket] AI Response processed for barcode ${barcode}`);
+                        } catch (aiError) {
+                            console.error('[WebSocket] Error processing AI response:', aiError);
+                            ws.send(JSON.stringify({
+                                success: false,
+                                type: 'AI_RESPONSE_ERROR',
+                                msgId: data.msgId,
+                                error: aiError.message
+                            }));
+                        }
+                        return;
+                    }
+                    // ------------------------
+
                     // Extract msgId for deduplication
                     const { msgId, barcode, type, deviceId } = data;
 

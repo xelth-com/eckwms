@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { EckwmsInstance } = require('../models/postgresql');
+const { EckwmsInstance } = require('../src/shared/models/postgresql');
 
 async function seedPublicInstance() {
   try {

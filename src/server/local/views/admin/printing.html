@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Printing Center | eckWMS</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1E1E1E;
+            --text-main: #E0E0E0;
+            --text-secondary: #A0A0A0;
+            --accent-blue: #3B82F6;
+            --accent-hover: #2563EB;
+            --success: #10B981;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --border: #333333;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: var(--text-main);
+            margin-bottom: 25px;
+            font-size: 1.8rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 15px;
+        }
+
+        h2 {
+            color: var(--accent-blue);
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            margin-bottom: 20px;
+        }
+
+        .print-type-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .print-type-card {
+            background: #252525;
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+
+        .print-type-card:hover {
+            border-color: var(--accent-blue);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+
+        .print-type-card.active {
+            border-color: var(--accent-blue);
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .print-type-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 8px;
+            color: var(--accent-blue);
+        }
+
+        .print-type-card p {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            background: #252525;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-main);
+            font-size: 1rem;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+
+        .btn-primary {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-primary:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .alert.success {
+            background: rgba(16, 185, 129, 0.2);
+            border: 1px solid var(--success);
+            color: var(--success);
+        }
+
+        .alert.error {
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid var(--danger);
+            color: var(--danger);
+        }
+
+        .alert.show {
+            display: block;
+        }
+
+        .info-text {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid var(--accent-blue);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 20px;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .back-link {
+            display: inline-block;
+            color: var(--accent-blue);
+            text-decoration: none;
+            margin-bottom: 20px;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/admin/dashboard" class="back-link">← Back to Dashboard</a>
+
+        <h1>🖨️ Printing Center</h1>
+
+        <div class="alert" id="alert"></div>
+
+        <div class="card">
+            <h2>Select Label Type</h2>
+            <div class="print-type-grid">
+                <div class="print-type-card" data-type="i">
+                    <h3>📦 Items</h3>
+                    <p>Individual product labels</p>
+                </div>
+                <div class="print-type-card" data-type="b">
+                    <h3>📦 Boxes</h3>
+                    <p>Container labels</p>
+                </div>
+                <div class="print-type-card" data-type="p">
+                    <h3>📍 Places</h3>
+                    <p>Location markers</p>
+                </div>
+                <div class="print-type-card" data-type="l">
+                    <h3>🏷️ L-Marker (InBody)</h3>
+                    <p>Sequential markers with IB suffix</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Print Configuration</h2>
+
+            <div class="info-text">
+                Leave start number empty to automatically print from the next available number in the sequence.
+            </div>
+
+            <form id="printForm">
+                <div class="form-group">
+                    <label for="layout">Page Layout</label>
+                    <select id="layout" name="layout" style="width: 100%; padding: 12px; background: #252525; border: 1px solid var(--border); border-radius: 6px; color: var(--text-main); font-size: 1rem;">
+                        <option value="2x16">2×16 (32 labels per page)</option>
+                        <option value="2x8">2×8 (16 labels per page)</option>
+                        <option value="3x7">3×7 (21 labels per page)</option>
+                        <option value="3x10">3×10 (30 labels per page)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="count">Number of Labels</label>
+                    <input type="number" id="count" name="count" min="1" max="1000" value="50" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="startNumber">Start Number (Optional)</label>
+                    <input type="number" id="startNumber" name="startNumber" min="0" placeholder="Auto (next available)">
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="printBtn">
+                    Generate and Download Labels
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let selectedType = null;
+        const typeCards = document.querySelectorAll('.print-type-card');
+        const printForm = document.getElementById('printForm');
+        const printBtn = document.getElementById('printBtn');
+        const alertBox = document.getElementById('alert');
+
+        // Type selection
+        typeCards.forEach(card => {
+            card.addEventListener('click', () => {
+                typeCards.forEach(c => c.classList.remove('active'));
+                card.classList.add('active');
+                selectedType = card.dataset.type;
+            });
+        });
+
+        // Form submission
+        printForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            if (!selectedType) {
+                showAlert('Please select a label type first', 'error');
+                return;
+            }
+
+            const count = document.getElementById('count').value;
+            const startNumber = document.getElementById('startNumber').value;
+            const layout = document.getElementById('layout').value;
+
+            // Parse layout dimensions (e.g., "2x16" -> cols: 2, rows: 16)
+            const [cols, rows] = layout.split('x').map(Number);
+
+            printBtn.disabled = true;
+            printBtn.textContent = 'Generating...';
+
+            try {
+                // Get JWT token from localStorage
+                const token = localStorage.getItem('auth_token');
+
+                if (!token) {
+                    showAlert('Please login first', 'error');
+                    setTimeout(() => {
+                        window.location.href = '/login';
+                    }, 2000);
+                    return;
+                }
+
+                const response = await fetch('/admin/generate-codes', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        type: selectedType,
+                        count: parseInt(count),
+                        startNumber: startNumber ? parseInt(startNumber) : null,
+                        cols: cols,
+                        rows: rows
+                    })
+                });
+
+                if (!response.ok) {
+                    // Handle 401 Unauthorized - redirect to login
+                    if (response.status === 401) {
+                        showAlert('Session expired. Redirecting to login...', 'error');
+                        localStorage.removeItem('auth_token');
+                        localStorage.removeItem('refresh_token');
+                        setTimeout(() => {
+                            window.location.href = '/login';
+                        }, 2000);
+                        return;
+                    }
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to generate labels');
+                }
+
+                // Download the PDF
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `eckwms_${selectedType}_labels.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+
+                showAlert('Labels generated successfully! Download started.', 'success');
+
+                // Clear the start number field after successful generation
+                document.getElementById('startNumber').value = '';
+            } catch (error) {
+                console.error('Error:', error);
+                showAlert(error.message, 'error');
+            } finally {
+                printBtn.disabled = false;
+                printBtn.textContent = 'Generate and Download Labels';
+            }
+        });
+
+        function showAlert(message, type) {
+            alertBox.textContent = message;
+            alertBox.className = `alert ${type} show`;
+            setTimeout(() => {
+                alertBox.classList.remove('show');
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

@@ -363,4 +363,59 @@ router.get('/API/DEVICE/:deviceId/STATUS', async (req, res) => {
   }
 });
 
+/**
+ * POST /API/AI/RESPOND
+ * Handle user responses to AI questions (feedback loop)
+ * Authenticated endpoint for processing user confirmations
+ */
+router.post('/API/AI/RESPOND', authenticateApiKey, async (req, res) => {
+  try {
+    const { interactionId, response, barcode, deviceId } = req.body;
+
+    console.log(`[eckWMS] AI Response received: interactionId=${interactionId}, response="${response}", barcode=${barcode}, deviceId=${deviceId}`);
+
+    // Validate required fields
+    if (!barcode || !response) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: barcode and response are required'
+      });
+    }
+
+    // STRICT SECURITY CHECK: Validate Device Status (if deviceId provided)
+    if (deviceId && !req.isPublicMode) {
+      const device = await RegisteredDevice.findOne({ where: { deviceId } });
+      if (!device) {
+        console.warn(`[Security] Blocked AI response from unknown device: ${deviceId}`);
+        return res.status(403).json({ success: false, error: 'Device not registered', code: 'DEVICE_NOT_FOUND' });
+      }
+      if (device.status !== 'active') {
+        console.warn(`[Security] Blocked AI response from ${device.status} device: ${deviceId}`);
+        return res.status(403).json({ success: false, error: `Device is ${device.status}`, code: 'DEVICE_BLOCKED' });
+      }
+    }
+
+    // Process the AI response using scanHandler
+    const scanHandler = require('../utils/scanHandler');
+    const result = await scanHandler.processAiResponse(barcode, response, deviceId);
+
+    console.log(`[eckWMS] AI Response processed for barcode ${barcode}: ${result.message}`);
+
+    res.status(200).json({
+      success: true,
+      interactionId: interactionId,
+      result: result,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('[eckWMS] Error processing AI response:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error while processing AI response',
+      details: error.message
+    });
+  }
+});
+
 module.exports = router;

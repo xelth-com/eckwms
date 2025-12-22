@@ -1,23 +1,30 @@
 // utils/pdfGenerator.js
 const PdfPrinter = require('pdfmake');
-const { betrugerCrc, base32table } = require('../../../shared/utils/encryption');
+const { betrugerCrc, betrugerUrlEncrypt, base32table } = require('../../../shared/utils/encryption');
+const crc32 = require('buffer-crc32');
 const fs = require('fs');
 const path = require('path');
 
 /**
  * Generates PDF files with Betruger codes
- * @param {string} codeType - Type of code: 'i' for items, 'b' for boxes, 'p' for places
+ * @param {string} codeType - Type of code: 'i' for items, 'b' for boxes, 'p' for places, 'l' for InBody markers
  * @param {number} startNumber - Starting number for codes
  * @param {Array} arrDim - Array dimensions [['', cols], ['', rows]]
+ * @param {number} count - Number of labels to generate (default: 32 for items, 16 for others)
+ * @param {number} cols - Number of columns per page (optional, default: 2)
+ * @param {number} rows - Number of rows per page (optional, default: 16)
  * @returns {void}
  */
-function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = []) {
+function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], count = null, cols = 2, rows = 16) {
+    // Read instance suffix from environment variable (default: M3)
+    const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
+
     const fonts = {
         Roboto: {
             normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf')
         }
     };
-    
+
     const printer = new PdfPrinter(fonts);
     
     var dd = {
@@ -37,7 +44,7 @@ function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = []) {
             alignment: 'center',
             margin: [0, 3, 0, 0],
             columns: [
-                { qr: `ECK1.COM/${code}M3`, fit: '29' }
+                { qr: `ECK1.COM/${code}${INSTANCE_SUFFIX}`, fit: '29' }
                 ,
                 {
                     width: 'auto',
@@ -45,7 +52,7 @@ function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = []) {
                     alignment: 'center',
                     text: field1
                 },
-                { qr: `ECK2.COM/${code}M3`, fit: '29' }
+                { qr: `ECK2.COM/${code}${INSTANCE_SUFFIX}`, fit: '29' }
                 ,
                 {
                     margin: [0, -4, 0, 0],
@@ -54,46 +61,117 @@ function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = []) {
                     alignment: 'center',
                     text: field2
                 },
-                { qr: `ECK3.COM/${code}M3`, fit: '29' }
+                { qr: `ECK3.COM/${code}${INSTANCE_SUFFIX}`, fit: '29' }
             ],
             columnGap: 1
         };
         return label;
     };
     
-    body = new Array(16).fill(0);
-    
+    // Determine number of labels and rows based on type and count
+    let labelsPerRow = 2; // Default: 2 labels per row
+    let totalLabels = count || 32; // Default count
+
+    if (codeType === 'i') {
+        totalLabels = count || 32;
+        labelsPerRow = 2;
+    } else if (codeType === 'b') {
+        totalLabels = count || 16;
+        labelsPerRow = 2;
+    } else if (codeType === 'p') {
+        totalLabels = count || 32;
+        labelsPerRow = 2;
+    } else if (codeType === 'l') {
+        totalLabels = count || 16;
+        labelsPerRow = 2;
+    }
+
+    const numRows = Math.ceil(totalLabels / labelsPerRow);
+    body = new Array(numRows).fill(0);
+
     if (codeType === 'i') {
         body.forEach((element, index) => {
             const index1 = 2 * index + startNumber;
             const index2 = 2 * index + startNumber + 1;
-            const codeTemp1 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index1)).slice(-18)}`)}`;
-            const codeTemp2 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index2)).slice(-18)}`)}`;
-            const temp1 = crc32.unsigned(index1.toString()) & 1023;
-            const field2Temp1 = Buffer.from([base32table[temp1 >> 5], base32table[temp1 & 31]]).toString();
-            const temp2 = crc32.unsigned(index2.toString()) & 1023;
-            const field2Temp2 = Buffer.from([base32table[temp2 >> 5], base32table[temp2 & 31]]).toString();
-            dd.content[0].table.body.push([labelMake(codeTemp1, `${('000000' + index1).slice(-6)}`, field2Temp1), labelMake(codeTemp2, `${('000000' + index2).slice(-6)}`, field2Temp2)]);
+
+            if (index1 < startNumber + totalLabels) {
+                const codeTemp1 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index1)).slice(-18)}`)}`;
+                const temp1 = crc32.unsigned(index1.toString()) & 1023;
+                const field2Temp1 = Buffer.from([base32table[temp1 >> 5], base32table[temp1 & 31]]).toString();
+
+                if (index2 < startNumber + totalLabels) {
+                    const codeTemp2 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index2)).slice(-18)}`)}`;
+                    const temp2 = crc32.unsigned(index2.toString()) & 1023;
+                    const field2Temp2 = Buffer.from([base32table[temp2 >> 5], base32table[temp2 & 31]]).toString();
+                    dd.content[0].table.body.push([labelMake(codeTemp1, `${('000000' + index1).slice(-6)}`, field2Temp1), labelMake(codeTemp2, `${('000000' + index2).slice(-6)}`, field2Temp2)]);
+                } else {
+                    // Odd number of labels - fill second column with empty cell
+                    dd.content[0].table.body.push([labelMake(codeTemp1, `${('000000' + index1).slice(-6)}`, field2Temp1), {}]);
+                }
+            }
         });
     } else if (codeType === 'b') {
         body.forEach((element, index) => {
-            const index1 = index + startNumber;
-            const codeTemp1 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index1)).slice(-18)}`)}`;
-            const temp1 = crc32.unsigned(index1.toString()) & 1023;
-            const field2Temp1 = Buffer.from([base32table[temp1 >> 5], base32table[temp1 & 31]]).toString();
-            dd.content[0].table.body.push([labelMake(codeTemp1, `#${('00000' + index1).slice(-5)}`, field2Temp1), labelMake(codeTemp1, `#${('00000' + index1).slice(-5)}`, field2Temp1)]);
+            const index1 = 2 * index + startNumber;
+            const index2 = 2 * index + startNumber + 1;
+
+            if (index1 < startNumber + totalLabels) {
+                const codeTemp1 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index1)).slice(-18)}`)}`;
+                const temp1 = crc32.unsigned(index1.toString()) & 1023;
+                const field2Temp1 = Buffer.from([base32table[temp1 >> 5], base32table[temp1 & 31]]).toString();
+
+                if (index2 < startNumber + totalLabels) {
+                    const codeTemp2 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index2)).slice(-18)}`)}`;
+                    const temp2 = crc32.unsigned(index2.toString()) & 1023;
+                    const field2Temp2 = Buffer.from([base32table[temp2 >> 5], base32table[temp2 & 31]]).toString();
+                    dd.content[0].table.body.push([labelMake(codeTemp1, `#${('00000' + index1).slice(-5)}`, field2Temp1), labelMake(codeTemp2, `#${('00000' + index2).slice(-5)}`, field2Temp2)]);
+                } else {
+                    dd.content[0].table.body.push([labelMake(codeTemp1, `#${('00000' + index1).slice(-5)}`, field2Temp1), {}]);
+                }
+            }
         });
     } else if (codeType === 'p') {
         body.forEach((element, index) => {
-            const index1 = 2 * index + startNumber - 1;
-            const index2 = 2 * index + startNumber + 1 - 1;
-            const place00 = (index1) % arrDim[0][1];
-            const place01 = ((index1 - place00) / arrDim[0][1]) % arrDim[1][1];
-            const place10 = (index2) % arrDim[0][1];
-            const place11 = ((index2 - place10) / arrDim[0][1]) % arrDim[1][1];
-            const codeTemp1 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index1 + 1)).slice(-18)}`)}`;
-            const codeTemp2 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index2 + 1)).slice(-18)}`)}`;
-            dd.content[0].table.body.push([labelMake(codeTemp1, `${arrDim[1][0]}${place01 + 1}`, `${arrDim[0][0]}${place00 + 1}`), labelMake(codeTemp2, `${arrDim[1][0]}${place11 + 1}`, `${arrDim[0][0]}${place10 + 1}`)]);
+            const labelIndex1 = 2 * index;
+            const labelIndex2 = 2 * index + 1;
+
+            if (labelIndex1 < totalLabels) {
+                const index1 = labelIndex1 + startNumber - 1;
+                const place00 = (index1) % arrDim[0][1];
+                const place01 = ((index1 - place00) / arrDim[0][1]) % arrDim[1][1];
+                const codeTemp1 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index1 + 1)).slice(-18)}`)}`;
+
+                if (labelIndex2 < totalLabels) {
+                    const index2 = labelIndex2 + startNumber - 1;
+                    const place10 = (index2) % arrDim[0][1];
+                    const place11 = ((index2 - place10) / arrDim[0][1]) % arrDim[1][1];
+                    const codeTemp2 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index2 + 1)).slice(-18)}`)}`;
+                    dd.content[0].table.body.push([labelMake(codeTemp1, `${arrDim[1][0]}${place01 + 1}`, `${arrDim[0][0]}${place00 + 1}`), labelMake(codeTemp2, `${arrDim[1][0]}${place11 + 1}`, `${arrDim[0][0]}${place10 + 1}`)]);
+                } else {
+                    dd.content[0].table.body.push([labelMake(codeTemp1, `${arrDim[1][0]}${place01 + 1}`, `${arrDim[0][0]}${place00 + 1}`), {}]);
+                }
+            }
+        });
+    } else if (codeType === 'l') {
+        // InBody Markers with 'l' prefix and 18-digit padding, using betruger encoding
+        body.forEach((element, index) => {
+            const index1 = 2 * index + startNumber;
+            const index2 = 2 * index + startNumber + 1;
+
+            if (index1 < startNumber + totalLabels) {
+                const codeTemp1 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index1)).slice(-18)}`)}`;
+                const temp1 = crc32.unsigned(index1.toString()) & 1023;
+                const field2Temp1 = Buffer.from([base32table[temp1 >> 5], base32table[temp1 & 31]]).toString();
+
+                if (index2 < startNumber + totalLabels) {
+                    const codeTemp2 = `${betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (index2)).slice(-18)}`)}`;
+                    const temp2 = crc32.unsigned(index2.toString()) & 1023;
+                    const field2Temp2 = Buffer.from([base32table[temp2 >> 5], base32table[temp2 & 31]]).toString();
+                    dd.content[0].table.body.push([labelMake(codeTemp1, `L${('00000' + index1).slice(-5)}`, field2Temp1), labelMake(codeTemp2, `L${('00000' + index2).slice(-5)}`, field2Temp2)]);
+                } else {
+                    dd.content[0].table.body.push([labelMake(codeTemp1, `L${('00000' + index1).slice(-5)}`, field2Temp1), {}]);
+                }
+            }
         });
     }
 
@@ -113,6 +191,9 @@ function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = []) {
  */
 function generatePdfRma(rmaJs, link, token, code) {
     return new Promise((resolve, reject) => {
+        // Read instance suffix from environment variable (default: M3)
+        const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
+
         const fonts = {
             Roboto: {
                 normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf'),
@@ -248,7 +329,7 @@ function generatePdfRma(rmaJs, link, token, code) {
                         fontSize: 12,
                     },
                     {
-                        qr: `ECK1.COM/${code}M3`,
+                        qr: `ECK1.COM/${code}${INSTANCE_SUFFIX}`,
                         fit: '58',
                         absolutePosition: { x: 180, y: 150 }, // Position in letter window
                     },
@@ -261,13 +342,13 @@ function generatePdfRma(rmaJs, link, token, code) {
                                 width: '70%',
                             },
                             {
-                                qr: `ECK2.COM/${code}M3`,
+                                qr: `ECK2.COM/${code}${INSTANCE_SUFFIX}`,
                                 fit: '58',
                                 alignment: 'right',
                                 width: '15%',
                             },
                             {
-                                qr: `ECK3.COM/${code}M3`,
+                                qr: `ECK3.COM/${code}${INSTANCE_SUFFIX}`,
                                 fit: '58',
                                 alignment: 'right',
                                 width: '15%',
@@ -279,19 +360,19 @@ function generatePdfRma(rmaJs, link, token, code) {
                     {
                         columns: [
                             {
-                                qr: `ECK1.COM/${code}M3`,
+                                qr: `ECK1.COM/${code}${INSTANCE_SUFFIX}`,
                                 fit: '58',
                                 alignment: 'right',
                                 width: '70%',
                             },
                             {
-                                qr: `ECK2.COM/${code}M3`,
+                                qr: `ECK2.COM/${code}${INSTANCE_SUFFIX}`,
                                 fit: '58',
                                 alignment: 'right',
                                 width: '15%',
                             },
                             {
-                                qr: `ECK3.COM/${code}M3`,
+                                qr: `ECK3.COM/${code}${INSTANCE_SUFFIX}`,
                                 fit: '58',
                                 alignment: 'right',
                                 width: '15%',

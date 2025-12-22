@@ -7,8 +7,8 @@ const { handleGeminiError, createGeminiErrorLog } = require('../utils/geminiErro
 class GeminiService {
     constructor() {
         this.client = geminiClient;
-        this.primaryModel = process.env.GEMINI_PRIMARY_MODEL || 'gemini-2.5-flash';
-        this.fallbackModel = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.0-flash';
+        this.primaryModel = process.env.GEMINI_PRIMARY_MODEL || 'gemini-3-flash-preview';
+        this.fallbackModel = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
     }
 
     /**

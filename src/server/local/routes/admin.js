@@ -15,6 +15,11 @@ router.get('/pairing', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/admin/pairing.html'));
 });
 
+// Serve the printing center page (no auth required - auth handled client-side)
+router.get('/printing', (req, res) => {
+    res.sendFile(path.join(__dirname, '../views/admin/printing.html'));
+});
+
 // Admin dashboard (no auth required - auth handled client-side)
 router.get('/dashboard', (req, res) => {
     res.sendFile(path.join(__dirname, '../html/admin-dashboard.html'));
@@ -209,33 +214,68 @@ router.get('/boxes/processing', (req, res) => {
 });
 
 // Generate new labels/codes
-router.post('/generate-codes', (req, res) => {
-    const { type, startNumber, count, dimensions } = req.body;
-    
-    if (!['i', 'b', 'p'].includes(type)) {
-        return res.status(400).json({ error: 'Invalid code type. Must be i, b, or p.' });
-    }
-    
-    if (isNaN(startNumber) || isNaN(count)) {
-        return res.status(400).json({ error: 'Start number and count must be numbers.' });
-    }
-    
-    const filename = `eckwms_${type}${startNumber}.pdf`;
-    const filePath = path.join(global.baseDirectory, filename);
-    
+router.post('/generate-codes', async (req, res) => {
     try {
-        // Generate PDF file
-        betrugerPrintCodesPdf(type, parseInt(startNumber), dimensions || [['', 5], ['', 20]]);
-        
-        // Update serialI, serialB, or serialP based on the type
-        if (type === 'i') {
-            global.serialI = Math.max(global.serialI, parseInt(startNumber) + parseInt(count));
-        } else if (type === 'b') {
-            global.serialB = Math.max(global.serialB, parseInt(startNumber) + parseInt(count));
-        } else if (type === 'p') {
-            global.serialP = Math.max(global.serialP, parseInt(startNumber) + parseInt(count));
+        let { type, startNumber, count, dimensions, cols, rows } = req.body;
+
+        if (!['i', 'b', 'p', 'l', 'marker'].includes(type)) {
+            return res.status(400).json({ error: 'Invalid code type. Must be i, b, p, l, or marker.' });
         }
-        
+
+        // Validate count
+        if (!count || isNaN(count)) {
+            return res.status(400).json({ error: 'Count must be a valid number.' });
+        }
+        count = parseInt(count);
+
+        // Parse layout dimensions (default to 2x16 if not provided)
+        const layoutCols = cols ? parseInt(cols) : 2;
+        const layoutRows = rows ? parseInt(rows) : 16;
+
+        // Import SystemSetting model
+        const { SystemSetting } = require('../../../shared/models/postgresql');
+
+        // Map type to database counter key (marker is legacy alias for 'l')
+        const counterKeyMap = {
+            'i': 'last_serial_item',
+            'b': 'last_serial_box',
+            'p': 'last_serial_place',
+            'l': 'last_serial_marker',
+            'marker': 'last_serial_marker'
+        };
+
+        const counterKey = counterKeyMap[type];
+
+        // If startNumber not provided, fetch the next available number from DB
+        if (!startNumber || startNumber === '' || isNaN(startNumber)) {
+            const lastSerial = await SystemSetting.getValue(counterKey, '0');
+            startNumber = parseInt(lastSerial) + 1;
+        } else {
+            startNumber = parseInt(startNumber);
+        }
+
+        // Normalize 'marker' to 'l' for PDF generation (backward compatibility)
+        const pdfType = type === 'marker' ? 'l' : type;
+        const filename = `eckwms_${pdfType}${startNumber}.pdf`;
+        const filePath = path.join(global.baseDirectory, filename);
+
+        // Generate PDF file with betruger encoding for all types
+        // Pass layout dimensions to support different grid layouts
+        betrugerPrintCodesPdf(pdfType, startNumber, dimensions || [['', 5], ['', 20]], count, layoutCols, layoutRows);
+
+        // Update the database counter
+        const newLastSerial = startNumber + count - 1;
+        await SystemSetting.setValue(counterKey, newLastSerial.toString());
+
+        // Also update global variables for backward compatibility (optional)
+        if (type === 'i') {
+            global.serialI = Math.max(global.serialI || 0, newLastSerial);
+        } else if (type === 'b') {
+            global.serialB = Math.max(global.serialB || 0, newLastSerial);
+        } else if (type === 'p') {
+            global.serialP = Math.max(global.serialP || 0, newLastSerial);
+        }
+
         // Send PDF file for download
         res.download(filePath, filename, (err) => {
             if (err) {
@@ -245,7 +285,7 @@ router.post('/generate-codes', (req, res) => {
         });
     } catch (error) {
         console.error("Error generating codes:", error);
-        return res.status(500).json({ error: 'Error generating codes' });
+        return res.status(500).json({ error: error.message || 'Error generating codes' });
     }
 });
 

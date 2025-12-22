@@ -75,6 +75,66 @@ node tests/ai/test-gemini-integration.js
 
 ---
 
+### 4. `test-feedback-loop.js`
+**Purpose:** End-to-end test for the AI Feedback Loop feature (user response handling).
+
+**What it tests:**
+- Server health check
+- `/API/AI/RESPOND` endpoint functionality
+- AI processing of user responses ("yes"/"no")
+- Tool execution based on user confirmation
+- Request/response structure validation
+- Device authentication (if applicable)
+
+**Requirements:**
+- Server must be running (`npm start`)
+- Valid `GEMINI_API_KEY` in `.env` (for full AI functionality)
+- Valid API key for authentication
+
+**Run:**
+```bash
+# Basic usage (requires server running)
+node tests/ai/test-feedback-loop.js
+
+# With custom configuration
+TEST_BARCODE="CUSTOM123" TEST_RESPONSE="yes" node tests/ai/test-feedback-loop.js
+
+# Test "no" response
+TEST_RESPONSE="no" node tests/ai/test-feedback-loop.js
+
+# Against different server
+TEST_SERVER_URL="http://192.168.1.100:3100" node tests/ai/test-feedback-loop.js
+```
+
+**Expected Output:**
+```
+======================================================================
+AI Feedback Loop - End-to-End Test
+======================================================================
+[0] Performing server health check
+✓ Server is healthy at http://localhost:3100
+[1] Simulating initial scan with unknown barcode
+✓ Initial scan simulation completed
+[2] Sending user response to /API/AI/RESPOND endpoint
+✓ AI response endpoint returned success
+✓ AI executed tools based on user response
+[3] Verifying database state (conceptual)
+✓ Response type indicates AI processed the feedback
+======================================================================
+Test Summary
+======================================================================
+✓ Tests passed: 4
+✓ All tests passed!
+```
+
+**Environment Variables:**
+- `TEST_SERVER_URL` - Server URL (default: http://localhost:3100)
+- `TEST_API_KEY` - API key for auth (default: public-demo-key-for-eckwms-app)
+- `TEST_BARCODE` - Barcode to test (default: TEST12345)
+- `TEST_RESPONSE` - User response (default: yes)
+
+---
+
 ## Running All Tests
 
 ```bash
