@@ -3,8 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { verifyJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../../shared/utils/encryption');
 const { addUnicEntryToProperty, addEntryToProperty } = require('../utils/dataInit');
-const { generatePdfRma } = require('../utils/pdfGenerator');
-const { betrugerPrintCodesPdf } = require('../utils/pdfGeneratorNew'); // Using new pdf-lib version
+const { generatePdfRma, betrugerPrintCodesPdf } = require('../utils/pdfGenerator');
 const { syncPublicData } = require('../services/globalSyncService');
 const { requireAdmin } = require('../middleware/auth');
 const path = require('path');
@@ -262,7 +261,10 @@ router.post('/generate-codes', async (req, res) => {
 
         // Normalize 'marker' to 'l' for PDF generation (backward compatibility)
         const pdfType = type === 'marker' ? 'l' : type;
-        const filename = `eckwms_${pdfType}${startNumber}.pdf`;
+
+        // Calculate end number for filename
+        const endNumber = startNumber + count - 1;
+        const filename = `eckwms_${pdfType}_${startNumber}-${endNumber}.pdf`;
 
         // Generate PDF buffer with betruger encoding for all types
         // Pass layout dimensions to support different grid layouts
@@ -270,7 +272,7 @@ router.post('/generate-codes', async (req, res) => {
         console.log('[Admin] Received PDF buffer:', pdfBuffer.length, 'bytes');
 
         // Update the database counter
-        const newLastSerial = startNumber + count - 1;
+        const newLastSerial = endNumber;
         await SystemSetting.setValue(counterKey, newLastSerial.toString());
 
         // Also update global variables for backward compatibility (optional)
