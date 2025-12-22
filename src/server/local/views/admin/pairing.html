@@ -227,6 +227,7 @@
 </head>
 <body>
     <div class="container">
+        <a href="/admin" style="color: #3B82F6; text-decoration: none; margin-right: 15px; font-size: 1.2rem; display: inline-block; margin-bottom: 15px;">🏠 Home</a>
         <h1>📡 Device Pairing Center</h1>
 
         <div class="top-grid">
@@ -281,7 +282,7 @@
         window.addEventListener('DOMContentLoaded', () => {
             const token = localStorage.getItem('auth_token');
             if (!token) {
-                window.location.href = '/auth/login';
+                window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);
             }
         });
     </script>

@@ -10,6 +10,11 @@ const path = require('path');
 const crc32 = require('buffer-crc32');
 const { base32table } = require('../../../shared/utils/encryption');
 
+// Serve the main admin dashboard (no auth required - auth handled client-side)
+router.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../views/admin/index.html'));
+});
+
 // Serve the device pairing page (no auth required - auth handled client-side)
 router.get('/pairing', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/admin/pairing.html'));

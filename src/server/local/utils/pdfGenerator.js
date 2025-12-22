@@ -19,13 +19,8 @@ function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], count = n
     // Read instance suffix from environment variable (default: M3)
     const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
 
-    const fonts = {
-        Roboto: {
-            normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf')
-        }
-    };
-
-    const printer = new PdfPrinter(fonts);
+    // Use default Helvetica font (built into PDF standard)
+    const printer = new PdfPrinter({});
     
     var dd = {
         content: [
@@ -193,15 +188,6 @@ function generatePdfRma(rmaJs, link, token, code) {
     return new Promise((resolve, reject) => {
         // Read instance suffix from environment variable (default: M3)
         const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
-
-        const fonts = {
-            Roboto: {
-                normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf'),
-                bold: path.join(__dirname, '../fonts/Roboto-Medium.ttf'),
-                italics: path.join(__dirname, '../fonts/Roboto-Italic.ttf'),
-                bolditalics: path.join(__dirname, '../fonts/Roboto-MediumItalic.ttf'),
-            },
-        };
 
         try {
             const dd = {
@@ -433,7 +419,7 @@ function generatePdfRma(rmaJs, link, token, code) {
                 },
             };
 
-            const printer = new PdfPrinter(fonts);
+            const printer = new PdfPrinter({});
             const pdfDoc = printer.createPdfKitDocument(dd);
 
             let chunks = [];

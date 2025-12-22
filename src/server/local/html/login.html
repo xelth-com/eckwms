@@ -208,7 +208,10 @@
 
                     // Redirect after a short delay
                     setTimeout(() => {
-                        window.location.href = '/admin/pairing';
+                        // Smart redirect: go to intended page or default to /admin
+                        const urlParams = new URLSearchParams(window.location.search);
+                        const redirect = urlParams.get('redirect') || '/admin';
+                        window.location.href = redirect;
                     }, 500);
                 } else {
                     errorMessage.textContent = data.error || 'Login failed';

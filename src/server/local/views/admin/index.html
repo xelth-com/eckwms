@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard | eckWMS</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1E1E1E;
+            --text-main: #E0E0E0;
+            --text-secondary: #A0A0A0;
+            --accent-blue: #3B82F6;
+            --accent-hover: #2563EB;
+            --success: #10B981;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --border: #333333;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: var(--text-main);
+            margin-bottom: 15px;
+            font-size: 2.2rem;
+            text-align: center;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: var(--text-secondary);
+            margin-bottom: 40px;
+            font-size: 1.1rem;
+        }
+
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .tool-card {
+            background: var(--card-bg);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            padding: 30px;
+            text-decoration: none;
+            color: var(--text-main);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+
+        .tool-card:hover {
+            border-color: var(--accent-blue);
+            transform: translateY(-5px);
+            box-shadow: 0 8px 16px rgba(59, 130, 246, 0.3);
+        }
+
+        .tool-icon {
+            font-size: 3.5rem;
+            margin-bottom: 15px;
+        }
+
+        .tool-title {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--accent-blue);
+        }
+
+        .tool-description {
+            font-size: 0.95rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .logout-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            background: var(--danger);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+        }
+
+        .logout-btn:hover {
+            background: #DC2626;
+        }
+
+        .version-info {
+            text-align: center;
+            margin-top: 50px;
+            padding-top: 30px;
+            border-top: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <button class="logout-btn" onclick="logout()">🚪 Logout</button>
+
+    <div class="container">
+        <h1>🏢 Admin Dashboard</h1>
+        <p class="subtitle">Warehouse Management System Control Center</p>
+
+        <div class="tools-grid">
+            <a href="/admin/printing" class="tool-card">
+                <div class="tool-icon">🖨️</div>
+                <div class="tool-title">Printing Center</div>
+                <div class="tool-description">Generate and print QR code labels for items, boxes, places, and markers</div>
+            </a>
+
+            <a href="/admin/pairing" class="tool-card">
+                <div class="tool-icon">📡</div>
+                <div class="tool-title">Device Pairing</div>
+                <div class="tool-description">Manage device registrations and approve pending devices</div>
+            </a>
+
+            <a href="/admin/dashboard" class="tool-card">
+                <div class="tool-icon">📊</div>
+                <div class="tool-title">Analytics Dashboard</div>
+                <div class="tool-description">View system statistics, reports, and performance metrics</div>
+            </a>
+
+            <a href="/admin/api/devices" class="tool-card">
+                <div class="tool-icon">📱</div>
+                <div class="tool-title">Device Management</div>
+                <div class="tool-description">Monitor and control registered devices and their permissions</div>
+            </a>
+
+            <a href="/admin/items/issues" class="tool-card">
+                <div class="tool-icon">⚠️</div>
+                <div class="tool-title">Items with Issues</div>
+                <div class="tool-description">Track and manage items requiring attention or repair</div>
+            </a>
+
+            <a href="/admin/boxes/processing" class="tool-card">
+                <div class="tool-icon">📦</div>
+                <div class="tool-title">Processing Boxes</div>
+                <div class="tool-description">Monitor boxes currently in processing workflow</div>
+            </a>
+
+            <a href="/admin/rmas/pending" class="tool-card">
+                <div class="tool-icon">🔄</div>
+                <div class="tool-title">Pending RMAs</div>
+                <div class="tool-description">Review and process return merchandise authorizations</div>
+            </a>
+
+            <a href="/admin/export/csv" class="tool-card">
+                <div class="tool-icon">📄</div>
+                <div class="tool-title">Export Service Data</div>
+                <div class="tool-description">Download CSV reports for service and repair data</div>
+            </a>
+        </div>
+
+        <div class="version-info">
+            <p><strong>eckWMS</strong> v1.0.0 | Admin Portal</p>
+            <p>Warehouse Management System for e-commerce and service centers</p>
+        </div>
+    </div>
+
+    <script>
+        // Check authentication on page load
+        function checkAuth() {
+            const token = localStorage.getItem('auth_token');
+            if (!token) {
+                window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('refresh_token');
+            window.location.href = '/auth/login';
+        }
+
+        // Run auth check on page load
+        checkAuth();
+    </script>
+</body>
+</html>

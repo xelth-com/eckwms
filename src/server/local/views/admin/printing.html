@@ -196,6 +196,7 @@
 </head>
 <body>
     <div class="container">
+        <a href="/admin" class="back-link" style="margin-right: 15px;">🏠 Home</a>
         <a href="/admin/dashboard" class="back-link">← Back to Dashboard</a>
 
         <h1>🖨️ Printing Center</h1>
@@ -301,7 +302,7 @@
                 if (!token) {
                     showAlert('Please login first', 'error');
                     setTimeout(() => {
-                        window.location.href = '/login';
+                        window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);
                     }, 2000);
                     return;
                 }
@@ -328,7 +329,7 @@
                         localStorage.removeItem('auth_token');
                         localStorage.removeItem('refresh_token');
                         setTimeout(() => {
-                            window.location.href = '/login';
+                            window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);
                         }, 2000);
                         return;
                     }

@@ -330,7 +330,7 @@ function betrugerCrc(value) {
 // так как ключи создаются внутри модуля.
 module.exports = {
     // Утилиты Base32 (если они нужны где-то еще)
-    // base32table,
+    base32table,
     // base32backHash,
     betrugerTimeIvBase32, // Might not be needed outside if IV generation is internal
     betrugerToBase32,     // Might not be needed outside
