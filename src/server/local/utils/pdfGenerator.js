@@ -19,8 +19,16 @@ function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], count = n
     // Read instance suffix from environment variable (default: M3)
     const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
 
-    // Use default Helvetica font (built into PDF standard)
-    const printer = new PdfPrinter({});
+    // Define fonts path
+    const fonts = {
+        Roboto: {
+            normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf'),
+            bold: path.join(__dirname, '../fonts/Roboto-Medium.ttf'),
+            italics: path.join(__dirname, '../fonts/Roboto-Italic.ttf'),
+            bolditalics: path.join(__dirname, '../fonts/Roboto-MediumItalic.ttf')
+        }
+    };
+    const printer = new PdfPrinter(fonts);
     
     var dd = {
         content: [
@@ -170,10 +178,40 @@ function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], count = n
         });
     }
 
-    var options = {}
-    var pdfDoc = printer.createPdfKitDocument(dd, options);
-    pdfDoc.pipe(fs.createWriteStream(`eckwms_${codeType}${startNumber}.pdf`));
-    pdfDoc.end();
+    return new Promise((resolve, reject) => {
+        try {
+            console.log('[PDF] Starting PDF generation:', { codeType, startNumber });
+            var options = {}
+            var pdfDoc = printer.createPdfKitDocument(dd, options);
+            const filename = `eckwms_${codeType}${startNumber}.pdf`;
+            const filePath = path.join(__dirname, '..', filename);
+            const writeStream = fs.createWriteStream(filePath);
+            console.log('[PDF] Created write stream for:', filePath);
+
+            pdfDoc.pipe(writeStream);
+
+            pdfDoc.on('error', (err) => {
+                console.error('[PDF] pdfDoc error:', err);
+                reject(err);
+            });
+
+            writeStream.on('error', (err) => {
+                console.error('[PDF] writeStream error:', err);
+                reject(err);
+            });
+
+            writeStream.on('finish', () => {
+                console.log('[PDF] PDF generation completed:', filename);
+                resolve();
+            });
+
+            pdfDoc.end();
+            console.log('[PDF] pdfDoc.end() called');
+        } catch (err) {
+            console.error('[PDF] Caught error during PDF generation:', err);
+            reject(err);
+        }
+    });
 }
 
 /**
@@ -419,7 +457,16 @@ function generatePdfRma(rmaJs, link, token, code) {
                 },
             };
 
-            const printer = new PdfPrinter({});
+            // Define fonts path
+            const fonts = {
+                Roboto: {
+                    normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf'),
+                    bold: path.join(__dirname, '../fonts/Roboto-Medium.ttf'),
+                    italics: path.join(__dirname, '../fonts/Roboto-Italic.ttf'),
+                    bolditalics: path.join(__dirname, '../fonts/Roboto-MediumItalic.ttf')
+                }
+            };
+            const printer = new PdfPrinter(fonts);
             const pdfDoc = printer.createPdfKitDocument(dd);
 
             let chunks = [];

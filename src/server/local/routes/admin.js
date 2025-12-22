@@ -266,7 +266,7 @@ router.post('/generate-codes', async (req, res) => {
 
         // Generate PDF file with betruger encoding for all types
         // Pass layout dimensions to support different grid layouts
-        betrugerPrintCodesPdf(pdfType, startNumber, dimensions || [['', 5], ['', 20]], count, layoutCols, layoutRows);
+        await betrugerPrintCodesPdf(pdfType, startNumber, dimensions || [['', 5], ['', 20]], count, layoutCols, layoutRows);
 
         // Update the database counter
         const newLastSerial = startNumber + count - 1;
