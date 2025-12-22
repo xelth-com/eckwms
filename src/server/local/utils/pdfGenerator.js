@@ -19,13 +19,10 @@ function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], count = n
     // Read instance suffix from environment variable (default: M3)
     const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
 
-    // Define fonts path
+    // Define fonts path (simplified like old code)
     const fonts = {
         Roboto: {
-            normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf'),
-            bold: path.join(__dirname, '../fonts/Roboto-Medium.ttf'),
-            italics: path.join(__dirname, '../fonts/Roboto-Italic.ttf'),
-            bolditalics: path.join(__dirname, '../fonts/Roboto-MediumItalic.ttf')
+            normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf')
         }
     };
     const printer = new PdfPrinter(fonts);
@@ -200,8 +197,8 @@ function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], count = n
                 reject(err);
             });
 
-            writeStream.on('finish', () => {
-                console.log('[PDF] PDF generation completed:', filename);
+            writeStream.on('close', () => {
+                console.log('[PDF] PDF generation completed and file closed:', filename);
                 resolve();
             });
 
@@ -457,13 +454,10 @@ function generatePdfRma(rmaJs, link, token, code) {
                 },
             };
 
-            // Define fonts path
+            // Define fonts path (simplified like old code)
             const fonts = {
                 Roboto: {
-                    normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf'),
-                    bold: path.join(__dirname, '../fonts/Roboto-Medium.ttf'),
-                    italics: path.join(__dirname, '../fonts/Roboto-Italic.ttf'),
-                    bolditalics: path.join(__dirname, '../fonts/Roboto-MediumItalic.ttf')
+                    normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf')
                 }
             };
             const printer = new PdfPrinter(fonts);
