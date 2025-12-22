@@ -1,5 +1,7 @@
 // utils/pdfGenerator.js
 const PdfPrinter = require('pdfmake');
+const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+const QRCode = require('qrcode');
 const { betrugerCrc, betrugerUrlEncrypt, base32table } = require('../../../shared/utils/encryption');
 const crc32 = require('buffer-crc32');
 const fs = require('fs');
@@ -13,26 +15,30 @@ const path = require('path');
  * @param {number} count - Number of labels to generate (default: 32 for items, 16 for others)
  * @param {number} cols - Number of columns per page (optional, default: 2)
  * @param {number} rows - Number of rows per page (optional, default: 16)
- * @returns {void}
+ * @returns {Promise<Buffer>} - PDF buffer
  */
 function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], count = null, cols = 2, rows = 16) {
     // Read instance suffix from environment variable (default: M3)
     const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
 
-    // Define fonts path (simplified like old code)
+    // Define fonts path (all variants required by PDFMake)
     const fonts = {
         Roboto: {
-            normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf')
+            normal: path.join(__dirname, '../fonts/Roboto-Regular.ttf'),
+            bold: path.join(__dirname, '../fonts/Roboto-Medium.ttf'),
+            italics: path.join(__dirname, '../fonts/Roboto-Italic.ttf'),
+            bolditalics: path.join(__dirname, '../fonts/Roboto-MediumItalic.ttf')
         }
     };
     const printer = new PdfPrinter(fonts);
     
     var dd = {
+        pageSize: 'A4',
+        pageMargins: [10, 10, 10, 10],
         content: [
             {
                 table: {
                     widths: ['*', '*'],
-                    heights: 44,
                     body: []
                 },
                 layout: 'noBorders'
@@ -44,24 +50,26 @@ function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], count = n
             alignment: 'center',
             margin: [0, 3, 0, 0],
             columns: [
-                { qr: `ECK1.COM/${code}${INSTANCE_SUFFIX}`, fit: '29' }
+                { qr: `ECK1.COM/${code}${INSTANCE_SUFFIX}`, fit: '29', foreground: '#000000' }
                 ,
                 {
                     width: 'auto',
                     fontSize: 25,
                     alignment: 'center',
+                    color: '#000000',
                     text: field1
                 },
-                { qr: `ECK2.COM/${code}${INSTANCE_SUFFIX}`, fit: '29' }
+                { qr: `ECK2.COM/${code}${INSTANCE_SUFFIX}`, fit: '29', foreground: '#000000' }
                 ,
                 {
                     margin: [0, -4, 0, 0],
                     width: 'auto',
                     fontSize: 32,
                     alignment: 'center',
+                    color: '#000000',
                     text: field2
                 },
-                { qr: `ECK3.COM/${code}${INSTANCE_SUFFIX}`, fit: '29' }
+                { qr: `ECK3.COM/${code}${INSTANCE_SUFFIX}`, fit: '29', foreground: '#000000' }
             ],
             columnGap: 1
         };
@@ -177,29 +185,35 @@ function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], count = n
 
     return new Promise((resolve, reject) => {
         try {
-            console.log('[PDF] Starting PDF generation:', { codeType, startNumber });
+            console.log('[PDF] Starting PDF generation:', {
+                codeType,
+                startNumber,
+                totalLabels,
+                tableRows: dd.content[0].table.body.length
+            });
             var options = {}
             var pdfDoc = printer.createPdfKitDocument(dd, options);
-            const filename = `eckwms_${codeType}${startNumber}.pdf`;
-            const filePath = path.join(__dirname, '..', filename);
-            const writeStream = fs.createWriteStream(filePath);
-            console.log('[PDF] Created write stream for:', filePath);
 
-            pdfDoc.pipe(writeStream);
+            let chunks = [];
+            pdfDoc.on('data', (chunk) => {
+                console.log('[PDF] Received chunk:', chunk.length, 'bytes');
+                chunks.push(chunk);
+            });
 
             pdfDoc.on('error', (err) => {
                 console.error('[PDF] pdfDoc error:', err);
                 reject(err);
             });
 
-            writeStream.on('error', (err) => {
-                console.error('[PDF] writeStream error:', err);
-                reject(err);
-            });
-
-            writeStream.on('close', () => {
-                console.log('[PDF] PDF generation completed and file closed:', filename);
-                resolve();
+            pdfDoc.on('end', () => {
+                const buffer = Buffer.concat(chunks);
+                console.log('[PDF] PDF generation completed:', {
+                    codeType,
+                    startNumber,
+                    chunks: chunks.length,
+                    totalBytes: buffer.length
+                });
+                resolve(buffer);
             });
 
             pdfDoc.end();

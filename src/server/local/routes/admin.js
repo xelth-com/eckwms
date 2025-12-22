@@ -3,7 +3,8 @@ const express = require('express');
 const router = express.Router();
 const { verifyJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../../shared/utils/encryption');
 const { addUnicEntryToProperty, addEntryToProperty } = require('../utils/dataInit');
-const { generatePdfRma, betrugerPrintCodesPdf } = require('../utils/pdfGenerator');
+const { generatePdfRma } = require('../utils/pdfGenerator');
+const { betrugerPrintCodesPdf } = require('../utils/pdfGeneratorNew'); // Using new pdf-lib version
 const { syncPublicData } = require('../services/globalSyncService');
 const { requireAdmin } = require('../middleware/auth');
 const path = require('path');
@@ -262,11 +263,11 @@ router.post('/generate-codes', async (req, res) => {
         // Normalize 'marker' to 'l' for PDF generation (backward compatibility)
         const pdfType = type === 'marker' ? 'l' : type;
         const filename = `eckwms_${pdfType}${startNumber}.pdf`;
-        const filePath = path.join(global.baseDirectory, filename);
 
-        // Generate PDF file with betruger encoding for all types
+        // Generate PDF buffer with betruger encoding for all types
         // Pass layout dimensions to support different grid layouts
-        await betrugerPrintCodesPdf(pdfType, startNumber, dimensions || [['', 5], ['', 20]], count, layoutCols, layoutRows);
+        const pdfBuffer = await betrugerPrintCodesPdf(pdfType, startNumber, dimensions || [['', 5], ['', 20]], count, layoutCols, layoutRows);
+        console.log('[Admin] Received PDF buffer:', pdfBuffer.length, 'bytes');
 
         // Update the database counter
         const newLastSerial = startNumber + count - 1;
@@ -281,13 +282,19 @@ router.post('/generate-codes', async (req, res) => {
             global.serialP = Math.max(global.serialP || 0, newLastSerial);
         }
 
-        // Send PDF file for download
-        res.download(filePath, filename, (err) => {
-            if (err) {
-                console.error("Error sending file:", err);
-                return res.status(500).json({ error: 'Error sending file' });
-            }
+        // Send PDF buffer directly to client
+        console.log('[Admin] Sending PDF to client:', {
+            filename,
+            bufferLength: pdfBuffer.length,
+            contentType: 'application/pdf'
         });
+        res.set({
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Content-Length': pdfBuffer.length
+        });
+        res.end(pdfBuffer);
+        console.log('[Admin] PDF sent to client');
     } catch (error) {
         console.error("Error generating codes:", error);
         return res.status(500).json({ error: error.message || 'Error generating codes' });
