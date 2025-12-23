@@ -32,16 +32,11 @@ module.exports = function createHtmlTranslationInterceptor(i18next) {
 
   return interceptor((req, res) => {
     return {
-      // УЛУЧШЕННАЯ ВЕРСИЯ: перехватываем все ответы, которые могут содержать HTML с i18n атрибутами
       isInterceptable: () => {
-        // 1. Сначала проверяем стандартный случай (полный HTML)
-        if (/text\/html/.test(res.get('Content-Type')) || !res.get('Content-Type')) {
-          return true;
-        }
-
-        // 2. Для всех других типов ответов - также возвращаем true,
-        // чтобы интерсептор мог проверить содержимое
-        return true;
+        const contentType = res.get('Content-Type');
+        // Only intercept actual HTML responses.
+        // Strictly ignore PDFs, images, and binary data to prevent UTF-8 corruption.
+        return contentType && /text\/html/.test(contentType);
       },
 
       // This function is called after the response body is complete

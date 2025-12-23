@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script>if(!localStorage.getItem('auth_token')) window.location.href='/auth/login?redirect='+encodeURIComponent(window.location.pathname);</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Printing Center | eckWMS</title>
@@ -201,8 +202,6 @@
 
         <h1>🖨️ Printing Center</h1>
 
-        <div class="alert" id="alert"></div>
-
         <div class="card">
             <h2>Select Label Type</h2>
             <div class="print-type-grid">
@@ -252,6 +251,8 @@
                     <label for="startNumber">Start Number (Optional)</label>
                     <input type="number" id="startNumber" name="startNumber" min="0" placeholder="Auto (next available)">
                 </div>
+
+                <div class="alert" id="alert"></div>
 
                 <button type="submit" class="btn btn-primary" id="printBtn">
                     Generate and Download Labels

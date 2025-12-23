@@ -7,6 +7,7 @@ const { generatePdfRma, betrugerPrintCodesPdf } = require('../utils/pdfGenerator
 const { syncPublicData } = require('../services/globalSyncService');
 const { requireAdmin } = require('../middleware/auth');
 const path = require('path');
+const fs = require('fs');
 const crc32 = require('buffer-crc32');
 const { base32table } = require('../../../shared/utils/encryption');
 
@@ -270,6 +271,13 @@ router.post('/generate-codes', async (req, res) => {
         // Pass layout dimensions to support different grid layouts
         const pdfBuffer = await betrugerPrintCodesPdf(pdfType, startNumber, dimensions || [['', 5], ['', 20]], count, layoutCols, layoutRows);
         console.log('[Admin] Received PDF buffer:', pdfBuffer.length, 'bytes');
+
+        // DEBUG: Save PDF buffer to disk for inspection
+        const debugTimestamp = new Date().toISOString().replace(/:/g, '-').replace(/\./g, '-');
+        const debugFilename = `DEBUG_admin_labels_${debugTimestamp}.pdf`;
+        const debugPath = path.join(process.cwd(), debugFilename);
+        fs.writeFileSync(debugPath, pdfBuffer);
+        console.log(`[DEBUG] PDF saved to disk: ${debugPath}`);
 
         // Update the database counter
         const newLastSerial = endNumber;

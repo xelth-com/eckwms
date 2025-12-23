@@ -89,21 +89,12 @@ async function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], cou
         }
 
         // Generate QR codes as PNG buffers
-        const qr1Buffer = await QRCode.toBuffer(`ECK1.COM/${code}${INSTANCE_SUFFIX}`, {
-            width: qrSize * 3,
-            margin: 0,
-            type: 'png'
-        });
-        const qr2Buffer = await QRCode.toBuffer(`ECK2.COM/${code}${INSTANCE_SUFFIX}`, {
-            width: qrSize * 3,
-            margin: 0,
-            type: 'png'
-        });
-        const qr3Buffer = await QRCode.toBuffer(`ECK3.COM/${code}${INSTANCE_SUFFIX}`, {
-            width: qrSize * 3,
-            margin: 0,
-            type: 'png'
-        });
+        // Optimized generation: Scale 7 prevents downscaling artifacts (aliasing).
+        // Margin 1 adds a built-in 'Quiet Zone' so adjacent text doesn't interfere with scanning.
+        const qrOptions = { scale: 7, margin: 1, type: 'png' };
+        const qr1Buffer = await QRCode.toBuffer(`ECK1.COM/${code}${INSTANCE_SUFFIX}`, qrOptions);
+        const qr2Buffer = await QRCode.toBuffer(`ECK2.COM/${code}${INSTANCE_SUFFIX}`, qrOptions);
+        const qr3Buffer = await QRCode.toBuffer(`ECK3.COM/${code}${INSTANCE_SUFFIX}`, qrOptions);
 
         // Embed QR codes as PNG
         const qr1Image = await pdfDoc.embedPng(qr1Buffer);
@@ -238,8 +229,8 @@ async function generatePdfRma(rmaJs, link, token, code) {
         page1.drawText(rmaJs.country, { x: leftColX, y: leftY, size: 12, font: font, color: rgb(0, 0, 0) });
     }
 
-    // Center column: QR code with tracking link
-    const qrLinkBuffer = await QRCode.toBuffer(link, { width: 330, margin: 0, type: 'png' });
+    // Center column: QR code with tracking link (High Res, Safe Margin)
+    const qrLinkBuffer = await QRCode.toBuffer(link, { scale: 7, margin: 1, type: 'png' });
     const qrLinkImage = await pdfDoc.embedPng(qrLinkBuffer);
     page1.drawImage(qrLinkImage, {
         x: centerColX,
@@ -279,8 +270,8 @@ async function generatePdfRma(rmaJs, link, token, code) {
         contactY -= 15;
     }
 
-    // QR code with JWT token (right side)
-    const qrTokenBuffer = await QRCode.toBuffer(token, { width: 300, margin: 0, type: 'png' });
+    // QR code with JWT token (right side) (High Res, Safe Margin)
+    const qrTokenBuffer = await QRCode.toBuffer(token, { scale: 7, margin: 1, type: 'png' });
     const qrTokenImage = await pdfDoc.embedPng(qrTokenBuffer);
     page1.drawImage(qrTokenImage, {
         x: rightColX,
@@ -352,8 +343,8 @@ async function generatePdfRma(rmaJs, link, token, code) {
     winY -= 15;
     page2.drawText('Deutschland', { x: windowX, y: winY, size: 12, font: font, color: rgb(0, 0, 0) });
 
-    // QR code next to address
-    const qrCode1Buffer = await QRCode.toBuffer(`ECK1.COM/${code}${INSTANCE_SUFFIX}`, { width: 174, margin: 0, type: 'png' });
+    // QR code next to address (High Res, Safe Margin)
+    const qrCode1Buffer = await QRCode.toBuffer(`ECK1.COM/${code}${INSTANCE_SUFFIX}`, { scale: 7, margin: 1, type: 'png' });
     const qrCode1Image = await pdfDoc.embedPng(qrCode1Buffer);
     page2.drawImage(qrCode1Image, {
         x: 180,
@@ -368,10 +359,10 @@ async function generatePdfRma(rmaJs, link, token, code) {
     instrY -= 18;
     page2.drawText(`${rmaJs.rma} on the parcel.`, { x: 50, y: instrY, size: 14, font: fontBold, color: rgb(0.53, 0, 0) });
 
-    // QR codes on the right
-    const qrCode2Buffer = await QRCode.toBuffer(`ECK2.COM/${code}${INSTANCE_SUFFIX}`, { width: 174, margin: 0, type: 'png' });
+    // QR codes on the right (High Res, Safe Margin)
+    const qrCode2Buffer = await QRCode.toBuffer(`ECK2.COM/${code}${INSTANCE_SUFFIX}`, { scale: 7, margin: 1, type: 'png' });
     const qrCode2Image = await pdfDoc.embedPng(qrCode2Buffer);
-    const qrCode3Buffer = await QRCode.toBuffer(`ECK3.COM/${code}${INSTANCE_SUFFIX}`, { width: 174, margin: 0, type: 'png' });
+    const qrCode3Buffer = await QRCode.toBuffer(`ECK3.COM/${code}${INSTANCE_SUFFIX}`, { scale: 7, margin: 1, type: 'png' });
     const qrCode3Image = await pdfDoc.embedPng(qrCode3Buffer);
 
     page2.drawImage(qrCode2Image, { x: 420, y: instrY - 30, width: 58, height: 58 });
