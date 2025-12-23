@@ -251,13 +251,6 @@ router.post('/confirm', async (req, res) => {
     // Generate PDF
     const pdfBuffer = await generatePdfRma(rmaJson, linkToken, token2, betrugerUrlEncrypt(formattedInput, process.env.ENC_KEY));
 
-    // DEBUG: Save PDF buffer to disk for inspection
-    const debugTimestamp = new Date().toISOString().replace(/:/g, '-').replace(/\./g, '-');
-    const debugFilename = `DEBUG_rma_${debugTimestamp}.pdf`;
-    const debugPath = path.join(process.cwd(), debugFilename);
-    fs.writeFileSync(debugPath, pdfBuffer);
-    console.log(`[DEBUG] PDF saved to disk: ${debugPath}`);
-
     // Create order in both systems
     await createOrderFromRma(formattedInput, rmaJson, req.user?.id || rmaJson.userId);
     

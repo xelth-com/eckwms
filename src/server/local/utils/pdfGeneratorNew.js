@@ -5,6 +5,37 @@ const { betrugerUrlEncrypt, base32table } = require('../../../shared/utils/encry
 const crc32 = require('buffer-crc32');
 
 /**
+ * Helper: Draws a QR code as vector rectangles onto a PDF page
+ * @param {PDFPage} page - The page to draw on
+ * @param {string} text - The data to encode
+ * @param {number} x - X coordinate (bottom-left)
+ * @param {number} y - Y coordinate (bottom-left)
+ * @param {number} size - Width/Height of the QR code
+ * @param {Object} rgbColor - Color object (default black)
+ */
+function drawQrVector(page, text, x, y, size, rgbColor) {
+    const qr = QRCode.create(text, { errorCorrectionLevel: 'M' });
+    const matrix = qr.modules;
+    const cellSize = size / matrix.size;
+
+    // Draw black modules
+    for (let r = 0; r < matrix.size; r++) {
+        for (let c = 0; c < matrix.size; c++) {
+            if (matrix.get(r, c)) {
+                page.drawRectangle({
+                    x: x + (c * cellSize),
+                    // Flip Y axis: PDF coords start at bottom-left, QR matrix starts top-left
+                    y: y + size - ((r + 1) * cellSize),
+                    width: cellSize,
+                    height: cellSize,
+                    color: rgbColor,
+                });
+            }
+        }
+    }
+}
+
+/**
  * Generates PDF files with Betruger codes using pdf-lib
  * @param {string} codeType - Type of code: 'i' for items, 'b' for boxes, 'p' for places, 'l' for InBody markers
  * @param {number} startNumber - Starting number for codes
@@ -88,30 +119,12 @@ async function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], cou
             field2 = `${arrDim[0][0]}${place00 + 1}`;
         }
 
-        // Generate QR codes as PNG buffers
-        // Optimized generation: Scale 7 prevents downscaling artifacts (aliasing).
-        // Margin 1 adds a built-in 'Quiet Zone' so adjacent text doesn't interfere with scanning.
-        const qrOptions = { scale: 7, margin: 1, type: 'png' };
-        const qr1Buffer = await QRCode.toBuffer(`ECK1.COM/${code}${INSTANCE_SUFFIX}`, qrOptions);
-        const qr2Buffer = await QRCode.toBuffer(`ECK2.COM/${code}${INSTANCE_SUFFIX}`, qrOptions);
-        const qr3Buffer = await QRCode.toBuffer(`ECK3.COM/${code}${INSTANCE_SUFFIX}`, qrOptions);
+        // --- VECTOR QR DRAWING START ---
+        // Draw label content (QR1, field1, QR2, field2, QR3) using vector primitives
+        let contentOffsetX = x + 5;
 
-        // Embed QR codes as PNG
-        const qr1Image = await pdfDoc.embedPng(qr1Buffer);
-        const qr2Image = await pdfDoc.embedPng(qr2Buffer);
-        const qr3Image = await pdfDoc.embedPng(qr3Buffer);
-
-        // Draw label content (QR1, field1, QR2, field2, QR3)
-        const contentX = x + 5;
-        let contentOffsetX = contentX;
-
-        // QR1
-        currentPage.drawImage(qr1Image, {
-            x: contentOffsetX,
-            y: currentY + 7,
-            width: qrSize,
-            height: qrSize
-        });
+        // Draw QR1 (vector)
+        drawQrVector(currentPage, `ECK1.COM/${code}${INSTANCE_SUFFIX}`, contentOffsetX, currentY + 7, qrSize, rgb(0, 0, 0));
         contentOffsetX += qrSize + qrMargin;
 
         // field1
@@ -125,13 +138,8 @@ async function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], cou
         const field1Width = fontBold.widthOfTextAtSize(field1, 20);
         contentOffsetX += field1Width + qrMargin + 5;
 
-        // QR2
-        currentPage.drawImage(qr2Image, {
-            x: contentOffsetX,
-            y: currentY + 7,
-            width: qrSize,
-            height: qrSize
-        });
+        // Draw QR2 (vector)
+        drawQrVector(currentPage, `ECK2.COM/${code}${INSTANCE_SUFFIX}`, contentOffsetX, currentY + 7, qrSize, rgb(0, 0, 0));
         contentOffsetX += qrSize + qrMargin;
 
         // field2
@@ -145,13 +153,9 @@ async function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], cou
         const field2Width = fontBold.widthOfTextAtSize(field2, 25);
         contentOffsetX += field2Width + qrMargin + 5;
 
-        // QR3
-        currentPage.drawImage(qr3Image, {
-            x: contentOffsetX,
-            y: currentY + 7,
-            width: qrSize,
-            height: qrSize
-        });
+        // Draw QR3 (vector)
+        drawQrVector(currentPage, `ECK3.COM/${code}${INSTANCE_SUFFIX}`, contentOffsetX, currentY + 7, qrSize, rgb(0, 0, 0));
+        // --- VECTOR QR DRAWING END ---
     }
 
     // Generate PDF buffer
@@ -229,15 +233,8 @@ async function generatePdfRma(rmaJs, link, token, code) {
         page1.drawText(rmaJs.country, { x: leftColX, y: leftY, size: 12, font: font, color: rgb(0, 0, 0) });
     }
 
-    // Center column: QR code with tracking link (High Res, Safe Margin)
-    const qrLinkBuffer = await QRCode.toBuffer(link, { scale: 7, margin: 1, type: 'png' });
-    const qrLinkImage = await pdfDoc.embedPng(qrLinkBuffer);
-    page1.drawImage(qrLinkImage, {
-        x: centerColX,
-        y: yPos - 100,
-        width: 110,
-        height: 110
-    });
+    // Center column: QR code with tracking link (Vector)
+    drawQrVector(page1, link, centerColX, yPos - 100, 110, rgb(0, 0, 0));
 
     // Right column: M3 address
     let rightY = yPos;
@@ -270,15 +267,8 @@ async function generatePdfRma(rmaJs, link, token, code) {
         contactY -= 15;
     }
 
-    // QR code with JWT token (right side) (High Res, Safe Margin)
-    const qrTokenBuffer = await QRCode.toBuffer(token, { scale: 7, margin: 1, type: 'png' });
-    const qrTokenImage = await pdfDoc.embedPng(qrTokenBuffer);
-    page1.drawImage(qrTokenImage, {
-        x: rightColX,
-        y: yPos - 90,
-        width: 100,
-        height: 100
-    });
+    // QR code with JWT token (right side) (Vector)
+    drawQrVector(page1, token, rightColX, yPos - 90, 100, rgb(0, 0, 0));
 
     yPos = contactY - 20;
 
@@ -343,15 +333,8 @@ async function generatePdfRma(rmaJs, link, token, code) {
     winY -= 15;
     page2.drawText('Deutschland', { x: windowX, y: winY, size: 12, font: font, color: rgb(0, 0, 0) });
 
-    // QR code next to address (High Res, Safe Margin)
-    const qrCode1Buffer = await QRCode.toBuffer(`ECK1.COM/${code}${INSTANCE_SUFFIX}`, { scale: 7, margin: 1, type: 'png' });
-    const qrCode1Image = await pdfDoc.embedPng(qrCode1Buffer);
-    page2.drawImage(qrCode1Image, {
-        x: 180,
-        y: windowY - 45,
-        width: 58,
-        height: 58
-    });
+    // QR code next to address (Vector)
+    drawQrVector(page2, `ECK1.COM/${code}${INSTANCE_SUFFIX}`, 180, windowY - 45, 58, rgb(0, 0, 0));
 
     // Instruction text and QR codes
     let instrY = windowY - 100;
@@ -359,20 +342,15 @@ async function generatePdfRma(rmaJs, link, token, code) {
     instrY -= 18;
     page2.drawText(`${rmaJs.rma} on the parcel.`, { x: 50, y: instrY, size: 14, font: fontBold, color: rgb(0.53, 0, 0) });
 
-    // QR codes on the right (High Res, Safe Margin)
-    const qrCode2Buffer = await QRCode.toBuffer(`ECK2.COM/${code}${INSTANCE_SUFFIX}`, { scale: 7, margin: 1, type: 'png' });
-    const qrCode2Image = await pdfDoc.embedPng(qrCode2Buffer);
-    const qrCode3Buffer = await QRCode.toBuffer(`ECK3.COM/${code}${INSTANCE_SUFFIX}`, { scale: 7, margin: 1, type: 'png' });
-    const qrCode3Image = await pdfDoc.embedPng(qrCode3Buffer);
+    // QR codes on the right (Vector)
+    drawQrVector(page2, `ECK2.COM/${code}${INSTANCE_SUFFIX}`, 420, instrY - 30, 58, rgb(0, 0, 0));
+    drawQrVector(page2, `ECK3.COM/${code}${INSTANCE_SUFFIX}`, 490, instrY - 30, 58, rgb(0, 0, 0));
 
-    page2.drawImage(qrCode2Image, { x: 420, y: instrY - 30, width: 58, height: 58 });
-    page2.drawImage(qrCode3Image, { x: 490, y: instrY - 30, width: 58, height: 58 });
-
-    // Additional QR codes row
+    // Additional QR codes row (Vector)
     instrY -= 80;
-    page2.drawImage(qrCode1Image, { x: 350, y: instrY, width: 58, height: 58 });
-    page2.drawImage(qrCode2Image, { x: 420, y: instrY, width: 58, height: 58 });
-    page2.drawImage(qrCode3Image, { x: 490, y: instrY, width: 58, height: 58 });
+    drawQrVector(page2, `ECK1.COM/${code}${INSTANCE_SUFFIX}`, 350, instrY, 58, rgb(0, 0, 0));
+    drawQrVector(page2, `ECK2.COM/${code}${INSTANCE_SUFFIX}`, 420, instrY, 58, rgb(0, 0, 0));
+    drawQrVector(page2, `ECK3.COM/${code}${INSTANCE_SUFFIX}`, 490, instrY, 58, rgb(0, 0, 0));
 
     // Dotted line
     instrY -= 70;

@@ -42,7 +42,6 @@
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
     "pdf-lib": "^1.17.1",
-    "pdfmake": "^0.2.12",
     "pg": "^8.14.0",
     "pg-hstore": "^2.3.4",
     "playwright": "^1.57.0",

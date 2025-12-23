@@ -272,13 +272,6 @@ router.post('/generate-codes', async (req, res) => {
         const pdfBuffer = await betrugerPrintCodesPdf(pdfType, startNumber, dimensions || [['', 5], ['', 20]], count, layoutCols, layoutRows);
         console.log('[Admin] Received PDF buffer:', pdfBuffer.length, 'bytes');
 
-        // DEBUG: Save PDF buffer to disk for inspection
-        const debugTimestamp = new Date().toISOString().replace(/:/g, '-').replace(/\./g, '-');
-        const debugFilename = `DEBUG_admin_labels_${debugTimestamp}.pdf`;
-        const debugPath = path.join(process.cwd(), debugFilename);
-        fs.writeFileSync(debugPath, pdfBuffer);
-        console.log(`[DEBUG] PDF saved to disk: ${debugPath}`);
-
         // Update the database counter
         const newLastSerial = endNumber;
         await SystemSetting.setValue(counterKey, newLastSerial.toString());
