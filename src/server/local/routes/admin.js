@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { verifyJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../../shared/utils/encryption');
 const { addUnicEntryToProperty, addEntryToProperty } = require('../utils/dataInit');
-const { generatePdfRma, betrugerPrintCodesPdf } = require('../utils/pdfGenerator');
+const { generatePdfRma, betrugerPrintCodesPdf } = require('../utils/pdfGeneratorNew');
 const { syncPublicData } = require('../services/globalSyncService');
 const { requireAdmin } = require('../middleware/auth');
 const path = require('path');
@@ -174,7 +174,7 @@ router.post('/api/devices/:id/layout', async (req, res) => {
 // Get all items with issues
 router.get('/items/issues', (req, res) => {
     const itemsWithIssues = [];
-    
+
     global.items.forEach((item, key) => {
         if (item.actn && item.actn.some(action => ['check', 'cause', 'result'].includes(action[0]))) {
             itemsWithIssues.push({
@@ -186,23 +186,23 @@ router.get('/items/issues', (req, res) => {
             });
         }
     });
-    
+
     res.json(itemsWithIssues);
 });
 
 // Get all boxes currently in processing
 router.get('/boxes/processing', (req, res) => {
     const processingBoxes = [];
-    
+
     global.boxes.forEach((box, key) => {
         let packIn = false;
         let packOut = false;
-        
+
         box.loc?.forEach((locElement) => {
             if (locElement[0] === 'p000000000000000030') packIn = locElement[1];
             if (locElement[0] === 'p000000000000000060') packOut = locElement[1];
         });
-        
+
         // Box is in processing if it has been packed in but not packed out
         if (packIn && !packOut) {
             processingBoxes.push({
@@ -214,7 +214,7 @@ router.get('/boxes/processing', (req, res) => {
             });
         }
     });
-    
+
     res.json(processingBoxes);
 });
 
@@ -306,30 +306,30 @@ router.post('/generate-codes', async (req, res) => {
 // Create new item
 router.post('/items', (req, res) => {
     const { classCode, attributes } = req.body;
-    
+
     if (!classCode) {
         return res.status(400).json({ error: 'Class code is required' });
     }
-    
+
     const itemSN = 'i' + (('000000000000000000' + (++global.serialI)).slice(-18));
     const newItem = Object.create(global.item);
-    
+
     newItem.sn = [itemSN, Math.floor(Date.now() / 1000)];
     newItem.cl = classCode;
-    
+
     // Add attributes if provided
     if (attributes) {
         newItem.attr = attributes;
     }
-    
+
     // Set prototype from class if available
     if (global.classes.has(classCode)) {
         Object.setPrototypeOf(newItem, global.classes.get(classCode));
     }
-    
+
     // Add to items collection
     global.items.set(itemSN, newItem);
-    
+
     // Add to class's down property
     if (global.classes.has(classCode)) {
         addUnicEntryToProperty(global.classes, classCode, ['i', itemSN], 'down');
@@ -349,11 +349,11 @@ router.post('/items', (req, res) => {
 router.post('/boxes', (req, res) => {
     const boxSN = 'b' + (('000000000000000000' + (++global.serialB)).slice(-18));
     const newBox = Object.create(global.box);
-    
+
     newBox.sn = [boxSN, Math.floor(Date.now() / 1000)];
     newBox.cont = [];
     newBox.loc = [];
-    
+
     // Add to boxes collection
     global.boxes.set(boxSN, newBox);
 
@@ -371,26 +371,26 @@ router.post('/boxes', (req, res) => {
 router.post('/boxes/:boxId/items/:itemId', (req, res) => {
     const boxId = req.params.boxId;
     const itemId = req.params.itemId;
-    
+
     // Check if both box and item exist
     if (!global.boxes.has(boxId)) {
         return res.status(404).json({ error: 'Box not found' });
     }
-    
+
     if (!global.items.has(itemId)) {
         return res.status(404).json({ error: 'Item not found' });
     }
-    
+
     const timestamp = Math.floor(Date.now() / 1000);
-    
+
     // Add item to box
     addEntryToProperty(global.boxes, boxId, [itemId, timestamp], 'cont');
-    
+
     // Update item location
     addEntryToProperty(global.items, itemId, [boxId, timestamp], 'loc');
-    
-    res.status(200).json({ 
-        success: true, 
+
+    res.status(200).json({
+        success: true,
         message: 'Item added to box',
         timestamp
     });
@@ -400,26 +400,26 @@ router.post('/boxes/:boxId/items/:itemId', (req, res) => {
 router.post('/boxes/:boxId/place/:placeId', (req, res) => {
     const boxId = req.params.boxId;
     const placeId = req.params.placeId;
-    
+
     // Check if both box and place exist
     if (!global.boxes.has(boxId)) {
         return res.status(404).json({ error: 'Box not found' });
     }
-    
+
     if (!global.places.has(placeId)) {
         return res.status(404).json({ error: 'Place not found' });
     }
-    
+
     const timestamp = Math.floor(Date.now() / 1000);
-    
+
     // Add place to box's location
     addEntryToProperty(global.boxes, boxId, [placeId, timestamp], 'loc');
-    
+
     // Add box to place's contents
     addEntryToProperty(global.places, placeId, [boxId, timestamp], 'cont');
-    
-    res.status(200).json({ 
-        success: true, 
+
+    res.status(200).json({
+        success: true,
         message: 'Box moved to place',
         timestamp
     });
@@ -429,22 +429,22 @@ router.post('/boxes/:boxId/place/:placeId', (req, res) => {
 router.post('/items/:itemId/actions', (req, res) => {
     const itemId = req.params.itemId;
     const { type, message } = req.body;
-    
+
     if (!global.items.has(itemId)) {
         return res.status(404).json({ error: 'Item not found' });
     }
-    
+
     if (!type || !message) {
         return res.status(400).json({ error: 'Action type and message are required' });
     }
-    
+
     const timestamp = Math.floor(Date.now() / 1000);
-    
+
     // Add action to item
     addEntryToProperty(global.items, itemId, [type, message, timestamp], 'actn');
-    
-    res.status(200).json({ 
-        success: true, 
+
+    res.status(200).json({
+        success: true,
         message: 'Action added to item',
         timestamp
     });
@@ -453,7 +453,7 @@ router.post('/items/:itemId/actions', (req, res) => {
 // Get all pending RMAs
 router.get('/rmas/pending', (req, res) => {
     const pendingRMAs = [];
-    
+
     global.orders.forEach((order, key) => {
         // Filter orders with RMA code but no contents yet
         if (key.startsWith('o') && key.includes('RMA') && (!order.cont || order.cont.length === 0)) {
@@ -468,14 +468,14 @@ router.get('/rmas/pending', (req, res) => {
             });
         }
     });
-    
+
     res.json(pendingRMAs);
 });
 
 // Export CSV with service data
 router.get('/export/csv', (req, res) => {
     let csv = 'SN /PN;Model;IN DATE;Out Date;Customer;SKU;email;Address;Zip Code;City;Complaint;Verification;Cause;Result;Shipping;Invoice number;Special note; warranty;condition;Used New Parts;Used Refurbished Parts\n';
-    
+
     global.boxes.forEach((element) => {
         let packIn = false;
         let packOut = false;
@@ -493,7 +493,7 @@ router.get('/export/csv', (req, res) => {
             let BZipCode = '';
             let BCity = '';
             let hasOrder = [];
-            
+
             // Extract shipping info
             element.brc?.forEach((brcElement, index) => {
                 // Shipping code extraction logic (UPS, DPD, etc.)
@@ -503,14 +503,14 @@ router.get('/export/csv', (req, res) => {
                 const dhlExpressRegex = /^JJD\d{9,10}$/;
                 const dhlPaketRegex = /^\d{12,14}$/;
                 const dhlGlobalMailRegex = /^GM\d{9}DE$/;
-                
+
                 if (upsRegex.test(brcElement)) shippingCode += `${brcElement}_UPS `;
                 else if (match = brcElement.match(dpdRegex)) shippingCode += `${match[1]}_DPD `;
                 else if (fedExRegex.test(brcElement)) shippingCode += `${brcElement}_FedEx `;
                 else if (dhlExpressRegex.test(brcElement)) shippingCode += `${brcElement}_DHLexp `;
                 else if (dhlGlobalMailRegex.test(brcElement)) shippingCode += `${brcElement}_DHLmail `;
             });
-            
+
             // Find order and customer info
             if (element.in?.length) {
                 element.in.forEach((link) => {
@@ -537,36 +537,36 @@ router.get('/export/csv', (req, res) => {
                     }
                 });
             }
-            
+
             // Process each device in the box
             const uniqueDevices = new Map();
-            
+
             element.cont?.forEach(dev => {
                 const serialNumber = dev[0];
                 const timestamp = dev[1];
-                
+
                 if (!uniqueDevices.has(serialNumber) || uniqueDevices.get(serialNumber).timestamp < timestamp) {
                     uniqueDevices.set(serialNumber, { timestamp, dev });
                 }
             });
-            
+
             // Generate CSV rows for each device
             uniqueDevices.forEach(({ dev }) => {
                 if (!global.items.has(dev[0])) return;
-                
+
                 const item = global.items.get(dev[0]);
                 let mcheck = '';
                 let mcause = '';
                 let mresult = '';
                 let mnote = '';
-                
+
                 item.actn?.forEach(([type, message, timestamp]) => {
                     if (type == 'check') mcheck += message;
                     if (type == 'cause') mcause += message;
                     if (type == 'result') mresult += message;
                     if (type == 'note') mnote += message;
                 });
-                
+
                 if (orderCode.includes('RMA')) {
                     csv += `${dev[0].slice(2).replace(/^0*/, '')};${item?.attr?.MN ?? ''};${packIn ? formatUnixTimestamp(packIn).slice(0, 10) : ''};` +
                         `${packOut ? formatUnixTimestamp(packOut).slice(0, 10) : ''};` +
@@ -576,13 +576,13 @@ router.get('/export/csv', (req, res) => {
             });
         }
     });
-    
+
     res.writeHead(200, {
         'Content-Type': 'text/csv',
         'Content-Disposition': 'attachment; filename="service_data.csv"',
         'Content-Length': csv.length
     });
-    
+
     res.end(csv);
 });
 
