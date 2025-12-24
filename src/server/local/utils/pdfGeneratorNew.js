@@ -1,8 +1,11 @@
-// utils/pdfGeneratorNew.js - Using pdf-lib instead of pdfmake
+// utils/pdfGeneratorNew.js - Using pdf-lib with Custom Font (Roboto)
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+const fontkit = require('@pdf-lib/fontkit');
 const QRCode = require('qrcode');
 const { eckUrlEncrypt, base32table } = require('../../../shared/utils/encryption');
 const crc32 = require('buffer-crc32');
+const fs = require('fs');
+const path = require('path');
 
 /**
  * Helper: Draws a QR code as vector rectangles onto a PDF page
@@ -56,14 +59,31 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
         gapY: config.gapY !== undefined ? config.gapY : 0
     };
 
-    console.log('[PDF-LIB] Generating PDF with layout:', layout);
+    console.log('[PDF-LIB] Generating PDF with Roboto Bold...');
 
     const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
     let totalLabels = count || (layout.cols * layout.rows);
 
     const pdfDoc = await PDFDocument.create();
-    const font = await pdfDoc.embedFont(StandardFonts.Courier);
-    const fontBold = await pdfDoc.embedFont(StandardFonts.CourierBold);
+
+    // --- FONT LOADING: Use Roboto Bold for labels ---
+    pdfDoc.registerFontkit(fontkit);
+    let customFont;
+    try {
+        const fontPath = path.join(__dirname, '../fonts/Roboto-Bold.ttf');
+        if (fs.existsSync(fontPath)) {
+            const fontBytes = fs.readFileSync(fontPath);
+            customFont = await pdfDoc.embedFont(fontBytes);
+            console.log('[PDF-LIB] Loaded Roboto-Bold.ttf successfully');
+        } else {
+            console.warn('[PDF-LIB] Roboto-Bold.ttf not found, falling back to Helvetica-Bold');
+            customFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+        }
+    } catch (e) {
+        console.error('[PDF-LIB] Error loading custom font:', e.message);
+        customFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    }
+    // -----------------------------------------------
 
     // A4 Dimensions in Points
     const pageWidth = 595.28;
@@ -160,7 +180,7 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
                     x: x + xOff,
                     y: y + yOff,
                     size: fSize,
-                    font: fontBold,
+                    font: customFont,
                     color: rgb(0, 0, 0)
                 });
             } else if (type === 'serial') {
@@ -169,7 +189,7 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
                     x: x + xOff,
                     y: y + yOff,
                     size: fSize,
-                    font: font,
+                    font: customFont,
                     color: rgb(0.2, 0.2, 0.2)
                 });
             }
@@ -189,10 +209,10 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
                 x: x + qr1Size + 10,
                 y: y + (labelHeight / 2) - (csSize / 4),
                 size: csSize,
-                font: fontBold,
+                font: customFont,
                 color: rgb(0, 0, 0)
             });
-            const csWidth = fontBold.widthOfTextAtSize(field2, csSize);
+            const csWidth = customFont.widthOfTextAtSize(field2, csSize);
 
             // Serial (Small below checksum)
             const sScale = 0.15;
@@ -201,7 +221,7 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
                 x: x + qr1Size + 10,
                 y: y + (labelHeight * 0.15),
                 size: sSize,
-                font: font,
+                font: customFont,
                 color: rgb(0.3, 0.3, 0.3)
             });
 
