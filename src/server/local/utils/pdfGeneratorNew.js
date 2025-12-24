@@ -108,18 +108,35 @@ async function betrugerPrintCodesPdf(codeType, startNumber = 0, config = {}, cou
 
         // Content generation
         let code, field1, field2;
+        const serialDigits = config.serialDigits || 0;
+
+        // Helper to format serial number based on serialDigits setting (full 18-digit support)
+        const formatSerial = (num, prefix = '', fullPadding = 18) => {
+            const numStr = num.toString();
+            const paddedFull = ('0'.repeat(fullPadding) + numStr).slice(-fullPadding);
+
+            if (serialDigits > 0) {
+                // Show only last N digits from the full 18-digit padded number
+                return prefix + paddedFull.slice(-serialDigits);
+            } else {
+                // Show full 18-digit padded number
+                return prefix + paddedFull;
+            }
+        };
+
         if (codeType === 'i' || codeType === 'b' || codeType === 'l') {
             code = betrugerUrlEncrypt(`${codeType}${('000000000000000000' + labelIndex).slice(-18)}`);
             const temp = crc32.unsigned(labelIndex.toString()) & 1023;
             field2 = Buffer.from([base32table[temp >> 5], base32table[temp & 31]]).toString();
 
-            if (codeType === 'i') field1 = `${('000000' + labelIndex).slice(-6)}`;
-            else if (codeType === 'b') field1 = `#${('00000' + labelIndex).slice(-5)}`;
-            else if (codeType === 'l') field1 = `L${('00000' + labelIndex).slice(-5)}`;
+            if (codeType === 'i') field1 = formatSerial(labelIndex, '', 18);
+            else if (codeType === 'b') field1 = formatSerial(labelIndex, '#', 18);
+            else if (codeType === 'l') field1 = formatSerial(labelIndex, 'L', 18);
         } else if (codeType === 'p') {
             // Places
             code = betrugerUrlEncrypt(`p${('000000000000000000' + (labelIndex + 1)).slice(-18)}`);
-            field1 = `P-${labelIndex + 1}`;
+            const paddedNum = ('000000000000000000' + (labelIndex + 1)).slice(-18);
+            field1 = serialDigits > 0 ? `P-${paddedNum.slice(-serialDigits)}` : `P-${labelIndex + 1}`;
             field2 = "00";
         }
 

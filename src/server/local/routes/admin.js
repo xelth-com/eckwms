@@ -245,7 +245,7 @@ router.get('/api/next-serials', async (req, res) => {
 // Generate new labels/codes
 router.post('/generate-codes', async (req, res) => {
     try {
-        const { type, startNumber, count, layoutParams, contentConfig } = req.body;
+        const { type, startNumber: requestedStartNumber, count, serialDigits, layoutParams, contentConfig } = req.body;
 
         if (!['i', 'b', 'p', 'l', 'marker'].includes(type)) {
             return res.status(400).json({ error: 'Invalid code type. Must be i, b, p, l, or marker.' });
@@ -270,6 +270,7 @@ router.post('/generate-codes', async (req, res) => {
             marginRight: mmToPt(layoutParams?.marginRight || 10),
             gapX: mmToPt(layoutParams?.gapX || 0),
             gapY: mmToPt(layoutParams?.gapY || 0),
+            serialDigits: parseInt(serialDigits) || 0,
             contentConfig: contentConfig || null
         };
 
@@ -287,12 +288,13 @@ router.post('/generate-codes', async (req, res) => {
 
         const counterKey = counterKeyMap[type];
 
-        // If startNumber not provided, fetch the next available number from DB
-        if (!startNumber || startNumber === '' || isNaN(startNumber)) {
+        // Determine actual start number - either from request or next available from DB
+        let startNumber;
+        if (!requestedStartNumber || requestedStartNumber === '' || isNaN(requestedStartNumber)) {
             const lastSerial = await SystemSetting.getValue(counterKey, '0');
             startNumber = parseInt(lastSerial) + 1;
         } else {
-            startNumber = parseInt(startNumber);
+            startNumber = parseInt(requestedStartNumber);
         }
 
         // Normalize 'marker' to 'l' for PDF generation
