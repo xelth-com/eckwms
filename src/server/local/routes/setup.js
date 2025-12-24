@@ -48,7 +48,10 @@ router.get('/pairing-qr', requireAdmin, async (req, res) => {
         pairingString += `$${inviteToken}`;
     }
 
-    const qrCodeDataUrl = await qrcode.toDataURL(pairingString);
+    const qrCodeDataUrl = await qrcode.toDataURL(pairingString, {
+      errorCorrectionLevel: 'L', // Low error correction for smallest size (targets Version 3/29x29)
+      margin: 1 // Minimal margin
+    });
 
     res.json({
       success: true,
