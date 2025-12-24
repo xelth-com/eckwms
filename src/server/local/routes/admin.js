@@ -219,10 +219,33 @@ router.get('/boxes/processing', (req, res) => {
     res.json(processingBoxes);
 });
 
+// Get current serial numbers for labels
+router.get('/api/next-serials', async (req, res) => {
+    try {
+        const { SystemSetting } = require('../../../shared/models/postgresql');
+        const serials = {
+            i: await SystemSetting.getValue('last_serial_item', '0'),
+            b: await SystemSetting.getValue('last_serial_box', '0'),
+            p: await SystemSetting.getValue('last_serial_place', '0'),
+            l: await SystemSetting.getValue('last_serial_marker', '0')
+        };
+        // Return INCREMENTED values (next available)
+        res.json({
+            i: parseInt(serials.i) + 1,
+            b: parseInt(serials.b) + 1,
+            p: parseInt(serials.p) + 1,
+            l: parseInt(serials.l) + 1
+        });
+    } catch (error) {
+        console.error('Error fetching serials:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Generate new labels/codes
 router.post('/generate-codes', async (req, res) => {
     try {
-        let { type, startNumber, count, dimensions, cols, rows } = req.body;
+        const { type, startNumber, count, layoutParams, contentConfig } = req.body;
 
         if (!['i', 'b', 'p', 'l', 'marker'].includes(type)) {
             return res.status(400).json({ error: 'Invalid code type. Must be i, b, p, l, or marker.' });
@@ -232,11 +255,23 @@ router.post('/generate-codes', async (req, res) => {
         if (!count || isNaN(count)) {
             return res.status(400).json({ error: 'Count must be a valid number.' });
         }
-        count = parseInt(count);
+        const labelCount = parseInt(count);
 
-        // Parse layout dimensions (default to 2x16 if not provided)
-        const layoutCols = cols ? parseInt(cols) : 2;
-        const layoutRows = rows ? parseInt(rows) : 16;
+        // Convert mm to points (1mm = 2.83465 pt)
+        const mmToPt = (val) => (parseFloat(val) || 0) * 2.83465;
+
+        // Configuration
+        const config = {
+            cols: parseInt(layoutParams?.cols) || 2,
+            rows: parseInt(layoutParams?.rows) || 16,
+            marginTop: mmToPt(layoutParams?.marginTop || 10),
+            marginBottom: mmToPt(layoutParams?.marginBottom || 10),
+            marginLeft: mmToPt(layoutParams?.marginLeft || 10),
+            marginRight: mmToPt(layoutParams?.marginRight || 10),
+            gapX: mmToPt(layoutParams?.gapX || 0),
+            gapY: mmToPt(layoutParams?.gapY || 0),
+            contentConfig: contentConfig || null
+        };
 
         // Import SystemSetting model
         const { SystemSetting } = require('../../../shared/models/postgresql');
@@ -260,44 +295,27 @@ router.post('/generate-codes', async (req, res) => {
             startNumber = parseInt(startNumber);
         }
 
-        // Normalize 'marker' to 'l' for PDF generation (backward compatibility)
+        // Normalize 'marker' to 'l' for PDF generation
         const pdfType = type === 'marker' ? 'l' : type;
 
         // Calculate end number for filename
         const endNumber = startNumber + count - 1;
         const filename = `eckwms_${pdfType}_${startNumber}-${endNumber}.pdf`;
 
-        // Generate PDF buffer with betruger encoding for all types
-        // Pass layout dimensions to support different grid layouts
-        const pdfBuffer = await betrugerPrintCodesPdf(pdfType, startNumber, dimensions || [['', 5], ['', 20]], count, layoutCols, layoutRows);
-        console.log('[Admin] Received PDF buffer:', pdfBuffer.length, 'bytes');
+        // Generate PDF buffer
+        const pdfBuffer = await betrugerPrintCodesPdf(pdfType, startNumber, config, count);
 
         // Update the database counter
         const newLastSerial = endNumber;
         await SystemSetting.setValue(counterKey, newLastSerial.toString());
 
-        // Also update global variables for backward compatibility (optional)
-        if (type === 'i') {
-            global.serialI = Math.max(global.serialI || 0, newLastSerial);
-        } else if (type === 'b') {
-            global.serialB = Math.max(global.serialB || 0, newLastSerial);
-        } else if (type === 'p') {
-            global.serialP = Math.max(global.serialP || 0, newLastSerial);
-        }
-
         // Send PDF buffer directly to client
-        console.log('[Admin] Sending PDF to client:', {
-            filename,
-            bufferLength: pdfBuffer.length,
-            contentType: 'application/pdf'
-        });
         res.set({
             'Content-Type': 'application/pdf',
             'Content-Disposition': `attachment; filename="${filename}"`,
             'Content-Length': pdfBuffer.length
         });
         res.end(pdfBuffer);
-        console.log('[Admin] PDF sent to client');
     } catch (error) {
         console.error("Error generating codes:", error);
         return res.status(500).json({ error: error.message || 'Error generating codes' });

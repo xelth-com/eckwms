@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <script>if(!localStorage.getItem('auth_token')) window.location.href='/auth/login?redirect='+encodeURIComponent(window.location.pathname);</script>
+    <script>if (!localStorage.getItem('auth_token')) window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Printing Center | eckWMS</title>
@@ -19,7 +20,11 @@
             --border: #333333;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
@@ -195,6 +200,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <a href="/admin" class="back-link" style="margin-right: 15px;">🏠 Home</a>
@@ -227,46 +233,596 @@
         <div class="card">
             <h2>Print Configuration</h2>
 
-            <div class="info-text">
-                Leave start number empty to automatically print from the next available number in the sequence.
-            </div>
-
-            <form id="printForm">
-                <div class="form-group">
-                    <label for="layout">Page Layout</label>
-                    <select id="layout" name="layout" style="width: 100%; padding: 12px; background: #252525; border: 1px solid var(--border); border-radius: 6px; color: var(--text-main); font-size: 1rem;">
-                        <option value="2x16">2×16 (32 labels per page)</option>
-                        <option value="2x8">2×8 (16 labels per page)</option>
-                        <option value="3x7">3×7 (21 labels per page)</option>
-                        <option value="3x10">3×10 (30 labels per page)</option>
-                    </select>
+            <div class="visual-editor-container">
+                <div class="config-header">
+                    <div class="form-group-inline">
+                        <label>Pages:</label>
+                        <input type="number" id="pages" value="1" min="1" style="width: 60px;">
+                    </div>
+                    <div class="form-group-inline">
+                        <label>Total Count:</label>
+                        <input type="number" id="count" value="16" style="width: 80px;">
+                    </div>
+                    <div class="form-group-inline">
+                        <label>Start #:</label>
+                        <input type="number" id="startNumber" placeholder="Loading..." style="width: 100px;">
+                    </div>
                 </div>
 
-                <div class="form-group">
-                    <label for="count">Number of Labels</label>
-                    <input type="number" id="count" name="count" min="1" max="1000" value="50" required>
-                </div>
+                <div class="page-layout-wrapper">
+                    <div class="input-pos top-margin">
+                        <input type="number" id="marginTop" value="10">
+                        <span>Top (mm)</span>
+                    </div>
 
-                <div class="form-group">
-                    <label for="startNumber">Start Number (Optional)</label>
-                    <input type="number" id="startNumber" name="startNumber" min="0" placeholder="Auto (next available)">
+                    <div class="input-pos left-margin">
+                        <input type="number" id="marginLeft" value="10">
+                        <span>Left</span>
+                    </div>
+
+                    <div class="visual-page">
+                        <div class="grid-controls">
+                            <div class="form-group-inline">
+                                <label>Cols:</label>
+                                <input type="number" id="cols" value="2" min="1" max="10">
+                            </div>
+                            <div class="form-group-inline">
+                                <label>Rows:</label>
+                                <input type="number" id="rows" value="8" min="1" max="20">
+                            </div>
+                        </div>
+
+                        <div class="gap-visualizer">
+                            <div class="label-box">Label 1</div>
+
+                            <div class="gap-x-control">
+                                <div class="arrow-h">↔</div>
+                                <input type="number" id="gapX" value="0" title="Gap Horizontal (mm)">
+                            </div>
+
+                            <div class="label-box">Label 2</div>
+
+                            <div class="gap-y-control">
+                                <div class="arrow-v">↕</div>
+                                <input type="number" id="gapY" value="0" title="Gap Vertical (mm)">
+                            </div>
+
+                            <div class="label-box">Label 3</div>
+                        </div>
+                    </div>
+
+                    <div class="input-pos right-margin">
+                        <input type="number" id="marginRight" value="10">
+                        <span>Right</span>
+                    </div>
+
+                    <div class="input-pos bottom-margin">
+                        <input type="number" id="marginBottom" value="10">
+                        <span>Bottom (mm)</span>
+                    </div>
                 </div>
 
                 <div class="alert" id="alert"></div>
 
-                <button type="submit" class="btn btn-primary" id="printBtn">
+                <button id="printBtn" class="btn btn-primary" style="margin-top: 20px;">
                     Generate and Download Labels
                 </button>
-            </form>
+            </div>
+        </div>
+
+        <!-- NEW: Label Content Styling Card -->
+        <div class="card" style="margin-top: 20px;">
+            <h2>Label Content Styling</h2>
+            <div class="styling-editor-layout">
+                <div class="label-preview-container">
+                    <h3>Live Preview</h3>
+                    <div id="labelPreview" class="label-preview">
+                        <!-- Elements positioned dynamically -->
+                        <div id="p-qr1" class="pv-element pv-qr">QR1</div>
+                        <div id="p-qr2" class="pv-element pv-qr">QR2</div>
+                        <div id="p-qr3" class="pv-element pv-qr">QR3</div>
+                        <div id="p-checksum" class="pv-element pv-text pv-bold">XX</div>
+                        <div id="p-serial" class="pv-element pv-text">123456</div>
+                    </div>
+                    <p class="preview-hint">Actual size: <span id="previewDims">0 x 0 mm</span></p>
+                </div>
+
+                <div class="styling-controls">
+                    <div class="control-group">
+                        <label>Element:</label>
+                        <select id="elementSelector">
+                            <option value="qr1">QR1 (Master)</option>
+                            <option value="qr2">QR2 (Small)</option>
+                            <option value="qr3">QR3 (Small)</option>
+                            <option value="checksum">Checksum (Field 2)</option>
+                            <option value="serial">Serial (Field 1)</option>
+                        </select>
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-item">
+                            <label>X (%)</label>
+                            <input type="number" id="e-x" value="5" min="0" max="100">
+                        </div>
+                        <div class="control-item">
+                            <label>Y (%)</label>
+                            <input type="number" id="e-y" value="10" min="0" max="100">
+                        </div>
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-item" style="width: 100%;">
+                            <label>Scale (0.1 - 1.0)</label>
+                            <input type="number" id="e-scale" value="0.8" step="0.05" min="0.05" max="2">
+                        </div>
+                    </div>
+
+                    <div class="puzzle-presets">
+                        <button class="btn btn-sm" onclick="applyPuzzlePreset('3x7')">Apply 3x7 "Puzzle" Layout</button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
+    <style>
+        /* Visual Editor Specific Styles */
+        .visual-editor-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .config-header {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 10px;
+            width: 100%;
+            justify-content: center;
+            background: #252525;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .form-group-inline {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-secondary);
+        }
+
+        .form-group-inline input {
+            background: #111;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 8px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .page-layout-wrapper {
+            display: grid;
+            grid-template-areas:
+                ". top ."
+                "left page right"
+                ". bottom .";
+            grid-template-columns: 80px 300px 80px;
+            grid-template-rows: 60px 424px 60px;
+            gap: 10px;
+            justify-items: center;
+            align-items: center;
+        }
+
+        .input-pos {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-size: 0.8rem;
+            color: var(--accent-blue);
+            gap: 5px;
+        }
+
+        .input-pos input {
+            width: 55px;
+            text-align: center;
+            background: #111;
+            border: 1px solid var(--accent-blue);
+            color: #fff;
+            padding: 6px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        .top-margin {
+            grid-area: top;
+            flex-direction: column-reverse;
+        }
+
+        .bottom-margin {
+            grid-area: bottom;
+        }
+
+        .left-margin {
+            grid-area: left;
+            flex-direction: row-reverse;
+        }
+
+        .right-margin {
+            grid-area: right;
+            flex-direction: row;
+        }
+
+        .visual-page {
+            grid-area: page;
+            width: 100%;
+            height: 100%;
+            background: white;
+            border: 1px solid #ccc;
+            position: relative;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            padding: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            border-radius: 4px;
+        }
+
+        .grid-controls {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px dashed #ccc;
+        }
+
+        .grid-controls input {
+            width: 50px;
+            font-size: 0.9rem;
+        }
+
+        .gap-visualizer {
+            display: grid;
+            grid-template-columns: 1fr 40px 1fr;
+            grid-template-rows: 1fr 30px 1fr;
+            gap: 4px;
+            height: 100%;
+            background: #f8f9fa;
+            padding: 10px;
+            border: 1px dashed #999;
+            border-radius: 4px;
+        }
+
+        .label-box {
+            background: #eff6ff;
+            border: 1px solid #3b82f6;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            color: #3b82f6;
+            font-weight: 500;
+        }
+
+        .gap-x-control,
+        .gap-y-control {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .gap-x-control input,
+        .gap-y-control input {
+            width: 38px;
+            height: 28px;
+            text-align: center;
+            border: 1px solid #f59e0b;
+            background: #fffbeb;
+            border-radius: 4px;
+            z-index: 2;
+            font-size: 0.8rem;
+            color: #b45309;
+            font-weight: bold;
+        }
+
+        .arrow-h,
+        .arrow-v {
+            position: absolute;
+            color: #f59e0b;
+            font-weight: bold;
+            pointer-events: none;
+        }
+
+        .arrow-h {
+            top: -14px;
+            font-size: 1.2rem;
+        }
+
+        .arrow-v {
+            left: -14px;
+            font-size: 1.2rem;
+        }
+
+        @media (max-width: 600px) {
+            .page-layout-wrapper {
+                transform: scale(0.85);
+                margin: -30px 0;
+            }
+        }
+
+        /* Styling Editor Layout */
+        .styling-editor-layout {
+            display: grid;
+            grid-template-columns: 1.2fr 0.8fr;
+            gap: 25px;
+            margin-top: 15px;
+        }
+
+        .label-preview-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .label-preview {
+            width: 100%;
+            background: white;
+            border: 1px solid #ccc;
+            position: relative;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .pv-element {
+            position: absolute;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px dashed var(--accent-blue);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent-blue);
+            font-size: 10px;
+            cursor: pointer;
+            transition: border 0.2s, box-shadow 0.2s;
+            pointer-events: auto;
+            /* Enable clicking */
+        }
+
+        .pv-element:hover {
+            border-style: solid;
+            background: rgba(59, 130, 246, 0.2);
+        }
+
+        .pv-element.selected {
+            border: 2px solid var(--accent-blue);
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+            background: rgba(59, 130, 246, 0.3);
+            z-index: 10;
+        }
+
+        .pv-qr {
+            aspect-ratio: 1;
+            border-style: solid;
+            background: #f0f0f0;
+            color: #333;
+            font-weight: bold;
+        }
+
+        .pv-text {
+            border-width: 1px;
+            /* Show box even for text on hover/select */
+            background: transparent;
+            font-family: monospace;
+            white-space: nowrap;
+        }
+
+        .pv-bold {
+            font-weight: bold;
+            color: black;
+        }
+
+        .styling-controls {
+            background: #252525;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #444;
+        }
+
+        .control-group {
+            margin-bottom: 12px;
+        }
+
+        .control-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .control-item {
+            flex: 1;
+        }
+
+        .control-item label {
+            font-size: 0.8rem;
+            margin-bottom: 4px;
+            display: block;
+        }
+
+        .control-item input,
+        .control-group select {
+            width: 100%;
+            background: #111;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 8px;
+            border-radius: 4px;
+        }
+
+        .preview-hint {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            text-align: center;
+        }
+
+        .puzzle-presets {
+            margin-top: 15px;
+            border-top: 1px solid #444;
+            padding-top: 15px;
+        }
+    </style>
+
     <script>
         let selectedType = null;
+        let nextSerials = { i: 1, b: 1, p: 1, l: 1 };
+
+        // Element Config Object
+        let styleCfg = {
+            qr1: { scale: 0.92, x: 2, y: 4 },
+            qr2: { scale: 0.38, x: 72, y: 56 },
+            qr3: { scale: 0.38, x: 72, y: 8 },
+            checksum: { scale: 0.48, x: 38, y: 35 },
+            serial: { scale: 0.22, x: 38, y: 12 }
+        };
+
         const typeCards = document.querySelectorAll('.print-type-card');
-        const printForm = document.getElementById('printForm');
         const printBtn = document.getElementById('printBtn');
         const alertBox = document.getElementById('alert');
+
+        const pagesInp = document.getElementById('pages');
+        const countInp = document.getElementById('count');
+        const colsInp = document.getElementById('cols');
+        const rowsInp = document.getElementById('rows');
+        const startNumberInp = document.getElementById('startNumber');
+
+        // Style Editor Elements
+        const elementSelector = document.getElementById('elementSelector');
+        const scaleInp = document.getElementById('e-scale');
+        const xInp = document.getElementById('e-x');
+        const yInp = document.getElementById('e-y');
+        const previewDims = document.getElementById('previewDims');
+
+        // Fetch Next Serials on load
+        async function fetchNextSerials() {
+            try {
+                const token = localStorage.getItem('auth_token');
+                const response = await fetch('/admin/api/next-serials', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (response.ok) {
+                    nextSerials = await response.json();
+                    updateStartNumber();
+                }
+            } catch (e) { console.error('Failed to fetch next serials', e); }
+        }
+
+        function updateStartNumber() {
+            if (selectedType && nextSerials[selectedType]) {
+                startNumberInp.value = nextSerials[selectedType];
+            }
+        }
+
+        function updateTotalCount() {
+            const pages = parseInt(pagesInp.value) || 0;
+            const cols = parseInt(colsInp.value) || 0;
+            const rows = parseInt(rowsInp.value) || 0;
+            countInp.value = pages * cols * rows;
+            updatePreviewAspect();
+        }
+
+        function updatePreviewAspect() {
+            const cols = parseInt(colsInp.value) || 2;
+            const rows = parseInt(rowsInp.value) || 8;
+            const w = (210 - 20) / cols;
+            const h = (297 - 20) / rows;
+            const aspect = w / h;
+
+            const preview = document.getElementById('labelPreview');
+            preview.style.aspectRatio = aspect;
+            previewDims.textContent = `${w.toFixed(1)} x ${h.toFixed(1)} mm`;
+            updatePreviewElements();
+        }
+
+        function updatePreviewElements() {
+            Object.keys(styleCfg).forEach(key => {
+                const el = document.getElementById(`p-${key}`);
+                const cfg = styleCfg[key];
+
+                const preview = document.getElementById('labelPreview');
+                const minSide = Math.min(preview.offsetWidth, preview.offsetHeight);
+                const size = minSide * cfg.scale;
+
+                el.style.left = cfg.x + '%';
+                el.style.bottom = cfg.y + '%';
+
+                if (key.startsWith('qr')) {
+                    el.style.width = size + 'px';
+                    el.style.height = size + 'px';
+                    el.style.fontSize = Math.max(8, size / 4) + 'px';
+                } else {
+                    el.style.fontSize = size + 'px';
+                }
+            });
+        }
+
+        function applyPuzzlePreset(type) {
+            if (type === '3x7') {
+                colsInp.value = 3;
+                rowsInp.value = 7;
+                styleCfg = {
+                    qr1: { scale: 0.92, x: 2, y: 4 },
+                    qr2: { scale: 0.38, x: 72, y: 56 },
+                    qr3: { scale: 0.38, x: 72, y: 8 },
+                    checksum: { scale: 0.48, x: 38, y: 35 },
+                    serial: { scale: 0.22, x: 38, y: 12 }
+                };
+                updateTotalCount();
+                syncControlsToElement();
+            }
+        }
+
+        function syncControlsToElement() {
+            const key = elementSelector.value;
+            const cfg = styleCfg[key];
+            scaleInp.value = cfg.scale;
+            xInp.value = cfg.x;
+            yInp.value = cfg.y;
+
+            // Highlight in preview
+            document.querySelectorAll('.pv-element').forEach(el => el.classList.remove('selected'));
+            document.getElementById(`p-${key}`).classList.add('selected');
+
+            updatePreviewElements();
+        }
+
+        // Add Click-to-Select for preview elements
+        document.querySelectorAll('.pv-element').forEach(el => {
+            el.addEventListener('click', (e) => {
+                const id = e.target.id.replace('p-', '');
+                elementSelector.value = id;
+                syncControlsToElement();
+            });
+        });
+
+        // Style Editor Event Listeners
+        elementSelector.addEventListener('change', syncControlsToElement);
+        [scaleInp, xInp, yInp].forEach(inp => {
+            inp.addEventListener('input', () => {
+                const key = elementSelector.value;
+                styleCfg[key] = {
+                    scale: parseFloat(scaleInp.value),
+                    x: parseFloat(xInp.value),
+                    y: parseFloat(yInp.value)
+                };
+                updatePreviewElements();
+            });
+        });
+
+        // Event Listeners for dynamic counting
+        [pagesInp, colsInp, rowsInp].forEach(el => el.addEventListener('input', updateTotalCount));
 
         // Type selection
         typeCards.forEach(card => {
@@ -274,13 +830,16 @@
                 typeCards.forEach(c => c.classList.remove('active'));
                 card.classList.add('active');
                 selectedType = card.dataset.type;
+                updateStartNumber();
             });
         });
 
-        // Form submission
-        printForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
+        // Initialize
+        fetchNextSerials();
+        applyPuzzlePreset('3x7');
 
+        // Generate Labels
+        printBtn.addEventListener('click', async () => {
             if (!selectedType) {
                 showAlert('Please select a label type first', 'error');
                 return;
@@ -288,23 +847,26 @@
 
             const count = document.getElementById('count').value;
             const startNumber = document.getElementById('startNumber').value;
-            const layout = document.getElementById('layout').value;
 
-            // Parse layout dimensions (e.g., "2x16" -> cols: 2, rows: 16)
-            const [cols, rows] = layout.split('x').map(Number);
+            const layoutParams = {
+                marginTop: document.getElementById('marginTop').value,
+                marginBottom: document.getElementById('marginBottom').value,
+                marginLeft: document.getElementById('marginLeft').value,
+                marginRight: document.getElementById('marginRight').value,
+                cols: document.getElementById('cols').value,
+                rows: document.getElementById('rows').value,
+                gapX: document.getElementById('gapX').value,
+                gapY: document.getElementById('gapY').value
+            };
 
             printBtn.disabled = true;
             printBtn.textContent = 'Generating...';
 
             try {
-                // Get JWT token from localStorage
                 const token = localStorage.getItem('auth_token');
-
                 if (!token) {
                     showAlert('Please login first', 'error');
-                    setTimeout(() => {
-                        window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);
-                    }, 2000);
+                    // ...
                     return;
                 }
 
@@ -317,41 +879,27 @@
                     body: JSON.stringify({
                         type: selectedType,
                         count: parseInt(count),
-                        startNumber: startNumber ? parseInt(startNumber) : null,
-                        cols: cols,
-                        rows: rows
+                        startNumber: parseInt(startNumber),
+                        layoutParams: layoutParams,
+                        contentConfig: styleCfg
                     })
                 });
 
                 if (!response.ok) {
-                    // Handle 401 Unauthorized - redirect to login
-                    if (response.status === 401) {
-                        showAlert('Session expired. Redirecting to login...', 'error');
-                        localStorage.removeItem('auth_token');
-                        localStorage.removeItem('refresh_token');
-                        setTimeout(() => {
-                            window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);
-                        }, 2000);
-                        return;
-                    }
                     const error = await response.json();
                     throw new Error(error.error || 'Failed to generate labels');
                 }
 
-                // Download the PDF
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
 
-                // Get filename from Content-Disposition header
                 const contentDisposition = response.headers.get('Content-Disposition');
-                let filename = `eckwms_${selectedType}_labels.pdf`; // fallback
+                let filename = `labels_${selectedType}.pdf`;
                 if (contentDisposition) {
                     const filenameMatch = contentDisposition.match(/filename="?(.+?)"?$/);
-                    if (filenameMatch) {
-                        filename = filenameMatch[1];
-                    }
+                    if (filenameMatch) filename = filenameMatch[1];
                 }
                 a.download = filename;
 
@@ -360,10 +908,8 @@
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
 
-                showAlert('Labels generated successfully! Download started.', 'success');
-
-                // Clear the start number field after successful generation
-                document.getElementById('startNumber').value = '';
+                showAlert('Labels generated successfully!', 'success');
+                fetchNextSerials();
             } catch (error) {
                 console.error('Error:', error);
                 showAlert(error.message, 'error');
@@ -382,4 +928,5 @@
         }
     </script>
 </body>
+
 </html>

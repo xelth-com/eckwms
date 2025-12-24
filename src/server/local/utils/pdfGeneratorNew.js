@@ -36,137 +36,180 @@ function drawQrVector(page, text, x, y, size, rgbColor) {
 }
 
 /**
- * Generates PDF files with Betruger codes using pdf-lib
- * @param {string} codeType - Type of code: 'i' for items, 'b' for boxes, 'p' for places, 'l' for InBody markers
+ * Generates PDF with dynamic layout configuration
+ * @param {string} codeType - Type of code: 'i', 'b', 'p', 'l'
  * @param {number} startNumber - Starting number for codes
- * @param {Array} arrDim - Array dimensions [['', cols], ['', rows]]
- * @param {number} count - Number of labels to generate
- * @param {number} cols - Number of columns per page (default: 2)
- * @param {number} rows - Number of rows per page (default: 16)
+ * @param {Object} config - Layout configuration (margins, gaps, cols, rows in pts)
+ * @param {number} count - Total labels to generate
  * @returns {Promise<Buffer>} - PDF buffer
  */
-async function betrugerPrintCodesPdf(codeType, startNumber = 0, arrDim = [], count = null, cols = 2, rows = 16) {
-    console.log('[PDF-LIB] Starting PDF generation:', { codeType, startNumber, count, cols, rows });
+async function betrugerPrintCodesPdf(codeType, startNumber = 0, config = {}, count = null) {
+    // Default layout (in points, 1mm ~ 2.83pt)
+    const layout = {
+        cols: config.cols || 2,
+        rows: config.rows || 8,
+        marginTop: config.marginTop !== undefined ? config.marginTop : 20,
+        marginBottom: config.marginBottom !== undefined ? config.marginBottom : 20,
+        marginLeft: config.marginLeft !== undefined ? config.marginLeft : 20,
+        marginRight: config.marginRight !== undefined ? config.marginRight : 20,
+        gapX: config.gapX !== undefined ? config.gapX : 10,
+        gapY: config.gapY !== undefined ? config.gapY : 0
+    };
+
+    console.log('[PDF-LIB] Generating PDF with layout:', layout);
 
     const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
+    let totalLabels = count || (layout.cols * layout.rows);
 
-    // Determine total labels
-    let totalLabels = count || 32;
-    if (codeType === 'i') totalLabels = count || 32;
-    else if (codeType === 'b') totalLabels = count || 16;
-    else if (codeType === 'p') totalLabels = count || 32;
-    else if (codeType === 'l') totalLabels = count || 16;
-
-    // Create a new PDF document
     const pdfDoc = await PDFDocument.create();
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-    // A4 page dimensions
-    const pageWidth = 595;
-    const pageHeight = 842;
+    // A4 Dimensions in Points
+    const pageWidth = 595.28;
+    const pageHeight = 841.89;
 
-    // Calculate label dimensions
-    const labelsPerRow = 2;
-    const labelWidth = pageWidth / labelsPerRow;
-    const labelHeight = 44;
+    // Calculate dimensions of a single label
+    // Working area = Total size - margins
+    const workingWidth = pageWidth - layout.marginLeft - layout.marginRight;
+    const workingHeight = pageHeight - layout.marginTop - layout.marginBottom;
 
-    // QR code settings
-    const qrSize = 29;
-    const qrMargin = 2;
+    // Total gaps = (count - 1) * gapSize
+    const totalGapWidth = (layout.cols - 1) * layout.gapX;
+    const totalGapHeight = (layout.rows - 1) * layout.gapY;
+
+    // Label size = (Working area - total gaps) / count
+    const labelWidth = (workingWidth - totalGapWidth) / layout.cols;
+    const labelHeight = (workingHeight - totalGapHeight) / layout.rows;
 
     let currentPage = null;
-    let currentY = 10;
 
-    // Generate labels
     for (let i = 0; i < totalLabels; i++) {
         const labelIndex = i + startNumber;
+        const labelsPerPage = layout.cols * layout.rows;
+        const indexOnPage = i % labelsPerPage;
 
-        // Create new page if needed
-        if (i % (labelsPerRow * rows) === 0) {
+        // Add page if needed
+        if (i % labelsPerPage === 0) {
             currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-            currentY = pageHeight - 10 - labelHeight;
         }
 
-        const col = i % labelsPerRow;
-        const x = col * labelWidth + 10;
+        // Grid position (0-indexed)
+        const col = indexOnPage % layout.cols;
+        const row = Math.floor(indexOnPage / layout.cols);
 
-        // Move to next row
-        if (col === 0 && i > 0 && i % labelsPerRow === 0) {
-            currentY -= labelHeight;
-        }
+        // X coordinate (from left)
+        const x = layout.marginLeft + (col * (labelWidth + layout.gapX));
 
-        // Generate code and data
+        // Y coordinate (from BOTTOM as per PDF-LIB)
+        // Y of the top edge of the current row = pageHeight - marginTop - (row * labelHeight) - (row * gapY)
+        // Y of the bottom edge (where we draw) = topEdge - labelHeight
+        const y = pageHeight - layout.marginTop - ((row + 1) * labelHeight) - (row * layout.gapY);
+
+        // Content generation
         let code, field1, field2;
-
         if (codeType === 'i' || codeType === 'b' || codeType === 'l') {
             code = betrugerUrlEncrypt(`${codeType}${('000000000000000000' + labelIndex).slice(-18)}`);
             const temp = crc32.unsigned(labelIndex.toString()) & 1023;
             field2 = Buffer.from([base32table[temp >> 5], base32table[temp & 31]]).toString();
 
-            if (codeType === 'i') {
-                field1 = `${('000000' + labelIndex).slice(-6)}`;
-            } else if (codeType === 'b') {
-                field1 = `#${('00000' + labelIndex).slice(-5)}`;
-            } else if (codeType === 'l') {
-                field1 = `L${('00000' + labelIndex).slice(-5)}`;
-            }
+            if (codeType === 'i') field1 = `${('000000' + labelIndex).slice(-6)}`;
+            else if (codeType === 'b') field1 = `#${('00000' + labelIndex).slice(-5)}`;
+            else if (codeType === 'l') field1 = `L${('00000' + labelIndex).slice(-5)}`;
         } else if (codeType === 'p') {
-            const place00 = labelIndex % arrDim[0][1];
-            const place01 = Math.floor(labelIndex / arrDim[0][1]) % arrDim[1][1];
-            code = betrugerUrlEncrypt(`${codeType}${('000000000000000000' + (labelIndex + 1)).slice(-18)}`);
-            field1 = `${arrDim[1][0]}${place01 + 1}`;
-            field2 = `${arrDim[0][0]}${place00 + 1}`;
+            // Places
+            code = betrugerUrlEncrypt(`p${('000000000000000000' + (labelIndex + 1)).slice(-18)}`);
+            field1 = `P-${labelIndex + 1}`;
+            field2 = "00";
         }
 
-        // --- VECTOR QR DRAWING START ---
-        // Draw label content (QR1, field1, QR2, field2, QR3) using vector primitives
-        let contentOffsetX = x + 5;
+        const cCfg = config.contentConfig || null;
 
-        // Draw QR1 (vector)
-        drawQrVector(currentPage, `ECK1.COM/${code}${INSTANCE_SUFFIX}`, contentOffsetX, currentY + 7, qrSize, rgb(0, 0, 0));
-        contentOffsetX += qrSize + qrMargin;
+        // Element positioning helper (X/Y are 0-100% of label size)
+        const drawElement = (type, cfg, fallback) => {
+            const scale = cfg.scale !== undefined ? cfg.scale : fallback.scale;
+            const xOff = (cfg.x !== undefined ? cfg.x : fallback.x) * (labelWidth / 100);
+            const yOff = (cfg.y !== undefined ? cfg.y : fallback.y) * (labelHeight / 100);
 
-        // field1
-        currentPage.drawText(field1, {
-            x: contentOffsetX,
-            y: currentY + labelHeight / 2 - 3,
-            size: 20,
-            font: fontBold,
-            color: rgb(0, 0, 0)
-        });
-        const field1Width = fontBold.widthOfTextAtSize(field1, 20);
-        contentOffsetX += field1Width + qrMargin + 5;
+            if (type.startsWith('qr')) {
+                const qrSize = Math.min(labelHeight, labelWidth) * scale;
+                const qrText = type === 'qr1' ? `ECK1.COM/${code}${INSTANCE_SUFFIX}` :
+                    type === 'qr2' ? `ECK2.COM/${code}${INSTANCE_SUFFIX}` :
+                        `ECK3.COM/${code}${INSTANCE_SUFFIX}`;
+                drawQrVector(currentPage, qrText, x + xOff, y + yOff, qrSize, rgb(0, 0, 0));
+            } else if (type === 'checksum') {
+                const fSize = Math.min(labelHeight, labelWidth) * scale;
+                currentPage.drawText(field2, {
+                    x: x + xOff,
+                    y: y + yOff,
+                    size: fSize,
+                    font: fontBold,
+                    color: rgb(0, 0, 0)
+                });
+            } else if (type === 'serial') {
+                const fSize = Math.min(labelHeight, labelWidth) * scale;
+                currentPage.drawText(field1, {
+                    x: x + xOff,
+                    y: y + yOff,
+                    size: fSize,
+                    font: font,
+                    color: rgb(0.2, 0.2, 0.2)
+                });
+            }
+        };
 
-        // Draw QR2 (vector)
-        drawQrVector(currentPage, `ECK2.COM/${code}${INSTANCE_SUFFIX}`, contentOffsetX, currentY + 7, qrSize, rgb(0, 0, 0));
-        contentOffsetX += qrSize + qrMargin;
+        if (!cCfg) {
+            // Default "Master QR" Puzzle Layout (Left-to-Right logic)
+            // QR1: Large (Master)
+            const qr1Scale = 0.9;
+            const qr1Size = labelHeight * qr1Scale;
+            drawQrVector(currentPage, `ECK1.COM/${code}${INSTANCE_SUFFIX}`, x + 2, y + (labelHeight - qr1Size) / 2, qr1Size, rgb(0, 0, 0));
 
-        // field2
-        currentPage.drawText(field2, {
-            x: contentOffsetX,
-            y: currentY + labelHeight / 2 - 5,
-            size: 25,
-            font: fontBold,
-            color: rgb(0, 0, 0)
-        });
-        const field2Width = fontBold.widthOfTextAtSize(field2, 25);
-        contentOffsetX += field2Width + qrMargin + 5;
+            // Checksum (Large center)
+            const csScale = 0.45;
+            const csSize = labelHeight * csScale;
+            currentPage.drawText(field2, {
+                x: x + qr1Size + 10,
+                y: y + (labelHeight / 2) - (csSize / 4),
+                size: csSize,
+                font: fontBold,
+                color: rgb(0, 0, 0)
+            });
+            const csWidth = fontBold.widthOfTextAtSize(field2, csSize);
 
-        // Draw QR3 (vector)
-        drawQrVector(currentPage, `ECK3.COM/${code}${INSTANCE_SUFFIX}`, contentOffsetX, currentY + 7, qrSize, rgb(0, 0, 0));
-        // --- VECTOR QR DRAWING END ---
+            // Serial (Small below checksum)
+            const sScale = 0.15;
+            const sSize = labelHeight * sScale;
+            currentPage.drawText(field1, {
+                x: x + qr1Size + 10,
+                y: y + (labelHeight * 0.15),
+                size: sSize,
+                font: font,
+                color: rgb(0.3, 0.3, 0.3)
+            });
+
+            // QR2 & QR3 (Small on right)
+            const sQrScale = 0.35;
+            const sQrSize = labelHeight * sQrScale;
+            const rightX = x + qr1Size + csWidth + 20;
+            if (rightX + sQrSize < x + labelWidth) {
+                drawQrVector(currentPage, `ECK2.COM/${code}${INSTANCE_SUFFIX}`, rightX, y + labelHeight - sQrSize - 5, sQrSize, rgb(0, 0, 0));
+                drawQrVector(currentPage, `ECK3.COM/${code}${INSTANCE_SUFFIX}`, rightX, y + 5, sQrSize, rgb(0, 0, 0));
+            }
+        } else {
+            // Manual configuration from UI
+            drawElement('qr1', cCfg.qr1 || {}, { scale: 0.8, x: 5, y: 10 });
+            drawElement('qr2', cCfg.qr2 || {}, { scale: 0.3, x: 75, y: 50 });
+            drawElement('qr3', cCfg.qr3 || {}, { scale: 0.3, x: 75, y: 10 });
+            drawElement('checksum', cCfg.checksum || {}, { scale: 0.5, x: 40, y: 35 });
+            drawElement('serial', cCfg.serial || {}, { scale: 0.2, x: 40, y: 10 });
+        }
+
+        // Draw debug border (optional)
+        // currentPage.drawRectangle({ x, y, width: labelWidth, height: labelHeight, borderColor: rgb(0.8, 0.8, 0.8), borderWidth: 0.5 });
     }
 
-    // Generate PDF buffer
     const pdfBytes = await pdfDoc.save();
-    console.log('[PDF-LIB] PDF generation completed:', {
-        codeType,
-        startNumber,
-        totalLabels,
-        bufferSize: pdfBytes.length
-    });
-
     return Buffer.from(pdfBytes);
 }
 
