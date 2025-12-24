@@ -14,7 +14,9 @@ const fonts = [
     { name: 'Roboto-Regular.ttf', url: 'https://raw.githubusercontent.com/googlefonts/roboto/main/src/hinted/Roboto-Regular.ttf' },
     { name: 'Roboto-Medium.ttf', url: 'https://raw.githubusercontent.com/googlefonts/roboto/main/src/hinted/Roboto-Medium.ttf' },
     { name: 'Roboto-Italic.ttf', url: 'https://raw.githubusercontent.com/googlefonts/roboto/main/src/hinted/Roboto-Italic.ttf' },
-    { name: 'Roboto-MediumItalic.ttf', url: 'https://raw.githubusercontent.com/googlefonts/roboto/main/src/hinted/Roboto-MediumItalic.ttf' }
+    { name: 'Roboto-MediumItalic.ttf', url: 'https://raw.githubusercontent.com/googlefonts/roboto/main/src/hinted/Roboto-MediumItalic.ttf' },
+    { name: 'RobotoMono-Regular.ttf', url: 'https://raw.githubusercontent.com/googlefonts/RobotoMono/main/fonts/ttf/RobotoMono-Regular.ttf' },
+    { name: 'RobotoMono-Bold.ttf', url: 'https://raw.githubusercontent.com/googlefonts/RobotoMono/main/fonts/ttf/RobotoMono-Bold.ttf' }
 ];
 
 const downloadFile = (url, dest) => {

@@ -1,4 +1,4 @@
-// utils/pdfGeneratorNew.js - Using pdf-lib with Custom Font (Roboto)
+// utils/pdfGeneratorNew.js - Using pdf-lib with Custom Font (Roboto Mono)
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 const fontkit = require('@pdf-lib/fontkit');
 const QRCode = require('qrcode');
@@ -59,31 +59,31 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
         gapY: config.gapY !== undefined ? config.gapY : 0
     };
 
-    console.log('[PDF-LIB] Generating PDF with Roboto Bold...');
+    console.log('[PDF-LIB] Generating PDF with Roboto Mono...');
 
     const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
     let totalLabels = count || (layout.cols * layout.rows);
 
     const pdfDoc = await PDFDocument.create();
 
-    // --- FONT LOADING: Use Roboto Bold for labels ---
+    // --- FONT LOADING: Use Roboto Mono for labels (monospaced) ---
     pdfDoc.registerFontkit(fontkit);
     let customFont;
     try {
-        const fontPath = path.join(__dirname, '../fonts/Roboto-Bold.ttf');
+        const fontPath = path.join(__dirname, '../fonts/RobotoMono-Bold.ttf');
         if (fs.existsSync(fontPath)) {
             const fontBytes = fs.readFileSync(fontPath);
             customFont = await pdfDoc.embedFont(fontBytes);
-            console.log('[PDF-LIB] Loaded Roboto-Bold.ttf successfully');
+            console.log('[PDF-LIB] Loaded RobotoMono-Bold.ttf successfully');
         } else {
-            console.warn('[PDF-LIB] Roboto-Bold.ttf not found, falling back to Helvetica-Bold');
-            customFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+            console.warn('[PDF-LIB] RobotoMono-Bold.ttf not found, falling back to Courier-Bold');
+            customFont = await pdfDoc.embedFont(StandardFonts.CourierBold);
         }
     } catch (e) {
         console.error('[PDF-LIB] Error loading custom font:', e.message);
-        customFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+        customFont = await pdfDoc.embedFont(StandardFonts.CourierBold);
     }
-    // -----------------------------------------------
+    // ---------------------------------------------------------------
 
     // A4 Dimensions in Points
     const pageWidth = 595.28;
