@@ -23,7 +23,7 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 
 // LOCAL IMPORTS (no relative paths to parent directories)
 const db = require('./models');
-const { betrugerUrlDecrypt, validateApiKey } = require('./utils/encryption');
+const { eckUrlDecrypt, betrugerUrlDecrypt, validateApiKey } = require('./utils/encryption');
 const { runRetentionPolicy } = require('./services/retentionService');
 
 const app = express();
@@ -470,7 +470,7 @@ eckRouter.get('/:code', async (req, res) => {
 
   try {
     // Decrypt QR code
-    const decryptedId = betrugerUrlDecrypt(`ECK/${code}M3`);
+    const decryptedId = eckUrlDecrypt(`ECK/${code}M3`);
 
     if (!decryptedId) {
       console.warn(`[eckWMS] Invalid QR code: ${code}`);

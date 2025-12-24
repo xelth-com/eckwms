@@ -1,6 +1,6 @@
 // services/rmaService.js
 const { RmaRequest } = require('../../../shared/models/postgresql');
-const { betrugerCrc } = require('../../../shared/utils/encryption');
+const { eckCrc } = require('../../../shared/utils/encryption');
 
 /**
  * Создает новый RMA-запрос
@@ -13,7 +13,7 @@ async function createRmaRequest(data) {
     let rmaCode = data.rmaCode;
     if (!rmaCode) {
       const timestamp = Math.floor(Date.now() / 1000);
-      rmaCode = `RMA${timestamp}${betrugerCrc(timestamp)}`;
+      rmaCode = `RMA${timestamp}${eckCrc(timestamp)}`;
     }
     
     // Создание записи в базе данных

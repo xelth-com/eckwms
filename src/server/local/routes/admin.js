@@ -1,9 +1,9 @@
 // routes/admin.js
 const express = require('express');
 const router = express.Router();
-const { verifyJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../../shared/utils/encryption');
+const { verifyJWT, eckUrlEncrypt, eckCrc } = require('../../../shared/utils/encryption');
 const { addUnicEntryToProperty, addEntryToProperty } = require('../utils/dataInit');
-const { generatePdfRma, betrugerPrintCodesPdf } = require('../utils/pdfGeneratorNew');
+const { generatePdfRma, eckPrintCodesPdf } = require('../utils/pdfGeneratorNew');
 const { syncPublicData } = require('../services/globalSyncService');
 const { requireAdmin } = require('../middleware/auth');
 const path = require('path');
@@ -305,7 +305,7 @@ router.post('/generate-codes', async (req, res) => {
         const filename = `eckwms_${pdfType}_${startNumber}-${endNumber}.pdf`;
 
         // Generate PDF buffer
-        const pdfBuffer = await betrugerPrintCodesPdf(pdfType, startNumber, config, count);
+        const pdfBuffer = await eckPrintCodesPdf(pdfType, startNumber, config, count);
 
         // Update the database counter
         const newLastSerial = endNumber;

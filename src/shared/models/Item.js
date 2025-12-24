@@ -1,7 +1,7 @@
 // models/Item.js
-const Betruger = require('./Betruger');
+const Eck = require('./Eck');
 
-class Item extends Betruger {
+class Item extends Eck {
     loc = [];
     prc = [];
     mult = [];

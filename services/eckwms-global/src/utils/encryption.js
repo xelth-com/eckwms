@@ -99,6 +99,10 @@ exports.betrugerUrlDecrypt = (betrugerUrl) => {
   }
 };
 
+// Eck branding aliases (same functionality, new naming)
+exports.eckUrlDecrypt = exports.betrugerUrlDecrypt;
+exports.eckToHex = betrugerToHex;
+
 /**
  * Simple API key validation (can be enhanced with JWT later)
  * @param {string} apiKey - API key to validate

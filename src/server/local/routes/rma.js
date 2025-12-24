@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const path = require('path');
-const { generateJWT, betrugerUrlEncrypt, betrugerCrc } = require('../../../shared/utils/encryption');
+const { generateJWT, eckUrlEncrypt, eckCrc } = require('../../../shared/utils/encryption');
 const { splitStreetAndHouseNumber, splitPostalCodeAndCity, convertToSerialDescriptionArray } = require('../utils/formatUtils');
 const { generatePdfRma } = require('../utils/pdfGeneratorNew');
 const { writeLargeMapToFile } = require('../utils/fileUtils');
@@ -60,7 +60,7 @@ router.post('/create', optionalAuth, async (req, res) => {
 // Generate RMA form page (HTML version)
 router.post('/generate', (req, res) => {
   const timestamp = Math.floor(Date.now() / 1000);
-  const rmaCode = `RMA${timestamp}${betrugerCrc(timestamp)}`;
+  const rmaCode = `RMA${timestamp}${eckCrc(timestamp)}`;
 
   const payload = {
     r: rmaCode,
@@ -249,7 +249,7 @@ router.post('/confirm', async (req, res) => {
     formattedInput = 'o' + formattedInput.padStart(18, '0');
     
     // Generate PDF
-    const pdfBuffer = await generatePdfRma(rmaJson, linkToken, token2, betrugerUrlEncrypt(formattedInput, process.env.ENC_KEY));
+    const pdfBuffer = await generatePdfRma(rmaJson, linkToken, token2, eckUrlEncrypt(formattedInput));
 
     // Create order in both systems
     await createOrderFromRma(formattedInput, rmaJson, req.user?.id || rmaJson.userId);

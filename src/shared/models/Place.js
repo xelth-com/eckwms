@@ -1,7 +1,7 @@
 // models/Place.js
-const Betruger = require('./Betruger');
+const Eck = require('./Eck');
 
-class Place extends Betruger {
+class Place extends Eck {
     cont = [];
     constructor(cl) {
         super(cl);

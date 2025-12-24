@@ -48,7 +48,7 @@ const setupRoutes = require('./routes/setup');
 const { errorHandler, requestLogger } = require('./middleware');
 
 // Import models (Legacy - возможно, часть уже не нужна при переходе на PG)
-const { Betruger, User, Order, Place, Box, Item, Dict } = require('../../shared/models');
+const { Eck, Betruger, User, Order, Place, Box, Item, Dict } = require('../../shared/models');
 const { writeLargeMapToFile } = require('./utils/fileUtils');
 
 // Import PostgreSQL models

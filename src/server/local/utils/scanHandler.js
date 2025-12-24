@@ -13,7 +13,7 @@ const {
 } = require('./dataInit');
 
 // Import encryption utils
-const { betrugerUrlDecrypt } = require('../../../shared/utils/encryption');
+const { eckUrlDecrypt } = require('../../../shared/utils/encryption');
 
 // Import AI components for Hybrid Identification
 const geminiService = require('../services/geminiService');
@@ -53,19 +53,20 @@ async function processScan(barcode, user = null) {
     try {
         let bet = '';
         
-        // Handle URL-formatted barcodes first
-        if (barcode.startsWith('http://betruger.com/') || barcode.startsWith('https://betruger.com/')) {
+        // Handle URL-formatted barcodes first (legacy betruger.com and new eck.com)
+        if (barcode.startsWith('http://betruger.com/') || barcode.startsWith('https://betruger.com/') ||
+            barcode.startsWith('http://eck.com/') || barcode.startsWith('https://eck.com/')) {
             // Extract the code part from the URL
             const code = barcode.split('/').pop();
             console.log(`Extracted code from URL: ${code}`);
-            
+
             // Try to process as a regular code
             bet = findKnownCode(code) || isBetDirect(code);
         }
-        // Handle ECK formatted codes 
+        // Handle ECK formatted codes
         else if (barcode.startsWith('ECK') && barcode.length === 76) {
             try {
-                bet = betrugerUrlDecrypt(barcode);
+                bet = eckUrlDecrypt(barcode);
                 console.log(`Decrypted ECK code: ${bet}`);
             } catch (err) {
                 console.error(`Error decrypting ECK code: ${err.message}`);

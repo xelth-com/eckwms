@@ -1,7 +1,7 @@
 // models/Box.js
-const Betruger = require('./Betruger');
+const Eck = require('./Eck');
 
-class Box extends Betruger {
+class Box extends Eck {
     in = [];
     out = [];
     cont = [];

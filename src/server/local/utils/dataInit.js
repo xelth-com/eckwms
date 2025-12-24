@@ -160,7 +160,7 @@ function findKnownCode(barcode) {
 }
 
 /**
- * Checks if input is a direct Betruger code
+ * Checks if input is a direct Eck code
  * @param {string} barcode - Input barcode
  * @returns {string|boolean} - Valid barcode or false
  */

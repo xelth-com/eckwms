@@ -1,7 +1,7 @@
 // utils/pdfGeneratorNew.js - Using pdf-lib instead of pdfmake
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 const QRCode = require('qrcode');
-const { betrugerUrlEncrypt, base32table } = require('../../../shared/utils/encryption');
+const { eckUrlEncrypt, base32table } = require('../../../shared/utils/encryption');
 const crc32 = require('buffer-crc32');
 
 /**
@@ -43,7 +43,7 @@ function drawQrVector(page, text, x, y, size, rgbColor) {
  * @param {number} count - Total labels to generate
  * @returns {Promise<Buffer>} - PDF buffer
  */
-async function betrugerPrintCodesPdf(codeType, startNumber = 0, config = {}, count = null) {
+async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = null) {
     // Default layout (in points, 1mm ~ 2.83pt)
     const layout = {
         cols: config.cols || 2,
@@ -62,8 +62,8 @@ async function betrugerPrintCodesPdf(codeType, startNumber = 0, config = {}, cou
     let totalLabels = count || (layout.cols * layout.rows);
 
     const pdfDoc = await PDFDocument.create();
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const font = await pdfDoc.embedFont(StandardFonts.Courier);
+    const fontBold = await pdfDoc.embedFont(StandardFonts.CourierBold);
 
     // A4 Dimensions in Points
     const pageWidth = 595.28;
@@ -125,7 +125,7 @@ async function betrugerPrintCodesPdf(codeType, startNumber = 0, config = {}, cou
         };
 
         if (codeType === 'i' || codeType === 'b' || codeType === 'l') {
-            code = betrugerUrlEncrypt(`${codeType}${('000000000000000000' + labelIndex).slice(-18)}`);
+            code = eckUrlEncrypt(`${codeType}${('000000000000000000' + labelIndex).slice(-18)}`);
             const temp = crc32.unsigned(labelIndex.toString()) & 1023;
             field2 = Buffer.from([base32table[temp >> 5], base32table[temp & 31]]).toString();
 
@@ -134,7 +134,7 @@ async function betrugerPrintCodesPdf(codeType, startNumber = 0, config = {}, cou
             else if (codeType === 'l') field1 = formatSerial(labelIndex, 'L', 18);
         } else if (codeType === 'p') {
             // Places
-            code = betrugerUrlEncrypt(`p${('000000000000000000' + (labelIndex + 1)).slice(-18)}`);
+            code = eckUrlEncrypt(`p${('000000000000000000' + (labelIndex + 1)).slice(-18)}`);
             const paddedNum = ('000000000000000000' + (labelIndex + 1)).slice(-18);
             field1 = serialDigits > 0 ? `P-${paddedNum.slice(-serialDigits)}` : `P-${labelIndex + 1}`;
             field2 = "00";
@@ -235,7 +235,7 @@ async function betrugerPrintCodesPdf(codeType, startNumber = 0, config = {}, cou
  * @param {Object} rmaJs - RMA data
  * @param {string} link - Tracking link
  * @param {string} token - JWT token
- * @param {string} code - Betruger code
+ * @param {string} code - Eck code
  * @returns {Promise<Buffer>} - PDF buffer
  */
 async function generatePdfRma(rmaJs, link, token, code) {
@@ -245,8 +245,10 @@ async function generatePdfRma(rmaJs, link, token, code) {
 
     // Create a new PDF document
     const pdfDoc = await PDFDocument.create();
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const font = await pdfDoc.embedFont(StandardFonts.Courier);
+    const fontBold = await pdfDoc.embedFont(StandardFonts.CourierBold);
+    const fontDoc = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const fontDocBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
     // A4 page dimensions
     const pageWidth = 595;
@@ -261,7 +263,7 @@ async function generatePdfRma(rmaJs, link, token, code) {
         x: 50,
         y: yPos,
         size: 22,
-        font: fontBold,
+        font: fontDocBold,
         color: rgb(0, 0, 0)
     });
     yPos -= 40;
@@ -274,23 +276,23 @@ async function generatePdfRma(rmaJs, link, token, code) {
     // Left column: Customer address
     let leftY = yPos;
     if (rmaJs.company) {
-        page1.drawText(rmaJs.company, { x: leftColX, y: leftY, size: 12, font: fontBold, color: rgb(0, 0, 0) });
+        page1.drawText(rmaJs.company, { x: leftColX, y: leftY, size: 12, font: fontDocBold, color: rgb(0, 0, 0) });
         leftY -= 15;
     }
     if (rmaJs.person) {
-        page1.drawText(rmaJs.person, { x: leftColX, y: leftY, size: 12, font: font, color: rgb(0, 0, 0) });
+        page1.drawText(rmaJs.person, { x: leftColX, y: leftY, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
         leftY -= 15;
     }
     if (rmaJs.street) {
-        page1.drawText(rmaJs.street, { x: leftColX, y: leftY, size: 12, font: font, color: rgb(0, 0, 0) });
+        page1.drawText(rmaJs.street, { x: leftColX, y: leftY, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
         leftY -= 15;
     }
     if (rmaJs.postal) {
-        page1.drawText(rmaJs.postal, { x: leftColX, y: leftY, size: 12, font: font, color: rgb(0, 0, 0) });
+        page1.drawText(rmaJs.postal, { x: leftColX, y: leftY, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
         leftY -= 15;
     }
     if (rmaJs.country) {
-        page1.drawText(rmaJs.country, { x: leftColX, y: leftY, size: 12, font: font, color: rgb(0, 0, 0) });
+        page1.drawText(rmaJs.country, { x: leftColX, y: leftY, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
     }
 
     // Center column: QR code with tracking link (Vector)
@@ -298,32 +300,32 @@ async function generatePdfRma(rmaJs, link, token, code) {
 
     // Right column: M3 address
     let rightY = yPos;
-    page1.drawText('M3 Mobile GmbH', { x: rightColX, y: rightY, size: 12, font: fontBold, color: rgb(0, 0, 0) });
+    page1.drawText('M3 Mobile GmbH', { x: rightColX, y: rightY, size: 12, font: fontDocBold, color: rgb(0, 0, 0) });
     rightY -= 15;
-    page1.drawText('Am Holzweg 26', { x: rightColX, y: rightY, size: 12, font: font, color: rgb(0, 0, 0) });
+    page1.drawText('Am Holzweg 26', { x: rightColX, y: rightY, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
     rightY -= 15;
-    page1.drawText('65830 Kriftel', { x: rightColX, y: rightY, size: 12, font: font, color: rgb(0, 0, 0) });
+    page1.drawText('65830 Kriftel', { x: rightColX, y: rightY, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
     rightY -= 15;
-    page1.drawText('Deutschland', { x: rightColX, y: rightY, size: 12, font: font, color: rgb(0, 0, 0) });
+    page1.drawText('Deutschland', { x: rightColX, y: rightY, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
 
     yPos -= 140;
 
     // Contact info section
     let contactY = yPos;
     if (rmaJs.email) {
-        page1.drawText(`Contact Email: ${rmaJs.email}`, { x: leftColX, y: contactY, size: 12, font: fontBold, color: rgb(0, 0, 0) });
+        page1.drawText(`Contact Email: ${rmaJs.email}`, { x: leftColX, y: contactY, size: 12, font: fontDocBold, color: rgb(0, 0, 0) });
         contactY -= 15;
     }
     if (rmaJs.invoice_email) {
-        page1.drawText(`E-Invoice Email: ${rmaJs.invoice_email}`, { x: leftColX, y: contactY, size: 12, font: fontBold, color: rgb(0, 0, 0) });
+        page1.drawText(`E-Invoice Email: ${rmaJs.invoice_email}`, { x: leftColX, y: contactY, size: 12, font: fontDocBold, color: rgb(0, 0, 0) });
         contactY -= 15;
     }
     if (rmaJs.phone) {
-        page1.drawText(`Phone: ${rmaJs.phone}`, { x: leftColX, y: contactY, size: 12, font: fontBold, color: rgb(0, 0, 0) });
+        page1.drawText(`Phone: ${rmaJs.phone}`, { x: leftColX, y: contactY, size: 12, font: fontDocBold, color: rgb(0, 0, 0) });
         contactY -= 15;
     }
     if (rmaJs.resellerName) {
-        page1.drawText(`Reseller: ${rmaJs.resellerName}`, { x: leftColX, y: contactY, size: 12, font: fontBold, color: rgb(0, 0, 0) });
+        page1.drawText(`Reseller: ${rmaJs.resellerName}`, { x: leftColX, y: contactY, size: 12, font: fontDocBold, color: rgb(0, 0, 0) });
         contactY -= 15;
     }
 
@@ -333,27 +335,27 @@ async function generatePdfRma(rmaJs, link, token, code) {
     yPos = contactY - 20;
 
     // Tracking link
-    page1.drawText('RMA Tracking Link:', { x: leftColX, y: yPos, size: 12, font: font, color: rgb(0, 0, 0) });
+    page1.drawText('RMA Tracking Link:', { x: leftColX, y: yPos, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
     yPos -= 15;
-    page1.drawText(link, { x: leftColX, y: yPos, size: 10, font: font, color: rgb(0, 0, 0.53) });
+    page1.drawText(link, { x: leftColX, y: yPos, size: 10, font: fontDoc, color: rgb(0, 0, 0.53) });
     yPos -= 25;
 
     // Access token
-    page1.drawText('RMA Access Token for full access:', { x: leftColX, y: yPos, size: 12, font: font, color: rgb(0, 0, 0) });
+    page1.drawText('RMA Access Token for full access:', { x: leftColX, y: yPos, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
     yPos -= 15;
 
     // Split token into multiple lines if too long
     const tokenChunkSize = 60;
     for (let i = 0; i < token.length; i += tokenChunkSize) {
         const chunk = token.substring(i, i + tokenChunkSize);
-        page1.drawText(chunk, { x: leftColX, y: yPos, size: 10, font: font, color: rgb(0, 0.4, 0) });
+        page1.drawText(chunk, { x: leftColX, y: yPos, size: 10, font: fontBold, color: rgb(0, 0.4, 0) });
         yPos -= 12;
     }
 
     yPos -= 15;
 
     // Serial numbers section
-    page1.drawText('Serial Numbers and Issue Descriptions', { x: leftColX, y: yPos, size: 18, font: fontBold, color: rgb(0, 0, 0) });
+    page1.drawText('Serial Numbers and Issue Descriptions', { x: leftColX, y: yPos, size: 18, font: fontDocBold, color: rgb(0, 0, 0) });
     yPos -= 25;
 
     // List serial numbers and descriptions
@@ -363,12 +365,12 @@ async function generatePdfRma(rmaJs, link, token, code) {
 
         if (rmaJs[serialKey] && rmaJs[descriptionKey]) {
             // Serial number
-            page1.drawText(rmaJs[serialKey], { x: leftColX, y: yPos, size: 10, font: font, color: rgb(0, 0, 0) });
+            page1.drawText(rmaJs[serialKey], { x: leftColX, y: yPos, size: 10, font: fontDoc, color: rgb(0, 0, 0) });
 
             // Description (wrap if too long)
             const description = rmaJs[descriptionKey];
             const maxDescWidth = 350;
-            page1.drawText(description.substring(0, 80), { x: leftColX + 100, y: yPos, size: 10, font: font, color: rgb(0, 0, 0) });
+            page1.drawText(description.substring(0, 80), { x: leftColX + 100, y: yPos, size: 10, font: fontDoc, color: rgb(0, 0, 0) });
 
             yPos -= 15;
 
@@ -385,22 +387,22 @@ async function generatePdfRma(rmaJs, link, token, code) {
     const windowY = pageHeight - 150;
 
     let winY = windowY;
-    page2.drawText('M3 Mobile GmbH', { x: windowX, y: winY, size: 12, font: fontBold, color: rgb(0, 0, 0) });
+    page2.drawText('M3 Mobile GmbH', { x: windowX, y: winY, size: 12, font: fontDocBold, color: rgb(0, 0, 0) });
     winY -= 15;
-    page2.drawText('Am Holzweg 26', { x: windowX, y: winY, size: 12, font: font, color: rgb(0, 0, 0) });
+    page2.drawText('Am Holzweg 26', { x: windowX, y: winY, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
     winY -= 15;
-    page2.drawText('65830 Kriftel', { x: windowX, y: winY, size: 12, font: font, color: rgb(0, 0, 0) });
+    page2.drawText('65830 Kriftel', { x: windowX, y: winY, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
     winY -= 15;
-    page2.drawText('Deutschland', { x: windowX, y: winY, size: 12, font: font, color: rgb(0, 0, 0) });
+    page2.drawText('Deutschland', { x: windowX, y: winY, size: 12, font: fontDoc, color: rgb(0, 0, 0) });
 
     // QR code next to address (Vector)
     drawQrVector(page2, `ECK1.COM/${code}${INSTANCE_SUFFIX}`, 180, windowY - 45, 58, rgb(0, 0, 0));
 
     // Instruction text and QR codes
     let instrY = windowY - 100;
-    page2.drawText('Please send us only this sheet or write', { x: 50, y: instrY, size: 14, font: font, color: rgb(0.53, 0, 0) });
+    page2.drawText('Please send us only this sheet or write', { x: 50, y: instrY, size: 14, font: fontDoc, color: rgb(0.53, 0, 0) });
     instrY -= 18;
-    page2.drawText(`${rmaJs.rma} on the parcel.`, { x: 50, y: instrY, size: 14, font: fontBold, color: rgb(0.53, 0, 0) });
+    page2.drawText(`${rmaJs.rma} on the parcel.`, { x: 50, y: instrY, size: 14, font: fontDocBold, color: rgb(0.53, 0, 0) });
 
     // QR codes on the right (Vector)
     drawQrVector(page2, `ECK2.COM/${code}${INSTANCE_SUFFIX}`, 420, instrY - 30, 58, rgb(0, 0, 0));
@@ -426,7 +428,7 @@ async function generatePdfRma(rmaJs, link, token, code) {
 
     // Serial numbers section on page 2
     instrY -= 30;
-    page2.drawText('Serial Numbers and Issue Descriptions', { x: 50, y: instrY, size: 18, font: fontBold, color: rgb(0, 0, 0) });
+    page2.drawText('Serial Numbers and Issue Descriptions', { x: 50, y: instrY, size: 18, font: fontDocBold, color: rgb(0, 0, 0) });
     instrY -= 25;
 
     // List serial numbers and descriptions again
@@ -435,10 +437,10 @@ async function generatePdfRma(rmaJs, link, token, code) {
         const descriptionKey = `description${i}`;
 
         if (rmaJs[serialKey] && rmaJs[descriptionKey]) {
-            page2.drawText(rmaJs[serialKey], { x: 50, y: instrY, size: 10, font: font, color: rgb(0, 0, 0) });
+            page2.drawText(rmaJs[serialKey], { x: 50, y: instrY, size: 10, font: fontDoc, color: rgb(0, 0, 0) });
 
             const description = rmaJs[descriptionKey];
-            page2.drawText(description.substring(0, 80), { x: 150, y: instrY, size: 10, font: font, color: rgb(0, 0, 0) });
+            page2.drawText(description.substring(0, 80), { x: 150, y: instrY, size: 10, font: fontDoc, color: rgb(0, 0, 0) });
 
             instrY -= 15;
 
@@ -454,6 +456,6 @@ async function generatePdfRma(rmaJs, link, token, code) {
 }
 
 module.exports = {
-    betrugerPrintCodesPdf,
+    eckPrintCodesPdf,
     generatePdfRma
 };

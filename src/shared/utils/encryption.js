@@ -324,6 +324,14 @@ function betrugerCrc(value) {
     return String.fromCharCode(base32table[temp >> 5]) + String.fromCharCode(base32table[temp & 31]); // More direct conversion
 }
 
+// --- New branding: Eck aliases (same functionality, new naming) ---
+const eckTimeIvBase32 = betrugerTimeIvBase32;
+const eckToBase32 = betrugerToBase32;
+const eckToHex = betrugerToHex;
+const eckUrlEncrypt = betrugerUrlEncrypt;
+const eckUrlDecrypt = betrugerUrlDecrypt;
+const eckCrc = betrugerCrc;
+
 
 // --- Экспорт публичных функций ---
 // Функции createSecretJwtKey и createEncryptionKey больше не экспортируются,
@@ -332,14 +340,24 @@ module.exports = {
     // Утилиты Base32 (если они нужны где-то еще)
     base32table,
     // base32backHash,
+
+    // Legacy Betruger naming (for backward compatibility)
     betrugerTimeIvBase32, // Might not be needed outside if IV generation is internal
     betrugerToBase32,     // Might not be needed outside
     betrugerToHex,        // Might not be needed outside
-
-    // Основные функции
     betrugerUrlEncrypt,
     betrugerUrlDecrypt,
+    betrugerCrc,
+
+    // New Eck branding
+    eckTimeIvBase32,
+    eckToBase32,
+    eckToHex,
+    eckUrlEncrypt,
+    eckUrlDecrypt,
+    eckCrc,
+
+    // JWT functions (brand neutral)
     generateJWT,
-    verifyJWT,
-    betrugerCrc
+    verifyJWT
 };

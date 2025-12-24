@@ -1,7 +1,7 @@
 // models/User.js
-const Betruger = require('./Betruger');
+const Eck = require('./Eck');
 
-class User extends Betruger {
+class User extends Eck {
     cont = [];
     constructor(cl) {
         super(cl);

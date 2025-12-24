@@ -1,5 +1,5 @@
 // utils/htmlParser.js
-const { verifyJWT, betrugerCrc } = require('../../../shared/utils/encryption');
+const { verifyJWT, eckCrc } = require('../../../shared/utils/encryption');
 const { formatUnixTimestamp, prettyPrintObject, maskObjectFields } = require('./formatUtils');
 const { findKnownCode, isBetDirect } = require('./dataInit');
 
@@ -311,7 +311,7 @@ const parseHtml = async (parsed) => {
         <td  class="cellPaper" style="width:80px;"><b>${itemTemp.mult.map(el => el[0]).join('<br>')}</b></td>
         <td  class="inputPaper" style="width:80px;"><span class="text2blue"><div id="${itemTemp.cl}" onfocus="onFocusInt('${itemTemp.cl}')" onfocusout="onFocusOutInt('${itemTemp.cl}',${itemTemp.mult.map(el => el[0]).join('<br>')})" contenteditable="true">0</div></span></td>
         <td  class="cellPaper" style="width:80px;"><small>${itemTemp.rel.map(el => el[0] == 'partOf' ? `${el[1]}` : '').join('<br>')}</small></td>
-        <td  class="cellPaper" style="width:80px;"><small><b>${betrugerCrc(itemTemp.sn[0].slice(2).replace(/^0*/, ''))}</b><br>${fullPath(itemTemp).join('<br>')}</small></td>
+        <td  class="cellPaper" style="width:80px;"><small><b>${eckCrc(itemTemp.sn[0].slice(2).replace(/^0*/, ''))}</b><br>${fullPath(itemTemp).join('<br>')}</small></td>
         <td  class="cellPaper"><small><small>${itemTemp.desc.join('<br>')}</small></small></td>
         </tr>`;
                                     }

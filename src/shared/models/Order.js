@@ -1,7 +1,7 @@
 // models/Order.js
-const Betruger = require('./Betruger');
+const Eck = require('./Eck');
 
-class Order extends Betruger {
+class Order extends Eck {
     cust = [];
     comp = '';
     pers = '';
