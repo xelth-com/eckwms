@@ -650,25 +650,83 @@
         let selectedType = null;
         let nextSerials = { i: 1, b: 1, p: 1, l: 1 };
 
-        // Layout Storage Manager
+        // Layout Storage Manager - Type-Specific Configurations
         const layoutManager = {
-            configs: {}, // Stores config per layout key "CxR" (e.g., "3x7")
+            configs: {}, // Stores config per type and layout: { 'i': { '3x7': {...} }, 'b': {...} }
 
-            // Standard Defaults
+            // Standard Defaults per Type and Layout
             defaults: {
-                '3x7': {
-                    qr1: { scale: 0.92, x: 0, y: 4 },
-                    qr2: { scale: 0.3, x: 61, y: 22 },
-                    qr3: { scale: 0.3, x: 81, y: 22 },
-                    checksum: { scale: 0.4, x: 62, y: 60 },
-                    serial: { scale: 0.15, x: 63, y: 7 }
+                'i': { // Items - значения из таблицы пользователя
+                    '3x7': {
+                        qr1: { scale: 1, x: 0, y: 0 },
+                        qr2: { scale: 0.3, x: 62, y: 22 },
+                        qr3: { scale: 0.3, x: 82, y: 22 },
+                        checksum: { scale: 0.55, x: 61, y: 60 },
+                        serial: { scale: 0.15, x: 64, y: 4 },
+                        serialDigits: 6
+                    },
+                    '2x8': {
+                        qr1: { scale: 0.8, x: 5, y: 10 },
+                        qr2: { scale: 0.3, x: 75, y: 50 },
+                        qr3: { scale: 0.3, x: 75, y: 10 },
+                        checksum: { scale: 0.5, x: 40, y: 35 },
+                        serial: { scale: 0.2, x: 40, y: 10 },
+                        serialDigits: 6
+                    }
                 },
-                '2x8': { // Example for 2x8
-                    qr1: { scale: 0.8, x: 5, y: 10 },
-                    qr2: { scale: 0.3, x: 75, y: 50 },
-                    qr3: { scale: 0.3, x: 75, y: 10 },
-                    checksum: { scale: 0.5, x: 40, y: 35 },
-                    serial: { scale: 0.2, x: 40, y: 10 }
+                'b': { // Boxes - отдельные defaults для коробок
+                    '3x7': {
+                        qr1: { scale: 0.92, x: 0, y: 4 },
+                        qr2: { scale: 0.3, x: 61, y: 22 },
+                        qr3: { scale: 0.3, x: 81, y: 22 },
+                        checksum: { scale: 0.4, x: 62, y: 60 },
+                        serial: { scale: 0.15, x: 63, y: 7 },
+                        serialDigits: 6
+                    },
+                    '2x8': {
+                        qr1: { scale: 0.8, x: 5, y: 10 },
+                        qr2: { scale: 0.3, x: 75, y: 50 },
+                        qr3: { scale: 0.3, x: 75, y: 10 },
+                        checksum: { scale: 0.5, x: 40, y: 35 },
+                        serial: { scale: 0.2, x: 40, y: 10 },
+                        serialDigits: 6
+                    }
+                },
+                'p': { // Places - отдельные defaults для мест
+                    '3x7': {
+                        qr1: { scale: 0.92, x: 0, y: 4 },
+                        qr2: { scale: 0.3, x: 61, y: 22 },
+                        qr3: { scale: 0.3, x: 81, y: 22 },
+                        checksum: { scale: 0.4, x: 62, y: 60 },
+                        serial: { scale: 0.15, x: 63, y: 7 },
+                        serialDigits: 6
+                    },
+                    '2x8': {
+                        qr1: { scale: 0.8, x: 5, y: 10 },
+                        qr2: { scale: 0.3, x: 75, y: 50 },
+                        qr3: { scale: 0.3, x: 75, y: 10 },
+                        checksum: { scale: 0.5, x: 40, y: 35 },
+                        serial: { scale: 0.2, x: 40, y: 10 },
+                        serialDigits: 6
+                    }
+                },
+                'l': { // L-Markers - отдельные defaults для лейблов
+                    '3x7': {
+                        qr1: { scale: 0.92, x: 0, y: 4 },
+                        qr2: { scale: 0.3, x: 61, y: 22 },
+                        qr3: { scale: 0.3, x: 81, y: 22 },
+                        checksum: { scale: 0.4, x: 62, y: 60 },
+                        serial: { scale: 0.15, x: 63, y: 7 },
+                        serialDigits: 6
+                    },
+                    '2x8': {
+                        qr1: { scale: 0.8, x: 5, y: 10 },
+                        qr2: { scale: 0.3, x: 75, y: 50 },
+                        qr3: { scale: 0.3, x: 75, y: 10 },
+                        checksum: { scale: 0.5, x: 40, y: 35 },
+                        serial: { scale: 0.2, x: 40, y: 10 },
+                        serialDigits: 6
+                    }
                 }
             },
 
@@ -676,29 +734,47 @@
                 return `${cols}x${rows}`;
             },
 
-            saveConfig(cols, rows, currentConfig) {
-                const key = this.getKey(cols, rows);
-                this.configs[key] = JSON.parse(JSON.stringify(currentConfig)); // Deep copy
-                // Optional: Persist to localStorage
+            saveConfig(type, cols, rows, currentConfig, serialDigits) {
+                const layoutKey = this.getKey(cols, rows);
+                if (!this.configs[type]) this.configs[type] = {};
+
+                // Сохраняем config вместе с serialDigits
+                this.configs[type][layoutKey] = {
+                    ...JSON.parse(JSON.stringify(currentConfig)),
+                    serialDigits: serialDigits
+                };
+
+                // Persist to localStorage
                 localStorage.setItem('eck_print_layouts', JSON.stringify(this.configs));
             },
 
-            getConfig(cols, rows) {
-                const key = this.getKey(cols, rows);
+            getConfig(type, cols, rows) {
+                const layoutKey = this.getKey(cols, rows);
 
-                // 1. Check runtime memory
-                if (this.configs[key]) return JSON.parse(JSON.stringify(this.configs[key]));
+                // 1. Check runtime memory for this type + layout
+                if (this.configs[type] && this.configs[type][layoutKey]) {
+                    return JSON.parse(JSON.stringify(this.configs[type][layoutKey]));
+                }
 
-                // 2. Check defaults
-                if (this.defaults[key]) return JSON.parse(JSON.stringify(this.defaults[key]));
+                // 2. Check defaults for this type + layout
+                if (this.defaults[type] && this.defaults[type][layoutKey]) {
+                    return JSON.parse(JSON.stringify(this.defaults[type][layoutKey]));
+                }
 
-                // 3. Fallback generic - use 3x7 defaults as base
+                // 3. Check if type has ANY defaults, use first one as fallback
+                if (this.defaults[type]) {
+                    const firstKey = Object.keys(this.defaults[type])[0];
+                    if (firstKey) return JSON.parse(JSON.stringify(this.defaults[type][firstKey]));
+                }
+
+                // 4. Ultimate fallback - use items 3x7 defaults
                 return {
-                    qr1: { scale: 0.92, x: 0, y: 4 },
-                    qr2: { scale: 0.3, x: 61, y: 22 },
-                    qr3: { scale: 0.3, x: 81, y: 22 },
-                    checksum: { scale: 0.4, x: 62, y: 60 },
-                    serial: { scale: 0.15, x: 63, y: 7 }
+                    qr1: { scale: 1, x: 0, y: 0 },
+                    qr2: { scale: 0.3, x: 62, y: 22 },
+                    qr3: { scale: 0.3, x: 82, y: 22 },
+                    checksum: { scale: 0.55, x: 61, y: 60 },
+                    serial: { scale: 0.15, x: 64, y: 4 },
+                    serialDigits: 6
                 };
             },
 
@@ -714,7 +790,7 @@
         layoutManager.init();
 
         // Current Config State
-        let styleCfg = layoutManager.getConfig(3, 7); // Start with 3x7
+        let styleCfg = layoutManager.getConfig('i', 3, 7); // Start with items 3x7
         let currentLayoutKey = "3x7";
 
         const typeCards = document.querySelectorAll('.print-type-card');
@@ -772,14 +848,23 @@
             const newLayoutKey = layoutManager.getKey(cols, rows);
 
             if (newLayoutKey !== currentLayoutKey) {
-                // Save old config before switching
-                const [oldCols, oldRows] = currentLayoutKey.split('x');
-                layoutManager.saveConfig(oldCols, oldRows, styleCfg);
+                // Save old config before switching (если выбран тип)
+                if (selectedType) {
+                    const [oldCols, oldRows] = currentLayoutKey.split('x');
+                    const serialDigits = parseInt(document.getElementById('serialDigits').value) || 6;
+                    layoutManager.saveConfig(selectedType, oldCols, oldRows, styleCfg, serialDigits);
+                }
 
-                // Load new config
-                styleCfg = layoutManager.getConfig(cols, rows);
+                // Load new config для текущего типа
+                const type = selectedType || 'i'; // fallback to items
+                styleCfg = layoutManager.getConfig(type, cols, rows);
                 currentLayoutKey = newLayoutKey;
                 currentLayoutLabel.textContent = newLayoutKey;
+
+                // Update Serial Digits from loaded config
+                if (styleCfg.serialDigits !== undefined) {
+                    document.getElementById('serialDigits').value = styleCfg.serialDigits;
+                }
 
                 // Update UI controls to match loaded config
                 syncControlsToElement();
@@ -862,23 +947,31 @@
         function resetToDefault() {
             const cols = parseInt(colsInp.value);
             const rows = parseInt(rowsInp.value);
+            const type = selectedType || 'i';
 
-            // Force load from defaults if available, ignoring saved state
-            if (layoutManager.defaults[currentLayoutKey]) {
-                styleCfg = JSON.parse(JSON.stringify(layoutManager.defaults[currentLayoutKey]));
+            // Force load from defaults for this type + layout, ignoring saved state
+            if (layoutManager.defaults[type] && layoutManager.defaults[type][currentLayoutKey]) {
+                styleCfg = JSON.parse(JSON.stringify(layoutManager.defaults[type][currentLayoutKey]));
             } else {
-                // Generic fallback - use 3x7 defaults as base
-                styleCfg = {
-                    qr1: { scale: 0.92, x: 0, y: 4 },
-                    qr2: { scale: 0.3, x: 61, y: 22 },
-                    qr3: { scale: 0.3, x: 81, y: 22 },
-                    checksum: { scale: 0.4, x: 62, y: 60 },
-                    serial: { scale: 0.15, x: 63, y: 7 }
-                };
+                // Fallback - use first available default for this type
+                if (layoutManager.defaults[type]) {
+                    const firstKey = Object.keys(layoutManager.defaults[type])[0];
+                    styleCfg = JSON.parse(JSON.stringify(layoutManager.defaults[type][firstKey]));
+                } else {
+                    // Ultimate fallback - use items 3x7
+                    styleCfg = {
+                        qr1: { scale: 1, x: 0, y: 0 },
+                        qr2: { scale: 0.3, x: 62, y: 22 },
+                        qr3: { scale: 0.3, x: 82, y: 22 },
+                        checksum: { scale: 0.55, x: 61, y: 60 },
+                        serial: { scale: 0.15, x: 64, y: 4 },
+                        serialDigits: 6
+                    };
+                }
             }
 
-            // Reset Serial Digits to default
-            document.getElementById('serialDigits').value = 6;
+            // Reset Serial Digits to default from config
+            document.getElementById('serialDigits').value = styleCfg.serialDigits || 6;
 
             syncControlsToElement();
         }
@@ -906,9 +999,20 @@
                 };
                 updatePreviewElements();
 
-                // Auto-save current config to state
-                layoutManager.saveConfig(colsInp.value, rowsInp.value, styleCfg);
+                // Auto-save current config to state (если выбран тип)
+                if (selectedType) {
+                    const serialDigits = parseInt(document.getElementById('serialDigits').value) || 6;
+                    layoutManager.saveConfig(selectedType, colsInp.value, rowsInp.value, styleCfg, serialDigits);
+                }
             });
+        });
+
+        // Save serialDigits separately when changed
+        document.getElementById('serialDigits').addEventListener('input', () => {
+            if (selectedType) {
+                const serialDigits = parseInt(document.getElementById('serialDigits').value) || 6;
+                layoutManager.saveConfig(selectedType, colsInp.value, rowsInp.value, styleCfg, serialDigits);
+            }
         });
 
         // Event Listeners for dynamic counting and layout switching
@@ -969,12 +1073,31 @@
             updatePreviewAspect();
         });
 
-        // Type selection
+        // Type selection - загрузка конфигурации для нового типа
         typeCards.forEach(card => {
             card.addEventListener('click', () => {
+                // Save current config before switching type
+                if (selectedType) {
+                    const serialDigits = parseInt(document.getElementById('serialDigits').value) || 6;
+                    layoutManager.saveConfig(selectedType, colsInp.value, rowsInp.value, styleCfg, serialDigits);
+                }
+
                 typeCards.forEach(c => c.classList.remove('active'));
                 card.classList.add('active');
                 selectedType = card.dataset.type;
+
+                // Load config for new type + current layout
+                const cols = parseInt(colsInp.value) || 3;
+                const rows = parseInt(rowsInp.value) || 7;
+                styleCfg = layoutManager.getConfig(selectedType, cols, rows);
+
+                // Update Serial Digits from loaded config
+                if (styleCfg.serialDigits !== undefined) {
+                    document.getElementById('serialDigits').value = styleCfg.serialDigits;
+                }
+
+                // Update UI to reflect new config
+                syncControlsToElement();
                 updateStartNumber();
             });
         });
