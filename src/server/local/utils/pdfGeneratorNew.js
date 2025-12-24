@@ -14,7 +14,7 @@ const crc32 = require('buffer-crc32');
  * @param {Object} rgbColor - Color object (default black)
  */
 function drawQrVector(page, text, x, y, size, rgbColor) {
-    const qr = QRCode.create(text, { errorCorrectionLevel: 'M' });
+    const qr = QRCode.create(text, { errorCorrectionLevel: 'L', version: 3 });
     const matrix = qr.modules;
     const cellSize = size / matrix.size;
 
