@@ -428,6 +428,52 @@
         }
         .preview-hint { font-size: 0.8rem; color: var(--text-secondary); text-align: center; }
         .puzzle-presets { margin-top: 15px; border-top: 1px solid #444; padding-top: 15px; text-align: center; }
+
+        /* Toggle Switch Styles */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: #252525;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            margin-bottom: 15px;
+        }
+        .toggle-label {
+            font-weight: 600;
+            color: var(--text-main);
+            font-size: 0.95rem;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 52px;
+            height: 28px;
+            background: #555;
+            border-radius: 14px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .toggle-switch.active {
+            background: var(--accent-blue);
+        }
+        .toggle-slider {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 22px;
+            height: 22px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+        .toggle-switch.active .toggle-slider {
+            transform: translateX(24px);
+        }
+        .toggle-description {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
     </style>
 </head>
 
@@ -463,6 +509,14 @@
         <div class="card">
             <h2>Print Configuration</h2>
 
+            <div class="toggle-container">
+                <span class="toggle-label">Overlap Margins:</span>
+                <div class="toggle-switch active" id="overlapToggle">
+                    <div class="toggle-slider"></div>
+                </div>
+                <span class="toggle-description" id="toggleDesc">Tight Layout (3mm margins, 7mm/6mm gaps)</span>
+            </div>
+
             <div class="visual-editor-container">
                 <div class="config-header">
                     <div class="form-group-inline">
@@ -481,12 +535,12 @@
 
                 <div class="page-layout-wrapper">
                     <div class="input-pos top-margin">
-                        <input type="number" id="marginTop" value="0">
+                        <input type="number" id="marginTop" value="3">
                         <span>Top (mm)</span>
                     </div>
 
                     <div class="input-pos left-margin">
-                        <input type="number" id="marginLeft" value="0">
+                        <input type="number" id="marginLeft" value="3">
                         <span>Left</span>
                     </div>
 
@@ -504,9 +558,9 @@
 
                         <div class="gap-visualizer">
                             <div class="label-box">Label 1</div>
-                            <div class="gap-x-control">↔ <input type="number" id="gapX" value="0" title="Gap Horizontal (mm)"></div>
+                            <div class="gap-x-control">↔ <input type="number" id="gapX" value="7" title="Gap Horizontal (mm)"></div>
                             <div class="label-box">Label 2</div>
-                            <div class="gap-y-control">↕ <input type="number" id="gapY" value="0" title="Gap Vertical (mm)"></div>
+                            <div class="gap-y-control">↕ <input type="number" id="gapY" value="6" title="Gap Vertical (mm)"></div>
                             <div></div>
                             <div></div>
                             <div class="label-box">Label 3</div>
@@ -514,12 +568,12 @@
                     </div>
 
                     <div class="input-pos right-margin">
-                        <input type="number" id="marginRight" value="0">
+                        <input type="number" id="marginRight" value="3">
                         <span>Right</span>
                     </div>
 
                     <div class="input-pos bottom-margin">
-                        <input type="number" id="marginBottom" value="0">
+                        <input type="number" id="marginBottom" value="3">
                         <span>Bottom (mm)</span>
                     </div>
                 </div>
@@ -603,7 +657,7 @@
             // Standard Defaults
             defaults: {
                 '3x7': {
-                    qr1: { scale: 0.92, x: 2, y: 4 },
+                    qr1: { scale: 0.92, x: 0, y: 4 },
                     qr2: { scale: 0.3, x: 61, y: 22 },
                     qr3: { scale: 0.3, x: 81, y: 22 },
                     checksum: { scale: 0.4, x: 62, y: 60 },
@@ -640,7 +694,7 @@
 
                 // 3. Fallback generic - use 3x7 defaults as base
                 return {
-                    qr1: { scale: 0.92, x: 2, y: 4 },
+                    qr1: { scale: 0.92, x: 0, y: 4 },
                     qr2: { scale: 0.3, x: 61, y: 22 },
                     qr3: { scale: 0.3, x: 81, y: 22 },
                     checksum: { scale: 0.4, x: 62, y: 60 },
@@ -737,8 +791,28 @@
         function updatePreviewAspect() {
             const cols = parseInt(colsInp.value) || 2;
             const rows = parseInt(rowsInp.value) || 8;
-            const w = (210 - 20) / cols; // Approx A4 width minus margins
-            const h = (297 - 20) / rows; // Approx A4 height minus margins
+
+            // Get actual margin and gap values
+            const marginLeft = parseFloat(document.getElementById('marginLeft').value) || 0;
+            const marginRight = parseFloat(document.getElementById('marginRight').value) || 0;
+            const marginTop = parseFloat(document.getElementById('marginTop').value) || 0;
+            const marginBottom = parseFloat(document.getElementById('marginBottom').value) || 0;
+            const gapX = parseFloat(document.getElementById('gapX').value) || 0;
+            const gapY = parseFloat(document.getElementById('gapY').value) || 0;
+
+            // A4 dimensions in mm: 210 x 297
+            const pageWidth = 210;
+            const pageHeight = 297;
+
+            // Calculate working area
+            const workingWidth = pageWidth - marginLeft - marginRight;
+            const workingHeight = pageHeight - marginTop - marginBottom;
+
+            // Calculate label dimensions
+            const totalGapWidth = (cols - 1) * gapX;
+            const totalGapHeight = (rows - 1) * gapY;
+            const w = (workingWidth - totalGapWidth) / cols;
+            const h = (workingHeight - totalGapHeight) / rows;
             const aspect = w / h;
 
             const preview = document.getElementById('labelPreview');
@@ -795,7 +869,7 @@
             } else {
                 // Generic fallback - use 3x7 defaults as base
                 styleCfg = {
-                    qr1: { scale: 0.92, x: 2, y: 4 },
+                    qr1: { scale: 0.92, x: 0, y: 4 },
                     qr2: { scale: 0.3, x: 61, y: 22 },
                     qr3: { scale: 0.3, x: 81, y: 22 },
                     checksum: { scale: 0.4, x: 62, y: 60 },
@@ -839,6 +913,61 @@
 
         // Event Listeners for dynamic counting and layout switching
         [pagesInp, colsInp, rowsInp].forEach(el => el.addEventListener('input', updateTotalCount));
+
+        // Event Listeners for margin/gap changes to update preview
+        const marginGapInputs = ['marginTop', 'marginBottom', 'marginLeft', 'marginRight', 'gapX', 'gapY'];
+        marginGapInputs.forEach(id => {
+            document.getElementById(id).addEventListener('input', updatePreviewAspect);
+        });
+
+        // Toggle Switch Functionality
+        const overlapToggle = document.getElementById('overlapToggle');
+        const toggleDesc = document.getElementById('toggleDesc');
+
+        // Preset configurations
+        const presets = {
+            tight: {
+                marginTop: 3,
+                marginBottom: 3,
+                marginLeft: 3,
+                marginRight: 3,
+                gapX: 7,
+                gapY: 6,
+                description: 'Tight Layout (3mm margins, 7mm/6mm gaps)'
+            },
+            safe: {
+                marginTop: 7,
+                marginBottom: 7,
+                marginLeft: 7,
+                marginRight: 7,
+                gapX: 10,
+                gapY: 10,
+                description: 'Safe Layout (7mm margins, 10mm gaps)'
+            }
+        };
+
+        let isTightMode = true; // Start with tight mode (overlap margins ON)
+
+        overlapToggle.addEventListener('click', () => {
+            isTightMode = !isTightMode;
+            overlapToggle.classList.toggle('active');
+
+            const preset = isTightMode ? presets.tight : presets.safe;
+
+            // Update all inputs
+            document.getElementById('marginTop').value = preset.marginTop;
+            document.getElementById('marginBottom').value = preset.marginBottom;
+            document.getElementById('marginLeft').value = preset.marginLeft;
+            document.getElementById('marginRight').value = preset.marginRight;
+            document.getElementById('gapX').value = preset.gapX;
+            document.getElementById('gapY').value = preset.gapY;
+
+            // Update description
+            toggleDesc.textContent = preset.description;
+
+            // Update preview
+            updatePreviewAspect();
+        });
 
         // Type selection
         typeCards.forEach(card => {
