@@ -908,7 +908,12 @@
 
         function updatePreviewElements() {
             Object.keys(styleCfg).forEach(key => {
+                // Skip non-element keys like serialDigits
+                if (key === 'serialDigits') return;
+
                 const el = document.getElementById(`p-${key}`);
+                if (!el) return; // Skip if element doesn't exist
+
                 const cfg = styleCfg[key];
 
                 const preview = document.getElementById('labelPreview');
