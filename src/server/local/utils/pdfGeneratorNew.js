@@ -2,10 +2,25 @@
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 const fontkit = require('@pdf-lib/fontkit');
 const QRCode = require('qrcode');
-const { eckUrlEncrypt, base32table } = require('../../../shared/utils/encryption');
+const { eckUrlEncrypt } = require('../../../shared/utils/encryption');
 const crc32 = require('buffer-crc32');
 const fs = require('fs');
 const path = require('path');
+
+// Base32 alphabet for human-readable warehouse locations
+const BASE32_CHARS = '0123456789ABCDEFGHJKLMNPQRTUVWXY';
+
+/**
+ * Convert a number to a base32 character for display
+ * @param {number} num - Number to convert (1-based)
+ * @returns {string} - Base32 character
+ */
+function toBase32Char(num) {
+    if (num < 1 || num > BASE32_CHARS.length) {
+        return '?';
+    }
+    return BASE32_CHARS[num - 1]; // Convert 1-based to 0-based index
+}
 
 /**
  * Helper: Draws a QR code as vector rectangles onto a PDF page
@@ -40,20 +55,22 @@ function drawQrVector(page, text, x, y, size, rgbColor) {
 
 /**
  * Calculate warehouse location for a given place index
- * @param {number} placeIndex - The index of the place (0-based, as it comes from loop)
+ * @param {number} placeIndex - The absolute place ID (e.g., 105)
  * @param {Object} warehouseConfig - Warehouse configuration with regals array
  * @returns {Object|null} - {regal: 1-based, column: 1-based, row: 1-based} or null if out of range
  */
 function calculateWarehouseLocation(placeIndex, warehouseConfig) {
-    let currentIndex = 0;
-
+    // Find the regal that contains this placeIndex based on start_index ranges
     for (let regalIdx = 0; regalIdx < warehouseConfig.regals.length; regalIdx++) {
         const regal = warehouseConfig.regals[regalIdx];
+        const startIdx = regal.start_index;
         const placesInRegal = regal.columns * regal.rows;
+        const endIdx = startIdx + placesInRegal - 1;
 
-        if (placeIndex < currentIndex + placesInRegal) {
-            // This place belongs to this regal
-            const indexInRegal = placeIndex - currentIndex;
+        // Check if placeIndex falls within this regal's range
+        if (placeIndex >= startIdx && placeIndex <= endIdx) {
+            // Calculate position within this regal
+            const indexInRegal = placeIndex - startIdx;
 
             // Calculate column and row (0-based for calculation)
             const column = Math.floor(indexInRegal / regal.rows);
@@ -66,11 +83,9 @@ function calculateWarehouseLocation(placeIndex, warehouseConfig) {
                 row: row + 1        // Convert to 1-based
             };
         }
-
-        currentIndex += placesInRegal;
     }
 
-    // Place index is out of range
+    // Place index is out of range (not in any regal)
     return null;
 }
 
@@ -184,7 +199,7 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
         if (codeType === 'i' || codeType === 'b' || codeType === 'l') {
             code = eckUrlEncrypt(`${codeType}${('000000000000000000' + labelIndex).slice(-18)}`);
             const temp = crc32.unsigned(labelIndex.toString()) & 1023;
-            field2 = Buffer.from([base32table[temp >> 5], base32table[temp & 31]]).toString();
+            field2 = BASE32_CHARS[temp >> 5] + BASE32_CHARS[temp & 31];
 
             if (codeType === 'i') field1 = formatSerial(labelIndex, '!', 18);
             else if (codeType === 'b') field1 = formatSerial(labelIndex, '#', 18);
@@ -198,14 +213,13 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
 
             // Calculate 3-char location code (Regal.Column.Row) if warehouse config is provided
             if (config.warehouseConfig && config.warehouseConfig.regals && config.warehouseConfig.regals.length > 0) {
-                // FIX: Use absolute labelIndex (0-based) for calculation
                 const location = calculateWarehouseLocation(labelIndex, config.warehouseConfig);
                 if (location) {
-                    // Convert to base32 using Eck alphabet
-                    // FIX: Use index directly (1 maps to '1', 10 maps to 'A')
-                    const regalChar = base32table[location.regal];
-                    const colChar = base32table[location.column];
-                    const rowChar = base32table[location.row];
+                    // Convert to human-readable base32 characters
+                    // 1 -> '1', 10 -> 'A', 11 -> 'B', etc.
+                    const regalChar = toBase32Char(location.regal);
+                    const colChar = toBase32Char(location.column);
+                    const rowChar = toBase32Char(location.row);
                     field2 = `${regalChar}${colChar}${rowChar}`;
                 } else {
                     field2 = "???"; // Out of range

@@ -1316,6 +1316,15 @@
         }
 
         function updateStartNumber() {
+            // Don't auto-update start number if a rack is currently selected (Places mode)
+            if (selectedType === 'p') {
+                const rackSelector = document.getElementById('rackSelector');
+                if (rackSelector && rackSelector.value) {
+                    // A rack is selected, don't overwrite the start number
+                    return;
+                }
+            }
+
             if (selectedType && nextSerials[selectedType]) {
                 startNumberInp.value = nextSerials[selectedType];
             }
@@ -1561,6 +1570,17 @@
             regals: []
         };
 
+        // Helper: Build warehouse config from registered racks
+        function buildWarehouseConfig() {
+            warehouseConfig.regals = registeredRacks.map((rack, idx) => ({
+                index: idx + 1,  // 1-based index for display
+                columns: parseInt(rack.columns),
+                rows: parseInt(rack.rows),
+                start_index: parseInt(rack.start_index)
+            }));
+            console.log('[Warehouse Config] Built config with', warehouseConfig.regals.length, 'racks');
+        }
+
         // --- Warehouse Planner Logic ---
         let registeredRacks = [];
 
@@ -1573,6 +1593,7 @@
                     registeredRacks = await response.json();
                     renderRacksTable();
                     renderRackSelector();
+                    buildWarehouseConfig(); // Build config from loaded racks
 
                     // Auto-suggest next start ID if empty
                     if (!document.getElementById('rackStart').value && registeredRacks.length > 0) {
