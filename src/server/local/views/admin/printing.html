@@ -10,14 +10,14 @@
         :root {
             --bg-color: #121212;
             --card-bg: #1E1E1E;
-            --text-main: #E0E0E0;
-            --text-secondary: #A0A0A0;
-            --accent-blue: #3B82F6;
-            --accent-hover: #2563EB;
-            --success: #10B981;
-            --warning: #F59E0B;
-            --danger: #EF4444;
-            --border: #333333;
+            --text-main: #C0C0C0;
+            --text-secondary: #888888;
+            --accent-blue: #5a7ba9;
+            --accent-hover: #4a6b99;
+            --success: #0d9488;
+            --warning: #b45309;
+            --danger: #991b1b;
+            --border: #2a2a2a;
         }
 
         * {
@@ -259,9 +259,9 @@
         .input-pos input {
             width: 40px;
             text-align: center;
-            background: white;
+            background: #d1d1d1;
             border: 1px solid var(--danger);
-            color: #991b1b;
+            color: #7f1d1d;
             padding: 4px;
             border-radius: 4px;
             font-weight: bold;
@@ -269,10 +269,10 @@
         }
 
         .visual-page {
-            width: 320px;
-            height: 440px;
-            background: white;
-            border: 1px solid #ccc;
+            width: 360px;
+            height: 360px;
+            background: #d1d1d1;
+            border: 1px solid #999;
             position: relative;
             color: #333;
             display: flex;
@@ -320,14 +320,14 @@
             grid-template-rows: 1fr 30px 1fr;
             gap: 4px;
             height: 100%;
-            background: #f8f9fa;
+            background: transparent;
             padding: 10px;
             border-radius: 4px;
             position: relative;
         }
 
         .label-box {
-            background: #3b82f6;
+            background: var(--accent-blue);
             border-radius: 2px;
             display: flex;
             align-items: center;
@@ -355,8 +355,8 @@
             left: -24px;
             right: -24px;
             bottom: -19px;
-            background: rgba(59, 130, 246, 0.2);
-            border: 1px dashed rgba(59, 130, 246, 0.4);
+            background: rgba(90, 123, 169, 0.2);
+            border: 1px dashed rgba(90, 123, 169, 0.4);
             border-radius: 4px;
             z-index: -1;
             pointer-events: none;
@@ -364,7 +364,6 @@
 
         #visualEditorContainer.is-safe .label-box {
             transform: translate(24px, 19px);
-            background: #5b99ff;
         }
 
         /* Centering Gap Arrows/Inputs - Perfectly on Boundary */
@@ -413,11 +412,11 @@
             width: 38px;
             height: 28px;
             text-align: center;
-            border: 1px solid #f59e0b;
-            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid #b45309;
+            background: rgba(200, 200, 200, 0.9);
             border-radius: 4px;
             font-size: 0.8rem;
-            color: #b45309;
+            color: #78350f;
             font-weight: bold;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
@@ -542,8 +541,8 @@
 
         .label-preview {
             width: 100%;
-            background: white;
-            border: 1px solid #ccc;
+            background: #d1d1d1;
+            border: 1px solid #999;
             position: relative;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
             border-radius: 2px;
@@ -552,7 +551,7 @@
 
         .pv-element {
             position: absolute;
-            background: rgba(59, 130, 246, 0.1);
+            background: rgba(90, 123, 169, 0.1);
             border: 1px dashed var(--accent-blue);
             display: flex;
             align-items: center;
@@ -571,16 +570,16 @@
 
         .pv-element.selected {
             border: 2px solid var(--accent-blue);
-            box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
-            background: rgba(59, 130, 246, 0.3);
+            box-shadow: 0 0 10px rgba(90, 123, 169, 0.4);
+            background: rgba(90, 123, 169, 0.2);
             z-index: 10;
         }
 
         .pv-qr {
             aspect-ratio: 1;
             border-style: solid;
-            background: #f0f0f0;
-            color: #333;
+            background: rgba(255, 255, 255, 0.6);
+            color: var(--accent-blue);
             font-weight: bold;
         }
 
@@ -593,7 +592,7 @@
 
         .pv-bold {
             font-weight: bold;
-            color: black;
+            color: var(--accent-blue);
         }
 
         .styling-controls {
@@ -783,7 +782,6 @@
 
         .overlap-visual.is-safe .visual-label-mock {
             transform: translate(20px, 20px);
-            background: #5b99ff;
         }
 
         .visual-legend {
@@ -791,7 +789,7 @@
             bottom: 4px;
             right: 6px;
             font-size: 9px;
-            color: #333;
+            color: var(--text-secondary);
             display: flex;
             flex-direction: column;
             align-items: flex-end;
@@ -861,7 +859,7 @@
         }
 
         .badge-active {
-            background: rgba(16, 185, 129, 0.2);
+            background: rgba(13, 148, 136, 0.2);
             color: var(--success);
         }
 
@@ -880,8 +878,7 @@
 
 <body>
     <div class="container">
-        <a href="/admin" class="back-link" style="margin-right: 15px;">🏠 Home</a>
-        <a href="/admin/dashboard" class="back-link">← Back to Dashboard</a>
+        <a href="/admin" class="back-link">🏠 Home</a>
 
         <h1>🖨️ Printing Center</h1>
 
@@ -994,8 +991,8 @@
                     <p>Location markers</p>
                 </div>
                 <div class="print-type-card" data-type="l">
-                    <h3>🏷️ L-Marker (InBody)</h3>
-                    <p>Sequential markers with IB suffix</p>
+                    <h3>🏷️ Labels</h3>
+                    <p>General purpose sequential labels</p>
                 </div>
             </div>
         </div>
@@ -1032,6 +1029,7 @@
                 <table class="device-table" style="margin-bottom: 20px;">
                     <thead>
                         <tr>
+                            <th>Rack #</th>
                             <th>Name</th>
                             <th>Size (Col x Row)</th>
                             <th>ID Range</th>
@@ -1074,9 +1072,9 @@
                 <div class="label-preview-container">
                     <h3>Live Preview (<span id="currentLayoutLabel">3x7</span>)</h3>
                     <div id="labelPreview" class="label-preview">
-                        <div id="p-qr1" class="pv-element pv-qr">QR1</div>
-                        <div id="p-qr2" class="pv-element pv-qr">QR2</div>
-                        <div id="p-qr3" class="pv-element pv-qr">QR3</div>
+                        <div id="p-qr1" class="pv-element pv-qr" style="background: rgba(90, 123, 169, 0.3);">QR1</div>
+                        <div id="p-qr2" class="pv-element pv-qr" style="background: rgba(90, 123, 169, 0.3);">QR2</div>
+                        <div id="p-qr3" class="pv-element pv-qr" style="background: rgba(90, 123, 169, 0.3);">QR3</div>
                         <div id="p-checksum" class="pv-element pv-text pv-bold">XX</div>
                         <div id="p-serial" class="pv-element pv-text">123456</div>
                     </div>
@@ -1617,10 +1615,12 @@
         function renderRacksTable() {
             const tbody = document.getElementById('racksTableBody');
             tbody.innerHTML = '';
-            registeredRacks.forEach(rack => {
+            registeredRacks.forEach((rack, idx) => {
                 const row = document.createElement('tr');
                 const endId = parseInt(rack.start_index) + (parseInt(rack.columns) * parseInt(rack.rows)) - 1;
+                const rackNumber = idx + 1; // 1-based rack number for display
                 row.innerHTML = `
+                    <td><strong style="color: var(--accent-blue); font-size: 1.1rem;">${rackNumber}</strong></td>
                     <td>${rack.name}</td>
                     <td>${rack.columns} × ${rack.rows} (${rack.columns * rack.rows})</td>
                     <td><code class="badge badge-active">${rack.start_index} - ${endId}</code></td>

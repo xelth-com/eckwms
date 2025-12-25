@@ -12,14 +12,14 @@ const BASE32_CHARS = '0123456789ABCDEFGHJKLMNPQRTUVWXY';
 
 /**
  * Convert a number to a base32 character for display
- * @param {number} num - Number to convert (1-based)
+ * @param {number} num - Number to convert (1-based: 1='1', 2='2', 10='A')
  * @returns {string} - Base32 character
  */
 function toBase32Char(num) {
-    if (num < 1 || num > BASE32_CHARS.length) {
+    if (num < 0 || num >= BASE32_CHARS.length) {
         return '?';
     }
-    return BASE32_CHARS[num - 1]; // Convert 1-based to 0-based index
+    return BASE32_CHARS[num]; // num is 1-based, BASE32_CHARS[1]='1'
 }
 
 /**
