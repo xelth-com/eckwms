@@ -1031,13 +1031,13 @@
 
             // Standard Defaults per Type and Layout
             defaults: {
-                'i': { // Items - значения из таблицы пользователя
+                'i': { // Items
                     '3x7': {
                         qr1: { scale: 1, x: 0, y: 0 },
                         qr2: { scale: 0.3, x: 62, y: 22 },
                         qr3: { scale: 0.3, x: 82, y: 22 },
                         checksum: { scale: 0.55, x: 61, y: 60 },
-                        serial: { scale: 0.15, x: 64, y: 4 },
+                        serial: { scale: 0.15, x: 62, y: 4 },
                         serialDigits: 6
                     },
                     '2x8': {
@@ -1049,13 +1049,13 @@
                         serialDigits: 6
                     }
                 },
-                'b': {
+                'b': { // Boxes
                     '3x7': {
                         qr1: { scale: 1, x: 0, y: 0 },
-                        qr2: { scale: 0.3, x: 62, y: 22 },
-                        qr3: { scale: 0.3, x: 82, y: 22 },
-                        checksum: { scale: 0.55, x: 61, y: 60 },
-                        serial: { scale: 0.15, x: 64, y: 4 },
+                        qr2: { scale: 0.3, x: 61, y: 0 },
+                        qr3: { scale: 0.3, x: 82, y: 0 },
+                        checksum: { scale: 0.55, x: 61, y: 39 },
+                        serial: { scale: 0.15, x: 61, y: 87 },
                         serialDigits: 6
                     },
                     '2x8': {
@@ -1067,14 +1067,14 @@
                         serialDigits: 6
                     }
                 },
-                'p': { // Places - отдельные defaults для мест
+                'p': { // Places
                     '3x7': {
-                        qr1: { scale: 0.92, x: 0, y: 4 },
-                        qr2: { scale: 0.3, x: 61, y: 22 },
-                        qr3: { scale: 0.3, x: 81, y: 22 },
-                        checksum: { scale: 0.4, x: 62, y: 60 },
-                        serial: { scale: 0.15, x: 63, y: 7 },
-                        serialDigits: 6
+                        qr1: { scale: 0.8, x: 0, y: 19 },
+                        qr2: { scale: 0.4, x: 50, y: 0 },
+                        qr3: { scale: 0.4, x: 77, y: 0 },
+                        checksum: { scale: 0.5, x: 50, y: 51 },
+                        serial: { scale: 0.15, x: 0, y: 0 },
+                        serialDigits: 8
                     },
                     '2x8': {
                         qr1: { scale: 0.8, x: 5, y: 10 },
@@ -1085,13 +1085,13 @@
                         serialDigits: 6
                     }
                 },
-                'l': { // L-Markers - отдельные defaults для лейблов
+                'l': { // L-Markers (Labels)
                     '3x7': {
-                        qr1: { scale: 0.92, x: 0, y: 4 },
-                        qr2: { scale: 0.3, x: 61, y: 22 },
-                        qr3: { scale: 0.3, x: 81, y: 22 },
-                        checksum: { scale: 0.4, x: 62, y: 60 },
-                        serial: { scale: 0.15, x: 63, y: 7 },
+                        qr1: { scale: 1, x: 0, y: 0 },
+                        qr2: { scale: 0.3, x: 62, y: 50 },
+                        qr3: { scale: 0.3, x: 82, y: 50 },
+                        checksum: { scale: 0.6, x: 60, y: 0 },
+                        serial: { scale: 0.15, x: 62, y: 87 },
                         serialDigits: 6
                     },
                     '2x8': {
