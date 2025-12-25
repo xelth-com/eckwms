@@ -340,19 +340,21 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
             else if (codeType === 'l') field1 = formatSerial(labelIndex, '*', 18);
         } else if (codeType === 'p') {
             // Places - calculate position in warehouse structure
-            // FIX: Use labelIndex directly (Start 1 -> p...1), remove extra +1
+            // FIX: ID matches StartNumber exactly (0 -> p...0)
             code = eckUrlEncrypt(`p${('000000000000000000' + labelIndex).slice(-18)}`);
             const paddedNum = ('000000000000000000' + labelIndex).slice(-18);
-            field1 = serialDigits > 0 ? `_${paddedNum.slice(-serialDigits)}` : `_${labelIndex}`;
+            field1 = serialDigits > 0 ? `_${paddedNum.slice(-serialDigits)}` : `_${paddedNum}`;
 
             // Calculate 3-char location code (Regal.Column.Row) if warehouse config is provided
             if (config.warehouseConfig && config.warehouseConfig.regals && config.warehouseConfig.regals.length > 0) {
-                const location = calculateWarehouseLocation(labelIndex - 1, config.warehouseConfig);
+                // FIX: Use absolute labelIndex (0-based) for calculation
+                const location = calculateWarehouseLocation(labelIndex, config.warehouseConfig);
                 if (location) {
-                    // Convert to base32 using Eck alphabet (1-based indexing)
-                    const regalChar = base32table[location.regal - 1]; // 1-based to 0-based for array
-                    const colChar = base32table[location.column - 1];
-                    const rowChar = base32table[location.row - 1];
+                    // Convert to base32 using Eck alphabet
+                    // FIX: Use index directly (1 maps to '1', 10 maps to 'A')
+                    const regalChar = base32table[location.regal];
+                    const colChar = base32table[location.column];
+                    const rowChar = base32table[location.row];
                     field2 = `${regalChar}${colChar}${rowChar}`;
                 } else {
                     field2 = "???"; // Out of range
