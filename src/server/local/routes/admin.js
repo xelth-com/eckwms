@@ -245,7 +245,7 @@ router.get('/api/next-serials', async (req, res) => {
 // Generate new labels/codes
 router.post('/generate-codes', async (req, res) => {
     try {
-        const { type, startNumber: requestedStartNumber, count, serialDigits, layoutParams, contentConfig } = req.body;
+        const { type, startNumber: requestedStartNumber, count, serialDigits, layoutParams, contentConfig, warehouseConfig } = req.body;
 
         if (!['i', 'b', 'p', 'l', 'marker'].includes(type)) {
             return res.status(400).json({ error: 'Invalid code type. Must be i, b, p, l, or marker.' });
@@ -271,7 +271,8 @@ router.post('/generate-codes', async (req, res) => {
             gapX: mmToPt(layoutParams?.gapX || 0),
             gapY: mmToPt(layoutParams?.gapY || 0),
             serialDigits: parseInt(serialDigits) || 0,
-            contentConfig: contentConfig || null
+            contentConfig: contentConfig || null,
+            warehouseConfig: warehouseConfig || null
         };
 
         // Import SystemSetting model

@@ -39,6 +39,192 @@ function drawQrVector(page, text, x, y, size, rgbColor) {
 }
 
 /**
+ * Calculate warehouse location for a given place index
+ * @param {number} placeIndex - The index of the place (0-based, as it comes from loop)
+ * @param {Object} warehouseConfig - Warehouse configuration with regals array
+ * @returns {Object|null} - {regal: 1-based, column: 1-based, row: 1-based} or null if out of range
+ */
+function calculateWarehouseLocation(placeIndex, warehouseConfig) {
+    let currentIndex = 0;
+
+    for (let regalIdx = 0; regalIdx < warehouseConfig.regals.length; regalIdx++) {
+        const regal = warehouseConfig.regals[regalIdx];
+        const placesInRegal = regal.columns * regal.rows;
+
+        if (placeIndex < currentIndex + placesInRegal) {
+            // This place belongs to this regal
+            const indexInRegal = placeIndex - currentIndex;
+
+            // Calculate column and row (0-based for calculation)
+            const column = Math.floor(indexInRegal / regal.rows);
+            const row = indexInRegal % regal.rows;
+
+            // Return 1-based indices for human readability
+            return {
+                regal: regal.index, // Already 1-based from config
+                column: column + 1, // Convert to 1-based
+                row: row + 1        // Convert to 1-based
+            };
+        }
+
+        currentIndex += placesInRegal;
+    }
+
+    // Place index is out of range
+    return null;
+}
+
+/**
+ * Add warehouse summary/visualization page to PDF
+ * @param {PDFDocument} pdfDoc - The PDF document
+ * @param {Object} warehouseConfig - Warehouse configuration
+ * @param {PDFFont} font - Font to use
+ * @param {number} startNumber - Starting serial number
+ */
+async function addWarehouseSummaryPage(pdfDoc, warehouseConfig, font, startNumber) {
+    let page = pdfDoc.addPage([595.28, 841.89]); // A4
+    let yPos = 800;
+
+    // Title
+    page.drawText('Warehouse Structure Summary', {
+        x: 50,
+        y: yPos,
+        size: 20,
+        font: font,
+        color: rgb(0, 0, 0)
+    });
+    yPos -= 40;
+
+    // Legend
+    page.drawText('Legend: Each place is labeled with 3-character code (Regal.Column.Row) using Eck alphabet', {
+        x: 50,
+        y: yPos,
+        size: 10,
+        font: font,
+        color: rgb(0.3, 0.3, 0.3)
+    });
+    yPos -= 20;
+
+    page.drawText('Eck Alphabet: 0123456789ABCDEFGHJKLMNPQRSTVWXYZ (base32, excludes I, O, U)', {
+        x: 50,
+        y: yPos,
+        size: 9,
+        font: font,
+        color: rgb(0.3, 0.3, 0.3)
+    });
+    yPos -= 30;
+
+    let currentPlaceIndex = 0;
+
+    // Draw each regal
+    for (const regal of warehouseConfig.regals) {
+        // Check if we need a new page
+        if (yPos < 150) {
+            page = pdfDoc.addPage([595.28, 841.89]);
+            yPos = 800;
+        }
+
+        // Regal header
+        page.drawText(`Regal ${regal.index} (${regal.columns} columns × ${regal.rows} rows = ${regal.columns * regal.rows} places)`, {
+            x: 50,
+            y: yPos,
+            size: 14,
+            font: font,
+            color: rgb(0, 0, 0)
+        });
+        yPos -= 25;
+
+        // Draw grid visualization
+        const cellWidth = 40;
+        const cellHeight = 20;
+        const startX = 70;
+        const maxCols = Math.min(regal.columns, 12); // Limit columns to fit on page
+
+        // Column headers
+        for (let col = 0; col < maxCols; col++) {
+            const colChar = base32table[col]; // 0-based for display
+            page.drawText(`C${col + 1}`, {
+                x: startX + col * cellWidth + cellWidth / 4,
+                y: yPos + 5,
+                size: 8,
+                font: font,
+                color: rgb(0.5, 0.5, 0.5)
+            });
+        }
+        yPos -= 15;
+
+        // Draw rows (from top to bottom, but labeled from bottom to top)
+        for (let row = regal.rows - 1; row >= 0; row--) {
+            // Row label
+            page.drawText(`R${row + 1}`, {
+                x: 40,
+                y: yPos - cellHeight / 2 + 3,
+                size: 8,
+                font: font,
+                color: rgb(0.5, 0.5, 0.5)
+            });
+
+            for (let col = 0; col < maxCols; col++) {
+                const x = startX + col * cellWidth;
+                const y = yPos - cellHeight;
+
+                // Draw cell border
+                page.drawRectangle({
+                    x: x,
+                    y: y,
+                    width: cellWidth,
+                    height: cellHeight,
+                    borderColor: rgb(0.7, 0.7, 0.7),
+                    borderWidth: 0.5
+                });
+
+                // Calculate 3-char code
+                const regalChar = base32table[regal.index - 1];
+                const colChar = base32table[col];
+                const rowChar = base32table[row];
+                const code = `${regalChar}${colChar}${rowChar}`;
+
+                // Draw code in cell
+                page.drawText(code, {
+                    x: x + 8,
+                    y: y + cellHeight / 2 - 3,
+                    size: 8,
+                    font: font,
+                    color: rgb(0, 0, 0)
+                });
+
+                currentPlaceIndex++;
+            }
+
+            yPos -= cellHeight;
+        }
+
+        if (regal.columns > maxCols) {
+            yPos -= 10;
+            page.drawText(`(Showing first ${maxCols} of ${regal.columns} columns)`, {
+                x: 70,
+                y: yPos,
+                size: 8,
+                font: font,
+                color: rgb(0.5, 0, 0)
+            });
+        }
+
+        yPos -= 30;
+    }
+
+    // Total summary
+    const totalPlaces = warehouseConfig.regals.reduce((sum, r) => sum + (r.columns * r.rows), 0);
+    page.drawText(`Total Places in Warehouse: ${totalPlaces}`, {
+        x: 50,
+        y: yPos,
+        size: 12,
+        font: font,
+        color: rgb(0, 0, 0.5)
+    });
+}
+
+/**
  * Generates PDF with dynamic layout configuration
  * @param {string} codeType - Type of code: 'i', 'b', 'p', 'l'
  * @param {number} startNumber - Starting number for codes
@@ -149,15 +335,31 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
             const temp = crc32.unsigned(labelIndex.toString()) & 1023;
             field2 = Buffer.from([base32table[temp >> 5], base32table[temp & 31]]).toString();
 
-            if (codeType === 'i') field1 = formatSerial(labelIndex, '', 18);
+            if (codeType === 'i') field1 = formatSerial(labelIndex, '!', 18);
             else if (codeType === 'b') field1 = formatSerial(labelIndex, '#', 18);
-            else if (codeType === 'l') field1 = formatSerial(labelIndex, 'L', 18);
+            else if (codeType === 'l') field1 = formatSerial(labelIndex, '*', 18);
         } else if (codeType === 'p') {
-            // Places
+            // Places - calculate position in warehouse structure
             code = eckUrlEncrypt(`p${('000000000000000000' + (labelIndex + 1)).slice(-18)}`);
             const paddedNum = ('000000000000000000' + (labelIndex + 1)).slice(-18);
-            field1 = serialDigits > 0 ? `P-${paddedNum.slice(-serialDigits)}` : `P-${labelIndex + 1}`;
-            field2 = "00";
+            field1 = serialDigits > 0 ? `_${paddedNum.slice(-serialDigits)}` : `_${labelIndex + 1}`;
+
+            // Calculate 3-char location code (Regal.Column.Row) if warehouse config is provided
+            if (config.warehouseConfig && config.warehouseConfig.regals && config.warehouseConfig.regals.length > 0) {
+                const location = calculateWarehouseLocation(i, config.warehouseConfig);
+                if (location) {
+                    // Convert to base32 using Eck alphabet (1-based indexing)
+                    const regalChar = base32table[location.regal - 1]; // 1-based to 0-based for array
+                    const colChar = base32table[location.column - 1];
+                    const rowChar = base32table[location.row - 1];
+                    field2 = `${regalChar}${colChar}${rowChar}`;
+                } else {
+                    field2 = "???"; // Out of range
+                }
+            } else {
+                // Fallback if no warehouse config
+                field2 = "00";
+            }
         }
 
         const cCfg = config.contentConfig || null;
@@ -244,6 +446,11 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
 
         // Draw debug border (optional)
         // currentPage.drawRectangle({ x, y, width: labelWidth, height: labelHeight, borderColor: rgb(0.8, 0.8, 0.8), borderWidth: 0.5 });
+    }
+
+    // Add warehouse summary page for Places
+    if (codeType === 'p' && config.warehouseConfig && config.warehouseConfig.regals && config.warehouseConfig.regals.length > 0) {
+        await addWarehouseSummaryPage(pdfDoc, config.warehouseConfig, customFont, startNumber);
     }
 
     const pdfBytes = await pdfDoc.save();

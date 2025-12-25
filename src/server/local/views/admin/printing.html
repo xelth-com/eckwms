@@ -843,6 +843,30 @@
             </div>
         </div>
 
+        <div class="card" id="warehouseConfigCard" style="display: none;">
+            <h2>Warehouse Configuration (Places)</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 15px;">
+                Configure warehouse structure: Regals (стеллажи) with columns and rows. Each Place will receive a 3-character code (Regal.Column.Row) in Eck alphabet.
+            </p>
+
+            <div class="form-group">
+                <label>Number of Regals (Стеллажей):</label>
+                <input type="number" id="warehouseRegals" value="3" min="1" max="32" style="max-width: 200px;">
+            </div>
+
+            <div class="form-group">
+                <label>Default Columns per Regal:</label>
+                <input type="number" id="warehouseDefaultCols" value="5" min="1" max="32" style="max-width: 200px;">
+            </div>
+
+            <div class="form-group">
+                <label>Default Rows per Regal:</label>
+                <input type="number" id="warehouseDefaultRows" value="10" min="1" max="32" style="max-width: 200px;">
+            </div>
+
+            <div id="warehouseRegalsList" style="margin-top: 20px;"></div>
+        </div>
+
         <div class="card">
             <h2>Print Configuration</h2>
 
@@ -1025,13 +1049,13 @@
                         serialDigits: 6
                     }
                 },
-                'b': { // Boxes - отдельные defaults для коробок
+                'b': {
                     '3x7': {
-                        qr1: { scale: 0.92, x: 0, y: 4 },
-                        qr2: { scale: 0.3, x: 61, y: 22 },
-                        qr3: { scale: 0.3, x: 81, y: 22 },
-                        checksum: { scale: 0.4, x: 62, y: 60 },
-                        serial: { scale: 0.15, x: 63, y: 7 },
+                        qr1: { scale: 1, x: 0, y: 0 },
+                        qr2: { scale: 0.3, x: 62, y: 22 },
+                        qr3: { scale: 0.3, x: 82, y: 22 },
+                        checksum: { scale: 0.55, x: 61, y: 60 },
+                        serial: { scale: 0.15, x: 64, y: 4 },
                         serialDigits: 6
                     },
                     '2x8': {
@@ -1424,6 +1448,81 @@
             updatePreviewAspect();
         });
 
+        // Warehouse Configuration Management
+        let warehouseConfig = {
+            regals: []
+        };
+
+        function initWarehouseConfig() {
+            const numRegals = parseInt(document.getElementById('warehouseRegals').value) || 3;
+            const defaultCols = parseInt(document.getElementById('warehouseDefaultCols').value) || 5;
+            const defaultRows = parseInt(document.getElementById('warehouseDefaultRows').value) || 10;
+
+            warehouseConfig.regals = [];
+            for (let i = 0; i < numRegals; i++) {
+                warehouseConfig.regals.push({
+                    index: i + 1,
+                    columns: defaultCols,
+                    rows: defaultRows
+                });
+            }
+
+            renderWarehouseRegals();
+        }
+
+        function renderWarehouseRegals() {
+            const container = document.getElementById('warehouseRegalsList');
+            container.innerHTML = '<h3 style="margin-bottom: 15px;">Individual Regal Configuration:</h3>';
+
+            warehouseConfig.regals.forEach((regal, idx) => {
+                const regalDiv = document.createElement('div');
+                regalDiv.className = 'form-group';
+                regalDiv.style.cssText = 'display: flex; align-items: center; gap: 15px; padding: 10px; background: #252525; border-radius: 6px; margin-bottom: 10px;';
+
+                regalDiv.innerHTML = `
+                    <label style="min-width: 100px; margin: 0;">Regal ${regal.index}:</label>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <label style="margin: 0;">Columns:</label>
+                        <input type="number" class="regal-cols" data-idx="${idx}" value="${regal.columns}" min="1" max="32" style="width: 70px; padding: 6px;">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <label style="margin: 0;">Rows:</label>
+                        <input type="number" class="regal-rows" data-idx="${idx}" value="${regal.rows}" min="1" max="32" style="width: 70px; padding: 6px;">
+                    </div>
+                    <span style="color: var(--text-secondary); font-size: 0.85rem;">
+                        Total: ${regal.columns * regal.rows} places
+                    </span>
+                `;
+                container.appendChild(regalDiv);
+            });
+
+            // Add event listeners for changes
+            container.querySelectorAll('.regal-cols, .regal-rows').forEach(input => {
+                input.addEventListener('input', (e) => {
+                    const idx = parseInt(e.target.dataset.idx);
+                    const isCols = e.target.classList.contains('regal-cols');
+                    const value = parseInt(e.target.value) || 1;
+
+                    if (isCols) {
+                        warehouseConfig.regals[idx].columns = value;
+                    } else {
+                        warehouseConfig.regals[idx].rows = value;
+                    }
+
+                    // Update total display
+                    const parent = e.target.closest('.form-group');
+                    const totalSpan = parent.querySelector('span');
+                    const regal = warehouseConfig.regals[idx];
+                    totalSpan.textContent = `Total: ${regal.columns * regal.rows} places`;
+                });
+            });
+        }
+
+        // Initialize warehouse config on input changes
+        document.getElementById('warehouseRegals').addEventListener('input', initWarehouseConfig);
+        document.getElementById('warehouseDefaultCols').addEventListener('input', initWarehouseConfig);
+        document.getElementById('warehouseDefaultRows').addEventListener('input', initWarehouseConfig);
+
         // Type selection - загрузка конфигурации для нового типа
         typeCards.forEach(card => {
             card.addEventListener('click', () => {
@@ -1436,6 +1535,15 @@
                 typeCards.forEach(c => c.classList.remove('active'));
                 card.classList.add('active');
                 selectedType = card.dataset.type;
+
+                // Show/hide warehouse config card based on type
+                const warehouseCard = document.getElementById('warehouseConfigCard');
+                if (selectedType === 'p') {
+                    warehouseCard.style.display = 'block';
+                    initWarehouseConfig();
+                } else {
+                    warehouseCard.style.display = 'none';
+                }
 
                 // Load config for new type + current layout
                 const cols = parseInt(colsInp.value) || 3;
@@ -1503,20 +1611,27 @@
                     return;
                 }
 
+                const requestBody = {
+                    type: selectedType,
+                    count: parseInt(count),
+                    startNumber: parseInt(startNumber),
+                    serialDigits: serialDigits,
+                    layoutParams: layoutParams,
+                    contentConfig: styleCfg
+                };
+
+                // Add warehouse config if printing Places
+                if (selectedType === 'p') {
+                    requestBody.warehouseConfig = warehouseConfig;
+                }
+
                 const response = await fetch('/admin/generate-codes', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${token}`
                     },
-                    body: JSON.stringify({
-                        type: selectedType,
-                        count: parseInt(count),
-                        startNumber: parseInt(startNumber),
-                        serialDigits: serialDigits,
-                        layoutParams: layoutParams,
-                        contentConfig: styleCfg
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 // ROBUST AUTH HANDLING
