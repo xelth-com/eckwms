@@ -238,61 +238,39 @@
         }
 
         .page-layout-wrapper {
-            display: grid;
-            grid-template-areas:
-                ". top ."
-                "left page right"
-                ". bottom .";
-            grid-template-columns: 80px 300px 80px;
-            grid-template-rows: 60px 424px 60px;
-            gap: 10px;
-            justify-items: center;
+            display: flex;
+            justify-content: center;
             align-items: center;
+            position: relative;
+            margin: 0 auto;
+            width: fit-content;
         }
 
         .input-pos {
             display: flex;
             flex-direction: column;
             align-items: center;
-            font-size: 0.8rem;
-            color: var(--accent-blue);
-            gap: 5px;
+            font-size: 0.75rem;
+            color: var(--danger);
+            gap: 2px;
+            z-index: 30;
         }
 
         .input-pos input {
-            width: 55px;
+            width: 40px;
             text-align: center;
-            background: #111;
-            border: 1px solid var(--accent-blue);
-            color: #fff;
-            padding: 6px;
+            background: white;
+            border: 1px solid var(--danger);
+            color: #991b1b;
+            padding: 4px;
             border-radius: 4px;
             font-weight: bold;
-        }
-
-        .top-margin {
-            grid-area: top;
-            flex-direction: column-reverse;
-        }
-
-        .bottom-margin {
-            grid-area: bottom;
-        }
-
-        .left-margin {
-            grid-area: left;
-            flex-direction: row-reverse;
-        }
-
-        .right-margin {
-            grid-area: right;
-            flex-direction: row;
+            font-size: 0.85rem;
         }
 
         .visual-page {
-            grid-area: page;
-            width: 100%;
-            height: 100%;
+            width: 320px;
+            height: 440px;
             background: white;
             border: 1px solid #ccc;
             position: relative;
@@ -302,19 +280,38 @@
             padding: 15px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
             border-radius: 4px;
+            overflow: hidden;
+            flex-shrink: 0;
+            user-select: none;
         }
 
-        .grid-controls {
-            display: flex;
-            justify-content: space-around;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px dashed #ccc;
+        /* Margin visualization lines (red dashed) - Crosshairs */
+        .visual-page::before,
+        .visual-page::after {
+            content: '';
+            position: absolute;
+            background: transparent;
+            opacity: 0.7;
+            pointer-events: none;
+            z-index: 10;
         }
 
-        .grid-controls input {
-            width: 50px;
-            font-size: 0.9rem;
+        /* Vertical Margin line */
+        .visual-page::before {
+            top: 0;
+            left: 25px;
+            width: 0;
+            height: 100%;
+            border-left: 1.5px dashed var(--danger);
+        }
+
+        /* Horizontal Margin line */
+        .visual-page::after {
+            top: 25px;
+            left: 0;
+            width: 100%;
+            height: 0;
+            border-top: 1.5px dashed var(--danger);
         }
 
         .gap-visualizer {
@@ -325,20 +322,90 @@
             height: 100%;
             background: #f8f9fa;
             padding: 10px;
-            border: 1px dashed #999;
             border-radius: 4px;
+            position: relative;
         }
 
         .label-box {
-            background: #eff6ff;
-            border: 1px solid #3b82f6;
-            border-radius: 4px;
+            background: #3b82f6;
+            border-radius: 2px;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 0.75rem;
-            color: #3b82f6;
-            font-weight: 500;
+            color: white;
+            font-weight: bold;
+            position: relative;
+            z-index: 50;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.2);
+            transform: translate(0, 0);
+            overflow: visible;
+        }
+
+        /* Ensure the label with controls is on top of siblings' padding/aura */
+        .label-box:first-child {
+            z-index: 60;
+        }
+
+        .label-box::after {
+            content: '';
+            position: absolute;
+            top: -19px;
+            left: -24px;
+            right: -24px;
+            bottom: -19px;
+            background: rgba(59, 130, 246, 0.2);
+            border: 1px dashed rgba(59, 130, 246, 0.4);
+            border-radius: 4px;
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        #visualEditorContainer.is-safe .label-box {
+            transform: translate(24px, 19px);
+            background: #5b99ff;
+        }
+
+        /* Centering Gap Arrows/Inputs - Perfectly on Boundary */
+        .gap-x-control {
+            position: absolute;
+            top: 25%;
+            /* Shifted down by 1/4 */
+            right: -24px;
+            /* Center of the horizontal gap */
+            transform: translateX(50%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 25;
+        }
+
+        .gap-y-control {
+            position: absolute;
+            bottom: -19px;
+            /* Center of the vertical gap */
+            left: 50%;
+            transform: translate(-50%, 50%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 25;
+        }
+
+        .arrow-set,
+        .arrow-set-v {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            width: 100%;
+        }
+
+        .arrow-set-v {
+            flex-direction: row;
+            gap: 5px;
         }
 
         .gap-x-control input,
@@ -347,17 +414,108 @@
             height: 28px;
             text-align: center;
             border: 1px solid #f59e0b;
-            background: #fffbeb;
+            background: rgba(255, 255, 255, 0.95);
             border-radius: 4px;
             font-size: 0.8rem;
             color: #b45309;
             font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Relocated Margin Inputs - Centered ON Red Lines (25px) */
+        .top-margin-abs {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            flex-direction: row-reverse;
+        }
+
+        .bottom-margin-abs {
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            flex-direction: row-reverse;
+        }
+
+        .left-margin-abs {
+            position: absolute;
+            top: 63%;
+            left: 25px;
+            transform: translate(-50%, -50%);
+            flex-direction: column-reverse;
+        }
+
+        .right-margin-abs {
+            position: absolute;
+            top: 63%;
+            right: 25px;
+            transform: translate(50%, -50%);
+            flex-direction: column-reverse;
+        }
+
+        .input-pos {
+            display: flex;
+            align-items: center;
+            font-size: 10px;
+            color: var(--danger);
+            gap: 4px;
+            z-index: 100;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 3px 6px;
+            border-radius: 4px;
+            border: 1px solid rgba(220, 38, 38, 0.3);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .input-pos input {
+            width: 38px !important;
+            height: 24px !important;
+            text-align: center;
+            border: 1px solid var(--danger) !important;
+            border-radius: 3px !important;
+            font-size: 0.85rem !important;
+            color: #991b1b !important;
+            background: white !important;
+            font-weight: bold;
+        }
+
+        .input-pos span {
+            white-space: nowrap;
+            text-transform: uppercase;
+            font-size: 8px;
+            letter-spacing: 0.5px;
         }
 
         @media (max-width: 600px) {
+            .visual-editor-container {
+                padding: 10px;
+            }
+
             .page-layout-wrapper {
-                transform: scale(0.85);
-                margin: -30px 0;
+                transform: scale(0.9);
+                margin: 0;
+            }
+
+            .config-header {
+                font-size: 0.8rem;
+            }
+
+            .config-header input {
+                padding: 4px;
+            }
+        }
+
+        @media (max-width: 440px) {
+            .page-layout-wrapper {
+                transform: scale(0.75);
+                margin: -20px 0;
+            }
+
+            .visual-page {
+                width: 100% !important;
+                max-width: 340px;
             }
         }
 
@@ -624,12 +782,12 @@
         .visual-legend {
             position: absolute;
             bottom: 4px;
-            left: 6px;
+            right: 6px;
             font-size: 9px;
             color: #333;
             display: flex;
             flex-direction: column;
-            align-items: flex-start;
+            align-items: flex-end;
             line-height: 1.2;
             font-weight: 500;
             z-index: 10;
@@ -681,88 +839,85 @@
         <div class="card">
             <h2>Print Configuration</h2>
 
-            <div class="toggle-container">
-                <div class="toggle-info">
-                    <div class="toggle-switch-wrapper">
-                        <span class="toggle-label">Overlap Margins:</span>
-                        <div class="toggle-switch active" id="overlapToggle">
+            <div class="visual-editor-container" id="visualEditorContainer">
+                <div class="config-header" style="flex-wrap: wrap; gap: 10px;">
+                    <div class="toggle-switch-wrapper"
+                        style="border-right: 1px solid var(--border); padding-right: 15px; margin-right: 5px; flex-shrink: 0;">
+                        <span class="toggle-label" style="font-size: 0.85rem;">Overlap:</span>
+                        <div class="toggle-switch active" id="overlapToggle"
+                            title="Toggle between Tight (Overlap ON) and Safe (Overlap OFF) modes">
                             <div class="toggle-slider"></div>
                         </div>
                     </div>
-                    <span class="toggle-description" id="toggleDesc">Overlap ON: Start = Margin (Max usage)</span>
-                </div>
-
-                <div class="overlap-visual" id="overlapVisual">
-                    <div class="visual-margin-line-v"></div>
-                    <div class="visual-margin-line-h"></div>
-                    <div class="visual-label-mock">Label</div>
-                    <div class="visual-legend">
-                        <span><b>--</b> Margin</span>
-                        <span id="visualGapLegend"><i>■</i> Label Padding</span>
+                    <div class="form-group-inline"
+                        style="border-right: 1px solid var(--border); padding-right: 15px; margin-right: 5px; flex-shrink: 0;">
+                        <label>Cols:</label>
+                        <input type="number" id="cols" value="3" min="1" max="10" style="width: 45px;">
+                        <label>Rows:</label>
+                        <input type="number" id="rows" value="7" min="1" max="20" style="width: 45px;">
                     </div>
-                </div>
-            </div>
-
-            <div class="visual-editor-container">
-                <div class="config-header">
-                    <div class="form-group-inline">
+                    <div class="form-group-inline" style="flex-shrink: 0;">
                         <label>Pages:</label>
-                        <input type="number" id="pages" value="1" min="1" style="width: 60px;">
+                        <input type="number" id="pages" value="1" min="1" style="width: 45px;">
                     </div>
-                    <div class="form-group-inline">
+                    <div class="form-group-inline" style="flex-shrink: 0;">
                         <label>Total Count:</label>
-                        <input type="number" id="count" value="21" style="width: 80px;">
+                        <input type="number" id="count" value="21" style="width: 60px;">
                     </div>
-                    <div class="form-group-inline">
+                    <div class="form-group-inline" style="flex-shrink: 0;">
                         <label>Start #:</label>
-                        <input type="number" id="startNumber" placeholder="Loading..." style="width: 100px;">
+                        <input type="number" id="startNumber" placeholder="Loading..." style="width: 90px;">
                     </div>
                 </div>
 
-                <div class="page-layout-wrapper">
-                    <div class="input-pos top-margin">
-                        <input type="number" id="marginTop" value="3">
-                        <span>Top (mm)</span>
-                    </div>
-
-                    <div class="input-pos left-margin">
-                        <input type="number" id="marginLeft" value="4">
-                        <span>Left</span>
-                    </div>
-
-                    <div class="visual-page">
-                        <div class="grid-controls">
-                            <div class="form-group-inline">
-                                <label>Cols:</label>
-                                <input type="number" id="cols" value="3" min="1" max="10">
-                            </div>
-                            <div class="form-group-inline">
-                                <label>Rows:</label>
-                                <input type="number" id="rows" value="7" min="1" max="20">
-                            </div>
+                <div class="page-layout-wrapper" style="padding: 10px;">
+                    <div class="visual-page" style="margin: 0 auto;">
+                        <!-- Absolute positioned margin inputs for mobile friendliness -->
+                        <div class="input-pos top-margin-abs">
+                            <input type="number" id="marginTop" value="3">
+                            <span>Top</span>
+                        </div>
+                        <div class="input-pos left-margin-abs">
+                            <input type="number" id="marginLeft" value="4">
+                            <span>Left</span>
+                        </div>
+                        <div class="input-pos right-margin-abs">
+                            <input type="number" id="marginRight" value="4">
+                            <span>Right</span>
+                        </div>
+                        <div class="input-pos bottom-margin-abs">
+                            <input type="number" id="marginBottom" value="3">
+                            <span>Bottom</span>
                         </div>
 
                         <div class="gap-visualizer">
-                            <div class="label-box">Label 1</div>
-                            <div class="gap-x-control">↔ <input type="number" id="gapX" value="8"
-                                    title="Gap Horizontal (mm)"></div>
+                            <div class="label-box">
+                                Label 1
+                                <div class="gap-x-control">
+                                    <div class="arrow-set">
+                                        <span>↔</span>
+                                        <input type="number" id="gapX" value="8" title="Gap Horizontal (mm)">
+                                    </div>
+                                </div>
+                                <div class="gap-y-control">
+                                    <div class="arrow-set-v">
+                                        <span>↕</span>
+                                        <input type="number" id="gapY" value="6" title="Gap Vertical (mm)">
+                                    </div>
+                                </div>
+                            </div>
+                            <div></div>
                             <div class="label-box">Label 2</div>
-                            <div class="gap-y-control">↕ <input type="number" id="gapY" value="6"
-                                    title="Gap Vertical (mm)"></div>
+                            <div></div>
                             <div></div>
                             <div></div>
                             <div class="label-box">Label 3</div>
                         </div>
-                    </div>
 
-                    <div class="input-pos right-margin">
-                        <input type="number" id="marginRight" value="4">
-                        <span>Right</span>
-                    </div>
-
-                    <div class="input-pos bottom-margin">
-                        <input type="number" id="marginBottom" value="3">
-                        <span>Bottom (mm)</span>
+                        <div class="visual-legend" style="bottom: 5px; left: 5px; opacity: 0.8; z-index: 20;">
+                            <span><b>--</b> Margin</span>
+                            <span><i>■</i> Label Padding</span>
+                        </div>
                     </div>
                 </div>
 
@@ -1241,9 +1396,7 @@
 
         // Toggle Switch Functionality
         const overlapToggle = document.getElementById('overlapToggle');
-        const toggleDesc = document.getElementById('toggleDesc');
-        const overlapVisual = document.getElementById('overlapVisual');
-        const visualGapLegend = document.getElementById('visualGapLegend');
+        const visualEditorContainer = document.getElementById('visualEditorContainer');
 
         // Логика Overlap (Наложение отступов)
         let isTightMode = true; // По умолчанию включено (Tight/Overlap ON)
@@ -1252,14 +1405,13 @@
         overlapToggle.addEventListener('click', () => {
             isTightMode = !isTightMode;
             overlapToggle.classList.toggle('active');
-            overlapVisual.classList.toggle('is-safe', !isTightMode);
+            visualEditorContainer.classList.toggle('is-safe', !isTightMode);
+            // Also keep the small visual for consistency if it still exists (it shouldn't in this version but let's be safe)
+            const ovs = document.getElementById('overlapVisual');
+            if (ovs) ovs.classList.toggle('is-safe', !isTightMode);
 
-            // Обновляем описание для понятности
-            if (isTightMode) {
-                toggleDesc.textContent = 'Overlap ON: Start = Margin (Max usage)';
-            } else {
-                toggleDesc.textContent = 'Overlap OFF: Start = Margin + Gap/2 (Safe usage)';
-            }
+            // Обновляем визуализацию
+            updatePreviewAspect();
 
             // Пересчитываем визуализацию
             updatePreviewAspect();
