@@ -242,6 +242,72 @@ router.get('/api/next-serials', async (req, res) => {
     }
 });
 
+// --- Warehouse Planner API ---
+
+// Get list of all registered racks
+router.get('/api/warehouse/racks', async (req, res) => {
+    try {
+        const { sequelize } = require('../../../shared/models/postgresql');
+        const racks = await sequelize.query(
+            'SELECT * FROM warehouse_racks ORDER BY sort_order ASC',
+            { type: sequelize.QueryTypes.SELECT }
+        );
+        res.json(racks);
+    } catch (error) {
+        console.error('Error fetching racks:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Create or Update rack
+router.post('/api/warehouse/racks', async (req, res) => {
+    try {
+        const { sequelize } = require('../../../shared/models/postgresql');
+        const { id, name, columns, rows, start_index, sort_order } = req.body;
+
+        if (id) {
+            // Update
+            await sequelize.query(
+                `UPDATE warehouse_racks SET 
+                    name = :name, 
+                    columns = :columns, 
+                    rows = :rows, 
+                    start_index = :start_index, 
+                    sort_order = :sort_order, 
+                    "updatedAt" = NOW() 
+                 WHERE id = :id`,
+                { replacements: { id, name, columns, rows, start_index, sort_order } }
+            );
+        } else {
+            // Create
+            await sequelize.query(
+                `INSERT INTO warehouse_racks (name, columns, rows, start_index, sort_order) 
+                 VALUES (:name, :columns, :rows, :start_index, :sort_order)`,
+                { replacements: { name, columns, rows, start_index, sort_order } }
+            );
+        }
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error saving rack:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete rack
+router.delete('/api/warehouse/racks/:id', async (req, res) => {
+    try {
+        const { sequelize } = require('../../../shared/models/postgresql');
+        await sequelize.query(
+            'DELETE FROM warehouse_racks WHERE id = :id',
+            { replacements: { id: req.params.id } }
+        );
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error deleting rack:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Generate new labels/codes
 router.post('/generate-codes', async (req, res) => {
     try {

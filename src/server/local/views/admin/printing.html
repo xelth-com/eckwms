@@ -811,6 +811,70 @@
             font-style: normal;
             font-weight: bold;
         }
+
+        /* Warehouse Planner Styles */
+        .device-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            font-size: 0.85rem;
+            color: var(--text-main);
+        }
+
+        .device-table th,
+        .device-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .device-table th {
+            color: var(--text-secondary);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+        }
+
+        .btn-action {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+            padding: 5px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .btn-action:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-delete:hover {
+            background: rgba(239, 68, 68, 0.2);
+        }
+
+        .badge {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge-active {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+        }
+
+        /* Responsive Styling for Content Editor */
+        @media (max-width: 850px) {
+            .styling-editor-layout {
+                grid-template-columns: 1fr !important;
+            }
+
+            .label-preview-container {
+                margin-bottom: 20px;
+            }
+        }
     </style>
 </head>
 
@@ -820,52 +884,6 @@
         <a href="/admin/dashboard" class="back-link">← Back to Dashboard</a>
 
         <h1>🖨️ Printing Center</h1>
-
-        <div class="card">
-            <h2>Select Label Type</h2>
-            <div class="print-type-grid">
-                <div class="print-type-card" data-type="i">
-                    <h3>📦 Items</h3>
-                    <p>Individual product labels</p>
-                </div>
-                <div class="print-type-card" data-type="b">
-                    <h3>📦 Boxes</h3>
-                    <p>Container labels</p>
-                </div>
-                <div class="print-type-card" data-type="p">
-                    <h3>📍 Places</h3>
-                    <p>Location markers</p>
-                </div>
-                <div class="print-type-card" data-type="l">
-                    <h3>🏷️ L-Marker (InBody)</h3>
-                    <p>Sequential markers with IB suffix</p>
-                </div>
-            </div>
-        </div>
-
-        <div class="card" id="warehouseConfigCard" style="display: none;">
-            <h2>Warehouse Configuration (Places)</h2>
-            <p style="color: var(--text-secondary); margin-bottom: 15px;">
-                Configure warehouse structure: Regals (стеллажи) with columns and rows. Each Place will receive a 3-character code (Regal.Column.Row) in Eck alphabet.
-            </p>
-
-            <div class="form-group">
-                <label>Number of Regals (Стеллажей):</label>
-                <input type="number" id="warehouseRegals" value="3" min="1" max="32" style="max-width: 200px;">
-            </div>
-
-            <div class="form-group">
-                <label>Default Columns per Regal:</label>
-                <input type="number" id="warehouseDefaultCols" value="5" min="1" max="32" style="max-width: 200px;">
-            </div>
-
-            <div class="form-group">
-                <label>Default Rows per Regal:</label>
-                <input type="number" id="warehouseDefaultRows" value="10" min="1" max="32" style="max-width: 200px;">
-            </div>
-
-            <div id="warehouseRegalsList" style="margin-top: 20px;"></div>
-        </div>
 
         <div class="card">
             <h2>Print Configuration</h2>
@@ -945,7 +963,7 @@
                             <div class="label-box">Label 3</div>
                         </div>
 
-                        <div class="visual-legend" style="bottom: 5px; left: 5px; opacity: 0.8; z-index: 20;">
+                        <div class="visual-legend" style="bottom: 5px; right: 5px; opacity: 0.8; z-index: 20;">
                             <span><b>--</b> Margin</span>
                             <span><i>■</i> Label Padding</span>
                         </div>
@@ -957,6 +975,96 @@
                 <button id="printBtn" class="btn btn-primary" style="margin-top: 20px;">
                     Generate and Download Labels
                 </button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Select Label Type</h2>
+            <div class="print-type-grid">
+                <div class="print-type-card" data-type="i">
+                    <h3>📦 Items</h3>
+                    <p>Individual product labels</p>
+                </div>
+                <div class="print-type-card" data-type="b">
+                    <h3>📦 Boxes</h3>
+                    <p>Container labels</p>
+                </div>
+                <div class="print-type-card" data-type="p">
+                    <h3>📍 Places</h3>
+                    <p>Location markers</p>
+                </div>
+                <div class="print-type-card" data-type="l">
+                    <h3>🏷️ L-Marker (InBody)</h3>
+                    <p>Sequential markers with IB suffix</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" id="warehouseConfigCard" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0;">📍 Warehouse Locations</h2>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn btn-sm" id="btnShowPlanner" onclick="togglePlannerMode(true)">⚙️ Planner</button>
+                    <button class="btn btn-sm" id="btnShowPrinter" onclick="togglePlannerMode(false)"
+                        style="display:none; background: var(--accent-blue);">🖨️ Print Mode</button>
+                </div>
+            </div>
+
+            <div id="rackPrintMode">
+                <p style="color: var(--text-secondary); margin-bottom: 15px;">Select a rack to auto-fill print settings:
+                </p>
+                <div class="form-group">
+                    <label>Select Rack:</label>
+                    <select id="rackSelector" class="control-item"
+                        style="width: 100%; padding: 12px; background: #252525; color: white; border: 1px solid #444; border-radius: 6px;">
+                        <option value="">-- Manual Configuration --</option>
+                    </select>
+                </div>
+                <div id="rackInfoDisplay"
+                    style="margin-top: 10px; color: var(--success); font-size: 0.9rem; display: none; background: rgba(16, 185, 129, 0.1); padding: 10px; border-radius: 6px; border: 1px solid rgba(16, 185, 129, 0.3);">
+                </div>
+            </div>
+
+            <div id="rackPlannerMode" style="display: none;">
+                <p style="color: var(--text-secondary); margin-bottom: 20px;">Define your physical warehouse structure.
+                    This maps IDs to coordinates (e.g. ID 101 = Regal 2, Col 1, Row 1).</p>
+
+                <table class="device-table" style="margin-bottom: 20px;">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Size (Col x Row)</th>
+                            <th>ID Range</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="racksTableBody">
+                    </tbody>
+                </table>
+
+                <div style="background: #252525; padding: 20px; border-radius: 8px; border: 1px dashed #444;">
+                    <h3
+                        style="font-size: 0.9rem; margin-bottom: 15px; color: var(--text-main); text-transform: uppercase;">
+                        Add / Edit Rack</h3>
+                    <input type="hidden" id="editRackId">
+                    <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1.5fr 1fr; gap: 10px;">
+                        <div class="form-group" style="margin: 0;">
+                            <input type="text" id="rackName" placeholder="Name (e.g. Regal A)">
+                        </div>
+                        <div class="form-group" style="margin: 0;">
+                            <input type="number" id="rackCols" placeholder="Cols" title="Columns">
+                        </div>
+                        <div class="form-group" style="margin: 0;">
+                            <input type="number" id="rackRows" placeholder="Rows" title="Rows">
+                        </div>
+                        <div class="form-group" style="margin: 0;">
+                            <input type="number" id="rackStart" placeholder="Start ID">
+                        </div>
+                        <button onclick="saveRack()" class="btn btn-primary" style="padding: 8px;">Save</button>
+                    </div>
+                    <small style="color: var(--text-secondary); display: block; margin-top: 10px;">* Start ID will be
+                        auto-suggested based on previous racks.</small>
+                </div>
             </div>
         </div>
 
@@ -1453,77 +1561,167 @@
             regals: []
         };
 
-        function initWarehouseConfig() {
-            const numRegals = parseInt(document.getElementById('warehouseRegals').value) || 3;
-            const defaultCols = parseInt(document.getElementById('warehouseDefaultCols').value) || 5;
-            const defaultRows = parseInt(document.getElementById('warehouseDefaultRows').value) || 10;
+        // --- Warehouse Planner Logic ---
+        let registeredRacks = [];
 
-            warehouseConfig.regals = [];
-            for (let i = 0; i < numRegals; i++) {
-                warehouseConfig.regals.push({
-                    index: i + 1,
-                    columns: defaultCols,
-                    rows: defaultRows
+        async function loadRacks() {
+            try {
+                const response = await fetch('/admin/api/warehouse/racks', {
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
                 });
+                if (response.ok) {
+                    registeredRacks = await response.json();
+                    renderRacksTable();
+                    renderRackSelector();
+
+                    // Auto-suggest next start ID if empty
+                    if (!document.getElementById('rackStart').value && registeredRacks.length > 0) {
+                        const lastRack = registeredRacks[registeredRacks.length - 1];
+                        document.getElementById('rackStart').value = parseInt(lastRack.start_index) + (parseInt(lastRack.columns) * parseInt(lastRack.rows));
+                    } else if (!document.getElementById('rackStart').value) {
+                        document.getElementById('rackStart').value = 0;
+                    }
+                }
+            } catch (e) { console.error('Failed to load racks', e); }
+        }
+
+        function togglePlannerMode(isPlanner) {
+            document.getElementById('rackPlannerMode').style.display = isPlanner ? 'block' : 'none';
+            document.getElementById('rackPrintMode').style.display = isPlanner ? 'none' : 'block';
+            document.getElementById('btnShowPlanner').style.display = isPlanner ? 'none' : 'block';
+            document.getElementById('btnShowPrinter').style.display = isPlanner ? 'block' : 'none';
+            if (isPlanner) loadRacks();
+        }
+
+        function renderRacksTable() {
+            const tbody = document.getElementById('racksTableBody');
+            tbody.innerHTML = '';
+            registeredRacks.forEach(rack => {
+                const row = document.createElement('tr');
+                const endId = parseInt(rack.start_index) + (parseInt(rack.columns) * parseInt(rack.rows)) - 1;
+                row.innerHTML = `
+                    <td>${rack.name}</td>
+                    <td>${rack.columns} × ${rack.rows} (${rack.columns * rack.rows})</td>
+                    <td><code class="badge badge-active">${rack.start_index} - ${endId}</code></td>
+                    <td>
+                        <button onclick="editRack(${rack.id})" class="btn-action">✏️</button>
+                        <button onclick="deleteRack(${rack.id})" class="btn-action btn-delete">🗑️</button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function renderRackSelector() {
+            const selector = document.getElementById('rackSelector');
+            const currentVal = selector.value;
+            selector.innerHTML = '<option value="">-- Manual Configuration --</option>';
+            registeredRacks.forEach(rack => {
+                const opt = document.createElement('option');
+                opt.value = rack.id;
+                opt.textContent = `${rack.name} (${rack.columns}x${rack.rows}, ID: ${rack.start_index}+)`;
+                selector.appendChild(opt);
+            });
+            selector.value = currentVal;
+        }
+
+        async function saveRack() {
+            const id = document.getElementById('editRackId').value;
+            const name = document.getElementById('rackName').value;
+            const cols = parseInt(document.getElementById('rackCols').value);
+            const rows = parseInt(document.getElementById('rackRows').value);
+            const start = parseInt(document.getElementById('rackStart').value);
+
+            console.log('Saving rack:', { id, name, cols, rows, start });
+
+            if (!name || isNaN(cols) || isNaN(rows) || isNaN(start)) {
+                showAlert('Please fill all fields (Name, Cols, Rows, Start ID)', 'error');
+                return;
             }
 
-            renderWarehouseRegals();
-        }
+            const data = {
+                id: id ? parseInt(id) : null,
+                name: name,
+                columns: cols,
+                rows: rows,
+                start_index: start,
+                sort_order: registeredRacks.length
+            };
 
-        function renderWarehouseRegals() {
-            const container = document.getElementById('warehouseRegalsList');
-            container.innerHTML = '<h3 style="margin-bottom: 15px;">Individual Regal Configuration:</h3>';
-
-            warehouseConfig.regals.forEach((regal, idx) => {
-                const regalDiv = document.createElement('div');
-                regalDiv.className = 'form-group';
-                regalDiv.style.cssText = 'display: flex; align-items: center; gap: 15px; padding: 10px; background: #252525; border-radius: 6px; margin-bottom: 10px;';
-
-                regalDiv.innerHTML = `
-                    <label style="min-width: 100px; margin: 0;">Regal ${regal.index}:</label>
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <label style="margin: 0;">Columns:</label>
-                        <input type="number" class="regal-cols" data-idx="${idx}" value="${regal.columns}" min="1" max="32" style="width: 70px; padding: 6px;">
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <label style="margin: 0;">Rows:</label>
-                        <input type="number" class="regal-rows" data-idx="${idx}" value="${regal.rows}" min="1" max="32" style="width: 70px; padding: 6px;">
-                    </div>
-                    <span style="color: var(--text-secondary); font-size: 0.85rem;">
-                        Total: ${regal.columns * regal.rows} places
-                    </span>
-                `;
-                container.appendChild(regalDiv);
-            });
-
-            // Add event listeners for changes
-            container.querySelectorAll('.regal-cols, .regal-rows').forEach(input => {
-                input.addEventListener('input', (e) => {
-                    const idx = parseInt(e.target.dataset.idx);
-                    const isCols = e.target.classList.contains('regal-cols');
-                    const value = parseInt(e.target.value) || 1;
-
-                    if (isCols) {
-                        warehouseConfig.regals[idx].columns = value;
-                    } else {
-                        warehouseConfig.regals[idx].rows = value;
-                    }
-
-                    // Update total display
-                    const parent = e.target.closest('.form-group');
-                    const totalSpan = parent.querySelector('span');
-                    const regal = warehouseConfig.regals[idx];
-                    totalSpan.textContent = `Total: ${regal.columns * regal.rows} places`;
+            try {
+                const response = await fetch('/admin/api/warehouse/racks', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                    },
+                    body: JSON.stringify(data)
                 });
-            });
+                if (response.ok) {
+                    document.getElementById('editRackId').value = '';
+                    document.getElementById('rackName').value = '';
+                    document.getElementById('rackCols').value = '';
+                    document.getElementById('rackRows').value = '';
+                    document.getElementById('rackStart').value = '';
+                    showAlert('Rack saved successfully', 'success');
+                    loadRacks();
+                } else {
+                    const err = await response.text();
+                    showAlert('Error saving rack: ' + err, 'error');
+                }
+            } catch (e) {
+                console.error(e);
+                showAlert('Error saving rack', 'error');
+            }
         }
 
-        // Initialize warehouse config on input changes
-        document.getElementById('warehouseRegals').addEventListener('input', initWarehouseConfig);
-        document.getElementById('warehouseDefaultCols').addEventListener('input', initWarehouseConfig);
-        document.getElementById('warehouseDefaultRows').addEventListener('input', initWarehouseConfig);
+        window.deleteRack = async function (id) {
+            if (!confirm('Are you sure you want to delete this rack?')) return;
+            try {
+                const response = await fetch(`/admin/api/warehouse/racks/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+                });
+                if (response.ok) loadRacks();
+            } catch (e) { showAlert('Error deleting rack', 'error'); }
+        };
 
-        // Type selection - загрузка конфигурации для нового типа
+        window.editRack = function (id) {
+            const rack = registeredRacks.find(r => r.id === id);
+            if (!rack) return;
+            document.getElementById('editRackId').value = rack.id;
+            document.getElementById('rackName').value = rack.name;
+            document.getElementById('rackCols').value = rack.columns;
+            document.getElementById('rackRows').value = rack.rows;
+            document.getElementById('rackStart').value = rack.start_index;
+        };
+
+        window.saveRack = saveRack;
+        window.togglePlannerMode = togglePlannerMode;
+
+        // Smart Fill functionality
+        document.getElementById('rackSelector').addEventListener('change', (e) => {
+            const rackId = e.target.value;
+            const infoDisplay = document.getElementById('rackInfoDisplay');
+
+            if (!rackId) {
+                infoDisplay.style.display = 'none';
+                return;
+            }
+
+            const rack = registeredRacks.find(r => r.id == rackId);
+            if (rack) {
+                // Auto-fill print settings
+                document.getElementById('startNumber').value = rack.start_index;
+                document.getElementById('count').value = rack.columns * rack.rows;
+
+                // Show info
+                infoDisplay.innerHTML = `<strong>Smart Fill Active:</strong> ${rack.name} selected. Auto-filled Start #${rack.start_index} and Count ${rack.columns * rack.rows}.`;
+                infoDisplay.style.display = 'block';
+            }
+        });
+
+        // Type selection
         typeCards.forEach(card => {
             card.addEventListener('click', () => {
                 // Save current config before switching type
@@ -1540,7 +1738,7 @@
                 const warehouseCard = document.getElementById('warehouseConfigCard');
                 if (selectedType === 'p') {
                     warehouseCard.style.display = 'block';
-                    initWarehouseConfig();
+                    loadRacks();
                 } else {
                     warehouseCard.style.display = 'none';
                 }
