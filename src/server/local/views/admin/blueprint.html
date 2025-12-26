@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <script>if (!localStorage.getItem('auth_token')) window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Warehouse Blueprint | eckWMS</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1E1E1E;
+            --text-main: #C0C0C0;
+            --text-secondary: #888888;
+            --accent-blue: #5a7ba9;
+            --accent-hover: #4a6b99;
+            --success: #0d9488;
+            --warning: #b45309;
+            --danger: #991b1b;
+            --border: #2a2a2a;
+            --grid-line: #1a1a1a;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-shrink: 0;
+        }
+
+        .back-link {
+            color: var(--accent-blue);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .main-layout {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 20px;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        /* Sidebar / Controls */
+        .sidebar {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            overflow-y: auto;
+        }
+
+        .rack-form {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            background: #111;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: white;
+            font-size: 0.9rem;
+        }
+
+        .btn {
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: #333;
+            color: #ddd;
+        }
+
+        .btn-delete {
+            background: var(--danger);
+            color: white;
+            margin-top: 5px;
+        }
+
+        /* Blueprint Canvas */
+        .canvas-area {
+            background: var(--bg-color);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            position: relative;
+            overflow: hidden;
+            background-image:
+                linear-gradient(var(--grid-line) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+            background-size: 50px 50px;
+            cursor: crosshair;
+        }
+
+        .rack-node {
+            position: absolute;
+            background: var(--accent-blue);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            cursor: move;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 0.8rem;
+            font-weight: bold;
+            text-align: center;
+            padding: 5px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+            transition: transform 0.1s, box-shadow 0.2s;
+            user-select: none;
+            min-width: 60px;
+            min-height: 40px;
+        }
+
+        .rack-node:hover {
+            box-shadow: 0 0 15px var(--accent-blue);
+            z-index: 100 !important;
+        }
+
+        .rack-node.selected {
+            border-color: white;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.4);
+            z-index: 101 !important;
+        }
+
+        .rack-node .info {
+            font-size: 0.7rem;
+            opacity: 0.8;
+            font-weight: normal;
+        }
+
+        .racks-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .rack-item {
+            background: #252525;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .rack-item:hover {
+            border-color: var(--accent-blue);
+        }
+
+        .rack-item.active {
+            border-color: var(--accent-blue);
+            background: rgba(90, 123, 169, 0.1);
+        }
+
+        .rack-item .name {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .rack-item .meta {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .alert {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 8px;
+            z-index: 1000;
+            display: none;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+            }
+
+            to {
+                transform: translateX(0);
+            }
+        }
+
+        .success {
+            background: var(--success);
+            color: white;
+        }
+
+        .error {
+            background: var(--danger);
+            color: white;
+        }
+
+        .canvas-controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: var(--card-bg);
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            display: flex;
+            gap: 10px;
+            z-index: 10;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <a href="/admin" class="back-link">🏠 Home</a>
+        <h1>📐 Warehouse Blueprint</h1>
+        <div style="width: 50px;"></div>
+    </div>
+
+    <div class="main-layout">
+        <div class="sidebar">
+            <h2>Rack Management</h2>
+
+            <div class="rack-form" id="rackForm">
+                <input type="hidden" id="editRackId">
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" id="rackName" placeholder="e.g. Rack A">
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group">
+                        <label>Cols</label>
+                        <input type="number" id="rackCols" placeholder="5">
+                    </div>
+                    <div class="form-group">
+                        <label>Rows</label>
+                        <input type="number" id="rackRows" placeholder="10">
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 10px;">
+                    <div class="form-group">
+                        <label>Start ID</label>
+                        <input type="number" id="rackStart" placeholder="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Sort</label>
+                        <input type="number" id="rackSort" value="0">
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 5px;">
+                    <button class="btn btn-primary" onclick="saveRack()">Save Rack</button>
+                    <button class="btn btn-secondary" onclick="resetForm()">New</button>
+                </div>
+                <button id="btnDelete" class="btn btn-delete" style="display:none;" onclick="deleteRack()">Delete
+                    Rack</button>
+            </div>
+
+            <div class="racks-list" id="racksList">
+                <!-- Rack items will be rendered here -->
+            </div>
+        </div>
+
+        <div class="canvas-area" id="canvas">
+            <!-- Racks nodes will be rendered here -->
+            <div class="canvas-controls">
+                <span id="coordDisplay">X: 0, Y: 0</span>
+                <button class="btn btn-sm btn-secondary" onclick="loadRacks()">🔄 Refresh</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="alert" class="alert"></div>
+
+    <script>
+        let registeredRacks = [];
+        let selectedRackId = null;
+        let isDragging = false;
+        let dragTarget = null;
+        let offset = { x: 0, y: 0 };
+
+        const canvas = document.getElementById('canvas');
+        const racksList = document.getElementById('racksList');
+        const alertBox = document.getElementById('alert');
+
+        async function loadRacks() {
+            try {
+                const response = await fetch('/admin/api/warehouse/racks', {
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+                });
+                if (response.ok) {
+                    registeredRacks = await response.json();
+                    renderRacks();
+                    renderList();
+                }
+            } catch (e) {
+                console.error(e);
+                showAlert('Failed to load racks', 'error');
+            }
+        }
+
+        function renderRacks() {
+            // Only remove nodes, keep controls
+            const nodes = canvas.querySelectorAll('.rack-node');
+            nodes.forEach(n => n.remove());
+
+            registeredRacks.forEach(rack => {
+                const node = document.createElement('div');
+                node.className = `rack-node ${selectedRackId == rack.id ? 'selected' : ''}`;
+                node.id = `node-${rack.id}`;
+
+                // Visualization logic: scale based on cols/rows to give a sense of size
+                // Base size 60x40, add 5px per unit
+                const w = 60 + (parseInt(rack.columns) * 6);
+                const h = 40 + (parseInt(rack.rows) * 4);
+
+                node.style.width = w + 'px';
+                node.style.height = h + 'px';
+                node.style.left = (rack.posX || 0) + 'px';
+                node.style.top = (rack.posY || 0) + 'px';
+
+                node.innerHTML = `
+                    <div>${rack.name}</div>
+                    <div class="info">${rack.columns}x${rack.rows}</div>
+                `;
+
+                node.addEventListener('mousedown', (e) => startDrag(e, rack));
+                node.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    selectRack(rack.id);
+                });
+
+                canvas.appendChild(node);
+            });
+        }
+
+        function renderList() {
+            racksList.innerHTML = '';
+            registeredRacks.forEach(rack => {
+                const item = document.createElement('div');
+                item.className = `rack-item ${selectedRackId == rack.id ? 'active' : ''}`;
+                item.innerHTML = `
+                    <div>
+                        <div class="name">${rack.name}</div>
+                        <div class="meta">${rack.columns} cols, ${rack.rows} rows</div>
+                    </div>
+                `;
+                item.onclick = () => selectRack(rack.id);
+                racksList.appendChild(item);
+            });
+        }
+
+        function selectRack(id) {
+            selectedRackId = id;
+            const rack = registeredRacks.find(r => r.id == id);
+            if (rack) {
+                document.getElementById('editRackId').value = rack.id;
+                document.getElementById('rackName').value = rack.name;
+                document.getElementById('rackCols').value = rack.columns;
+                document.getElementById('rackRows').value = rack.rows;
+                document.getElementById('rackStart').value = rack.start_index;
+                document.getElementById('rackSort').value = rack.sort_order || 0;
+                document.getElementById('btnDelete').style.display = 'block';
+            }
+            renderRacks();
+            renderList();
+        }
+
+        function resetForm() {
+            selectedRackId = null;
+            document.getElementById('editRackId').value = '';
+            document.getElementById('rackName').value = '';
+            document.getElementById('rackCols').value = '';
+            document.getElementById('rackRows').value = '';
+            document.getElementById('rackStart').value = '';
+            document.getElementById('rackSort').value = 0;
+            document.getElementById('btnDelete').style.display = 'none';
+            renderRacks();
+            renderList();
+        }
+
+        async function saveRack() {
+            const data = {
+                id: document.getElementById('editRackId').value || null,
+                name: document.getElementById('rackName').value,
+                columns: parseInt(document.getElementById('rackCols').value),
+                rows: parseInt(document.getElementById('rackRows').value),
+                start_index: parseInt(document.getElementById('rackStart').value),
+                sort_order: parseInt(document.getElementById('rackSort').value) || 0
+            };
+
+            // If updating existing, preserve coordinates unless it's a new create
+            const existing = registeredRacks.find(r => r.id == data.id);
+            if (existing) {
+                data.posX = existing.posX;
+                data.posY = existing.posY;
+            }
+
+            if (!data.name || isNaN(data.columns) || isNaN(data.rows) || isNaN(data.start_index)) {
+                showAlert('Please fill all required fields', 'error');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/admin/api/warehouse/racks', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                    },
+                    body: JSON.stringify(data)
+                });
+                if (resp.ok) {
+                    showAlert('Rack saved successfully', 'success');
+                    if (!data.id) resetForm();
+                    loadRacks();
+                }
+            } catch (e) { showAlert('Error saving rack', 'error'); }
+        }
+
+        async function deleteRack() {
+            if (!selectedRackId || !confirm('Delete this rack and its position?')) return;
+            try {
+                const resp = await fetch(`/admin/api/warehouse/racks/${selectedRackId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+                });
+                if (resp.ok) {
+                    resetForm();
+                    loadRacks();
+                    showAlert('Rack deleted', 'success');
+                }
+            } catch (e) { showAlert('Error deleting rack', 'error'); }
+        }
+
+        function startDrag(e, rack) {
+            isDragging = true;
+            dragTarget = rack;
+            selectRack(rack.id);
+
+            const node = document.getElementById(`node-${rack.id}`);
+            const rect = node.getBoundingClientRect();
+            offset.x = e.clientX - rect.left;
+            offset.y = e.clientY - rect.top;
+
+            document.addEventListener('mousemove', onDrag);
+            document.addEventListener('mouseup', stopDrag);
+        }
+
+        function onDrag(e) {
+            if (!isDragging || !dragTarget) return;
+
+            const canvasRect = canvas.getBoundingClientRect();
+            let x = e.clientX - canvasRect.left - offset.x;
+            let y = e.clientY - canvasRect.top - offset.y;
+
+            // Snapping to 10px grid
+            x = Math.round(x / 10) * 10;
+            y = Math.round(y / 10) * 10;
+
+            // Constrain
+            x = Math.max(0, Math.min(x, canvasRect.width - 60));
+            y = Math.max(0, Math.min(y, canvasRect.height - 40));
+
+            dragTarget.posX = x;
+            dragTarget.posY = y;
+
+            const node = document.getElementById(`node-${dragTarget.id}`);
+            node.style.left = x + 'px';
+            node.style.top = y + 'px';
+
+            document.getElementById('coordDisplay').textContent = `X: ${x}, Y: ${y}`;
+        }
+
+        async function stopDrag() {
+            if (isDragging && dragTarget) {
+                // Save coordinates
+                try {
+                    await fetch('/admin/api/warehouse/racks', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                        },
+                        body: JSON.stringify(dragTarget)
+                    });
+                } catch (e) { console.error('Auto-save position failed', e); }
+            }
+
+            isDragging = false;
+            dragTarget = null;
+            document.removeEventListener('mousemove', onDrag);
+            document.removeEventListener('mouseup', stopDrag);
+        }
+
+        function showAlert(msg, type) {
+            alertBox.textContent = msg;
+            alertBox.className = `alert ${type}`;
+            alertBox.style.display = 'block';
+            setTimeout(() => { alertBox.style.display = 'none'; }, 3000);
+        }
+
+        canvas.addEventListener('click', (e) => {
+            if (e.target === canvas) resetForm();
+        });
+
+        loadRacks();
+    </script>
+</body>
+
+</html>

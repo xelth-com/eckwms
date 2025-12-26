@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <script>if(!localStorage.getItem('auth_token')) window.location.href='/auth/login?redirect='+encodeURIComponent(window.location.pathname);</script>
+    <script>if (!localStorage.getItem('auth_token')) window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard | eckWMS</title>
@@ -19,7 +20,11 @@
             --border: #333333;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
@@ -122,6 +127,7 @@
         }
     </style>
 </head>
+
 <body>
     <button class="logout-btn" onclick="logout()">🚪 Logout</button>
 
@@ -133,7 +139,8 @@
             <a href="/admin/printing" class="tool-card">
                 <div class="tool-icon">🖨️</div>
                 <div class="tool-title">Printing Center</div>
-                <div class="tool-description">Generate and print QR code labels for items, boxes, places, and markers</div>
+                <div class="tool-description">Generate and print QR code labels for items, boxes, places, and markers
+                </div>
             </a>
 
             <a href="/admin/pairing" class="tool-card">
@@ -142,10 +149,11 @@
                 <div class="tool-description">Manage device registrations and approve pending devices</div>
             </a>
 
-            <a href="/admin/dashboard" class="tool-card">
-                <div class="tool-icon">📊</div>
-                <div class="tool-title">Analytics Dashboard</div>
-                <div class="tool-description">View system statistics, reports, and performance metrics</div>
+            <a href="/admin/blueprint" class="tool-card">
+                <div class="tool-icon">📐</div>
+                <div class="tool-title">Warehouse Blueprint</div>
+                <div class="tool-description">Visual layout editor for racks. Position and manage warehouse storage
+                    areas.</div>
             </a>
 
             <a href="/admin/api/devices" class="tool-card">
@@ -204,4 +212,5 @@
         checkAuth();
     </script>
 </body>
+
 </html>

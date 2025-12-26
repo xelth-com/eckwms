@@ -21,12 +21,17 @@ router.get('/pairing', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/admin/pairing.html'));
 });
 
-// Serve the printing center page (no auth required - auth handled client-side)
+// Serve the printing center page
 router.get('/printing', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/admin/printing.html'));
 });
 
-// Admin dashboard (no auth required - auth handled client-side)
+// Serve the warehouse blueprint page
+router.get('/blueprint', (req, res) => {
+    res.sendFile(path.join(__dirname, '../views/admin/blueprint.html'));
+});
+
+// Admin dashboard
 router.get('/dashboard', (req, res) => {
     res.sendFile(path.join(__dirname, '../html/admin-dashboard.html'));
 });
@@ -249,7 +254,7 @@ router.get('/api/warehouse/racks', async (req, res) => {
     try {
         const { sequelize } = require('../../../shared/models/postgresql');
         const racks = await sequelize.query(
-            'SELECT * FROM warehouse_racks ORDER BY sort_order ASC',
+            'SELECT * FROM warehouse_racks ORDER BY sort_order ASC, name ASC',
             { type: sequelize.QueryTypes.SELECT }
         );
         res.json(racks);
@@ -263,27 +268,38 @@ router.get('/api/warehouse/racks', async (req, res) => {
 router.post('/api/warehouse/racks', async (req, res) => {
     try {
         const { sequelize } = require('../../../shared/models/postgresql');
-        const { id, name, columns, rows, start_index, sort_order } = req.body;
+        const { id, name, columns, rows, start_index, sort_order, prefix } = req.body;
 
         if (id) {
             // Update
             await sequelize.query(
                 `UPDATE warehouse_racks SET 
-                    name = :name, 
-                    columns = :columns, 
-                    rows = :rows, 
-                    start_index = :start_index, 
-                    sort_order = :sort_order, 
-                    "updatedAt" = NOW() 
+                 name = :name, columns = :columns, rows = :rows, 
+                 start_index = :start_index, prefix = :prefix, 
+                 sort_order = :sort_order, "posX" = :posX, "posY" = :posY,
+                 "updatedAt" = NOW() 
                  WHERE id = :id`,
-                { replacements: { id, name, columns, rows, start_index, sort_order } }
+                {
+                    replacements: {
+                        id, name, columns, rows, start_index,
+                        prefix: prefix || '', sort_order: sort_order || 0,
+                        posX: req.body.posX || 0, posY: req.body.posY || 0
+                    }
+                }
             );
         } else {
             // Create
-            await sequelize.query(
-                `INSERT INTO warehouse_racks (name, columns, rows, start_index, sort_order) 
-                 VALUES (:name, :columns, :rows, :start_index, :sort_order)`,
-                { replacements: { name, columns, rows, start_index, sort_order } }
+            const [result] = await sequelize.query(
+                `INSERT INTO warehouse_racks (name, columns, rows, start_index, sort_order, prefix, "posX", "posY") 
+                 VALUES (:name, :columns, :rows, :start_index, :sort_order, :prefix, :posX, :posY) 
+                 RETURNING id`,
+                {
+                    replacements: {
+                        name, columns, rows, start_index,
+                        prefix: prefix || '', sort_order: sort_order || 0,
+                        posX: req.body.posX || 0, posY: req.body.posY || 0
+                    }
+                }
             );
         }
         res.json({ success: true });
