@@ -1127,6 +1127,7 @@
         </div>
     </div>
 
+    <script src="/js/auth-client.js"></script>
     <script>
         let selectedType = null;
         let nextSerials = { i: 1, b: 1, p: 1, l: 1 };
@@ -1294,17 +1295,7 @@
         // Fetch Next Serials on load
         async function fetchNextSerials() {
             try {
-                const token = localStorage.getItem('auth_token');
-                if (!token) throw new Error('No token');
-
-                const response = await fetch('/admin/api/next-serials', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-
-                if (response.status === 401 || response.status === 403) {
-                    window.location.href = '/auth/login';
-                    return;
-                }
+                const response = await authClient.fetch('/admin/api/next-serials');
 
                 if (response.ok) {
                     nextSerials = await response.json();
@@ -1824,12 +1815,6 @@
             printBtn.textContent = 'Generating...';
 
             try {
-                const token = localStorage.getItem('auth_token');
-                if (!token) {
-                    window.location.href = '/auth/login';
-                    return;
-                }
-
                 const requestBody = {
                     type: selectedType,
                     count: parseInt(count),
@@ -1844,21 +1829,13 @@
                     requestBody.warehouseConfig = warehouseConfig;
                 }
 
-                const response = await fetch('/admin/generate-codes', {
+                const response = await authClient.fetch('/admin/generate-codes', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify(requestBody)
                 });
-
-                // ROBUST AUTH HANDLING
-                if (response.status === 401 || response.status === 403) {
-                    localStorage.removeItem('auth_token'); // Clear invalid token
-                    window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);
-                    return;
-                }
 
                 if (!response.ok) {
                     // Try to parse JSON error, fall back to text

@@ -29,6 +29,15 @@ if (!jwtSecretHex) {
     throw new Error('КРИТИЧЕСКАЯ ОШИБКА: Переменная окружения JWT_SECRET не установлена! Модуль шифрования не может быть инициализирован.');
 }
 
+// Проверяем наличие и корректность INSTANCE_SUFFIX
+const instanceSuffix = process.env.INSTANCE_SUFFIX;
+if (!instanceSuffix) {
+    throw new Error('КРИТИЧЕСКАЯ ОШИБКА: Переменная окружения INSTANCE_SUFFIX не установлена! Модуль шифрования не может быть инициализирован.');
+}
+if (instanceSuffix.length !== 2) {
+    throw new Error(`КРИТИЧЕСКАЯ ОШИБКА: INSTANCE_SUFFIX должен иметь длину 2 символа, получено: ${instanceSuffix.length} ("${instanceSuffix}")`);
+}
+
 // Создаем объекты KeyObject ОДИН РАЗ при загрузке модуля
 // Используем функции, которые были в вашем файле - они корректно используют createSecretKey(..., 'hex')
 const internalEncKey = createSecretKey(encKeyHex, 'hex');
@@ -166,7 +175,7 @@ const betrugerUrlDecrypt = (betrugerUrl) => {
         // Basic format checks (adjust lengths based on actual expected format)
         // Original code checks for length 76. Let's keep it for now.
         if (typeof betrugerUrl !== 'string' || betrugerUrl.length !== 76 ||
-            betrugerUrl.substring(74, 76) !== 'IB' || // InBody suffix validation
+            betrugerUrl.substring(74, 76) !== instanceSuffix || // Instance suffix validation
             !betrugerUrl.substring(0, 9).match(/^ECK[123]\.COM\//)) { // Use ^ for start anchor
             // console.warn('Invalid betrugerUrl format or prefix/suffix mismatch.');
             return false;

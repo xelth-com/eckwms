@@ -7,6 +7,14 @@ const crc32 = require('buffer-crc32');
 const fs = require('fs');
 const path = require('path');
 
+// Validate INSTANCE_SUFFIX at module load
+if (!process.env.INSTANCE_SUFFIX) {
+    throw new Error('CRITICAL: INSTANCE_SUFFIX missing in .env - PDF generation cannot proceed without proper QR code suffix configuration');
+}
+if (process.env.INSTANCE_SUFFIX.length !== 2) {
+    throw new Error(`CRITICAL: INSTANCE_SUFFIX must be exactly 2 characters, got: ${process.env.INSTANCE_SUFFIX.length} ("${process.env.INSTANCE_SUFFIX}")`);
+}
+
 // Base32 alphabet for human-readable warehouse locations
 const BASE32_CHARS = '0123456789ABCDEFGHJKLMNPQRTUVWXY';
 
@@ -113,7 +121,7 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
 
     console.log('[PDF-LIB] Generating PDF with Roboto Mono...');
 
-    const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
+    const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX;
     let totalLabels = count || (layout.cols * layout.rows);
 
     const pdfDoc = await PDFDocument.create();
@@ -332,7 +340,7 @@ async function eckPrintCodesPdf(codeType, startNumber = 0, config = {}, count = 
 async function generatePdfRma(rmaJs, link, token, code) {
     console.log('[PDF-LIB] Starting RMA PDF generation');
 
-    const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX || 'M3';
+    const INSTANCE_SUFFIX = process.env.INSTANCE_SUFFIX;
 
     // Create a new PDF document
     const pdfDoc = await PDFDocument.create();

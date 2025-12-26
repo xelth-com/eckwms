@@ -4,39 +4,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const qrImg = document.getElementById('qr-code-img');
     const statusBox = document.getElementById('status-box');
 
-    // Function to get JWT from localStorage
-    function getAuthToken() {
-        return localStorage.getItem('auth_token');
-    }
-
     // Generate QR Code
     generateBtn.addEventListener('click', async () => {
         qrContainer.innerHTML = '<p>Generating QR code...</p>';
         qrImg.style.display = 'none';
 
-        const token = getAuthToken();
-        if (!token) {
-            qrContainer.innerHTML = '<p style="color:red;">Error: You are not authenticated. Please log in again.</p>';
-            return;
-        }
-
         try {
             const isVip = document.getElementById('vip-mode-check').checked;
             const url = isVip ? '/api/internal/pairing-qr?type=vip' : '/api/internal/pairing-qr';
 
-            const response = await fetch(url, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
+            const response = await authClient.fetch(url);
 
             if (!response.ok) {
-                // Handle 401 Unauthorized - token expired or invalid
-                if (response.status === 401) {
-                    localStorage.removeItem('auth_token');
-                    window.location.href = '/auth/login';
-                    return;
-                }
                 throw new Error(`Server returned status ${response.status}`);
             }
 
@@ -79,17 +58,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function loadDevices() {
     const container = document.getElementById('devices-list');
-    const token = localStorage.getItem('auth_token');
 
     try {
-        const response = await fetch('/admin/api/devices', {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const response = await authClient.fetch('/admin/api/devices');
 
-        if (response.status === 401 || response.status === 403) {
-            console.warn('Auth failed, redirecting to login');
-            window.location.href = '/auth/login';
-            return;
+        if (!response.ok) {
+            throw new Error(`Server returned status ${response.status}`);
         }
 
         const devices = await response.json();
@@ -235,12 +209,10 @@ window.updateStatus = async (id, status) => {
         }
 
         // Execute API call
-        const token = localStorage.getItem('auth_token');
-        await fetch(`/admin/api/devices/${id}/status`, {
+        await authClient.fetch(`/admin/api/devices/${id}/status`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({ status })
         });
@@ -252,10 +224,8 @@ let deleteTimeouts = {};
 window.deleteDevice = async (id, btn) => {
     if (btn.classList.contains('btn-confirm-delete')) {
         // Real delete
-        const token = localStorage.getItem('auth_token');
-        await fetch(`/admin/api/devices/${id}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
+        await authClient.fetch(`/admin/api/devices/${id}`, {
+            method: 'DELETE'
         });
         loadDevices();
         return;
