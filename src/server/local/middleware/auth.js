@@ -126,3 +126,26 @@ exports.requireOwnershipOrAdmin = (resourceField) => {
     res.status(403).json({ error: 'You do not have permission to access this resource' });
   };
 };
+
+// Admin authorization for HTML pages - redirects to login instead of returning JSON
+exports.requireAdminPage = (req, res, next) => {
+  passport.authenticate('jwt', { session: false }, (err, user, info) => {
+    if (err) {
+      return next(err);
+    }
+
+    if (!user) {
+      // Redirect to login with return URL
+      const returnUrl = encodeURIComponent(req.originalUrl);
+      return res.redirect(`/auth/login?redirect=${returnUrl}`);
+    }
+
+    if (user.role !== 'admin') {
+      // For non-admins, also redirect to login (they'll see error there)
+      return res.redirect('/auth/login?error=admin_required');
+    }
+
+    req.user = user;
+    next();
+  })(req, res, next);
+};

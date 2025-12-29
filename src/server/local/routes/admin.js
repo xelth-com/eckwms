@@ -5,39 +5,36 @@ const { verifyJWT, eckUrlEncrypt, eckCrc } = require('../../../shared/utils/encr
 const { addUnicEntryToProperty, addEntryToProperty } = require('../utils/dataInit');
 const { generatePdfRma, eckPrintCodesPdf } = require('../utils/pdfGeneratorNew');
 const { syncPublicData } = require('../services/globalSyncService');
-const { requireAdmin } = require('../middleware/auth');
+const { requireAdmin, requireAdminPage } = require('../middleware/auth');
 const path = require('path');
 const fs = require('fs');
 const crc32 = require('buffer-crc32');
 const { base32table } = require('../../../shared/utils/encryption');
 
-// Serve the main admin dashboard (no auth required - auth handled client-side)
+// HTML pages use client-side auth (token in localStorage, checked via JS)
+// This is correct for SPA architecture where token is in localStorage
 router.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/admin/index.html'));
 });
 
-// Serve the device pairing page (no auth required - auth handled client-side)
 router.get('/pairing', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/admin/pairing.html'));
 });
 
-// Serve the printing center page
 router.get('/printing', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/admin/printing.html'));
 });
 
-// Serve the warehouse blueprint page
 router.get('/blueprint', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/admin/blueprint.html'));
 });
 
-// Admin dashboard
 router.get('/dashboard', (req, res) => {
     res.sendFile(path.join(__dirname, '../html/admin-dashboard.html'));
 });
 
-// Apply authentication middleware to all API routes (not HTML pages)
-router.use(requireAdmin);
+// SECURITY: Server-side authentication for API routes (returns JSON)
+router.use('/api', requireAdmin);
 
 // --- Device Management API ---
 
@@ -249,14 +246,99 @@ router.get('/api/next-serials', async (req, res) => {
 
 // --- Warehouse Planner API ---
 
-// Get list of all registered racks
+// Get all warehouses
+router.get('/api/warehouses', async (req, res) => {
+    try {
+        const { sequelize } = require('../../../shared/models/postgresql');
+        const warehouses = await sequelize.query(
+            'SELECT * FROM warehouses ORDER BY id ASC',
+            { type: sequelize.QueryTypes.SELECT }
+        );
+        res.json(warehouses);
+    } catch (error) {
+        console.error('Error fetching warehouses:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Create or Update warehouse
+router.post('/api/warehouses', async (req, res) => {
+    try {
+        const { sequelize } = require('../../../shared/models/postgresql');
+        const { id, name, id_offset, is_active } = req.body;
+
+        if (id) {
+            // Update
+            await sequelize.query(
+                `UPDATE warehouses SET
+                 name = :name, id_offset = :id_offset, is_active = :is_active,
+                 "updatedAt" = NOW()
+                 WHERE id = :id`,
+                {
+                    replacements: {
+                        id,
+                        name,
+                        id_offset: id_offset || 0,
+                        is_active: is_active !== undefined ? is_active : true
+                    }
+                }
+            );
+        } else {
+            // Create
+            await sequelize.query(
+                `INSERT INTO warehouses (name, id_offset, is_active)
+                 VALUES (:name, :id_offset, :is_active)`,
+                {
+                    replacements: {
+                        name,
+                        id_offset: id_offset || 0,
+                        is_active: is_active !== undefined ? is_active : true
+                    }
+                }
+            );
+        }
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error saving warehouse:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete warehouse
+router.delete('/api/warehouses/:id', async (req, res) => {
+    try {
+        const { sequelize } = require('../../../shared/models/postgresql');
+        await sequelize.query(
+            'DELETE FROM warehouses WHERE id = :id',
+            { replacements: { id: req.params.id } }
+        );
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error deleting warehouse:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get list of all registered racks (optionally filtered by warehouse_id)
 router.get('/api/warehouse/racks', async (req, res) => {
     try {
         const { sequelize } = require('../../../shared/models/postgresql');
-        const racks = await sequelize.query(
-            'SELECT * FROM warehouse_racks ORDER BY sort_order ASC, name ASC',
-            { type: sequelize.QueryTypes.SELECT }
-        );
+        const { warehouse_id } = req.query;
+
+        let query = 'SELECT * FROM warehouse_racks';
+        let replacements = {};
+
+        if (warehouse_id) {
+            query += ' WHERE warehouse_id = :warehouse_id';
+            replacements.warehouse_id = warehouse_id;
+        }
+
+        query += ' ORDER BY sort_order ASC, name ASC';
+
+        const racks = await sequelize.query(query, {
+            type: sequelize.QueryTypes.SELECT,
+            replacements
+        });
         res.json(racks);
     } catch (error) {
         console.error('Error fetching racks:', error);
@@ -268,36 +350,55 @@ router.get('/api/warehouse/racks', async (req, res) => {
 router.post('/api/warehouse/racks', async (req, res) => {
     try {
         const { sequelize } = require('../../../shared/models/postgresql');
-        const { id, name, columns, rows, start_index, sort_order, prefix } = req.body;
+        const {
+            id, name, columns, rows, start_index, sort_order, prefix,
+            warehouse_id, visual_width, visual_height
+        } = req.body;
 
         if (id) {
             // Update
             await sequelize.query(
-                `UPDATE warehouse_racks SET 
-                 name = :name, columns = :columns, rows = :rows, 
-                 start_index = :start_index, prefix = :prefix, 
+                `UPDATE warehouse_racks SET
+                 name = :name, columns = :columns, rows = :rows,
+                 start_index = :start_index, prefix = :prefix,
                  sort_order = :sort_order, "posX" = :posX, "posY" = :posY,
-                 "updatedAt" = NOW() 
+                 warehouse_id = :warehouse_id, visual_width = :visual_width,
+                 visual_height = :visual_height, "updatedAt" = NOW()
                  WHERE id = :id`,
                 {
                     replacements: {
                         id, name, columns, rows, start_index,
                         prefix: prefix || '', sort_order: sort_order || 0,
-                        posX: req.body.posX || 0, posY: req.body.posY || 0
+                        posX: req.body.posX || 0, posY: req.body.posY || 0,
+                        warehouse_id: warehouse_id || null,
+                        visual_width: visual_width || 0,
+                        visual_height: visual_height || 0
                     }
                 }
             );
         } else {
-            // Create
+            // Create - default to first warehouse if not specified
+            let finalWarehouseId = warehouse_id;
+            if (!finalWarehouseId) {
+                const [defaultWarehouse] = await sequelize.query(
+                    'SELECT id FROM warehouses ORDER BY id ASC LIMIT 1',
+                    { type: sequelize.QueryTypes.SELECT }
+                );
+                finalWarehouseId = defaultWarehouse?.id || null;
+            }
+
             const [result] = await sequelize.query(
-                `INSERT INTO warehouse_racks (name, columns, rows, start_index, sort_order, prefix, "posX", "posY") 
-                 VALUES (:name, :columns, :rows, :start_index, :sort_order, :prefix, :posX, :posY) 
+                `INSERT INTO warehouse_racks (name, columns, rows, start_index, sort_order, prefix, "posX", "posY", warehouse_id, visual_width, visual_height)
+                 VALUES (:name, :columns, :rows, :start_index, :sort_order, :prefix, :posX, :posY, :warehouse_id, :visual_width, :visual_height)
                  RETURNING id`,
                 {
                     replacements: {
                         name, columns, rows, start_index,
                         prefix: prefix || '', sort_order: sort_order || 0,
-                        posX: req.body.posX || 0, posY: req.body.posY || 0
+                        posX: req.body.posX || 0, posY: req.body.posY || 0,
+                        warehouse_id: finalWarehouseId,
+                        visual_width: visual_width || 0,
+                        visual_height: visual_height || 0
                     }
                 }
             );

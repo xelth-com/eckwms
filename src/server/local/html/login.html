@@ -177,6 +177,14 @@
         const errorMessage = document.getElementById('error-message');
         const successMessage = document.getElementById('success-message');
 
+        // Check for error parameter in URL (e.g., admin_required)
+        const urlParams = new URLSearchParams(window.location.search);
+        const errorParam = urlParams.get('error');
+        if (errorParam === 'admin_required') {
+            errorMessage.textContent = 'Admin access required. Please login with an admin account.';
+            errorMessage.style.display = 'block';
+        }
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
 

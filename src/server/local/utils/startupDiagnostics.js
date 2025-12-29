@@ -16,7 +16,21 @@ function executeCommand(command) {
 
 async function collectAndReportDiagnostics() {
     console.log('[Diagnostics] Collecting network information...');
-    const globalServerDomain = new URL(process.env.GLOBAL_SERVER_URL || 'https://pda.repair').hostname;
+
+    // SECURITY FIX: Validate hostname to prevent command injection
+    let globalServerDomain;
+    try {
+        globalServerDomain = new URL(process.env.GLOBAL_SERVER_URL || 'https://pda.repair').hostname;
+
+        // Validate hostname format (only alphanumeric, dots, and hyphens)
+        if (!/^[a-zA-Z0-9.-]+$/.test(globalServerDomain)) {
+            console.error('[Diagnostics] Invalid hostname format detected. Using default.');
+            globalServerDomain = 'pda.repair';
+        }
+    } catch (error) {
+        console.error('[Diagnostics] Invalid GLOBAL_SERVER_URL. Using default.');
+        globalServerDomain = 'pda.repair';
+    }
 
     const [localIps, traceroute] = await Promise.all([
         getLocalIpAddresses(),

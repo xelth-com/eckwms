@@ -2,7 +2,12 @@
 <html lang="en">
 
 <head>
-    <script>if (!localStorage.getItem('auth_token')) window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);</script>
+    <script>
+    // Client-side auth check - redirect to login if no token
+    if (!localStorage.getItem('auth_token')) {
+        window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);
+    }
+    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Warehouse Blueprint | eckWMS</title>
@@ -134,12 +139,20 @@
             border: 1px solid var(--border);
             border-radius: 12px;
             position: relative;
-            overflow: hidden;
+            overflow: auto;
             background-image:
                 linear-gradient(var(--grid-line) 1px, transparent 1px),
                 linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
             background-size: 50px 50px;
             cursor: crosshair;
+        }
+
+        .canvas-container {
+            position: relative;
+            min-width: 100%;
+            min-height: 100%;
+            width: max-content;
+            height: max-content;
         }
 
         .rack-node {
@@ -274,6 +287,14 @@
         <div class="sidebar">
             <h2>Rack Management</h2>
 
+            <!-- Warehouse Selector (hidden if only 1 warehouse) -->
+            <div class="form-group" id="warehouseSelector" style="display: none;">
+                <label>Warehouse</label>
+                <select id="warehouseSelect" style="width: 100%; padding: 10px; background: #111; border: 1px solid var(--border); border-radius: 6px; color: white; font-size: 0.9rem;">
+                    <option value="">Loading...</option>
+                </select>
+            </div>
+
             <div class="rack-form" id="rackForm">
                 <input type="hidden" id="editRackId">
                 <div class="form-group">
@@ -301,6 +322,18 @@
                     </div>
                 </div>
 
+                <!-- Visual Sizing Override -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 5px;">
+                    <div class="form-group">
+                        <label>Visual Width (px)</label>
+                        <input type="number" id="rackVisualWidth" placeholder="Auto" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Visual Height (px)</label>
+                        <input type="number" id="rackVisualHeight" placeholder="Auto" value="0">
+                    </div>
+                </div>
+
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 5px;">
                     <button class="btn btn-primary" onclick="saveRack()">Save Rack</button>
                     <button class="btn btn-secondary" onclick="resetForm()">New</button>
@@ -314,11 +347,13 @@
             </div>
         </div>
 
-        <div class="canvas-area" id="canvas">
-            <!-- Racks nodes will be rendered here -->
+        <div class="canvas-area" id="canvasArea">
+            <div class="canvas-container" id="canvas">
+                <!-- Racks nodes will be rendered here -->
+            </div>
             <div class="canvas-controls">
                 <span id="coordDisplay">X: 0, Y: 0</span>
-                <button class="btn btn-sm btn-secondary" onclick="loadRacks()">🔄 Refresh</button>
+                <button class="btn btn-sm btn-secondary" onclick="loadData()">🔄 Refresh</button>
             </div>
         </div>
     </div>
@@ -326,19 +361,67 @@
     <div id="alert" class="alert"></div>
 
     <script>
+        let warehouses = [];
         let registeredRacks = [];
         let selectedRackId = null;
+        let selectedWarehouseId = null;
         let isDragging = false;
         let dragTarget = null;
         let offset = { x: 0, y: 0 };
 
         const canvas = document.getElementById('canvas');
+        const canvasArea = document.getElementById('canvasArea');
         const racksList = document.getElementById('racksList');
         const alertBox = document.getElementById('alert');
+        const warehouseSelector = document.getElementById('warehouseSelector');
+        const warehouseSelect = document.getElementById('warehouseSelect');
+
+        // Load both warehouses and racks
+        async function loadData() {
+            await loadWarehouses();
+            await loadRacks();
+        }
+
+        async function loadWarehouses() {
+            try {
+                const response = await fetch('/admin/api/warehouses', {
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+                });
+                if (response.ok) {
+                    warehouses = await response.json();
+
+                    // Show/hide warehouse selector based on count
+                    if (warehouses.length > 1) {
+                        warehouseSelector.style.display = 'block';
+                        warehouseSelect.innerHTML = warehouses.map(wh =>
+                            `<option value="${wh.id}">${wh.name} (ID Offset: ${wh.id_offset})</option>`
+                        ).join('');
+
+                        // Set default to first warehouse
+                        if (!selectedWarehouseId && warehouses.length > 0) {
+                            selectedWarehouseId = warehouses[0].id;
+                            warehouseSelect.value = selectedWarehouseId;
+                        }
+                    } else if (warehouses.length === 1) {
+                        // Single warehouse mode - hide selector, auto-select
+                        warehouseSelector.style.display = 'none';
+                        selectedWarehouseId = warehouses[0].id;
+                    }
+                }
+            } catch (e) {
+                console.error('Error loading warehouses:', e);
+                showAlert('Failed to load warehouses', 'error');
+            }
+        }
 
         async function loadRacks() {
             try {
-                const response = await fetch('/admin/api/warehouse/racks', {
+                let url = '/admin/api/warehouse/racks';
+                if (selectedWarehouseId) {
+                    url += `?warehouse_id=${selectedWarehouseId}`;
+                }
+
+                const response = await fetch(url, {
                     headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
                 });
                 if (response.ok) {
@@ -352,6 +435,13 @@
             }
         }
 
+        // Handle warehouse selection change
+        warehouseSelect.addEventListener('change', async (e) => {
+            selectedWarehouseId = parseInt(e.target.value);
+            resetForm();
+            await loadRacks();
+        });
+
         function renderRacks() {
             // Only remove nodes, keep controls
             const nodes = canvas.querySelectorAll('.rack-node');
@@ -362,10 +452,20 @@
                 node.className = `rack-node ${selectedRackId == rack.id ? 'selected' : ''}`;
                 node.id = `node-${rack.id}`;
 
-                // Visualization logic: scale based on cols/rows to give a sense of size
-                // Base size 60x40, add 5px per unit
-                const w = 60 + (parseInt(rack.columns) * 6);
-                const h = 40 + (parseInt(rack.rows) * 4);
+                // Use visual dimensions if set, otherwise auto-calculate
+                let w, h;
+                if (rack.visual_width && rack.visual_width > 0) {
+                    w = rack.visual_width;
+                } else {
+                    // Auto-calculate: Base size 60x40, add 6px per col, 4px per row
+                    w = 60 + (parseInt(rack.columns) * 6);
+                }
+
+                if (rack.visual_height && rack.visual_height > 0) {
+                    h = rack.visual_height;
+                } else {
+                    h = 40 + (parseInt(rack.rows) * 4);
+                }
 
                 node.style.width = w + 'px';
                 node.style.height = h + 'px';
@@ -413,6 +513,8 @@
                 document.getElementById('rackRows').value = rack.rows;
                 document.getElementById('rackStart').value = rack.start_index;
                 document.getElementById('rackSort').value = rack.sort_order || 0;
+                document.getElementById('rackVisualWidth').value = rack.visual_width || 0;
+                document.getElementById('rackVisualHeight').value = rack.visual_height || 0;
                 document.getElementById('btnDelete').style.display = 'block';
             }
             renderRacks();
@@ -427,6 +529,8 @@
             document.getElementById('rackRows').value = '';
             document.getElementById('rackStart').value = '';
             document.getElementById('rackSort').value = 0;
+            document.getElementById('rackVisualWidth').value = 0;
+            document.getElementById('rackVisualHeight').value = 0;
             document.getElementById('btnDelete').style.display = 'none';
             renderRacks();
             renderList();
@@ -439,10 +543,13 @@
                 columns: parseInt(document.getElementById('rackCols').value),
                 rows: parseInt(document.getElementById('rackRows').value),
                 start_index: parseInt(document.getElementById('rackStart').value),
-                sort_order: parseInt(document.getElementById('rackSort').value) || 0
+                sort_order: parseInt(document.getElementById('rackSort').value) || 0,
+                visual_width: parseInt(document.getElementById('rackVisualWidth').value) || 0,
+                visual_height: parseInt(document.getElementById('rackVisualHeight').value) || 0,
+                warehouse_id: selectedWarehouseId
             };
 
-            // If updating existing, preserve coordinates unless it's a new create
+            // If updating existing, preserve coordinates
             const existing = registeredRacks.find(r => r.id == data.id);
             if (existing) {
                 data.posX = existing.posX;
@@ -480,7 +587,7 @@
                 });
                 if (resp.ok) {
                     resetForm();
-                    loadRacks();
+                    await loadRacks();
                     showAlert('Rack deleted', 'success');
                 }
             } catch (e) { showAlert('Error deleting rack', 'error'); }
@@ -557,7 +664,8 @@
             if (e.target === canvas) resetForm();
         });
 
-        loadRacks();
+        // Initialize: Load warehouses and racks
+        loadData();
     </script>
 </body>
 

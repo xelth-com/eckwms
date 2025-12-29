@@ -20,11 +20,29 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage: storage });
+// SECURITY FIX: Add file type validation and size limits
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB max file size
+  },
+  fileFilter: (req, file, cb) => {
+    // Only allow image files
+    const allowedTypes = /jpeg|jpg|png|webp|avif/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed (jpeg, jpg, png, webp, avif)'));
+    }
+  }
+});
 
 // POST /api/upload/image
-// NOTE: Authentication temporarily disabled for debugging Android client
-router.post('/image', upload.single('image'), (req, res) => {
+// SECURITY FIX: Authentication re-enabled - all uploads require authentication
+router.post('/image', requireAuth, upload.single('image'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'No image file uploaded.' });
   }

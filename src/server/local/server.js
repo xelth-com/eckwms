@@ -188,10 +188,9 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', server: 'local' });
 });
-// --- Маршрут для JWT верификации (пример, возможно, не нужен) ---
-// Если используется только для отладки, можно удалить или защитить.
-// Сейчас он использует глобальные переменные, что не идеально.
-app.get('/jwt/:token', (req, res) => {
+
+// SECURITY FIX: JWT debug endpoint now requires admin authentication
+app.get('/jwt/:token', requireAdmin, (req, res) => {
     const { token } = req.params;
     res.status(200);
     res.setHeader('Content-Type', 'text/html');

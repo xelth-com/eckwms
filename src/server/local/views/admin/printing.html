@@ -2,7 +2,12 @@
 <html lang="en">
 
 <head>
-    <script>if (!localStorage.getItem('auth_token')) window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);</script>
+    <script>
+    // Client-side auth check - redirect to login if no token
+    if (!localStorage.getItem('auth_token')) {
+        window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);
+    }
+    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Printing Center | eckWMS</title>

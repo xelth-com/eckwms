@@ -12,6 +12,17 @@ const { optionalAuth, requireAuth } = require('../middleware/auth');
 const { UserAuth, RmaRequest } = require('../../../shared/models/postgresql');
 const { createRmaRequest } = require('../services/rmaService');
 
+// SECURITY FIX: Helper function to escape HTML and prevent XSS
+function escapeHtml(unsafe) {
+  if (unsafe === null || unsafe === undefined) return '';
+  return String(unsafe)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 // Apply optional authentication to all RMA routes
 router.use(optionalAuth);
 
@@ -85,19 +96,20 @@ router.post('/generate', (req, res) => {
     phone: '' 
   };
 
+  // SECURITY FIX: Escape all user data to prevent XSS
   if (req.user) {
     userData = {
-      company: req.user.company || '',
-      vat: req.user.vat || '',
-      person: req.user.name || '',
-      street: req.user.street || '',
-      houseNumber: req.user.houseNumber || '',
-      addressLine2: req.user.addressLine2 || '',
-      city: req.user.city || '',
-      postalCode: req.user.postalCode || '',
-      country: req.user.country || '',
-      email: req.user.email || '',
-      phone: req.user.phone || ''
+      company: escapeHtml(req.user.company || ''),
+      vat: escapeHtml(req.user.vat || ''),
+      person: escapeHtml(req.user.name || ''),
+      street: escapeHtml(req.user.street || ''),
+      houseNumber: escapeHtml(req.user.houseNumber || ''),
+      addressLine2: escapeHtml(req.user.addressLine2 || ''),
+      city: escapeHtml(req.user.city || ''),
+      postalCode: escapeHtml(req.user.postalCode || ''),
+      country: escapeHtml(req.user.country || ''),
+      email: escapeHtml(req.user.email || ''),
+      phone: escapeHtml(req.user.phone || '')
     };
   }
 
