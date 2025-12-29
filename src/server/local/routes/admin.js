@@ -474,11 +474,19 @@ router.post('/generate-codes', async (req, res) => {
 
         // Determine actual start number - either from request or next available from DB
         let startNumber;
-        if (!requestedStartNumber || requestedStartNumber === '' || isNaN(requestedStartNumber)) {
+        console.log('[LABEL-GEN] ========== LABEL GENERATION START ==========');
+        console.log('[LABEL-GEN] Type:', type);
+        console.log('[LABEL-GEN] Requested Start Number:', requestedStartNumber, '(type:', typeof requestedStartNumber, ')');
+        console.log('[LABEL-GEN] Count:', count);
+        console.log('[LABEL-GEN] Counter Key:', counterKey);
+
+        if (requestedStartNumber === undefined || requestedStartNumber === null || requestedStartNumber === '' || isNaN(requestedStartNumber)) {
             const lastSerial = await SystemSetting.getValue(counterKey, '0');
             startNumber = parseInt(lastSerial) + 1;
+            console.log('[LABEL-GEN] Using AUTO-INCREMENT mode: lastSerial =', lastSerial, '→ startNumber =', startNumber);
         } else {
             startNumber = parseInt(requestedStartNumber);
+            console.log('[LABEL-GEN] Using SPECIFIC START mode: requestedStartNumber =', requestedStartNumber, '→ startNumber =', startNumber);
         }
 
         // Normalize 'marker' to 'l' for PDF generation
@@ -488,12 +496,31 @@ router.post('/generate-codes', async (req, res) => {
         const endNumber = startNumber + count - 1;
         const filename = `eckwms_${pdfType}_${startNumber}-${endNumber}.pdf`;
 
+        console.log('[LABEL-GEN] Will generate labels from', startNumber, 'to', endNumber, `(total: ${count} labels)`);
+
         // Generate PDF buffer
         const pdfBuffer = await eckPrintCodesPdf(pdfType, startNumber, config, count);
+        console.log('[LABEL-GEN] PDF generated successfully');
 
-        // Update the database counter
-        const newLastSerial = endNumber;
-        await SystemSetting.setValue(counterKey, newLastSerial.toString());
+        // Update the database counter ONLY if specific start number was NOT requested
+        // This prevents reprints of specific Racks (e.g. ID 100-200) from messing up the global 'Next ID' counter
+        // Important: Must handle requestedStartNumber=0 correctly (0 is a valid start number!)
+        const shouldUpdateCounter = requestedStartNumber === undefined || requestedStartNumber === null || requestedStartNumber === '' || isNaN(requestedStartNumber);
+        console.log('[LABEL-GEN] Should update counter?', shouldUpdateCounter);
+        console.log('[LABEL-GEN] Check: requestedStartNumber === undefined:', requestedStartNumber === undefined);
+        console.log('[LABEL-GEN] Check: requestedStartNumber === null:', requestedStartNumber === null);
+        console.log('[LABEL-GEN] Check: requestedStartNumber === "":', requestedStartNumber === '');
+        console.log('[LABEL-GEN] Check: isNaN(requestedStartNumber):', isNaN(requestedStartNumber));
+
+        if (shouldUpdateCounter) {
+            const newLastSerial = endNumber;
+            console.log('[LABEL-GEN] ✅ UPDATING counter from ? to', newLastSerial);
+            await SystemSetting.setValue(counterKey, newLastSerial.toString());
+            console.log('[LABEL-GEN] Counter updated successfully');
+        } else {
+            console.log('[LABEL-GEN] ⏭️  SKIPPING counter update (specific start number was requested)');
+        }
+        console.log('[LABEL-GEN] ========== LABEL GENERATION END ==========');
 
         // Send PDF buffer directly to client
         res.set({
