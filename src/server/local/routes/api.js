@@ -6,6 +6,7 @@ const { prettyPrintObject, maskObjectFields } = require('../utils/formatUtils');
 const { findKnownCode, isBetDirect } = require('../utils/dataInit');
 const OpenAI = require("openai");
 const { processDocument } = require('../services/documentService');
+const inventoryService = require('../services/inventoryService');
 
 // Initialize OpenAI
 const openai = new OpenAI({
@@ -28,15 +29,15 @@ const authenticateJWT = (req, res, next) => {
 };
 
 // Get item information by code
-router.get('/item/:code', (req, res) => {
+router.get('/item/:code', async (req, res) => {
     const code = req.params.code;
     let betCode = findKnownCode(code) || isBetDirect(code);
-    
+
     if (!betCode) {
         return res.status(404).json({ error: 'Invalid item code' });
     }
 
-    const item = global.items.get(betCode);
+    const item = await inventoryService.get('item', betCode);
     if (!item) {
         return res.status(404).json({ error: 'Item not found' });
     }
@@ -62,15 +63,15 @@ router.get('/item/:code/actions', (req, res) => {
 });
 
 // Get box information
-router.get('/box/:code', (req, res) => {
+router.get('/box/:code', async (req, res) => {
     const code = req.params.code;
     let betCode = isBetDirect(code);
-    
+
     if (!betCode || betCode[0] !== 'b') {
         return res.status(404).json({ error: 'Invalid box code' });
     }
 
-    const box = global.boxes.get(betCode);
+    const box = await inventoryService.get('box', betCode);
     if (!box) {
         return res.status(404).json({ error: 'Box not found' });
     }
