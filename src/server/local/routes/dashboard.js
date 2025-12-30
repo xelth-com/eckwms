@@ -62,7 +62,6 @@ router.get('/', requireAuth, async (req, res) => {
         <div class="dashboard-section">
           <h3>Quick Actions</h3>
           <div class="quick-actions">
-            <a href="/rma/generate" class="quick-action">Create New RMA</a>
             <a href="/auth/link-rma" class="quick-action">Link Existing RMA</a>
             <a href="/auth/profile" class="quick-action">Edit Profile</a>
           </div>

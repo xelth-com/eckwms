@@ -36,6 +36,9 @@ db.PublicData = require('./PublicData')(sequelize, Sequelize);
 db.ProductAlias = require('./ProductAlias')(sequelize, Sequelize);
 db.SystemSetting = require('./SystemSetting')(sequelize, Sequelize);
 db.WarehouseRack = require('./WarehouseRack')(sequelize, Sequelize);
+db.Item = require('./Item')(sequelize, Sequelize);
+db.Box = require('./Box')(sequelize, Sequelize);
+db.Place = require('./Place')(sequelize, Sequelize);
 
 // Import InBody Driver models (optional - only if needed for integration)
 db.RepairOrder = require('./RepairOrder')(sequelize, Sequelize);
