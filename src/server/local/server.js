@@ -32,8 +32,6 @@ const authRoutes = require('./routes/auth');
 const translationApiRoutes = require('./routes/translation-api');
 const translationAdminRoutes = require('./routes/translation-admin');
 const eckwmsRoutes = require('./routes/eckwms');
-// Убрал mavenProxyRoutes, так как сказали, что он нерелевантен для проксирования сайта
-// const mavenProxyRoutes = require('./routes/mavenProxy'); // Если все же нужен, верни
 
 // NEW: Import scan routes
 const scanRoutes = require('./routes/scan');
@@ -173,7 +171,6 @@ app.use('/ECK', eckwmsRoutes);
 app.use('/ECK/api/upload', uploadRoutes);
 app.use('/api/internal', setupRoutes); // Device pairing endpoints
 app.use('/api/rbac', require('./routes/rbac')); // RBAC Management API
-// app.use('/nexus', mavenProxyRoutes); // Если нужен Maven Proxy, верни
 
 // Legacy scan routes removed - use /eckwms/api/scan instead with the new intelligent buffer architecture
 // app.use('/api/scan', scanRoutes);
