@@ -2,11 +2,27 @@
 <html lang="en">
 
 <head>
+    <script src="/js/auth-client.js"></script>
     <script>
-    // Client-side auth check - redirect to login if no token
-    if (!localStorage.getItem('auth_token')) {
-        window.location.href = '/auth/login?redirect=' + encodeURIComponent(window.location.pathname);
-    }
+    // Client-side auth check with token refresh
+    (async function() {
+        const authClient = new AuthClient();
+        if (!authClient.getAccessToken()) {
+            authClient.redirectToLogin();
+            return;
+        }
+        // Test token validity by making a simple request
+        try {
+            const testResponse = await authClient.fetch('/admin/api/warehouses');
+            if (!testResponse.ok && testResponse.status === 401) {
+                // Token refresh failed, redirect to login
+                authClient.redirectToLogin();
+            }
+        } catch (err) {
+            console.error('Auth check failed:', err);
+            authClient.redirectToLogin();
+        }
+    })();
     </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -314,11 +330,11 @@
                 <div style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 10px;">
                     <div class="form-group">
                         <label>Start ID</label>
-                        <input type="number" id="rackStart" placeholder="0">
+                        <input type="number" id="rackStart" placeholder="Auto">
                     </div>
                     <div class="form-group">
-                        <label>Sort</label>
-                        <input type="number" id="rackSort" value="0">
+                        <label>Rack ID</label>
+                        <input type="number" id="rackSort" placeholder="Auto">
                     </div>
                 </div>
 
@@ -334,9 +350,20 @@
                     </div>
                 </div>
 
+                <!-- Rotation Control -->
+                <div class="form-group" style="margin-top: 5px;">
+                    <label>Rotation</label>
+                    <select id="rackRotation" style="width: 100%; padding: 10px; background: #111; border: 1px solid var(--border); border-radius: 6px; color: white; font-size: 0.9rem;">
+                        <option value="0">0° (Horizontal)</option>
+                        <option value="90">90° (Vertical)</option>
+                        <option value="180">180° (Inverted)</option>
+                        <option value="270">270° (Vert. Inverted)</option>
+                    </select>
+                </div>
+
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 5px;">
                     <button class="btn btn-primary" onclick="saveRack()">Save Rack</button>
-                    <button class="btn btn-secondary" onclick="resetForm()">New</button>
+                    <button class="btn btn-secondary" onclick="resetForm()">Clear</button>
                 </div>
                 <button id="btnDelete" class="btn btn-delete" style="display:none;" onclick="deleteRack()">Delete
                     Rack</button>
@@ -384,9 +411,7 @@
 
         async function loadWarehouses() {
             try {
-                const response = await fetch('/admin/api/warehouses', {
-                    headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
-                });
+                const response = await authClient.fetch('/admin/api/warehouses');
                 if (response.ok) {
                     warehouses = await response.json();
 
@@ -421,9 +446,7 @@
                     url += `?warehouse_id=${selectedWarehouseId}`;
                 }
 
-                const response = await fetch(url, {
-                    headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
-                });
+                const response = await authClient.fetch(url);
                 if (response.ok) {
                     registeredRacks = await response.json();
                     renderRacks();
@@ -452,19 +475,18 @@
                 node.className = `rack-node ${selectedRackId == rack.id ? 'selected' : ''}`;
                 node.id = `node-${rack.id}`;
 
-                // Use visual dimensions if set, otherwise auto-calculate
+                // 50px Grid Logic - 1 unit = 50px
                 let w, h;
                 if (rack.visual_width && rack.visual_width > 0) {
                     w = rack.visual_width;
                 } else {
-                    // Auto-calculate: Base size 60x40, add 6px per col, 4px per row
-                    w = 60 + (parseInt(rack.columns) * 6);
+                    w = (parseInt(rack.columns) || 1) * 50;
                 }
 
                 if (rack.visual_height && rack.visual_height > 0) {
                     h = rack.visual_height;
                 } else {
-                    h = 40 + (parseInt(rack.rows) * 4);
+                    h = (parseInt(rack.rows) || 1) * 50;
                 }
 
                 node.style.width = w + 'px';
@@ -472,10 +494,53 @@
                 node.style.left = (rack.posX || 0) + 'px';
                 node.style.top = (rack.posY || 0) + 'px';
 
-                node.innerHTML = `
-                    <div>${rack.name}</div>
-                    <div class="info">${rack.columns}x${rack.rows}</div>
-                `;
+                // Apply Rotation
+                const rot = rack.rotation || 0;
+                node.style.transform = `rotate(${rot}deg)`;
+                node.style.transformOrigin = 'center';
+
+                // Indicator dot (like on microchips) - shows rack start position
+                const dot = document.createElement('div');
+                dot.style.position = 'absolute';
+                dot.style.width = '8px';
+                dot.style.height = '8px';
+                dot.style.borderRadius = '50%';
+                dot.style.backgroundColor = 'white';
+                dot.style.top = '4px';
+                dot.style.left = '4px';
+                dot.style.boxShadow = '0 0 3px rgba(0,0,0,0.5)';
+                dot.style.zIndex = '10';
+                node.appendChild(dot);
+
+                // Text rotation using dot product rule - always readable orientation
+                // Need to counter-rotate to achieve desired absolute angle
+                // Horizontal racks (0°, 180°) → text at 0° on screen
+                // Vertical racks (90°, 270°) → text at 90° on screen
+                let desiredTextAngle;
+                if (rot === 90 || rot === 270) {
+                    desiredTextAngle = 90; // Want vertical text on screen
+                } else {
+                    desiredTextAngle = 0; // Want horizontal text on screen
+                }
+                // Counter-rotate: textRot = desired angle - rack angle
+                let textRot = desiredTextAngle - rot;
+
+                // Create content using DOM methods to avoid XSS
+                // Show everything in one line: #ID dimensions name
+                const labelDiv = document.createElement('div');
+                labelDiv.style.fontWeight = 'bold';
+                labelDiv.style.fontSize = '0.85rem';
+                labelDiv.style.whiteSpace = 'nowrap';
+                labelDiv.style.transform = `rotate(${textRot}deg)`;
+
+                // Build label: #3 6×5 Name
+                let labelText = `#${rack.sort_order || 0} ${rack.columns}×${rack.rows}`;
+                if (rack.name && rack.name.trim()) {
+                    labelText += ` ${rack.name}`;
+                }
+                labelDiv.textContent = labelText;
+
+                node.appendChild(labelDiv);
 
                 node.addEventListener('mousedown', (e) => startDrag(e, rack));
                 node.addEventListener('click', (e) => {
@@ -492,12 +557,29 @@
             registeredRacks.forEach(rack => {
                 const item = document.createElement('div');
                 item.className = `rack-item ${selectedRackId == rack.id ? 'active' : ''}`;
-                item.innerHTML = `
-                    <div>
-                        <div class="name">${rack.name}</div>
-                        <div class="meta">${rack.columns} cols, ${rack.rows} rows</div>
-                    </div>
-                `;
+
+                // Create content safely
+                const contentDiv = document.createElement('div');
+
+                // Top line: Rack ID
+                const idDiv = document.createElement('div');
+                idDiv.className = 'name';
+                idDiv.textContent = `Rack #${rack.sort_order || 0}`;
+
+                // Second line: Name (if exists)
+                const nameDiv = document.createElement('div');
+                nameDiv.className = 'meta';
+                if (rack.name && rack.name.trim()) {
+                    nameDiv.textContent = rack.name;
+                } else {
+                    nameDiv.textContent = `${rack.columns} cols, ${rack.rows} rows`;
+                    nameDiv.style.opacity = '0.6';
+                }
+
+                contentDiv.appendChild(idDiv);
+                contentDiv.appendChild(nameDiv);
+                item.appendChild(contentDiv);
+
                 item.onclick = () => selectRack(rack.id);
                 racksList.appendChild(item);
             });
@@ -515,6 +597,7 @@
                 document.getElementById('rackSort').value = rack.sort_order || 0;
                 document.getElementById('rackVisualWidth').value = rack.visual_width || 0;
                 document.getElementById('rackVisualHeight').value = rack.visual_height || 0;
+                document.getElementById('rackRotation').value = rack.rotation || 0;
                 document.getElementById('btnDelete').style.display = 'block';
             }
             renderRacks();
@@ -531,21 +614,27 @@
             document.getElementById('rackSort').value = 0;
             document.getElementById('rackVisualWidth').value = 0;
             document.getElementById('rackVisualHeight').value = 0;
+            document.getElementById('rackRotation').value = 0;
             document.getElementById('btnDelete').style.display = 'none';
             renderRacks();
             renderList();
         }
 
         async function saveRack() {
+            const idRaw = document.getElementById('editRackId').value;
+            const startIndexRaw = document.getElementById('rackStart').value;
+
             const data = {
-                id: document.getElementById('editRackId').value || null,
+                id: idRaw ? parseInt(idRaw) : null,
                 name: document.getElementById('rackName').value,
                 columns: parseInt(document.getElementById('rackCols').value),
                 rows: parseInt(document.getElementById('rackRows').value),
-                start_index: parseInt(document.getElementById('rackStart').value),
+                // If empty, send -1 to trigger backend auto-calc
+                start_index: startIndexRaw === '' ? -1 : parseInt(startIndexRaw),
                 sort_order: parseInt(document.getElementById('rackSort').value) || 0,
                 visual_width: parseInt(document.getElementById('rackVisualWidth').value) || 0,
                 visual_height: parseInt(document.getElementById('rackVisualHeight').value) || 0,
+                rotation: parseInt(document.getElementById('rackRotation').value) || 0,
                 warehouse_id: selectedWarehouseId
             };
 
@@ -556,24 +645,26 @@
                 data.posY = existing.posY;
             }
 
-            if (!data.name || isNaN(data.columns) || isNaN(data.rows) || isNaN(data.start_index)) {
-                showAlert('Please fill all required fields', 'error');
+            if (!data.name || isNaN(data.columns) || isNaN(data.rows)) {
+                showAlert('Please fill Name, Cols, and Rows', 'error');
                 return;
             }
 
             try {
-                const resp = await fetch('/admin/api/warehouse/racks', {
+                const resp = await authClient.fetch('/admin/api/warehouse/racks', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify(data)
                 });
                 if (resp.ok) {
-                    showAlert('Rack saved successfully', 'success');
+                    const resData = await resp.json();
+                    showAlert(`Rack saved! ${resData.calculatedStartId !== undefined ? 'Auto-assigned ID: ' + resData.calculatedStartId : ''}`, 'success');
                     if (!data.id) resetForm();
                     loadRacks();
+                } else {
+                    showAlert('Error saving rack', 'error');
                 }
             } catch (e) { showAlert('Error saving rack', 'error'); }
         }
@@ -581,9 +672,8 @@
         async function deleteRack() {
             if (!selectedRackId || !confirm('Delete this rack and its position?')) return;
             try {
-                const resp = await fetch(`/admin/api/warehouse/racks/${selectedRackId}`, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+                const resp = await authClient.fetch(`/admin/api/warehouse/racks/${selectedRackId}`, {
+                    method: 'DELETE'
                 });
                 if (resp.ok) {
                     resetForm();
@@ -636,11 +726,10 @@
             if (isDragging && dragTarget) {
                 // Save coordinates
                 try {
-                    await fetch('/admin/api/warehouse/racks', {
+                    await authClient.fetch('/admin/api/warehouse/racks', {
                         method: 'POST',
                         headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                            'Content-Type': 'application/json'
                         },
                         body: JSON.stringify(dragTarget)
                     });

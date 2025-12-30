@@ -346,14 +346,59 @@ router.get('/api/warehouse/racks', async (req, res) => {
     }
 });
 
-// Create or Update rack
+// Create or Update rack with Smart ID Gap Finder
 router.post('/api/warehouse/racks', async (req, res) => {
     try {
         const { sequelize } = require('../../../shared/models/postgresql');
         const {
             id, name, columns, rows, start_index, sort_order, prefix,
-            warehouse_id, visual_width, visual_height
+            warehouse_id, visual_width, visual_height, rotation
         } = req.body;
+
+        // Helper: Calculate needed size
+        const requiredSize = (parseInt(columns) || 1) * (parseInt(rows) || 1);
+        let finalStartIndex = start_index;
+
+        // SMART ID CALCULATION: Only if creating new or start_index is explicitly requested as -1 (auto)
+        if (!id && (start_index === undefined || start_index === '' || start_index === null || start_index < 0)) {
+            // 1. Get all racks for this warehouse to find gaps
+            let finalWarehouseId = warehouse_id;
+            if (!finalWarehouseId) {
+                const [defWH] = await sequelize.query('SELECT id FROM warehouses ORDER BY id ASC LIMIT 1', { type: sequelize.QueryTypes.SELECT });
+                finalWarehouseId = defWH?.id;
+            }
+
+            const existingRacks = await sequelize.query(
+                'SELECT start_index, columns, rows FROM warehouse_racks WHERE warehouse_id = :wid ORDER BY start_index ASC',
+                { type: sequelize.QueryTypes.SELECT, replacements: { wid: finalWarehouseId } }
+            );
+
+            // 2. Calculate occupied ranges
+            const ranges = existingRacks.map(r => ({
+                start: r.start_index,
+                end: r.start_index + (r.columns * r.rows)
+            }));
+
+            // 3. Find first gap
+            let currentPointer = 0;
+            let foundGap = false;
+            for (const range of ranges) {
+                // Check gap between pointer and next start
+                if (range.start - currentPointer >= requiredSize) {
+                    finalStartIndex = currentPointer;
+                    foundGap = true;
+                    break;
+                }
+                // Move pointer to end of current range
+                currentPointer = Math.max(currentPointer, range.end);
+            }
+
+            // If no gap found, append to end
+            if (!foundGap) {
+                finalStartIndex = currentPointer;
+            }
+            console.log(`[Smart Fill] Calculated Start ID: ${finalStartIndex} for size ${requiredSize}`);
+        }
 
         if (id) {
             // Update
@@ -363,16 +408,17 @@ router.post('/api/warehouse/racks', async (req, res) => {
                  start_index = :start_index, prefix = :prefix,
                  sort_order = :sort_order, "posX" = :posX, "posY" = :posY,
                  warehouse_id = :warehouse_id, visual_width = :visual_width,
-                 visual_height = :visual_height, "updatedAt" = NOW()
+                 visual_height = :visual_height, rotation = :rotation, "updatedAt" = NOW()
                  WHERE id = :id`,
                 {
                     replacements: {
-                        id, name, columns, rows, start_index,
+                        id, name, columns, rows, start_index: finalStartIndex,
                         prefix: prefix || '', sort_order: sort_order || 0,
                         posX: req.body.posX || 0, posY: req.body.posY || 0,
                         warehouse_id: warehouse_id || null,
                         visual_width: visual_width || 0,
-                        visual_height: visual_height || 0
+                        visual_height: visual_height || 0,
+                        rotation: rotation || 0
                     }
                 }
             );
@@ -387,23 +433,23 @@ router.post('/api/warehouse/racks', async (req, res) => {
                 finalWarehouseId = defaultWarehouse?.id || null;
             }
 
-            const [result] = await sequelize.query(
-                `INSERT INTO warehouse_racks (name, columns, rows, start_index, sort_order, prefix, "posX", "posY", warehouse_id, visual_width, visual_height)
-                 VALUES (:name, :columns, :rows, :start_index, :sort_order, :prefix, :posX, :posY, :warehouse_id, :visual_width, :visual_height)
-                 RETURNING id`,
+            await sequelize.query(
+                `INSERT INTO warehouse_racks (name, columns, rows, start_index, sort_order, prefix, "posX", "posY", warehouse_id, visual_width, visual_height, rotation)
+                 VALUES (:name, :columns, :rows, :start_index, :sort_order, :prefix, :posX, :posY, :warehouse_id, :visual_width, :visual_height, :rotation)`,
                 {
                     replacements: {
-                        name, columns, rows, start_index,
+                        name, columns, rows, start_index: finalStartIndex,
                         prefix: prefix || '', sort_order: sort_order || 0,
                         posX: req.body.posX || 0, posY: req.body.posY || 0,
                         warehouse_id: finalWarehouseId,
                         visual_width: visual_width || 0,
-                        visual_height: visual_height || 0
+                        visual_height: visual_height || 0,
+                        rotation: rotation || 0
                     }
                 }
             );
         }
-        res.json({ success: true });
+        res.json({ success: true, calculatedStartId: finalStartIndex });
     } catch (error) {
         console.error('Error saving rack:', error);
         res.status(500).json({ error: error.message });

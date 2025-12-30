@@ -925,7 +925,7 @@
                     <div class="visual-page" style="margin: 0 auto;">
                         <!-- Absolute positioned margin inputs for mobile friendliness -->
                         <div class="input-pos top-margin-abs">
-                            <input type="number" id="marginTop" value="3">
+                            <input type="number" id="marginTop" value="4">
                             <span>Top</span>
                         </div>
                         <div class="input-pos left-margin-abs">
@@ -937,7 +937,7 @@
                             <span>Right</span>
                         </div>
                         <div class="input-pos bottom-margin-abs">
-                            <input type="number" id="marginBottom" value="3">
+                            <input type="number" id="marginBottom" value="4">
                             <span>Bottom</span>
                         </div>
 
@@ -1567,7 +1567,7 @@
         // Helper: Build warehouse config from registered racks
         function buildWarehouseConfig() {
             warehouseConfig.regals = registeredRacks.map((rack, idx) => ({
-                index: idx + 1,  // 1-based index for display
+                index: rack.sort_order || (idx + 1),  // Use user's Rack ID, fallback to idx+1
                 columns: parseInt(rack.columns),
                 rows: parseInt(rack.rows),
                 start_index: parseInt(rack.start_index)
@@ -1776,7 +1776,54 @@
             });
         });
 
+        // Save/Load print settings from localStorage
+        function savePrintSettings() {
+            const settings = {
+                marginTop: document.getElementById('marginTop').value,
+                marginBottom: document.getElementById('marginBottom').value,
+                marginLeft: document.getElementById('marginLeft').value,
+                marginRight: document.getElementById('marginRight').value,
+                gapX: document.getElementById('gapX').value,
+                gapY: document.getElementById('gapY').value,
+                cols: document.getElementById('cols').value,
+                rows: document.getElementById('rows').value,
+                serialDigits: document.getElementById('serialDigits').value
+            };
+            localStorage.setItem('print_settings', JSON.stringify(settings));
+        }
+
+        function loadPrintSettings() {
+            try {
+                const saved = localStorage.getItem('print_settings');
+                if (saved) {
+                    const settings = JSON.parse(saved);
+                    if (settings.marginTop) document.getElementById('marginTop').value = settings.marginTop;
+                    if (settings.marginBottom) document.getElementById('marginBottom').value = settings.marginBottom;
+                    if (settings.marginLeft) document.getElementById('marginLeft').value = settings.marginLeft;
+                    if (settings.marginRight) document.getElementById('marginRight').value = settings.marginRight;
+                    if (settings.gapX) document.getElementById('gapX').value = settings.gapX;
+                    if (settings.gapY) document.getElementById('gapY').value = settings.gapY;
+                    if (settings.cols) document.getElementById('cols').value = settings.cols;
+                    if (settings.rows) document.getElementById('rows').value = settings.rows;
+                    if (settings.serialDigits) document.getElementById('serialDigits').value = settings.serialDigits;
+                    console.log('[Print Settings] Loaded from localStorage');
+                }
+            } catch (e) {
+                console.warn('[Print Settings] Failed to load:', e);
+            }
+        }
+
+        // Auto-save settings on change
+        const settingsInputs = ['marginTop', 'marginBottom', 'marginLeft', 'marginRight', 'gapX', 'gapY', 'cols', 'rows', 'serialDigits'];
+        settingsInputs.forEach(id => {
+            const input = document.getElementById(id);
+            if (input) {
+                input.addEventListener('change', savePrintSettings);
+            }
+        });
+
         // Initial setup
+        loadPrintSettings(); // Load saved settings first
         fetchNextSerials();
         updateTotalCount(); // Triggers layout load for default 3x7
         syncControlsToElement();
