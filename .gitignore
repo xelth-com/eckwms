@@ -87,7 +87,7 @@ web_modules/
 .env.local
 
 # Server access credentials (sensitive)
-.eck/SERVER_ACCESS.md
+# Confidential .eck documentation - see full list below
 
 # IDE and editor files
 .idea/
@@ -12194,7 +12194,40 @@ dist/
 .tmp.driveupload/66131
 
 # Added by eck-snapshot to ignore metadata directory
-.eck/
 
 # Google Cloud Credentials
 google-credentials.json
+
+# .eck directory - selective ignoring
+# Public files (for Architect) ARE tracked in git
+# Confidential files (for Coder) are NOT tracked
+
+# Confidential documentation (NOT in git)
+.eck/SERVER_ACCESS.md
+.eck/REMOTE_DEVELOPMENT.md
+.eck/README.md
+.eck/TROUBLESHOOTING.md
+.eck/MIGRATION_TEMPLATES.md
+.eck/SECRETS_REFERENCE.md
+
+# Snapshots directory (NOT in git)
+.eck/snapshots/
+
+# Public files (IN git):
+# .eck/ARCHITECTURE.md
+# .eck/STACK.md
+# .eck/WORKFLOWS.md
+# .eck/DELEGATION_GUIDE.md
+# .eck/OPERATIONS.md
+# .eck/CONTEXT.md
+# .eck/ENVIRONMENT.md
+# .eck/JOURNAL.md
+# .eck/ROADMAP.md
+# .eck/TECH_DEBT.md
+
+# Quick reference is environment-specific (xelth.com server)
+# Other developers will have different servers
+QUICK_REFERENCE.md
+
+# Added by eck-snapshot to ignore metadata directory
+.eck/
