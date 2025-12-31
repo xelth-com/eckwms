@@ -130,7 +130,7 @@ router.post('/generate-codes', async (req, res) => {
         let actualStart = startNumber;
         const counterKey = type === 'i' ? 'last_serial_item' : type === 'b' ? 'last_serial_box' : type === 'p' ? 'last_serial_place' : 'last_serial_marker';
 
-        if (!actualStart) {
+        if (actualStart === null || actualStart === undefined) {
             const last = await db.SystemSetting.getValue(counterKey, '0');
             actualStart = parseInt(last) + 1;
         }
@@ -166,6 +166,38 @@ router.get('/api/warehouses', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+router.post('/api/warehouses', async (req, res) => {
+    try {
+        const { name, id_offset, is_active } = req.body;
+        const warehouse = await db.Warehouse.create({
+            name,
+            id_offset,
+            is_active: is_active !== undefined ? is_active : true
+        });
+        res.json(warehouse);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/api/warehouses/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Check if this is the only warehouse
+        const warehouseCount = await db.Warehouse.count();
+        if (warehouseCount <= 1) {
+            return res.status(400).json({ error: 'Cannot delete the last warehouse' });
+        }
+
+        // Delete associated racks first
+        await db.WarehouseRack.destroy({ where: { warehouse_id: id } });
+
+        // Delete the warehouse
+        await db.Warehouse.destroy({ where: { id } });
+
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Warehouse Racks API
 router.get('/api/warehouse/racks', async (req, res) => {
     try {
@@ -173,7 +205,7 @@ router.get('/api/warehouse/racks', async (req, res) => {
         const where = warehouseId ? { warehouse_id: warehouseId } : {};
         const racks = await db.WarehouseRack.findAll({
             where,
-            order: [['sort_order', 'ASC'], ['id', 'ASC']]
+            order: [['id', 'ASC']]
         });
         res.json(racks);
     } catch (e) { res.status(500).json({ error: e.message }); }

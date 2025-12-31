@@ -315,12 +315,17 @@
         <div class="sidebar">
             <h2>Rack Management</h2>
 
-            <!-- Warehouse Selector (hidden if only 1 warehouse) -->
-            <div class="form-group" id="warehouseSelector" style="display: none;">
-                <label>Warehouse</label>
-                <select id="warehouseSelect" style="width: 100%; padding: 10px; background: #111; border: 1px solid var(--border); border-radius: 6px; color: white; font-size: 0.9rem;">
+            <!-- Warehouse Selector -->
+            <div class="form-group" style="border-bottom: 1px solid var(--border); padding-bottom: 15px; margin-bottom: 15px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <label style="margin:0;">Warehouse</label>
+                    <button class="btn btn-secondary" onclick="openWarehouseModal()" style="padding: 4px 12px; font-size: 0.75rem;">⚙️ Manage</button>
+                </div>
+
+                <select id="warehouseSelect" style="width: 100%; padding: 10px; background: #111; border: 1px solid var(--border); border-radius: 6px; color: white; font-size: 0.9rem; display: none;">
                     <option value="">Loading...</option>
                 </select>
+                <div id="singleWarehouseLabel" style="font-size: 0.9rem; font-weight: bold; color: var(--accent-blue); padding: 5px 0;"></div>
             </div>
 
             <div class="rack-form" id="rackForm">
@@ -339,15 +344,9 @@
                         <input type="number" id="rackRows" placeholder="10">
                     </div>
                 </div>
-                <div style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 10px;">
-                    <div class="form-group">
-                        <label>Start ID</label>
-                        <input type="number" id="rackStart" placeholder="Auto">
-                    </div>
-                    <div class="form-group">
-                        <label>Rack ID</label>
-                        <input type="number" id="rackSort" placeholder="Auto">
-                    </div>
+                <div class="form-group">
+                    <label>Start ID</label>
+                    <input type="number" id="rackStart" placeholder="Auto">
                 </div>
 
                 <!-- Visual Sizing Override -->
@@ -395,6 +394,37 @@
 
     <div id="alert" class="alert"></div>
 
+    <!-- Warehouse Management Modal -->
+    <div id="warehouseModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center;">
+        <div style="width: 500px; max-width: 90%; background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+                <h2>🏢 Manage Warehouses</h2>
+                <button onclick="closeWarehouseModal()" style="background:none; border:none; color:white; cursor:pointer; font-size: 1.2rem;">✕</button>
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                <input type="text" id="newWarehouseName" placeholder="New Warehouse Name (e.g. Area 51)" style="flex: 1;">
+                <button class="btn btn-primary" onclick="createWarehouse()" style="width: auto;">Add</button>
+            </div>
+
+            <div style="max-height: 300px; overflow-y: auto;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border);">
+                            <th style="padding: 10px; text-align: left; color: var(--text-secondary); font-size: 0.85rem;">ID</th>
+                            <th style="padding: 10px; text-align: left; color: var(--text-secondary); font-size: 0.85rem;">Name</th>
+                            <th style="padding: 10px; text-align: left; color: var(--text-secondary); font-size: 0.85rem;">ID Range</th>
+                            <th style="padding: 10px; text-align: right; color: var(--text-secondary); font-size: 0.85rem;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="warehouseListBody">
+                        <!-- Warehouses will be rendered here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <script>
         let warehouses = [];
         let registeredRacks = [];
@@ -408,8 +438,8 @@
         const canvasArea = document.getElementById('canvasArea');
         const racksList = document.getElementById('racksList');
         const alertBox = document.getElementById('alert');
-        const warehouseSelector = document.getElementById('warehouseSelector');
         const warehouseSelect = document.getElementById('warehouseSelect');
+        const singleWarehouseLabel = document.getElementById('singleWarehouseLabel');
 
         // Load both warehouses and racks
         async function loadData() {
@@ -423,12 +453,19 @@
                 if (response.ok) {
                     warehouses = await response.json();
 
-                    // Show/hide warehouse selector based on count
+                    // UI Logic: Show dropdown for multiple warehouses, label for single
                     if (warehouses.length > 1) {
-                        warehouseSelector.style.display = 'block';
-                        warehouseSelect.innerHTML = warehouses.map(wh =>
-                            `<option value="${wh.id}">${wh.name} (ID Offset: ${wh.id_offset})</option>`
-                        ).join('');
+                        warehouseSelect.style.display = 'block';
+                        singleWarehouseLabel.style.display = 'none';
+
+                        // Safe DOM creation for options
+                        warehouseSelect.innerHTML = '';
+                        warehouses.forEach(wh => {
+                            const option = document.createElement('option');
+                            option.value = wh.id;
+                            option.textContent = wh.name;
+                            warehouseSelect.appendChild(option);
+                        });
 
                         // Set default to first warehouse
                         if (!selectedWarehouseId && warehouses.length > 0) {
@@ -436,8 +473,10 @@
                             warehouseSelect.value = selectedWarehouseId;
                         }
                     } else if (warehouses.length === 1) {
-                        // Single warehouse mode - hide selector, auto-select
-                        warehouseSelector.style.display = 'none';
+                        // Single warehouse mode - show label instead of dropdown
+                        warehouseSelect.style.display = 'none';
+                        singleWarehouseLabel.style.display = 'block';
+                        singleWarehouseLabel.textContent = `📍 ${warehouses[0].name}`;
                         selectedWarehouseId = warehouses[0].id;
                     }
                 }
@@ -547,7 +586,7 @@
                 idSpan.style.color = '#ffffff';
                 idSpan.style.fontWeight = '900';
                 idSpan.style.marginRight = '6px';
-                idSpan.textContent = `#${rack.sort_order || 0}`;
+                idSpan.textContent = `#${rack.id}`;
                 labelDiv.appendChild(idSpan);
 
                 // 2. Dimensions (Amber/Gold)
@@ -591,7 +630,7 @@
                 // Top line: Rack ID
                 const idDiv = document.createElement('div');
                 idDiv.className = 'name';
-                idDiv.textContent = `Rack #${rack.sort_order || 0}`;
+                idDiv.textContent = `Rack #${rack.id}`;
 
                 // Second line: Name (if exists)
                 const nameDiv = document.createElement('div');
@@ -621,7 +660,6 @@
                 document.getElementById('rackCols').value = rack.columns;
                 document.getElementById('rackRows').value = rack.rows;
                 document.getElementById('rackStart').value = rack.start_index;
-                document.getElementById('rackSort').value = rack.sort_order || 0;
                 document.getElementById('rackVisualWidth').value = rack.visual_width || 0;
                 document.getElementById('rackVisualHeight').value = rack.visual_height || 0;
                 document.getElementById('rackRotation').value = rack.rotation || 0;
@@ -638,7 +676,6 @@
             document.getElementById('rackCols').value = '';
             document.getElementById('rackRows').value = '';
             document.getElementById('rackStart').value = '';
-            document.getElementById('rackSort').value = 0;
             document.getElementById('rackVisualWidth').value = 0;
             document.getElementById('rackVisualHeight').value = 0;
             document.getElementById('rackRotation').value = 0;
@@ -658,7 +695,6 @@
                 rows: parseInt(document.getElementById('rackRows').value),
                 // If empty, send -1 to trigger backend auto-calc
                 start_index: startIndexRaw === '' ? -1 : parseInt(startIndexRaw),
-                sort_order: parseInt(document.getElementById('rackSort').value) || 0,
                 visual_width: parseInt(document.getElementById('rackVisualWidth').value) || 0,
                 visual_height: parseInt(document.getElementById('rackVisualHeight').value) || 0,
                 rotation: parseInt(document.getElementById('rackRotation').value) || 0,
@@ -777,6 +813,137 @@
         canvas.addEventListener('click', (e) => {
             if (e.target === canvas) resetForm();
         });
+
+        // --- Warehouse Management Functions ---
+        function openWarehouseModal() {
+            document.getElementById('warehouseModal').style.display = 'flex';
+            renderWarehouseList();
+        }
+
+        function closeWarehouseModal() {
+            document.getElementById('warehouseModal').style.display = 'none';
+        }
+
+        function renderWarehouseList() {
+            const tbody = document.getElementById('warehouseListBody');
+            tbody.innerHTML = '';
+
+            warehouses.forEach(wh => {
+                const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid var(--border)';
+
+                // ID cell
+                const tdId = document.createElement('td');
+                tdId.style.padding = '10px';
+                tdId.textContent = wh.id;
+                tr.appendChild(tdId);
+
+                // Name cell
+                const tdName = document.createElement('td');
+                tdName.style.padding = '10px';
+                tdName.textContent = wh.name;
+                tr.appendChild(tdName);
+
+                // ID Range cell
+                const tdRange = document.createElement('td');
+                tdRange.style.padding = '10px';
+                tdRange.style.fontSize = '0.85rem';
+                tdRange.style.color = 'var(--text-secondary)';
+                const offset = parseInt(wh.id_offset || 0);
+                const rangeEnd = offset + 9999999;
+                tdRange.textContent = `${offset.toLocaleString()} - ${rangeEnd.toLocaleString()}`;
+                tr.appendChild(tdRange);
+
+                // Action cell
+                const tdAction = document.createElement('td');
+                tdAction.style.padding = '10px';
+                tdAction.style.textAlign = 'right';
+
+                if (warehouses.length > 1) {
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.textContent = '🗑️';
+                    deleteBtn.className = 'btn btn-secondary';
+                    deleteBtn.style.padding = '4px 8px';
+                    deleteBtn.style.fontSize = '0.85rem';
+                    deleteBtn.title = 'Delete';
+                    deleteBtn.onclick = () => deleteWarehouse(wh.id);
+                    tdAction.appendChild(deleteBtn);
+                } else {
+                    const span = document.createElement('span');
+                    span.textContent = 'Default';
+                    span.style.opacity = '0.5';
+                    span.style.fontSize = '0.8rem';
+                    tdAction.appendChild(span);
+                }
+
+                tr.appendChild(tdAction);
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function createWarehouse() {
+            const name = document.getElementById('newWarehouseName').value.trim();
+            if (!name) {
+                showAlert('Enter a warehouse name', 'error');
+                return;
+            }
+
+            // Auto-calculate offset: Max existing offset + 10,000,000
+            const maxOffset = warehouses.reduce((max, w) => Math.max(max, parseInt(w.id_offset || 0)), 0);
+            const newOffset = maxOffset + 10000000;
+
+            try {
+                const resp = await authClient.fetch('/admin/api/warehouses', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: name,
+                        id_offset: newOffset,
+                        is_active: true
+                    })
+                });
+
+                if (resp.ok) {
+                    document.getElementById('newWarehouseName').value = '';
+                    await loadWarehouses(); // Reload global list
+                    renderWarehouseList(); // Update modal list
+                    showAlert('Warehouse created successfully', 'success');
+                } else {
+                    showAlert('Failed to create warehouse', 'error');
+                }
+            } catch (e) {
+                console.error('Error creating warehouse:', e);
+                showAlert('Error creating warehouse', 'error');
+            }
+        }
+
+        async function deleteWarehouse(id) {
+            if (!confirm('Delete this warehouse? All racks inside will be permanently deleted!')) return;
+
+            try {
+                const resp = await authClient.fetch(`/admin/api/warehouses/${id}`, {
+                    method: 'DELETE'
+                });
+
+                if (resp.ok) {
+                    await loadWarehouses();
+                    renderWarehouseList();
+
+                    // Reset selection if we deleted the active warehouse
+                    if (selectedWarehouseId == id && warehouses.length > 0) {
+                        selectedWarehouseId = warehouses[0].id;
+                        await loadRacks();
+                    }
+
+                    showAlert('Warehouse deleted', 'success');
+                } else {
+                    showAlert('Failed to delete warehouse', 'error');
+                }
+            } catch (e) {
+                console.error('Error deleting warehouse:', e);
+                showAlert('Error deleting warehouse', 'error');
+            }
+        }
 
         // Initialize: Load warehouses and racks
         loadData();

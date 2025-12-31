@@ -35,6 +35,7 @@ db.RegisteredDevice = require('./RegisteredDevice')(sequelize, Sequelize);
 db.PublicData = require('./PublicData')(sequelize, Sequelize);
 db.ProductAlias = require('./ProductAlias')(sequelize, Sequelize);
 db.SystemSetting = require('./SystemSetting')(sequelize, Sequelize);
+db.Warehouse = require('./Warehouse')(sequelize, Sequelize);
 db.WarehouseRack = require('./WarehouseRack')(sequelize, Sequelize);
 db.Item = require('./Item')(sequelize, Sequelize);
 db.Box = require('./Box')(sequelize, Sequelize);
