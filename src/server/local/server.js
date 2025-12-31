@@ -3,8 +3,6 @@ require('dotenv').config();
 
 const express = require('express');
 const path = require('path');
-const fs = require('fs');
-const { resolve } = require('path');
 const app = express();
 const bodyParser = require('body-parser');
 const helmet = require('helmet');
@@ -18,10 +16,6 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const { collectAndReportDiagnostics } = require('./utils/startupDiagnostics');
 const WebSocket = require('ws');
 const { isDuplicate } = require('./utils/messageDeduplicator');
-
-// Services
-const inventoryService = require('./services/inventoryService');
-const { RmaRequest } = require('../../shared/models/postgresql');
 
 // Import routes
 const apiRoutes = require('./routes/api');
@@ -48,7 +42,7 @@ global.secretJwt = process.env.JWT_SECRET;
 
 // --- Middleware ---
 app.use((req, res, next) => {
-    console.log('============================= Request Start =========================================');
+    // console.log('Request:', req.method, req.url); // Optional: less noise
     next();
 });
 
@@ -101,61 +95,22 @@ app.use('/ECK/api/upload', uploadRoutes);
 app.use('/api/internal', setupRoutes);
 app.use('/api/rbac', require('./routes/rbac'));
 
+// SPA Fallback
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'html', 'index.html')));
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok', server: 'local' }));
 
-// --- Public Data API (Refactored for DB) ---
-app.get('/api/internal/public-data/:id', async (req, res) => {
-    const { id } = req.params;
-    console.log(`[Local Server] Public API request for ID: ${id}`);
-    try {
-        let data = null;
-        let type = null;
-
-        // 1. Check Items
-        if (await inventoryService.exists('item', id)) {
-            const item = await inventoryService.get('item', id);
-            type = 'item';
-            data = { id, type, model: item.cl || 'Unknown', status: item.status || 'Unknown', timestamp: item.sn ? new Date(item.sn[1] * 1000).toISOString() : new Date().toISOString() };
-        }
-        // 2. Check Boxes
-        else if (await inventoryService.exists('box', id)) {
-            const box = await inventoryService.get('box', id);
-            type = 'box';
-            data = { id, type, status: box.status || 'Unknown', timestamp: box.sn ? new Date(box.sn[1] * 1000).toISOString() : new Date().toISOString() };
-        }
-        // 3. Check Orders (RMA)
-        else {
-            // Try to find RMA by order code pattern
-            const rma = await RmaRequest.findOne({ where: { orderCode: id } }) ||
-                        await RmaRequest.findOne({ where: { rmaCode: id.replace('o000', '') } });
-
-            if (rma) {
-                type = 'order';
-                data = { id, type, status: rma.status, timestamp: rma.createdAt };
-            }
-        }
-
-        if (data) return res.json(data);
-        return res.status(404).json({ error: 'Not found', message: 'No information available.' });
-
-    } catch (error) {
-        console.error('[Local Server] Error in public API:', error);
-        return res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
+// Error handling
 app.use(errorHandler);
 
 // --- Initialization ---
 async function initialize() {
     try {
         await db.sequelize.authenticate();
-        console.log('PostgreSQL connection established.');
+        console.log('✅ PostgreSQL connection established.');
 
         if (process.env.NODE_ENV === 'development') {
             await db.sequelize.sync({ alter: process.env.DB_ALTER === 'true' });
-            console.log('PostgreSQL models synchronized.');
+            console.log('✅ PostgreSQL models synchronized.');
         }
 
         // Graceful Shutdown
@@ -170,7 +125,7 @@ async function initialize() {
 
         const PORT = process.env.LOCAL_SERVER_PORT || process.env.PORT || 3100;
         const server = app.listen(PORT, () => {
-            console.log(`eckwms server running on port ${PORT}.`);
+            console.log(`🚀 eckwms server running on port ${PORT}.`);
             if (process.env.NODE_ENV !== 'development-no-sync') collectAndReportDiagnostics();
         });
 

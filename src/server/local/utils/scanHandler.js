@@ -1,36 +1,22 @@
+// utils/scanHandler.js
 const inventoryService = require('../services/inventoryService');
-const {
-    findKnownCode,
-    isBetDirect,
-    disAct,
-    toAct,
-    isAct
-} = require('./dataInit');
 const { eckUrlDecrypt } = require('../../../shared/utils/encryption');
-const geminiService = require('../services/geminiService');
-const { searchInventoryTool, linkCodeTool } = require('../tools/inventoryTools');
-const { AGENT_SYSTEM_PROMPT } = require('../prompts/agentPrompt');
+const { writeLog } = require('./fileUtils'); // Assuming simple file logger or replace with DB logging
 
-// Buffers remain in memory for session context
+// Session Buffers (In-Memory for active session context)
 let iTem = [];
 let bOx = [];
 let pLace = [];
 
-function unixTime() {
-    return Math.floor(Date.now() / 1000);
-}
+function unixTime() { return Math.floor(Date.now() / 1000); }
 
-async function writeLog(str) {
-    try {
-        const { appendFile } = require('fs/promises');
-        const { resolve } = require('path');
-        const dateTemp = new Date();
-        const logDir = resolve('./logs');
-        const fs = require('fs');
-        if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-        const filename = `${dateTemp.getFullYear().toString().slice(-2)}${('0' + (dateTemp.getMonth() + 1)).slice(-2)}.txt`;
-        await appendFile(resolve(logDir, filename), `${str}\t${new Date().toISOString()}\n`);
-    } catch (e) { console.error('Log error:', e); }
+// Helper to identify code type
+function identifyCode(code) {
+    if (code.startsWith('i7')) return 'item';
+    if (code.startsWith('b')) return 'box';
+    if (code.startsWith('p')) return 'place';
+    if (code.startsWith('l')) return 'marker';
+    return 'unknown';
 }
 
 async function processScan(barcode, user = null) {
@@ -42,135 +28,112 @@ async function processScan(barcode, user = null) {
     };
 
     try {
-        let bet = '';
-        if (barcode.startsWith('http')) {
-            const code = barcode.split('/').pop();
-            bet = findKnownCode(code) || isBetDirect(code);
-        } else if (barcode.startsWith('ECK') && barcode.length === 76) {
-            try { bet = eckUrlDecrypt(barcode); } catch (e) {}
+        let cleanCode = barcode;
+        // Decrypt if ECK format
+        if (barcode.startsWith('ECK') && barcode.length === 76) {
+            const decrypted = eckUrlDecrypt(barcode);
+            if (decrypted) cleanCode = decrypted;
+        } else if (barcode.startsWith('http')) {
+            cleanCode = barcode.split('/').pop();
         }
-        if (!bet) bet = findKnownCode(barcode) || isBetDirect(barcode);
 
-        if (bet) {
-            const type = bet.slice(0, 1);
-            switch (type) {
-                case 'i': result = await handleItemBarcode(bet); break;
-                case 'b': result = await handleBoxBarcode(bet); break;
-                case 'p': result = await handlePlaceBarcode(bet); break;
-                // Order and User handlers can be migrated later or kept if using global.orders
-                default: result.message = `Unknown barcode type: ${type}`;
-            }
+        const type = identifyCode(cleanCode);
+
+        if (type === 'item') {
+            result = await handleItem(cleanCode);
+        } else if (type === 'box') {
+            result = await handleBox(cleanCode);
+        } else if (type === 'place') {
+            result = await handlePlace(cleanCode);
         } else {
-            result = await handleUnknownBarcode(barcode);
+            // Unknown / External code
+            // TODO: Hook up AI Service here for Product Alias check
+            result.message = `Unknown code: ${cleanCode}`;
+            result.type = 'unknown';
         }
 
         result.buffers = { items: [...iTem], boxes: [...bOx], places: [...pLace] };
         return result;
+
     } catch (error) {
         console.error('Scan Error:', error);
         return { type: 'error', message: error.message, data: {}, buffers: result.buffers };
     }
 }
 
-async function handleItemBarcode(id) {
+async function handleItem(id) {
     const exists = await inventoryService.exists('item', id);
     let message = '';
-    let data = {};
 
     if (!exists) {
-        // Create new item
-        const newItem = { sn: [id, unixTime()], cl: null, actn: [] };
-        await inventoryService.create('item', id, newItem);
-        message = 'New item created';
+        await inventoryService.create('item', id, { sn: [id, unixTime()], actn: [] });
+        message = 'New Item Created';
     } else {
-        const item = await inventoryService.get('item', id);
-        data = { serialNumber: id, created: item.sn[1], class: item.cl || 'Unknown' };
-        message = 'Item found';
+        message = 'Item Scanned';
     }
 
-    // Update Buffer
-    updateBuffer(iTem, id);
-    if (iTem.includes(toAct(id))) message = 'Item activated';
-    else message = 'Item deactivated/added';
+    // Toggle buffer
+    const idx = iTem.indexOf(id);
+    if (idx > -1) {
+        iTem.splice(idx, 1);
+        message += ' (Deselected)';
+    } else {
+        iTem.push(id);
+        message += ' (Selected)';
+    }
 
-    return { type: 'item', message, data };
+    const item = await inventoryService.get('item', id);
+    return { type: 'item', message, data: { id, created: item.sn[1] } };
 }
 
-async function handleBoxBarcode(id) {
+async function handleBox(id) {
     const exists = await inventoryService.exists('box', id);
     let message = '';
-    let data = {};
 
     if (!exists) {
-        const newBox = { sn: [id, unixTime()], cont: [], loc: [] };
-        await inventoryService.create('box', id, newBox);
-        message = 'New box created';
+        await inventoryService.create('box', id, { sn: [id, unixTime()], cont: [], loc: [] });
+        message = 'New Box Created';
     } else {
-        const box = await inventoryService.get('box', id);
-        data = { serialNumber: id, contents: box.cont || [] };
-        message = 'Box found';
+        message = 'Box Scanned';
     }
 
-    // Logic: Put active items into this box
+    // Move active items into box
     if (iTem.length > 0) {
         for (const itemId of iTem) {
-            const cleanId = disAct(itemId);
-            // Update Item location
-            await inventoryService.pushToArray('item', cleanId, 'loc', [id, unixTime()]);
-            // Update Box content
-            await inventoryService.pushToArray('box', id, 'cont', [cleanId, unixTime()]);
+            await inventoryService.pushToArray('item', itemId, 'loc', [id, unixTime()]);
+            await inventoryService.pushToArray('box', id, 'cont', [itemId, unixTime()]);
         }
-        message = `${iTem.length} items added to box ${id}`;
-        await writeLog(`[${iTem.join(', ')}] => ${id}`);
-        iTem.length = 0; // Clear item buffer
+        message = `${iTem.length} items moved to box ${id}`;
+        iTem = []; // Clear items
     }
 
-    updateBuffer(bOx, id);
-    return { type: 'box', message, data };
+    // Toggle box buffer
+    const idx = bOx.indexOf(id);
+    if (idx > -1) bOx.splice(idx, 1);
+    else bOx.push(id);
+
+    const box = await inventoryService.get('box', id);
+    return { type: 'box', message, data: { id, count: box.cont?.length || 0 } };
 }
 
-async function handlePlaceBarcode(id) {
-    // Placeholder for Place logic (similar to Box)
+async function handlePlace(id) {
     const exists = await inventoryService.exists('place', id);
     if (!exists) {
-        await inventoryService.create('place', id, { sn: [id, unixTime()], cont: [] });
+        await inventoryService.create('place', id, { sn: [id, unixTime()] });
     }
 
-    let message = 'Place scanned';
-    // If boxes are active, move them to this place
+    let message = 'Place Scanned';
+    // Move boxes to place
     if (bOx.length > 0) {
         for (const boxId of bOx) {
-            const cleanId = disAct(boxId);
-            await inventoryService.pushToArray('box', cleanId, 'loc', [id, unixTime()]);
-            await inventoryService.pushToArray('place', id, 'cont', [cleanId, unixTime()]);
+            await inventoryService.pushToArray('box', boxId, 'loc', [id, unixTime()]);
+            await inventoryService.pushToArray('place', id, 'cont', [boxId, unixTime()]);
         }
         message = `${bOx.length} boxes moved to place ${id}`;
-        await writeLog(`[${bOx.join(', ')}] => ${id}`);
-        bOx.length = 0;
+        bOx = [];
     }
 
-    updateBuffer(pLace, id);
-    return { type: 'place', message, data: {} };
-}
-
-function updateBuffer(buffer, id) {
-    const activeId = toAct(id);
-    const index = buffer.indexOf(activeId);
-    if (index > -1) {
-        // If already active, maybe toggle? For now, we keep simpler logic from original:
-        // Actually original logic toggles state. Let's simplify: if active, deactivate. If not, activate.
-        // But here we'll just push to end if not present, or remove if present (toggle).
-         buffer.splice(index, 1); // Remove
-    } else {
-         buffer.push(activeId); // Add
-    }
-}
-
-// Fallback for Unknown Barcodes (AI)
-async function handleUnknownBarcode(barcode) {
-    // Simplification: just return unknown for now, or hook up AI logic similarly to before
-    // For this migration step, we ensure DB logic works first.
-    return { type: 'unknown', message: `Unknown barcode: ${barcode}` };
+    return { type: 'place', message, data: { id } };
 }
 
 module.exports = { processScan };

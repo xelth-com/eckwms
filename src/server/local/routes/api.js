@@ -3,10 +3,18 @@ const express = require('express');
 const router = express.Router();
 const { verifyJWT } = require('../../../shared/utils/encryption');
 const { prettyPrintObject, maskObjectFields } = require('../utils/formatUtils');
-const { findKnownCode, isBetDirect } = require('../utils/dataInit');
 const OpenAI = require("openai");
 const { processDocument } = require('../services/documentService');
 const inventoryService = require('../services/inventoryService');
+
+// Simple code identification (Clean Slate - no legacy lookup)
+function identifyCode(code) {
+    if (code.startsWith('i')) return code;
+    if (code.startsWith('b')) return code;
+    if (code.startsWith('p')) return code;
+    if (code.startsWith('o')) return code;
+    return null;
+}
 
 // Initialize OpenAI
 const openai = new OpenAI({
@@ -30,88 +38,53 @@ const authenticateJWT = (req, res, next) => {
 
 // Get item information by code
 router.get('/item/:code', async (req, res) => {
-    const code = req.params.code;
-    let betCode = findKnownCode(code) || isBetDirect(code);
+    const code = identifyCode(req.params.code);
+    if (!code) return res.status(404).json({ error: 'Invalid item code' });
 
-    if (!betCode) {
-        return res.status(404).json({ error: 'Invalid item code' });
-    }
-
-    const item = await inventoryService.get('item', betCode);
-    if (!item) {
-        return res.status(404).json({ error: 'Item not found' });
-    }
+    const item = await inventoryService.get('item', code);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
 
     res.json(item);
 });
 
 // Get item actions
-router.get('/item/:code/actions', (req, res) => {
-    const code = req.params.code;
-    let betCode = findKnownCode(code) || isBetDirect(code);
-    
-    if (!betCode) {
-        return res.status(404).json({ error: 'Invalid item code' });
-    }
+router.get('/item/:code/actions', async (req, res) => {
+    const code = identifyCode(req.params.code);
+    if (!code) return res.status(404).json({ error: 'Invalid item code' });
 
-    const item = global.items.get(betCode);
-    if (!item) {
-        return res.status(404).json({ error: 'Item not found' });
-    }
+    const item = await inventoryService.get('item', code);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
 
     res.json(item.actn || []);
 });
 
 // Get box information
 router.get('/box/:code', async (req, res) => {
-    const code = req.params.code;
-    let betCode = isBetDirect(code);
+    const code = identifyCode(req.params.code);
+    if (!code || !code.startsWith('b')) return res.status(404).json({ error: 'Invalid box code' });
 
-    if (!betCode || betCode[0] !== 'b') {
-        return res.status(404).json({ error: 'Invalid box code' });
-    }
-
-    const box = await inventoryService.get('box', betCode);
-    if (!box) {
-        return res.status(404).json({ error: 'Box not found' });
-    }
+    const box = await inventoryService.get('box', code);
+    if (!box) return res.status(404).json({ error: 'Box not found' });
 
     res.json(box);
 });
 
 // Get order information (protected)
-router.get('/order/:code', authenticateJWT, (req, res) => {
-    const code = req.params.code;
-    let betCode = isBetDirect(code);
-    
-    if (!betCode || betCode[0] !== 'o') {
-        return res.status(404).json({ error: 'Invalid order code' });
-    }
+router.get('/order/:code', authenticateJWT, async (req, res) => {
+    const code = identifyCode(req.params.code);
+    if (!code || !code.startsWith('o')) return res.status(404).json({ error: 'Invalid order code' });
 
-    const order = global.orders.get(betCode);
-    if (!order) {
-        return res.status(404).json({ error: 'Order not found' });
-    }
-
-    // Mask sensitive fields for regular users, but not for admin
-    const maskedOrder = req.user.a === 'p' ? order : maskObjectFields(order, ["comp", "pers", "str", "cem", "iem"]);
-    
-    res.json(maskedOrder);
+    // Orders migration TBD - for now return placeholder
+    return res.status(501).json({ error: 'Order lookup not yet implemented in clean slate' });
 });
 
 // Get item location history
-router.get('/item/:code/location', (req, res) => {
-    const code = req.params.code;
-    let betCode = findKnownCode(code) || isBetDirect(code);
-    
-    if (!betCode) {
-        return res.status(404).json({ error: 'Invalid item code' });
-    }
+router.get('/item/:code/location', async (req, res) => {
+    const code = identifyCode(req.params.code);
+    if (!code) return res.status(404).json({ error: 'Invalid item code' });
 
-    const item = global.items.get(betCode);
-    if (!item) {
-        return res.status(404).json({ error: 'Item not found' });
-    }
+    const item = await inventoryService.get('item', code);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
 
     res.json(item.loc || []);
 });
