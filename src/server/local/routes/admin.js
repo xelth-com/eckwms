@@ -158,4 +158,56 @@ router.post('/generate-codes', async (req, res) => {
     }
 });
 
+// Warehouse API
+router.get('/api/warehouses', async (req, res) => {
+    try {
+        const warehouses = await db.Warehouse.findAll({ order: [['id', 'ASC']] });
+        res.json(warehouses);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Warehouse Racks API
+router.get('/api/warehouse/racks', async (req, res) => {
+    try {
+        const warehouseId = req.query.warehouseId;
+        const where = warehouseId ? { warehouse_id: warehouseId } : {};
+        const racks = await db.WarehouseRack.findAll({
+            where,
+            order: [['sort_order', 'ASC'], ['id', 'ASC']]
+        });
+        res.json(racks);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/api/warehouse/racks', async (req, res) => {
+    try {
+        // Upsert logic: update if ID exists, create if not
+        if (req.body.id) {
+            const existing = await db.WarehouseRack.findByPk(req.body.id);
+            if (existing) {
+                await existing.update(req.body);
+                return res.json(existing);
+            }
+        }
+        const rack = await db.WarehouseRack.create(req.body);
+        res.json(rack);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/api/warehouse/racks/:id', async (req, res) => {
+    try {
+        const rack = await db.WarehouseRack.findByPk(req.params.id);
+        if (!rack) return res.status(404).json({ error: 'Rack not found' });
+        await rack.update(req.body);
+        res.json(rack);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/api/warehouse/racks/:id', async (req, res) => {
+    try {
+        await db.WarehouseRack.destroy({ where: { id: req.params.id } });
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

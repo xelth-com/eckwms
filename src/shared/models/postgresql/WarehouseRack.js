@@ -33,12 +33,44 @@ module.exports = (sequelize, DataTypes) => {
     sort_order: {
       type: DataTypes.INTEGER,
       defaultValue: 0
+    },
+    posX: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'X position on blueprint canvas'
+    },
+    posY: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'Y position on blueprint canvas'
+    },
+    warehouse_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'Foreign key to warehouse'
+    },
+    visual_width: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'Visual width on canvas'
+    },
+    visual_height: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'Visual height on canvas'
+    },
+    rotation: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: 0,
+      comment: 'Rotation angle in degrees'
     }
   }, {
     tableName: 'warehouse_racks',
     timestamps: true,
     indexes: [
-      { fields: ['sort_order'] }
+      { fields: ['sort_order'] },
+      { fields: ['warehouse_id'] }
     ]
   });
   return WarehouseRack;
