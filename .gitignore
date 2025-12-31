@@ -86,6 +86,9 @@ web_modules/
 .env.production.local
 .env.local
 
+# Server access credentials (sensitive)
+.eck/SERVER_ACCESS.md
+
 # IDE and editor files
 .idea/
 .vscode/
