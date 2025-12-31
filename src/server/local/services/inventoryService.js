@@ -65,6 +65,19 @@ class InventoryService {
         await this.update(type, id, { [field]: array });
         return array;
     }
+
+    async getAll(type) {
+        const model = this._getModel(type);
+        const records = await model.findAll();
+        return records.map(r => ({ ...r.data, id: r.id, class: r.class }));
+    }
+
+    async queryJson(type, filterFn) {
+        // Note: For performance on large datasets, specific SQL queries should be used instead of this
+        // This is a compatibility layer for complex legacy filtering
+        const all = await this.getAll(type);
+        return all.filter(filterFn);
+    }
 }
 
 module.exports = new InventoryService();

@@ -174,49 +174,51 @@ router.post('/api/devices/:id/layout', async (req, res) => {
     }
 });
 
-// Get all items with issues
-router.get('/items/issues', (req, res) => {
-    const itemsWithIssues = [];
+// Get all items with issues (Refactored for DB)
+router.get('/items/issues', async (req, res) => {
+    const { sequelize } = require('../../../shared/models/postgresql');
+    // Use optimized JSONB query
+    const [results] = await sequelize.query(`
+        SELECT id, data
+        FROM items
+        WHERE EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(data->'actn') as action
+            WHERE action->>0 IN ('check', 'cause', 'result')
+        )
+    `);
 
-    global.items.forEach((item, key) => {
-        if (item.actn && item.actn.some(action => ['check', 'cause', 'result'].includes(action[0]))) {
-            itemsWithIssues.push({
-                id: key,
-                serialNumber: key.startsWith('i7') ? key.slice(-7) : key,
-                model: item.cl || 'Unknown',
-                actions: item.actn || [],
-                location: item.loc && item.loc.length > 0 ? item.loc[item.loc.length - 1] : null
-            });
-        }
-    });
+    const itemsWithIssues = results.map(row => ({
+        id: row.id,
+        serialNumber: row.id.startsWith('i7') ? row.id.slice(-7) : row.id,
+        model: row.data.cl || 'Unknown',
+        actions: row.data.actn || [],
+        location: row.data.loc && row.data.loc.length > 0 ? row.data.loc[row.data.loc.length - 1] : null
+    }));
 
     res.json(itemsWithIssues);
 });
 
-// Get all boxes currently in processing
-router.get('/boxes/processing', (req, res) => {
-    const processingBoxes = [];
+// Get processing boxes
+router.get('/boxes/processing', async (req, res) => {
+    const { sequelize } = require('../../../shared/models/postgresql');
+    // Find boxes that have IN location (p...30) but no OUT location (p...60)
+    // This is complex in JSONB, doing hybrid approach
+    const boxes = await require('../services/inventoryService').getAll('box');
 
-    global.boxes.forEach((box, key) => {
-        let packIn = false;
-        let packOut = false;
-
-        box.loc?.forEach((locElement) => {
-            if (locElement[0] === 'p000000000000000030') packIn = locElement[1];
-            if (locElement[0] === 'p000000000000000060') packOut = locElement[1];
+    const processingBoxes = boxes.filter(box => {
+        let packIn = false, packOut = false;
+        box.loc?.forEach(l => {
+            if (l[0] === 'p000000000000000030') packIn = l[1];
+            if (l[0] === 'p000000000000000060') packOut = l[1];
         });
-
-        // Box is in processing if it has been packed in but not packed out
-        if (packIn && !packOut) {
-            processingBoxes.push({
-                id: key,
-                serialNumber: key.replace(/^b0+/, ''),
-                inDate: packIn,
-                contents: box.cont || [],
-                linkedOrders: box.in?.filter(link => link[0].startsWith('o')) || []
-            });
-        }
-    });
+        return packIn && !packOut;
+    }).map(box => ({
+        id: box.id,
+        serialNumber: box.id.replace(/^b0+/, ''),
+        contents: box.cont || [],
+        linkedOrders: box.in?.filter(link => link[0].startsWith('o')) || []
+    }));
 
     res.json(processingBoxes);
 });
