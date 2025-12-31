@@ -7,3 +7,7 @@
 ## AI / Server
 - **Prompt Tuning**: The `agentPrompt.js` is V1. Needs refinement based on real-world usage data.
 - **Tool Error Handling**: If the database is locked, the AI might hallucinate success. Needs better error propagation from tools.
+
+## Resolved
+- **Inventory Storage**: Migrated from in-memory maps (legacy) to PostgreSQL (Phase 4 complete). All Items, Boxes, and Places are now DB-backed.
+- **Read/Write Split**: Resolved. Single source of truth is now the database.
