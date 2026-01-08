@@ -85,7 +85,7 @@ location ~* \.(?:css|js|png|jpg|jpeg|webp|avif|gif|ico|svg|woff|woff2|ttf|eot)$ 
 
 # 2. Явно обрабатываем HTML файлы - отправляем их на Node.js
 location ~* \.html$ {
-    proxy_pass http://localhost:3000;
+    proxy_pass http://localhost:3100;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection 'upgrade';
@@ -111,7 +111,7 @@ location /ECK/ {
 
 # 3. Все остальные запросы проксируем на Node.js
 location / {
-    proxy_pass http://localhost:3000;
+    proxy_pass http://localhost:3100;
     proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -212,11 +212,11 @@ location ~* \.(?:css|js|png|jpg|jpeg|webp|avif|gif|ico|svg|woff|woff2|ttf|eot)$ 
 #### 2. HTML файлы
 ```nginx
 location ~* \.html$ {
-    proxy_pass http://localhost:3000;
+    proxy_pass http://localhost:3100;
     # ... proxy headers ...
 }
 ```
-- Проксируются на Node.js сервер (порт 3000)
+- Проксируются на Node.js сервер (порт 3100)
 - Вероятно, для SSR или динамической генерации
 
 #### 3. **eckWMS Global Server** (КРИТИЧНО)
@@ -243,7 +243,7 @@ location /ECK/ {
 #### 4. Все остальные запросы
 ```nginx
 location / {
-    proxy_pass http://localhost:3000;
+    proxy_pass http://localhost:3100;
     # ... proxy headers ...
 }
 ```
@@ -344,7 +344,7 @@ systemctl reload nginx
 # Проверка активных портов
 netstat -tulpn | grep nginx
 netstat -tulpn | grep 8080
-netstat -tulpn | grep 3000
+netstat -tulpn | grep 3100
 
 # Тест endpoints
 curl -I https://pda.repair/ECK/HEALTH

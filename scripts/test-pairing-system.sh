@@ -70,13 +70,13 @@ echo ""
 
 # 4. Check if servers are running
 echo "4. Проверка запущенных серверов..."
-LOCAL_RUNNING=$(lsof -ti:3000 2>/dev/null)
+LOCAL_RUNNING=$(lsof -ti:3100 2>/dev/null)
 GLOBAL_RUNNING=$(lsof -ti:8080 2>/dev/null)
 
 if [ -n "$LOCAL_RUNNING" ]; then
-    print_status 0 "Локальный сервер работает (порт 3000, PID: $LOCAL_RUNNING)"
+    print_status 0 "Локальный сервер работает (порт 3100, PID: $LOCAL_RUNNING)"
 else
-    print_status 1 "Локальный сервер НЕ работает (порт 3000)"
+    print_status 1 "Локальный сервер НЕ работает (порт 3100)"
 fi
 
 if [ -n "$GLOBAL_RUNNING" ]; then
@@ -122,8 +122,8 @@ fi
 echo -e "${YELLOW}Следующие шаги для тестирования:${NC}"
 echo ""
 echo "1. Запустите оба сервера (если еще не запущены)"
-echo "2. Войдите в систему как администратор: http://localhost:3000/auth/login"
-echo "3. Перейдите на страницу подключения: http://localhost:3000/admin/pairing"
+echo "2. Войдите в систему как администратор: http://localhost:3100/auth/login"
+echo "3. Перейдите на страницу подключения: http://localhost:3100/admin/pairing"
 echo "4. Нажмите 'Generate New QR Code'"
 echo "5. Проверьте, что QR код появился и статус показывает 'ONLINE'"
 echo ""
