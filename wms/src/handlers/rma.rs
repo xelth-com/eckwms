@@ -253,6 +253,7 @@ pub async fn search_orders(
                  FROM order
                  WHERE issue_description @1@ $q_text
                     OR order_number @1@ $q_text
+                    OR customer_name @1@ $q_text
                  ORDER BY score DESC LIMIT 10",
             )
             .bind(("q_text", payload.query.clone()))
@@ -261,25 +262,63 @@ pub async fn search_orders(
             .take(0)
             .map_err(db_err)?
     } else {
-        // Hybrid: BM25 + Cosine similarity
-        state
+        // Hybrid: separate BM25 + cosine queries, merged with RRF in Rust.
+        // SurrealDB 3.x doesn't support KNN mixed with BM25 in one WHERE,
+        // and search::rrf() is not available in v3.0.4.
+        let mut response = state
             .db
             .query(
-                "SELECT *,
-                    (vector::similarity::cosine(embedding, $q_vector) * 0.7)
-                    + (search::score(1) * 0.3) AS score
+                "SELECT *, search::score(1) AS _bm25
                  FROM order
                  WHERE issue_description @1@ $q_text
                     OR order_number @1@ $q_text
-                    OR embedding <|10|> $q_vector
-                 ORDER BY score DESC LIMIT 10",
+                    OR customer_name @1@ $q_text
+                 ORDER BY _bm25 DESC LIMIT 10;
+
+                 SELECT *, vector::similarity::cosine(embedding, $q_vector) AS _vec
+                 FROM order
+                 WHERE embedding IS NOT NONE
+                 ORDER BY _vec DESC LIMIT 10;",
             )
             .bind(("q_text", payload.query.clone()))
             .bind(("q_vector", q_vector))
             .await
-            .map_err(db_err)?
-            .take(0)
-            .map_err(db_err)?
+            .map_err(db_err)?;
+
+        let bm25_hits: Vec<Value> = response.take(0).map_err(db_err)?;
+        let vec_hits: Vec<Value> = response.take(1).map_err(db_err)?;
+
+        // Reciprocal Rank Fusion: score = sum(1 / (k + rank)) across both lists
+        const K: f64 = 60.0;
+        let mut scores: std::collections::HashMap<String, (Value, f64)> =
+            std::collections::HashMap::new();
+
+        for (rank, mut val) in bm25_hits.into_iter().enumerate() {
+            let id = val.as_object().and_then(|o| o.get("id"))
+                .map(|v| v.to_string()).unwrap_or_default();
+            if let Some(obj) = val.as_object_mut() { obj.remove("_bm25"); }
+            let entry = scores.entry(id).or_insert((val, 0.0));
+            entry.1 += 1.0 / (K + rank as f64 + 1.0);
+        }
+
+        for (rank, mut val) in vec_hits.into_iter().enumerate() {
+            let id = val.as_object().and_then(|o| o.get("id"))
+                .map(|v| v.to_string()).unwrap_or_default();
+            if let Some(obj) = val.as_object_mut() { obj.remove("_vec"); }
+            let entry = scores.entry(id).or_insert((val, 0.0));
+            entry.1 += 1.0 / (K + rank as f64 + 1.0);
+        }
+
+        let mut merged: Vec<(Value, f64)> = scores.into_values().collect();
+        merged.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        merged.truncate(10);
+
+        merged.into_iter().map(|(mut val, score)| {
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("score".to_string(), serde_json::Value::from(score));
+            }
+            val
+        }).collect()
     };
 
     // Strip embedding from response to reduce payload size

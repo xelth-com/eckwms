@@ -147,6 +147,7 @@ async fn main() -> Result<(), anyhow::Error> {
          DEFINE ANALYZER IF NOT EXISTS custom_analyzer TOKENIZERS blank,class,camel,punct FILTERS lowercase,ascii;
          DEFINE INDEX IF NOT EXISTS issue_bm25 ON order FIELDS issue_description SEARCH ANALYZER custom_analyzer BM25;
          DEFINE INDEX IF NOT EXISTS order_number_bm25 ON order FIELDS order_number SEARCH ANALYZER custom_analyzer BM25;
+         DEFINE INDEX IF NOT EXISTS customer_name_bm25 ON order FIELDS customer_name SEARCH ANALYZER custom_analyzer BM25;
 
          -- Graph: location ─contains→ rack
          DEFINE TABLE IF NOT EXISTS contains TYPE RELATION IN location OUT rack;
@@ -157,7 +158,29 @@ async fn main() -> Result<(), anyhow::Error> {
          DEFINE FIELD embedding ON document TYPE option<array<float>>;
          DEFINE INDEX IF NOT EXISTS document_embedding ON document FIELDS embedding
              HNSW DIMENSION 768 DIST COSINE TYPE F32;
-         DEFINE INDEX IF NOT EXISTS doc_content_bm25 ON document FIELDS payload.content SEARCH ANALYZER custom_analyzer BM25;",
+         DEFINE INDEX IF NOT EXISTS doc_content_bm25 ON document FIELDS payload.content SEARCH ANALYZER custom_analyzer BM25;
+
+         -- Vector + BM25 indexes for partner (360-degree view)
+         DEFINE FIELD IF NOT EXISTS embedding ON partner TYPE option<array<float>>;
+         DEFINE INDEX IF NOT EXISTS partner_embedding ON partner FIELDS embedding
+             HNSW DIMENSION 768 DIST COSINE TYPE F32;
+         DEFINE INDEX IF NOT EXISTS partner_name_bm25 ON partner FIELDS name SEARCH ANALYZER custom_analyzer BM25;
+         DEFINE INDEX IF NOT EXISTS partner_email_bm25 ON partner FIELDS email SEARCH ANALYZER custom_analyzer BM25;
+
+         -- Vector + BM25 indexes for product (360-degree view)
+         DEFINE FIELD IF NOT EXISTS embedding ON product TYPE option<array<float>>;
+         DEFINE INDEX IF NOT EXISTS product_embedding ON product FIELDS embedding
+             HNSW DIMENSION 768 DIST COSINE TYPE F32;
+         DEFINE INDEX IF NOT EXISTS product_name_bm25 ON product FIELDS name SEARCH ANALYZER custom_analyzer BM25;
+         DEFINE INDEX IF NOT EXISTS product_code_bm25 ON product FIELDS default_code SEARCH ANALYZER custom_analyzer BM25;
+         DEFINE INDEX IF NOT EXISTS product_barcode_bm25 ON product FIELDS barcode SEARCH ANALYZER custom_analyzer BM25;
+
+         -- Vector + BM25 indexes for picking / delivery (360-degree view)
+         DEFINE FIELD IF NOT EXISTS embedding ON picking TYPE option<array<float>>;
+         DEFINE INDEX IF NOT EXISTS picking_embedding ON picking FIELDS embedding
+             HNSW DIMENSION 768 DIST COSINE TYPE F32;
+         DEFINE INDEX IF NOT EXISTS picking_tracking_bm25 ON picking FIELDS tracking_number SEARCH ANALYZER custom_analyzer BM25;
+         DEFINE INDEX IF NOT EXISTS picking_recipient_bm25 ON picking FIELDS recipient_name SEARCH ANALYZER custom_analyzer BM25;",
     )
     .await?;
 
@@ -384,6 +407,7 @@ async fn migrate_products(pg: &sqlx::PgPool, sdb: &db::SurrealDb) -> Result<(), 
                 "standard_price": r.standard_price,
                 "weight": r.weight,
                 "volume": r.volume,
+                "embedding_status": "pending",
             }))
             .await?;
     }
@@ -416,6 +440,7 @@ async fn migrate_partners(pg: &sqlx::PgPool, sdb: &db::SurrealDb) -> Result<(), 
                 "vat": r.vat,
                 "company_type": r.company_type,
                 "is_company": r.is_company.unwrap_or(false),
+                "embedding_status": "pending",
             }))
             .await?;
     }

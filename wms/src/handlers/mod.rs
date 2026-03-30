@@ -14,4 +14,5 @@ pub mod proofs;
 pub mod rma;
 pub mod users;
 pub mod warehouse;
+pub mod support;
 pub mod ws;
