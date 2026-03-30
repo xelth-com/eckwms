@@ -1,0 +1,14 @@
+/target
+**/node_modules
+**/build
+!wms/web/build
+**/.svelte-kit
+**/.eck
+*.db
+data/
+.env
+Cargo.lock
+
+# Added by eck-snapshot to ignore metadata directory
+.eck/
+.mcp.json
