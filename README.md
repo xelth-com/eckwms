@@ -26,7 +26,15 @@ We use AI (Google Gemini) extensively, but in enterprise environments, AI needs 
 * **Hybrid Search:** Combines BM25 full-text search with Gemini 768-dim Vector Embeddings for unparalleled RMA/repair issue matching.
 * **Immutable AI Actions:** Every autonomous AI decision (prompt, reasoning, output) is SHA-256 hashed and sealed on the **Hedera Hashgraph Consensus Service (HCS)**. This provides cryptographic proof of the AI's actions, satisfying strict German fiscal compliance (GoBD / Festschreibung).
 
-### 4. The Enterprise Vision: Extending Twenty CRM to a Full ERP
+### 4. Zero-Knowledge AI Search (GDPR & Privacy-Preserving)
+Sending raw customer data (PII) to cloud AI models violates strict European privacy laws. eckWMS implements a mathematical **Privacy-Preserving Record Linkage (PPRL)** pipeline to achieve "Zero-Knowledge" semantic search.
+* **Local PII Extraction:** Names and addresses are isolated before vectorization.
+* **Keyed SimHash:** PII is passed through a deterministic, collision-resistant LSH algorithm peppered with a cryptographic `SYNC_SECRET` (SHA-256 over character bigrams).
+* **Secure Embeddings:** Google Gemini processes clean text with obfuscated tokens (e.g., `Name_CC0068898836CB06`). The real identity never leaves your server.
+
+This mathematically guarantees that customer identities never reach third-party AI providers in plaintext, while preserving the AI's ability to perform semantic vector search and match entities even with typos. See the math behind it in [PPRL_ARCHITECTURE.md](.eck/PPRL_ARCHITECTURE.md).
+
+### 5. The Enterprise Vision: Extending Twenty CRM to a Full ERP
 While eckWMS serves as the operational high-speed edge, it is built to integrate. Our strategic vision is to bidirectionally sync with modern, open-source CRMs like **Twenty CRM**. 
 By handling the heavy lifting of inventory (quants, pickings, move lines), hardware repair tracking, and fiscal compliance, **eckWMS effectively extends Twenty CRM into a complete, enterprise-grade ERP ecosystem** without the bloat of legacy systems.
 

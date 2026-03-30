@@ -52,6 +52,19 @@ async fn main() {
         .await
         .expect("Failed to connect to SurrealDB");
 
+    // Ensure search indexes exist (idempotent)
+    if let Err(e) = db
+        .query(
+            "DEFINE ANALYZER IF NOT EXISTS custom_analyzer TOKENIZERS blank,class,camel,punct FILTERS lowercase,ascii;
+             DEFINE INDEX IF NOT EXISTS issue_bm25 ON order FIELDS issue_description SEARCH ANALYZER custom_analyzer BM25;
+             DEFINE INDEX IF NOT EXISTS order_number_bm25 ON order FIELDS order_number SEARCH ANALYZER custom_analyzer BM25;
+             DEFINE INDEX IF NOT EXISTS customer_name_bm25 ON order FIELDS customer_name SEARCH ANALYZER custom_analyzer BM25;",
+        )
+        .await
+    {
+        tracing::warn!("Failed to ensure search indexes: {}", e);
+    }
+
     // Mesh Sync
     use eck_core::utils::identity::{ensure_uuid_instance_id, compute_mesh_id};
     let raw_id = std::env::var("INSTANCE_ID").unwrap_or_default();
@@ -111,13 +124,28 @@ async fn main() {
     if let Ok(gemini_key) = std::env::var("GEMINI_API_KEY") {
         if !gemini_key.is_empty() {
             let emb_db = db.clone();
-            tokio::spawn(ai::embeddings::start_embedding_worker(emb_db, gemini_key));
-            info!("Embedding worker spawned");
+            let sum_db = db.clone();
+            let sum_key = gemini_key.clone();
+            let gen_model = std::env::var("GEMINI_GENERATION_MODEL")
+                .unwrap_or_else(|_| "gemini-3.1-flash-lite-preview".to_string());
+            let emb_model = std::env::var("GEMINI_EMBEDDING_MODEL")
+                .unwrap_or_else(|_| "gemini-embedding-2-preview".to_string());
+            tokio::spawn(ai::embeddings::start_embedding_worker(emb_db, gemini_key, gen_model.clone(), emb_model));
+            tokio::spawn(ai::summarization::start_summarization_worker(sum_db, sum_key, gen_model));
+            info!("Embedding + Summarization workers spawned");
         } else {
-            warn!("GEMINI_API_KEY is empty — embedding worker disabled");
+            warn!("GEMINI_API_KEY is empty — AI workers disabled");
         }
     } else {
-        warn!("GEMINI_API_KEY not set — embedding worker disabled");
+        warn!("GEMINI_API_KEY not set — AI workers disabled");
+    }
+
+    // Spawn scraper scheduler (hourly: OPAL/DHL/Zoho, daily 06:00: Excel/Exact Online)
+    {
+        let sched_db = db.clone();
+        let sched_iid = instance_id.clone();
+        tokio::spawn(services::scheduler::start_cron_jobs(sched_db, sched_iid));
+        info!("Scraper scheduler spawned");
     }
 
     let jwt_secret = std::env::var("JWT_SECRET")
@@ -246,6 +274,9 @@ async fn main() {
         .route("/files/attachments", get(handlers::files::list_attachments))
         .route("/files/attach", post(handlers::files::attach))
         .route("/files/attachments/{edge_id}", delete(handlers::files::detach))
+        // Support (Zoho Desk import)
+        .route("/support/import-ticket", post(handlers::support::import_ticket))
+        .route("/support/import-thread", post(handlers::support::import_thread))
         // Auth (protected)
         .route("/auth/me", get(handlers::auth::me))
         .route_layer(axum_mw::from_fn_with_state(app_state.clone(), middleware::auth::auth_middleware));
