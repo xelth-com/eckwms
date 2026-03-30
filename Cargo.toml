@@ -1,0 +1,3 @@
+[workspace]
+members = ["core", "wms", "relay", "compliance", "migrator"]
+resolver = "2"
