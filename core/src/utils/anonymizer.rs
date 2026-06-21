@@ -7,7 +7,18 @@ use regex::Regex;
 /// enabling privacy-preserving record linkage (PPRL).
 /// The pepper prevents dictionary attacks on the hash tokens.
 fn simhash(text: &str) -> u64 {
-    let pepper = std::env::var("SYNC_SECRET").unwrap_or_else(|_| "eck_default_pepper".to_string());
+    // The pepper MUST come from SYNC_SECRET — there is deliberately NO fallback
+    // default. A known/public pepper makes the obfuscated PII tokens reversible
+    // by dictionary attack (hash candidate names with the known pepper, match
+    // tokens), which would void the Zero-Knowledge / "PII never leaves in
+    // plaintext" guarantee. Fail closed rather than ship reversible anonymisation.
+    let pepper = std::env::var("SYNC_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .expect(
+            "SYNC_SECRET (PPRL pepper) is unset — refusing to anonymise PII with a \
+             publicly-known default pepper (it would be reversible). Set SYNC_SECRET.",
+        );
     let lower = text.to_lowercase();
     let chars: Vec<char> = lower.chars().collect();
 

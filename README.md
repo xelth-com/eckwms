@@ -89,7 +89,10 @@ cargo run -p wms
 * `PORT`: HTTP listen port (default: `3210`)
 * `SURREAL_DB_PATH`: Path to the database folder (default: `data/wms.db`)
 * `GEMINI_API_KEY`: Required for Hybrid Vector Search & AI features.
-* `SYNC_SECRET`: 32-byte hex key for P2P mesh network joining.
+* `SYNC_SECRET`: 32-byte hex key for P2P mesh network joining. **Also the PPRL
+  pepper for PII anonymisation — it is therefore REQUIRED when AI features are
+  enabled.** The server refuses to start AI without it rather than fall back to a
+  public default pepper (which would make the anonymised PII tokens reversible).
 
 *On first startup, the system will automatically generate a temporary `setup-admin` account and print the credentials to the console.*
 

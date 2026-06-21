@@ -348,6 +348,17 @@ async fn async_main() {
         // pinned bearer, for managed). The managed bearer itself is minted
         // lazily inside each worker cycle — see AiAuth::resolve.
         if eck_core::ai::AiAuth::is_enabled_in_env() {
+            // PPRL anonymisation peppers PII with SYNC_SECRET before any cloud AI
+            // call. Without it the pepper falls back to a public default and the
+            // masking becomes reversible — refuse to run AI without SYNC_SECRET
+            // rather than ship a false privacy guarantee. (Same fail-fast style as
+            // the GEMINI_* expects below.)
+            assert!(
+                sync_secret.is_some(),
+                "AI is configured (AiAuth) but SYNC_SECRET is unset — refusing to start: \
+                 PPRL anonymisation would use a publicly-known default pepper and be \
+                 reversible. Set SYNC_SECRET to enable AI."
+            );
             let emb_db = db.clone();
             let sum_db = db.clone();
             let gen_model = std::env::var("GEMINI_GENERATION_MODEL")
