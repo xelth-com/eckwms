@@ -46,6 +46,22 @@ pub async fn submit_proof(
         payload.hedera_timestamp = Some(receipt.consensus_timestamp);
     }
 
+    // Capture audit fields before `payload` is moved into the DB write.
+    let audit_action = format!("proof.{}", payload.proof_type);
+    let audit_summary = format!(
+        "Proof {} on {}:{} by device {}",
+        payload.proof_type, payload.entity_type, payload.entity_id, payload.device_id
+    );
+    let audit_payload = json!({
+        "entity_type": payload.entity_type,
+        "entity_id": payload.entity_id,
+        "proof_type": payload.proof_type,
+        "device_id": payload.device_id,
+        "verified_by": payload.verified_by,
+        "content_hash": content_hash,
+    });
+    let audit_actor = payload.device_id.clone();
+
     // 4. Save to SurrealDB
     let doc_id = Uuid::new_v4().to_string();
     let created: Option<Value> = state
@@ -54,6 +70,19 @@ pub async fn submit_proof(
         .content(payload)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 5. Tamper-evident audit chain (best-effort; never fails the proof write).
+    eck_core::audit::append_soft(
+        &state.db,
+        &state.server_identity,
+        &eck_core::audit::wms_chain(&state.instance_id),
+        &audit_actor,
+        &audit_action,
+        eck_core::audit::class::MUTATE,
+        &audit_summary,
+        audit_payload,
+    )
+    .await;
 
     match created {
         Some(v) => Ok((StatusCode::CREATED, Json(v))),

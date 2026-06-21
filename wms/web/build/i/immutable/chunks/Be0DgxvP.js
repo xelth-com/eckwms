@@ -1,1 +1,0 @@
-import{a9 as d}from"./BDgw1cfa.js";function f(){const{subscribe:i,update:o}=d([]);return{subscribe:i,add:(e,r="info",t=3e3)=>{const s=Date.now()+Math.random(),n={id:s,message:e,type:r};o(a=>[...a,n]),t>0&&setTimeout(()=>{o(a=>a.filter(c=>c.id!==s))},t)},remove:e=>{o(r=>r.filter(t=>t.id!==e))}}}const u=f();export{u as t};

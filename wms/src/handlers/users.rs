@@ -6,7 +6,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::AppState;
 
@@ -42,7 +42,7 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<Value>>, (StatusCode, String)> {
     let mut result = state
-        .db
+        .users_db
         .query(
             "SELECT record::id(id) AS id, username, email, name, role, isActive, \
              pin != '' AND pin IS NOT NONE AS hasPin, \
@@ -86,7 +86,7 @@ pub async fn create(
 
     // CREATE + SELECT in one query to avoid Thing serialization and timing issues
     let mut result = state
-        .db
+        .users_db
         .query(
             "CREATE user SET
                 username = $username,
@@ -132,50 +132,9 @@ pub async fn create(
     super::auth::cleanup_setup_account(&state).await;
     info!("New user '{}' created, setup account cleanup triggered", username);
 
-    // Push new user to mesh peers via relay
-    if let Some(ref user_data) = created {
-        let entity_id = user_data.get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        // Strip sensitive fields and normalize SurrealDB types before syncing
-        let mut sync_payload = user_data.clone();
-        if let Some(obj) = sync_payload.as_object_mut() {
-            obj.remove("password");
-            obj.remove("pin");
-            // Ensure `role` is a plain string, not a SurrealDB internal enum wrapper
-            if let Some(role_val) = obj.get("role") {
-                if let Some(role_str) = role_val.as_str() {
-                    obj.insert("role".to_string(), serde_json::json!(role_str.to_string()));
-                }
-            }
-            // Ensure `id` is a plain string
-            if let Some(id_val) = obj.get("id") {
-                if let Some(id_str) = id_val.as_str() {
-                    obj.insert("id".to_string(), serde_json::json!(id_str.to_string()));
-                }
-            }
-        }
-        // Record in sync outbox — the background P2P sync worker will push to peers
-        if let Err(e) = state
-            .db
-            .query(
-                "INSERT INTO sync_outbox { \
-                    entity_type: 'user', \
-                    entity_id: $eid, \
-                    payload: $data, \
-                    error_count: 0, \
-                    next_attempt_at: time::now(), \
-                    created_at: time::now() \
-                }",
-            )
-            .bind(("eid", entity_id.clone()))
-            .bind(("data", sync_payload))
-            .await
-        {
-            warn!("Outbox insert failed for user '{}': {}", username, e);
-        }
-    }
+    // Users do NOT sync across the mesh. The `user` table lives in
+    // `users_db` (Zone 1, PII) and is local to each node by design.
+    // Each kiosk holds its own local operator accounts; no relay-push.
 
     Ok((
         StatusCode::CREATED,
@@ -195,7 +154,7 @@ pub async fn update(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     // Verify user exists
     let exists: Option<Value> = state
-        .db
+        .users_db
         .query("SELECT record::id(id) AS id FROM user WHERE record::id(id) = $id AND deleted_at IS NONE LIMIT 1")
         .bind(("id", id.clone()))
         .await
@@ -244,7 +203,7 @@ pub async fn update(
     }
 
     state
-        .db
+        .users_db
         .query("UPDATE user MERGE $data WHERE record::id(id) = $id AND deleted_at IS NONE")
         .bind(("id", id.clone()))
         .bind(("data", update_obj))
@@ -263,7 +222,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let mut result = state
-        .db
+        .users_db
         .query(
             "UPDATE user SET deleted_at = time::now(), updatedAt = time::now() \
              WHERE record::id(id) = $id AND deleted_at IS NONE",

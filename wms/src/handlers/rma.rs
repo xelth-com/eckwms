@@ -53,6 +53,11 @@ pub async fn list_orders(
 }
 
 /// GET /api/rma/:id — get a single order
+///
+/// Cache-mode aware: on a local miss, the cache pulls the row from a full
+/// peer (transparent pull-through). Touch the cache row on every hit so the
+/// LRU evictor sees activity. See [`crate::AppState::node_role`] for the
+/// per-node role flag.
 pub async fn get_order(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -63,10 +68,24 @@ pub async fn get_order(
         .await
         .map_err(db_err)?;
 
-    match order {
-        Some(v) => Ok(Json(v)),
-        None => Err((StatusCode::NOT_FOUND, format!("Order '{id}' not found"))),
+    if let Some(v) = order {
+        // Cache hit (or full-peer hit) — bump LRU access bit. Cheap UPSERT
+        // on cache nodes; no-op on full peers since `is_cache=true` filter
+        // never matches.
+        if state.node_role == "cache" {
+            state.sync_engine.touch_cache("order", &id).await;
+        }
+        return Ok(Json(v));
     }
+
+    // Local miss. On a cache node, try pulling from a full peer.
+    if state.node_role == "cache" {
+        if let Some(v) = state.sync_engine.pull_entity_on_demand("order", &id).await {
+            return Ok(Json(v));
+        }
+    }
+
+    Err((StatusCode::NOT_FOUND, format!("Order '{id}' not found")))
 }
 
 #[derive(Deserialize, Default)]
@@ -232,10 +251,8 @@ pub async fn search_orders(
         return Ok(Json(vec![]));
     }
 
-    let api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
-
-    // Get real embedding for the query via Gemini
-    let q_vector = match crate::ai::embeddings::embed_query(&api_key, &payload.query).await {
+    // Get real embedding for the query via Gemini (embed_query self-resolves auth).
+    let q_vector = match crate::ai::embeddings::embed_query(&payload.query).await {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("Embedding query failed ({}), falling back to BM25-only", e);
@@ -243,82 +260,88 @@ pub async fn search_orders(
         }
     };
 
+    // SurrealDB v3 BM25: @N@ operator doesn't support bind variables,
+    // and multi-word queries use AND semantics. We tokenize the query
+    // into individual terms, each becoming a separate ranked list for RRF.
+    let terms: Vec<String> = payload.query
+        .split_whitespace()
+        .filter(|t| t.len() > 2)
+        .map(|t| t.replace('\'', "''").replace('\\', "\\\\"))
+        .collect();
+
     let results: Vec<Value> = if q_vector.is_empty() {
-        // BM25-only fallback when embedding is unavailable
+        // BM25-only fallback: OR all term/field combinations with @@
+        let bm25_where = if terms.is_empty() {
+            let safe_q = payload.query.replace('\'', "''").replace('\\', "\\\\");
+            format!("issue_description @@ '{safe_q}' OR order_number @@ '{safe_q}' OR customer_name @@ '{safe_q}'")
+        } else {
+            terms.iter()
+                .flat_map(|term| [
+                    format!("issue_description @@ '{term}'"),
+                    format!("customer_name @@ '{term}'"),
+                    format!("order_number @@ '{term}'"),
+                ])
+                .collect::<Vec<_>>()
+                .join(" OR ")
+        };
         state
             .db
-            .query(
-                "SELECT *,
-                    search::score(1) AS score
-                 FROM order
-                 WHERE issue_description @1@ $q_text
-                    OR order_number @1@ $q_text
-                    OR customer_name @1@ $q_text
-                 ORDER BY score DESC LIMIT 10",
-            )
-            .bind(("q_text", payload.query.clone()))
+            .query(&format!(
+                "SELECT * FROM order WHERE {bm25_where} LIMIT 10"
+            ))
             .await
             .map_err(db_err)?
             .take(0)
             .map_err(db_err)?
     } else {
-        // Hybrid: separate BM25 + cosine queries, merged with RRF in Rust.
-        // SurrealDB 3.x doesn't support KNN mixed with BM25 in one WHERE,
-        // and search::rrf() is not available in v3.0.4.
+        // Hybrid search: per-term BM25 + Vector via native SurrealDB RRF
+        let mut let_stmts = Vec::new();
+        let mut rrf_vars = vec!["$vec_results".to_string()];
+
+        let_stmts.push(
+            "LET $vec_results = SELECT id, vector::distance::knn() AS distance FROM order WHERE embedding <|10,100|> $query_emb".to_string()
+        );
+
+        for (i, term) in terms.iter().enumerate() {
+            let r1 = i * 3 + 1;
+            let r2 = i * 3 + 2;
+            let r3 = i * 3 + 3;
+            let vi = format!("$bm25_i{i}");
+            let vn = format!("$bm25_n{i}");
+            let vo = format!("$bm25_o{i}");
+            let_stmts.push(format!(
+                "LET {vi} = SELECT id, search::score({r1}) AS s FROM order WHERE issue_description @{r1}@ '{term}' ORDER BY s DESC"
+            ));
+            let_stmts.push(format!(
+                "LET {vn} = SELECT id, search::score({r2}) AS s FROM order WHERE customer_name @{r2}@ '{term}' ORDER BY s DESC"
+            ));
+            let_stmts.push(format!(
+                "LET {vo} = SELECT id, search::score({r3}) AS s FROM order WHERE order_number @{r3}@ '{term}' ORDER BY s DESC"
+            ));
+            rrf_vars.push(vi);
+            rrf_vars.push(vn);
+            rrf_vars.push(vo);
+        }
+
+        let rrf_array = rrf_vars.join(", ");
+        let total_stmts = let_stmts.len() + 1 + 1; // + RRF LET + final SELECT
+        let final_idx = total_stmts - 1;
+
+        let sql = format!(
+            "{stmts};\
+             LET $hybrid = search::rrf([{rrf_array}], 10, 60);\
+             SELECT * FROM $hybrid.id;",
+            stmts = let_stmts.join(";\n")
+        );
+
         let mut response = state
             .db
-            .query(
-                "SELECT *, search::score(1) AS _bm25
-                 FROM order
-                 WHERE issue_description @1@ $q_text
-                    OR order_number @1@ $q_text
-                    OR customer_name @1@ $q_text
-                 ORDER BY _bm25 DESC LIMIT 10;
-
-                 SELECT *, vector::similarity::cosine(embedding, $q_vector) AS _vec
-                 FROM order
-                 WHERE embedding IS NOT NONE
-                 ORDER BY _vec DESC LIMIT 10;",
-            )
-            .bind(("q_text", payload.query.clone()))
-            .bind(("q_vector", q_vector))
+            .query(&sql)
+            .bind(("query_emb", q_vector))
             .await
             .map_err(db_err)?;
 
-        let bm25_hits: Vec<Value> = response.take(0).map_err(db_err)?;
-        let vec_hits: Vec<Value> = response.take(1).map_err(db_err)?;
-
-        // Reciprocal Rank Fusion: score = sum(1 / (k + rank)) across both lists
-        const K: f64 = 60.0;
-        let mut scores: std::collections::HashMap<String, (Value, f64)> =
-            std::collections::HashMap::new();
-
-        for (rank, mut val) in bm25_hits.into_iter().enumerate() {
-            let id = val.as_object().and_then(|o| o.get("id"))
-                .map(|v| v.to_string()).unwrap_or_default();
-            if let Some(obj) = val.as_object_mut() { obj.remove("_bm25"); }
-            let entry = scores.entry(id).or_insert((val, 0.0));
-            entry.1 += 1.0 / (K + rank as f64 + 1.0);
-        }
-
-        for (rank, mut val) in vec_hits.into_iter().enumerate() {
-            let id = val.as_object().and_then(|o| o.get("id"))
-                .map(|v| v.to_string()).unwrap_or_default();
-            if let Some(obj) = val.as_object_mut() { obj.remove("_vec"); }
-            let entry = scores.entry(id).or_insert((val, 0.0));
-            entry.1 += 1.0 / (K + rank as f64 + 1.0);
-        }
-
-        let mut merged: Vec<(Value, f64)> = scores.into_values().collect();
-        merged.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        merged.truncate(10);
-
-        merged.into_iter().map(|(mut val, score)| {
-            if let Some(obj) = val.as_object_mut() {
-                obj.insert("score".to_string(), serde_json::Value::from(score));
-            }
-            val
-        }).collect()
+        response.take(final_idx).map_err(db_err)?
     };
 
     // Strip embedding from response to reduce payload size

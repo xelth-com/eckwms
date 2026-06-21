@@ -6,6 +6,12 @@
     let loading = false;
     let dumpData = [];
 
+    // --- Batch CSV Enrichment state ---
+    let csvFile = null;
+    let enrichLoading = false;
+    let enrichResults = [];
+    let enrichNote = '';
+
     // Prompt builder state
     let systemPrompt = `You are an expert technical support analyst for InBody devices.
 I will provide you with a log of our recent support tickets.
@@ -29,6 +35,45 @@ Here is the data:
             toastStore.add('Failed to fetch data: ' + e.message, 'error');
         } finally {
             loading = false;
+        }
+    }
+
+    function onCsvSelected(e) {
+        const files = e.target.files;
+        csvFile = files && files.length > 0 ? files[0] : null;
+        enrichResults = [];
+        enrichNote = '';
+    }
+
+    async function enrichCsv() {
+        if (!csvFile) {
+            toastStore.add('Select a .csv file first', 'warning');
+            return;
+        }
+        enrichLoading = true;
+        enrichResults = [];
+        enrichNote = '';
+        try {
+            const token = localStorage.getItem('auth_token');
+            const fd = new FormData();
+            fd.append('file', csvFile);
+            const res = await fetch('/api/ai/enrich-csv', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+                body: fd,
+            });
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(errText || `Request failed: ${res.status}`);
+            }
+            const data = await res.json();
+            enrichResults = data.results || [];
+            enrichNote = data.note || '';
+            toastStore.add(`Enriched ${enrichResults.length} rows`, 'success');
+        } catch (err) {
+            toastStore.add('Enrichment failed: ' + err.message, 'error');
+        } finally {
+            enrichLoading = false;
         }
     }
 
@@ -108,18 +153,56 @@ Here is the data:
             </div>
         </div>
 
-        <div class="card wip">
+        <div class="card">
             <div class="card-header">
-                <h2>Repair Statistics</h2>
-                <span class="badge wip-badge">WIP</span>
+                <h2>Batch Data Enrichment (CSV)</h2>
+                <span class="badge">Ready</span>
             </div>
             <p class="desc">
-                Future module: Will aggregate data from the <code>orders</code> table (Repairs) to show charts:
-                average labor hours, most replaced parts by device model, and warranty vs non-warranty ratios.
+                Upload a headerless CSV (one record per line). Each row is sent to a Gemini agent equipped with
+                <code>search_database</code>; the agent deduces location / device / issue and matches it against
+                our <code>order</code> and <code>document</code> tables. Review the AI's guesses before acting.
             </p>
-            <div class="placeholder-box">
-                Data Visualization coming soon...
+
+            <div class="controls">
+                <input type="file" accept=".csv,text/csv" on:change={onCsvSelected} disabled={enrichLoading} />
+                <button class="btn primary" on:click={enrichCsv} disabled={enrichLoading || !csvFile}>
+                    {enrichLoading ? 'Enriching…' : 'Enrich Data via AI'}
+                </button>
             </div>
+
+            {#if enrichNote}
+                <p class="record-count">{enrichNote}</p>
+            {/if}
+
+            {#if enrichResults.length > 0}
+                <div class="enrich-table-wrap">
+                    <table class="enrich-table">
+                        <thead>
+                            <tr>
+                                <th>Raw row</th>
+                                <th>Order #</th>
+                                <th>Customer</th>
+                                <th>Model</th>
+                                <th>Issue</th>
+                                <th>Conf.</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {#each enrichResults as r}
+                                <tr class:low-conf={(r.confidence_score ?? 0) < 0.4}>
+                                    <td class="mono">{r.original_line ?? ''}</td>
+                                    <td>{r.matched_order_number ?? '—'}</td>
+                                    <td>{r.matched_customer ?? '—'}</td>
+                                    <td>{r.device_model ?? '—'}</td>
+                                    <td>{r.issue_notes ?? '—'}</td>
+                                    <td>{r.confidence_score != null ? r.confidence_score.toFixed(2) : '—'}</td>
+                                </tr>
+                            {/each}
+                        </tbody>
+                    </table>
+                </div>
+            {/if}
         </div>
 
         <div class="card wip">
@@ -174,6 +257,14 @@ Here is the data:
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .placeholder-box { background: #121212; border: 1px dashed #444; border-radius: 4px; padding: 2rem; text-align: center; color: #666; font-style: italic; margin-top: auto; }
+
+    .controls input[type="file"] { color: #ccc; font-size: 0.85rem; }
+    .enrich-table-wrap { max-height: 420px; overflow: auto; border: 1px solid #333; border-radius: 4px; }
+    .enrich-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .enrich-table th, .enrich-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #2a2a2a; text-align: left; vertical-align: top; color: #ddd; }
+    .enrich-table th { background: #161616; color: #9ab; position: sticky; top: 0; }
+    .enrich-table tr.low-conf td { color: #999; }
+    .enrich-table .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #888; max-width: 280px; word-break: break-all; }
 
     @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
 </style>

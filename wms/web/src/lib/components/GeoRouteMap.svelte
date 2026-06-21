@@ -78,8 +78,9 @@
         // Initialize map
         map = window.L.map(mapContainer).setView([targetLat, targetLng], 7);
 
-        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors',
+        window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap &copy; CARTO',
+            subdomains: 'abcd',
             maxZoom: 18,
         }).addTo(map);
 
@@ -178,7 +179,11 @@
         border: 1px solid #333;
     }
 
-    .leaflet-map { width: 100%; height: 100%; }
+    .leaflet-map {
+        width: 100%;
+        height: 100%;
+        filter: brightness(1.25) contrast(1.15) saturate(1.1);
+    }
     .leaflet-map.hidden { visibility: hidden; }
 
     .map-loading, .map-error {

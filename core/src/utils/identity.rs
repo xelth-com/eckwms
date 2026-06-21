@@ -114,12 +114,52 @@ pub fn ensure_uuid_instance_id(raw: &str) -> String {
 }
 
 /// Compute mesh_id from SYNC_NETWORK_KEY.
-/// mesh_id = sha256(key)[:8 bytes] = 16 hex characters.
-/// All nodes sharing the same network key get the same mesh_id automatically.
+/// Derives a deterministic UUID from the first 16 bytes of the SHA256 hash.
+/// All nodes sharing the same network key get the same UUID automatically.
 pub fn compute_mesh_id(key: &str) -> String {
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(key.as_bytes());
-    hex::encode(&hash[..8])
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&hash[..16]);
+    uuid::Uuid::from_bytes(bytes).to_string()
+}
+
+/// Deterministic primary-node index for a mesh among the N paid service nodes
+/// (eck1/eck2/eck3): `sha256(mesh_id) % n`. Every party computes it locally, so
+/// a mesh knows its preferred home node without a coordinator — and load spreads
+/// across the nodes instead of everyone defaulting to the first. All nodes still
+/// serve any mesh that reaches them; this is preference/ordering only.
+pub fn compute_primary_index(mesh_id: &str, n: usize) -> usize {
+    use sha2::{Digest, Sha256};
+    if n == 0 {
+        return 0;
+    }
+    let hash = Sha256::digest(mesh_id.as_bytes());
+    let v = u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]]);
+    (v as usize) % n
+}
+
+/// Sign a message with an Ed25519 private key (base64-encoded), returning
+/// a base64-encoded detached signature. Companion to `verify_signature`.
+pub fn sign_message(private_key_base64: &str, message: &str) -> Result<String, String> {
+    use ed25519_dalek::Signer;
+    let priv_bytes = BASE64
+        .decode(private_key_base64)
+        .map_err(|e| format!("invalid private key base64: {}", e))?;
+    if priv_bytes.len() != 32 {
+        return Err(format!(
+            "invalid private key size: expected 32, got {}",
+            priv_bytes.len()
+        ));
+    }
+    let signing_key = SigningKey::from_bytes(
+        priv_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| "invalid private key bytes".to_string())?,
+    );
+    let signature: Signature = signing_key.sign(message.as_bytes());
+    Ok(BASE64.encode(signature.to_bytes()))
 }
 
 /// Verify an Ed25519 signature (public key and signature are base64-encoded)

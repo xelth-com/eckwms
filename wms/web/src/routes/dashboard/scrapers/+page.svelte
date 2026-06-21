@@ -3,6 +3,26 @@
     import { api } from "$lib/api";
     import { toastStore } from "$lib/stores/toastStore.js";
 
+    // Single-retry wrapper for scraper calls. The Node/Playwright scraper
+    // serializes all requests through a browser lock and occasionally
+    // emits "Failed to fetch" on transient network errors, context close
+    // races, or Zoho 5xx. One retry after a short pause recovers the
+    // majority of these without changing the scraper architecture.
+    async function fetchThreadsWithRetry(ticketId) {
+        const body = { ticketId, _from_env: true };
+        try {
+            return await api.post('/S/api/zoho/ticket-threads', body);
+        } catch (e) {
+            const msg = String(e?.message || e);
+            const transient = msg.includes('Failed to fetch')
+                || msg.includes('NetworkError')
+                || /Request failed:\s*(5\d\d|429)/.test(msg);
+            if (!transient) throw e;
+            await new Promise(r => setTimeout(r, 2000));
+            return await api.post('/S/api/zoho/ticket-threads', body);
+        }
+    }
+
     export let data;
 
     let syncHistory = data.syncHistory || [];
@@ -279,7 +299,9 @@ Analyze and suggest a fix. Be concise.`.trim();
 
             const res = await api.post(endpoint, payload);
             exactImportResult = res;
-            toastStore.add(`Imported ${res.imported} records to DB`, 'success');
+            const count = res.updated ?? res.imported ?? 0;
+            const skip = res.skipped ?? 0;
+            toastStore.add(count > 0 ? `Updated ${count} records in DB` : `All ${skip} records already up to date`, count > 0 ? 'success' : 'info');
         } catch (e) {
             toastStore.add('Import failed: ' + e.message, 'error');
         } finally {
@@ -372,10 +394,7 @@ Analyze and suggest a fix. Be concise.`.trim();
             zohoImportAllProgress = `#${ticketNum}: fetching threads…`;
 
             try {
-                const threadRes = await api.post('/S/api/zoho/ticket-threads', {
-                    ticketId: t.id,
-                    _from_env: true,
-                });
+                const threadRes = await fetchThreadsWithRetry(t.id);
 
                 if (!threadRes.success || !threadRes.threads?.length) {
                     zohoImportAllStats = { ...zohoImportAllStats, skipped: zohoImportAllStats.skipped + 1 };
@@ -388,15 +407,18 @@ Analyze and suggest a fix. Be concise.`.trim();
                         ticket: threadRes.ticket || t,
                     });
 
+                    const hadBackendErrors = saveRes.errors?.length > 0;
                     if (saveRes.imported > 0) {
                         zohoImportAllStats = { ...zohoImportAllStats, imported: zohoImportAllStats.imported + 1 };
                         threadCount += saveRes.imported;
-                    } else {
-                        errorList.push(`#${ticketNum}: 0 threads saved`);
+                    } else if (hadBackendErrors) {
                         zohoImportAllStats = { ...zohoImportAllStats, errors: zohoImportAllStats.errors + 1 };
+                    } else {
+                        // imported=0 with no errors = all threads already synced (hash match) — not an error
+                        zohoImportAllStats = { ...zohoImportAllStats, skipped: zohoImportAllStats.skipped + 1 };
                     }
 
-                    if (saveRes.errors?.length) {
+                    if (hadBackendErrors) {
                         for (const err of saveRes.errors) errorList.push(`#${ticketNum}: ${err}`);
                     }
                 }
@@ -503,10 +525,7 @@ Analyze and suggest a fix. Be concise.`.trim();
                 zohoImportAllProgress = `#${ticketNum}: fetching threads…`;
 
                 try {
-                    const threadRes = await api.post('/S/api/zoho/ticket-threads', {
-                        ticketId: t.id,
-                        _from_env: true,
-                    });
+                    const threadRes = await fetchThreadsWithRetry(t.id);
 
                     if (!threadRes.success || !threadRes.threads?.length) {
                         zohoImportAllStats = { ...zohoImportAllStats, skipped: zohoImportAllStats.skipped + 1 };
@@ -518,15 +537,18 @@ Analyze and suggest a fix. Be concise.`.trim();
                             ticket: threadRes.ticket || null,
                         });
 
+                        const hadBackendErrors = saveRes.errors?.length > 0;
                         if (saveRes.imported > 0) {
                             zohoImportAllStats = { ...zohoImportAllStats, imported: zohoImportAllStats.imported + 1 };
                             threadCount += saveRes.imported;
-                        } else {
-                            errorList.push(`#${ticketNum}: 0 threads saved`);
+                        } else if (hadBackendErrors) {
                             zohoImportAllStats = { ...zohoImportAllStats, errors: zohoImportAllStats.errors + 1 };
+                        } else {
+                            // imported=0 with no errors = threads already synced (hash match) — not an error
+                            zohoImportAllStats = { ...zohoImportAllStats, skipped: zohoImportAllStats.skipped + 1 };
                         }
 
-                        if (saveRes.errors?.length) {
+                        if (hadBackendErrors) {
                             for (const err of saveRes.errors) errorList.push(`#${ticketNum}: ${err}`);
                         }
                     }
@@ -709,14 +731,14 @@ Analyze this error and suggest a fix. Be concise.
             }
         };
 
-        checkField('Issue Description', dbR.issueDescription, exR.errorDescription, 'issueDescription');
+        checkField('Issue Description', dbR.issue_description, exR.errorDescription, 'issueDescription');
         checkField('Resolution', dbR.resolution, exR.troubleshooting, 'resolution');
         checkField('Status', dbR.status, exR.status, 'status');
-        checkField('Product Model', dbR.productName, exR.model, 'productName');
-        checkField('Serial Number', dbR.serialNumber, exR.serialNumber, 'serialNumber');
-        checkField('Customer Name', dbR.customerName, exR.customerName, 'customerName');
+        checkField('Product Model', dbR.product_name, exR.model, 'productName');
+        checkField('Serial Number', dbR.serial_number, exR.serial_number, 'serialNumber');
+        checkField('Customer Name', dbR.customer_name, exR.customer_name, 'customerName');
 
-        const dbDate = dbR.startedAt ? dbR.startedAt.slice(0, 10) : '';
+        const dbDate = dbR.started_at ? dbR.started_at.slice(0, 10) : '';
         const exDate = exR.dateOfReceipt || '';
         checkField('Date of Receipt', dbDate, exDate, 'startedAt');
 
@@ -731,7 +753,7 @@ Analyze this error and suggest a fix. Be concise.
         excelImportResult = null;
         try {
             const dbList = await api.get('/api/rma?type=repair');
-            const dbMap = new Map((dbList || []).map(r => [r.orderNumber, r]));
+            const dbMap = new Map((dbList || []).map(r => [r.order_number, r]));
 
             const res = await api.post('/S/api/excel/read', { limit: excelLimit, offset: 0 });
             if (res.success) {
@@ -777,7 +799,7 @@ Analyze this error and suggest a fix. Be concise.
         try {
             // 1. Fetch all DB repairs
             const dbRes = await api.get('/api/rma?type=repair');
-            const dbRepairs = (dbRes || []).filter(r => r.orderNumber && r.orderNumber.startsWith('CS-'));
+            const dbRepairs = (dbRes || []).filter(r => r.order_number && r.order_number.startsWith('CS-'));
 
             // 2. Fetch Excel repairs (high limit to get all)
             const exRes = await api.post('/S/api/excel/read', { limit: 10000, offset: 0 });
@@ -787,7 +809,7 @@ Analyze this error and suggest a fix. Be concise.
             const changes = [];
 
             for (const dbR of dbRepairs) {
-                const exR = exMap.get(dbR.orderNumber);
+                const exR = exMap.get(dbR.order_number);
 
                 if (!exR) {
                     changes.push({ ...dbR, _changeType: 'New', _diffs: ['Record missing in Excel'] });
@@ -807,7 +829,7 @@ Analyze this error and suggest a fix. Be concise.
                     diffs.push('Resolution updated');
                 }
 
-                const dbDesc = (dbR.issueDescription || '').trim();
+                const dbDesc = (dbR.issue_description || '').trim();
                 const exDesc = (exR.errorDescription || '').trim();
                 if (dbDesc !== exDesc && dbDesc !== '') {
                     diffs.push('Issue updated');
@@ -820,7 +842,7 @@ Analyze this error and suggest a fix. Be concise.
 
             excelDbRepairs = changes;
             // Auto-select all changes by default
-            excelDbSelected = new Set(changes.map(r => r.orderNumber));
+            excelDbSelected = new Set(changes.map(r => r.order_number));
         } catch (e) {
             excelDbRepairs = [];
             toastStore.add('Failed to scan changes: ' + e.message, 'error');
@@ -873,7 +895,7 @@ Analyze this error and suggest a fix. Be concise.
         if (excelDbSelected.size === excelDbRepairs.length) {
             excelDbSelected = new Set();
         } else {
-            excelDbSelected = new Set(excelDbRepairs.map(r => r.orderNumber));
+            excelDbSelected = new Set(excelDbRepairs.map(r => r.order_number));
         }
     }
 
@@ -900,9 +922,9 @@ Analyze this error and suggest a fix. Be concise.
                         (repair._conflicts || []).forEach(c => { payload[c.key] = c.exRaw; });
                     }
 
-                    if (payload.startedAt && !payload.startedAt.includes('T')) {
-                        const d = new Date(payload.startedAt);
-                        if (!isNaN(d.getTime())) payload.startedAt = d.toISOString();
+                    if (payload.started_at && !payload.started_at.includes('T')) {
+                        const d = new Date(payload.started_at);
+                        if (!isNaN(d.getTime())) payload.started_at = d.toISOString();
                     }
 
                     payload.metadata = {
@@ -919,12 +941,12 @@ Analyze this error and suggest a fix. Be concise.
                     payload = {
                         orderNumber: repair.repairNumber,
                         orderType: 'repair',
-                        customerName: repair.customerName || '',
+                        customerName: repair.customer_name || '',
                         customerEmail: '',
                         customerPhone: '',
                         productSku: '',
                         productName: repair.model || '',
-                        serialNumber: repair.serialNumber || '',
+                        serialNumber: repair.serial_number || '',
                         issueDescription: repair.errorDescription || '',
                         resolution: repair.troubleshooting || '',
                         status: repair.status || 'in_progress',
@@ -941,7 +963,7 @@ Analyze this error and suggest a fix. Be concise.
                             fwBefore: repair.fwBefore,
                             fwAfter: repair.fwAfter,
                             productionDate: repair.productionDate,
-                            purchaseDate: repair.purchaseDate,
+                            purchaseDate: repair.purchase_date,
                             repairTime: repair.repairTime,
                             excelRow: repair.excelRow,
                             importedFromExcel: true,
@@ -949,7 +971,7 @@ Analyze this error and suggest a fix. Be concise.
                     };
                     if (repair.dateOfReceipt) {
                         const d = new Date(repair.dateOfReceipt);
-                        if (!isNaN(d.getTime())) payload.startedAt = d.toISOString();
+                        if (!isNaN(d.getTime())) payload.started_at = d.toISOString();
                     }
                     if (repair.releaseDate) {
                         const d = new Date(repair.releaseDate);
@@ -985,7 +1007,7 @@ Analyze this error and suggest a fix. Be concise.
             const dbList = await api.get('/api/rma?type=repair');
             const dbMap = new Map();
             for (const r of dbList) {
-                if (r.orderNumber) dbMap.set(r.orderNumber, r.id);
+                if (r.order_number) dbMap.set(r.order_number, r.id);
             }
 
             // Fetch all Excel records
@@ -1008,12 +1030,12 @@ Analyze this error and suggest a fix. Be concise.
                 const payload = {
                     orderNumber: repair.repairNumber,
                     orderType: 'repair',
-                    customerName: repair.customerName || '',
+                    customerName: repair.customer_name || '',
                     customerEmail: '',
                     customerPhone: '',
                     productSku: '',
                     productName: repair.model || '',
-                    serialNumber: repair.serialNumber || '',
+                    serialNumber: repair.serial_number || '',
                     issueDescription: repair.errorDescription || '',
                     resolution: repair.troubleshooting || '',
                     status: repair.status || 'in_progress',
@@ -1030,7 +1052,7 @@ Analyze this error and suggest a fix. Be concise.
                         fwBefore: repair.fwBefore,
                         fwAfter: repair.fwAfter,
                         productionDate: repair.productionDate,
-                        purchaseDate: repair.purchaseDate,
+                        purchaseDate: repair.purchase_date,
                         repairTime: repair.repairTime,
                         excelRow: repair.excelRow,
                         importedFromExcel: true,
@@ -1039,7 +1061,7 @@ Analyze this error and suggest a fix. Be concise.
                 try {
                     if (repair.dateOfReceipt) {
                         const d = new Date(repair.dateOfReceipt);
-                        if (!isNaN(d.getTime())) payload.startedAt = d.toISOString();
+                        if (!isNaN(d.getTime())) payload.started_at = d.toISOString();
                     }
                     if (repair.releaseDate) {
                         const d = new Date(repair.releaseDate);
@@ -1086,20 +1108,20 @@ Analyze this error and suggest a fix. Be concise.
         const repairsToExport = [];
 
         for (const on of excelDbSelected) {
-            const repair = excelDbRepairs.find(r => r.orderNumber === on);
+            const repair = excelDbRepairs.find(r => r.order_number === on);
             if (!repair) continue;
 
             repairsToExport.push({
-                repairNumber: repair.orderNumber,
+                repairNumber: repair.order_number,
                 ticketNumber: repair.metadata?.ticketNumber || '',
                 warranty: repair.metadata?.warranty === 'J' || repair.metadata?.warranty === 'Y',
-                errorDescription: repair.issueDescription || '',
+                errorDescription: repair.issue_description || '',
                 troubleshooting: repair.resolution || '',
-                model: repair.productName || '',
-                serialNumber: repair.serialNumber || '',
-                customerName: repair.customerName || '',
+                model: repair.product_name || '',
+                serialNumber: repair.serial_number || '',
+                customerName: repair.customer_name || '',
                 defectiveParts: repair.partsUsed || [],
-                dateOfReceipt: repair.startedAt ? repair.startedAt.slice(0, 10) : null,
+                dateOfReceipt: repair.started_at ? repair.started_at.slice(0, 10) : null,
                 releaseDate: repair.completedAt ? repair.completedAt.slice(0, 10) : null,
                 status: repair.status,
             });
@@ -1134,7 +1156,7 @@ You are a technical assistant for eckWMS (warehouse management system). This is 
 
 ## Error
 **Provider:** ${sync.provider}
-**Time:** ${formatDate(sync.startedAt)}
+**Time:** ${formatDate(sync.started_at)}
 **Status:** ${sync.status}
 **Duration:** ${sync.duration ? (sync.duration / 1000).toFixed(1) + "s" : "N/A"}
 **Short:** ${summarizeError(sync.errorDetail)}
@@ -1292,17 +1314,6 @@ Analyze this error and suggest a fix. Be concise.
                         <button class="action-btn copy-btn" on:click={copyStartError}>Copy to AI</button>
                     </div>
                     <div class="error-detail">{scraperStartError}</div>
-                </div>
-            {/if}
-
-            {#if scraperOnline === true && scraperStatus}
-                <div class="endpoints-hint">
-                    {#each scraperStatus.endpoints as ep}
-                        <span class="ep-badge">
-                            <span class="ep-method">{ep.method}</span>
-                            <span class="ep-path">{ep.path}</span>
-                        </span>
-                    {/each}
                 </div>
             {/if}
 
@@ -1482,7 +1493,10 @@ Analyze this error and suggest a fix. Be concise.
                             {#if exactImportResult}
                                 <div class="result-box result-ok" style="margin-top: 0.5rem;">
                                     <div class="result-summary">
-                                        ✅ Imported: {exactImportResult.imported} | Errors: {exactImportResult.errors}
+                                        ✅ Imported: {exactImportResult.updated ?? exactImportResult.imported ?? 0} | Skipped: {exactImportResult.skipped ?? 0}
+                                        {#if (exactImportResult.updated ?? exactImportResult.imported ?? 0) === 0 && (exactImportResult.skipped ?? 0) === 0}
+                                            <span style="color: #888; margin-left: 0.5rem;">(all data already up to date)</span>
+                                        {/if}
                                     </div>
                                 </div>
                             {/if}
@@ -1839,8 +1853,8 @@ Analyze this error and suggest a fix. Be concise.
                                                 <td class="mono">{r.repairNumber}</td>
                                                 <td class="muted">{r.ticketNumber || '-'}</td>
                                                 <td>{r.model || '-'}</td>
-                                                <td class="mono">{r.serialNumber || '-'}</td>
-                                                <td class="truncate">{r.customerName || '-'}</td>
+                                                <td class="mono">{r.serial_number || '-'}</td>
+                                                <td class="truncate">{r.customer_name || '-'}</td>
                                                 <td class="truncate">{r.errorDescription || '-'}</td>
                                                 <td>{r.dateOfReceipt || '-'}</td>
                                                 <td>
@@ -1913,9 +1927,9 @@ Analyze this error and suggest a fix. Be concise.
                                     </thead>
                                     <tbody>
                                         {#each excelDbRepairs as r}
-                                            <tr class:selected={excelDbSelected.has(r.orderNumber)}>
-                                                <td><input type="checkbox" checked={excelDbSelected.has(r.orderNumber)} on:change={() => toggleDbSelect(r.orderNumber)} /></td>
-                                                <td class="mono">{r.orderNumber}</td>
+                                            <tr class:selected={excelDbSelected.has(r.order_number)}>
+                                                <td><input type="checkbox" checked={excelDbSelected.has(r.order_number)} on:change={() => toggleDbSelect(r.order_number)} /></td>
+                                                <td class="mono">{r.order_number}</td>
                                                 <td>
                                                     <span class="change-badge" class:new={r._changeType === 'New'} class:update={r._changeType === 'Update'}>
                                                         {r._changeType}
@@ -2013,7 +2027,7 @@ Analyze this error and suggest a fix. Be concise.
                                 <tr>
                                     <td class="mono">{backup.filename}</td>
                                     <td>{formatBytes(backup.sizeBytes)}</td>
-                                    <td class="sync-time">{formatDate(backup.createdAt)}</td>
+                                    <td class="sync-time">{formatDate(backup.created_at)}</td>
                                     <td>
                                         <button
                                             class="action-btn restore-btn"
@@ -2078,7 +2092,7 @@ Analyze this error and suggest a fix. Be concise.
                                             <span class="muted">-</span>
                                         {/if}
                                     </td>
-                                    <td class="sync-time">{formatDate(sync.startedAt)}</td>
+                                    <td class="sync-time">{formatDate(sync.started_at)}</td>
                                     <td>
                                         <span class="provider-badge" class:opal={sync.provider === "opal"} class:dhl={sync.provider === "dhl"}>
                                             {sync.provider.toUpperCase()}

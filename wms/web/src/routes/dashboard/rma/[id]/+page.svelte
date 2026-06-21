@@ -48,7 +48,7 @@
 
     async function loadRMA() {
         try {
-            const data = await api.get(`/rma/${rmaId}`);
+            const data = await api.get(`/api/rma/${rmaId}`);
             formData = { ...data };
         } catch (e) {
             toastStore.add('Error loading RMA', 'error');
@@ -71,10 +71,10 @@
                 // If rmaNumber is placeholder, clear it so backend generates it
                 if(formData.rmaNumber === 'AUTO-GEN') delete formData.rmaNumber;
 
-                await api.post('/rma', formData);
+                await api.post('/api/rma', formData);
                 toastStore.add('RMA Created Successfully', 'success');
             } else {
-                await api.put(`/rma/${rmaId}`, formData);
+                await api.put(`/api/rma/${rmaId}`, formData);
                 toastStore.add('RMA Updated', 'success');
             }
             goto(`${base}/dashboard/rma`);
@@ -87,7 +87,7 @@
         if(!confirm('Are you sure you want to delete this RMA?')) return;
 
         try {
-            await api.delete(`/rma/${rmaId}`);
+            await api.delete(`/api/rma/${rmaId}`);
             toastStore.add('RMA Deleted', 'success');
             goto(`${base}/dashboard/rma`);
         } catch (e) {

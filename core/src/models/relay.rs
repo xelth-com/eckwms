@@ -43,6 +43,20 @@ pub struct RegisterRequest {
     pub port: u16,
     #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// `"full"` (default) or `"cache"`. The relay stores and re-emits this
+    /// string; the sync engine on each peer decides what to do with it.
+    #[serde(default)]
+    pub node_role: Option<String>,
+    /// 9eck product license token (JWS-lite, see `crate::licensing`). Optional —
+    /// the relay verifies it offline and tags the registration `paid`/`tier`.
+    /// Absent / unverifiable ⇒ treated as free.
+    #[serde(default)]
+    pub license: Option<String>,
+    /// Private/LAN address advertised alongside the public `base_url` (B3).
+    #[serde(default)]
+    pub lan_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -93,6 +107,8 @@ pub struct NodeStatus {
     pub port: u16,
     pub status: String,
     pub last_seen: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

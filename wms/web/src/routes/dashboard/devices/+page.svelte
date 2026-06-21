@@ -1,6 +1,7 @@
 <script>
     import { onMount } from 'svelte';
     import { api } from '$lib/api';
+    import { authStore } from '$lib/stores/authStore';
     import { toastStore } from '$lib/stores/toastStore';
     import { base } from '$app/paths';
 
@@ -15,14 +16,74 @@
     let showQr = false;
     let qrType = 'standard';
 
+    // Xelixir C2 (Remote Support) state — managed via /X/* endpoints,
+    // NOT /api/* (microservice routing prefix).
+    let xelixirConfig = { auto_start: true, auto_accept: true };
+    let xelixirBusy = false;
+    $: isAdmin = $authStore.currentUser?.role === 'admin';
+
+    // Dashboard SLA scale (mesh-synced via system_config:dashboard_sla)
+    let slaConfig = { aging_scale_days: 7, repair_aging_scale_days: 7 };
+    let slaBusy = false;
+
     // Server Pairing Data
-    let pairingStep = 'idle'; // idle, hosting, connecting, waiting_approval, approving
-    let pairingCode = '';
-    let connectCode = '';
-    let pendingPeer = null;
-    let pollTimer = null;
+    // NOTE: The interactive pairing UI (host/join via 6-digit code) was
+    // removed 2026-05-24 — the backend endpoints (/api/pairing/*) were never
+    // implemented. Current peering is documented in .eck/PEERING.md: share
+    // SYNC_SECRET out-of-band and set BASE_URL in each peer's .env.
 
     // --- SCANNERS LOGIC ---
+
+    async function loadXelixirConfig() {
+        try {
+            const cfg = await api.get('/X/config');
+            xelixirConfig = {
+                auto_start: cfg.auto_start !== false,
+                auto_accept: cfg.auto_accept !== false,
+            };
+        } catch (e) {
+            // Non-fatal — endpoint may not be exposed via nginx yet.
+            console.warn('Xelixir config load failed:', e.message);
+        }
+    }
+
+    async function saveXelixirConfig(patch) {
+        if (!isAdmin || xelixirBusy) return;
+        xelixirBusy = true;
+        try {
+            const res = await api.post('/X/config', patch);
+            xelixirConfig = {
+                auto_start: res.auto_start !== false,
+                auto_accept: res.auto_accept !== false,
+            };
+            toastStore.add('Xelixir settings saved', 'success');
+        } catch (e) {
+            toastStore.add('Failed to save: ' + e.message, 'error');
+        } finally {
+            xelixirBusy = false;
+        }
+    }
+
+    async function requestXelixir(deviceId) {
+        try {
+            await api.post(`/X/devices/${deviceId}/start`, {});
+            toastStore.add('Access requested — propagating via mesh…', 'info');
+            // Allow time for mesh sync + ack from edge before reloading.
+            setTimeout(loadScannersData, 5000);
+        } catch (e) {
+            toastStore.add(e.message, 'error');
+        }
+    }
+
+    async function stopXelixir(deviceId) {
+        try {
+            await api.post(`/X/devices/${deviceId}/stop`, {});
+            toastStore.add('Stop dispatched', 'success');
+            setTimeout(loadScannersData, 5000);
+        } catch (e) {
+            toastStore.add(e.message, 'error');
+        }
+    }
 
     async function loadScannersData() {
         loading = true;
@@ -34,7 +95,10 @@
             ]);
             devices = devicesData || [];
 
-            let nodes = nodesData || [];
+            // Backend returns { relay, nodes }; tolerate legacy array shape.
+            let nodes = Array.isArray(nodesData)
+                ? nodesData
+                : (nodesData && nodesData.nodes) || [];
             if (statusData && statusData.instance_id) {
                 const selfNode = {
                     instance_id: statusData.instance_id,
@@ -56,7 +120,7 @@
         try {
             await api.put(`/api/admin/devices/${deviceId}/status`, { status });
             toastStore.add(`Device ${status}`, 'success');
-            devices = devices.map(d => d.deviceId === deviceId ? { ...d, status } : d);
+            devices = devices.map(d => d.device_id === deviceId ? { ...d, status } : d);
         } catch (e) {
             toastStore.add(e.message, 'error');
         }
@@ -129,11 +193,13 @@
     async function loadServersData() {
         loading = true;
         try {
-            const [nodes, status] = await Promise.all([
+            const [nodesBody, status] = await Promise.all([
                 api.get('/api/mesh/nodes'),
                 api.get('/api/mesh/status')
             ]);
-            serverNodes = nodes || [];
+            serverNodes = Array.isArray(nodesBody)
+                ? nodesBody
+                : (nodesBody && nodesBody.nodes) || [];
             selfInfo = status || null;
         } catch (e) {
             toastStore.add('Failed to load nodes', 'error');
@@ -153,97 +219,8 @@
         }
     }
 
-    // Host Flow
-    async function startHosting() {
-        try {
-            const res = await api.post('/api/pairing/host', {});
-            pairingCode = res.code;
-            pairingStep = 'hosting';
-            pollForPeer(res.code);
-        } catch (e) {
-            toastStore.add(e.message, 'error');
-        }
-    }
-
-    async function pollForPeer(code) {
-        if (pairingStep !== 'hosting') return;
-        try {
-            const res = await api.post('/api/pairing/check', { code });
-            if (res.found) {
-                pendingPeer = { id: res.remote_instance_id, name: res.remote_instance_name };
-                pairingStep = 'approving';
-            } else {
-                pollTimer = setTimeout(() => pollForPeer(code), 2000);
-            }
-        } catch (e) {
-            console.error('Polling error', e);
-        }
-    }
-
-    async function approvePeer() {
-        try {
-            await api.post('/api/pairing/approve', {
-                code: pairingCode,
-                remote_instance_id: pendingPeer.id
-            });
-            toastStore.add('Pairing successful!', 'success');
-            pairingStep = 'idle';
-            loadServersData();
-        } catch (e) {
-            toastStore.add(e.message, 'error');
-        }
-    }
-
-    // Client Flow
-    async function connectToServer() {
-        if (!connectCode) return;
-        try {
-            pairingStep = 'connecting';
-            await api.post('/api/pairing/connect', { code: connectCode });
-            toastStore.add('Connected! Waiting for approval...', 'info');
-            pairingStep = 'waiting_approval';
-            pollForApproval(connectCode);
-        } catch (e) {
-            pairingStep = 'idle';
-            toastStore.add(e.message, 'error');
-        }
-    }
-
-    async function pollForApproval(code) {
-        if (pairingStep !== 'waiting_approval') return;
-        try {
-            const res = await api.post('/api/pairing/finalize', { code });
-            if (res.status === 'finalized') {
-                if (res.network_key) {
-                    await saveConfig(res.network_key);
-                }
-                toastStore.add('Pairing Complete! Server saved.', 'success');
-                pairingStep = 'idle';
-                loadServersData();
-            } else {
-                pollTimer = setTimeout(() => pollForApproval(code), 2000);
-            }
-        } catch (e) {
-            console.error(e);
-        }
-    }
-
-    async function saveConfig(key) {
-        try {
-            await api.post('/api/admin/config/save-key', { network_key: key });
-            toastStore.add('Network Key saved. Restart server to apply.', 'warning');
-        } catch (e) {
-            toastStore.add('Failed to save config: ' + e.message, 'error');
-        }
-    }
-
-    function cancelPairing() {
-        if (pollTimer) clearTimeout(pollTimer);
-        pairingStep = 'idle';
-        pairingCode = '';
-        connectCode = '';
-        pendingPeer = null;
-    }
+    // Pairing flow removed — see note at top of <script>. Manual peering
+    // via SYNC_SECRET in .env, documented in .eck/PEERING.md.
 
     function switchTab(tab) {
         activeTab = tab;
@@ -251,8 +228,42 @@
         else loadServersData();
     }
 
+    async function loadSlaConfig() {
+        try {
+            const cfg = await api.get('/api/admin/config/dashboard_sla');
+            slaConfig = {
+                aging_scale_days: typeof cfg.aging_scale_days === 'number' ? cfg.aging_scale_days : 7,
+                repair_aging_scale_days: typeof cfg.repair_aging_scale_days === 'number' ? cfg.repair_aging_scale_days : 7,
+            };
+        } catch (e) {
+            console.warn('SLA config load failed:', e.message);
+        }
+    }
+
+    async function saveSlaConfig() {
+        if (!isAdmin || slaBusy) return;
+        slaBusy = true;
+        try {
+            const res = await api.post('/api/admin/config/dashboard_sla', {
+                aging_scale_days: Number(slaConfig.aging_scale_days),
+                repair_aging_scale_days: Number(slaConfig.repair_aging_scale_days),
+            });
+            slaConfig = {
+                aging_scale_days: res.aging_scale_days,
+                repair_aging_scale_days: res.repair_aging_scale_days,
+            };
+            toastStore.add('Dashboard SLA settings saved (refresh map to apply)', 'success');
+        } catch (e) {
+            toastStore.add('Failed to save SLA: ' + e.message, 'error');
+        } finally {
+            slaBusy = false;
+        }
+    }
+
     onMount(() => {
         loadScannersData();
+        loadXelixirConfig();
+        loadSlaConfig();
     });
 </script>
 
@@ -271,6 +282,76 @@
 
     {#if activeTab === 'scanners'}
         <!-- SCANNERS VIEW -->
+
+        {#if isAdmin}
+            <!-- Xelixir Remote Support settings (manages local system_config:xelixir) -->
+            <div class="xelixir-settings">
+                <div class="xelixir-header">
+                    <h3>Remote Support (Xelixir C2)</h3>
+                    <span class="xelixir-hint">Controls how this node handles xelth.com remote sessions.</span>
+                </div>
+                <label class="xelixir-toggle">
+                    <input
+                        type="checkbox"
+                        checked={xelixirConfig.auto_start}
+                        disabled={xelixirBusy}
+                        on:change={(e) => saveXelixirConfig({ auto_start: e.target.checked })}
+                    />
+                    <span>Auto-start agent at boot</span>
+                    <span class="xelixir-toggle-hint">When off, the agent only starts on a remote "Request Access".</span>
+                </label>
+                <label class="xelixir-toggle">
+                    <input
+                        type="checkbox"
+                        checked={xelixirConfig.auto_accept}
+                        disabled={xelixirBusy}
+                        on:change={(e) => saveXelixirConfig({ auto_accept: e.target.checked })}
+                    />
+                    <span>Auto-accept remote start requests</span>
+                    <span class="xelixir-toggle-hint">When off, a local operator must approve each incoming session.</span>
+                </label>
+            </div>
+
+            <!-- Dashboard SLA aging scale (mesh-synced) -->
+            <div class="xelixir-settings">
+                <div class="xelixir-header">
+                    <h3>Dashboard SLA Scale</h3>
+                    <span class="xelixir-hint">How many days a task ages from blue (fresh) to yellow (overdue). Red is reserved for escalations.</span>
+                </div>
+                <label class="xelixir-toggle">
+                    <span style="min-width:180px">Tickets — full-scale (days)</span>
+                    <input
+                        type="number"
+                        min="0.5"
+                        max="60"
+                        step="0.5"
+                        bind:value={slaConfig.aging_scale_days}
+                        disabled={slaBusy}
+                        style="width:80px;padding:2px 6px;background:#222;color:#ddd;border:1px solid #444;border-radius:3px"
+                    />
+                    <span class="xelixir-toggle-hint">Ticket marker hits full yellow at this age.</span>
+                </label>
+                <label class="xelixir-toggle">
+                    <span style="min-width:180px">Repairs — full-scale (days)</span>
+                    <input
+                        type="number"
+                        min="0.5"
+                        max="60"
+                        step="0.5"
+                        bind:value={slaConfig.repair_aging_scale_days}
+                        disabled={slaBusy}
+                        style="width:80px;padding:2px 6px;background:#222;color:#ddd;border:1px solid #444;border-radius:3px"
+                    />
+                    <span class="xelixir-toggle-hint">Repair marker hits full yellow at this age.</span>
+                </label>
+                <div style="margin-top:0.5rem">
+                    <button class="btn primary" on:click={saveSlaConfig} disabled={slaBusy}>
+                        {slaBusy ? 'Saving…' : 'Save'}
+                    </button>
+                </div>
+            </div>
+        {/if}
+
         <div class="toolbar">
             <div class="action-group">
                 <button class="btn secondary" class:active={showQr && qrType === 'standard'} on:click={() => loadQr('standard')}>
@@ -311,6 +392,7 @@
                             <th>Device Name</th>
                             <th>ID / Key</th>
                             <th>Home Node</th>
+                            <th>Xelixir</th>
                             <th>Last Seen</th>
                             <th>Actions</th>
                         </tr>
@@ -325,38 +407,59 @@
                                         <span class="badge {device.status}">{device.status}</span>
                                     {/if}
                                 </td>
-                                <td>{device.name || 'Unknown'}</td>
+                                <td>{device.device_name || 'Unknown'}</td>
                                 <td>
-                                    <div class="mono-id" title={device.deviceId}>{device.deviceId.substring(0, 8)}...</div>
-                                    <div class="mono-key">{device.publicKey ? device.publicKey.substring(0, 8) + '...' : '-'}</div>
+                                    <div class="mono-id" title={device.device_id}>{(device.device_id || '').substring(0, 8)}...</div>
+                                    <div class="mono-key">{device.public_key ? device.public_key.substring(0, 8) + '...' : '-'}</div>
                                 </td>
                                 <td>
                                     <select
-                                        value={device.homeInstanceId}
-                                        on:change={(e) => updateHomeNode(device.deviceId, e.target.value)}
-                                        disabled={!!device.deletedAt}
+                                        value={device.home_instance_id}
+                                        on:change={(e) => updateHomeNode(device.device_id, e.target.value)}
+                                        disabled={!!device.deleted_at}
                                         class="node-select"
                                     >
-                                        <option value={device.homeInstanceId}>{getNodeName(device.homeInstanceId)} (Current)</option>
+                                        <option value={device.home_instance_id}>{getNodeName(device.home_instance_id)} (Current)</option>
                                         {#each meshNodes as node}
-                                            {#if node.instance_id !== device.homeInstanceId}
+                                            {#if node.instance_id !== device.home_instance_id}
                                                 <option value={node.instance_id}>{getNodeName(node.instance_id)}</option>
                                             {/if}
                                         {/each}
                                     </select>
                                 </td>
-                                <td>{new Date(device.lastSeenAt).toLocaleString()}</td>
+                                <td class="xelixir-cell">
+                                    {#if device.xelixir_status === 'running'}
+                                        <span class="badge active">running</span>
+                                        {#if device.xelixir_session_url}
+                                            <a class="btn-text-link" href={device.xelixir_session_url} target="_blank" rel="noopener">Open session →</a>
+                                        {/if}
+                                        {#if isAdmin}
+                                            <button class="btn-text-link danger" on:click={() => stopXelixir(device.device_id)}>Stop</button>
+                                        {/if}
+                                    {:else if device.xelixir_status === 'pending_approval'}
+                                        <span class="badge pending">awaiting operator</span>
+                                    {:else if device.xelixir_status === 'starting'}
+                                        <span class="badge pending">starting…</span>
+                                    {:else}
+                                        {#if isAdmin && !device.deleted_at}
+                                            <button class="btn-text-link" on:click={() => requestXelixir(device.device_id)}>Request access</button>
+                                        {:else}
+                                            <span class="mono-key">—</span>
+                                        {/if}
+                                    {/if}
+                                </td>
+                                <td>{device.last_seen_at ? new Date(device.last_seen_at).toLocaleString() : '—'}</td>
                                 <td class="actions">
-                                    {#if device.deletedAt}
-                                        <button class="btn-icon" title="Restore" on:click={() => restoreDevice(device.deviceId)}>&#9851;</button>
+                                    {#if device.deleted_at}
+                                        <button class="btn-icon" title="Restore" on:click={() => restoreDevice(device.device_id)}>&#9851;</button>
                                     {:else}
                                         {#if device.status === 'pending' || device.status === 'blocked'}
-                                            <button class="btn-icon approve" title="Approve" on:click={() => updateStatus(device.deviceId, 'active')}>&#10003;</button>
+                                            <button class="btn-icon approve" title="Approve" on:click={() => updateStatus(device.device_id, 'active')}>&#10003;</button>
                                         {/if}
                                         {#if device.status === 'active' || device.status === 'pending'}
-                                            <button class="btn-icon block" title="Block" on:click={() => updateStatus(device.deviceId, 'blocked')}>&#10007;</button>
+                                            <button class="btn-icon block" title="Block" on:click={() => updateStatus(device.device_id, 'blocked')}>&#10007;</button>
                                         {/if}
-                                        <button class="btn-icon delete" title="Delete" on:click={() => deleteDevice(device.deviceId)}>&#128465;</button>
+                                        <button class="btn-icon delete" title="Delete" on:click={() => deleteDevice(device.device_id)}>&#128465;</button>
                                     {/if}
                                 </td>
                             </tr>
@@ -368,14 +471,8 @@
 
     {:else}
         <!-- SERVERS VIEW -->
-        <div class="toolbar">
-            <div class="action-group">
-                <button class="btn primary" on:click={startHosting}>+ Invite Server</button>
-            </div>
-            <div class="join-group">
-                <input type="text" placeholder="XXX-XXX" bind:value={connectCode} maxlength="7" />
-                <button class="btn secondary" on:click={connectToServer} disabled={connectCode.length < 6}>Join Network</button>
-            </div>
+        <div class="peering-note">
+            <strong>Manual peering</strong> — set <code>SYNC_SECRET</code> and <code>BASE_URL</code> in each peer's <code>.env</code> (see <code>.eck/PEERING.md</code>). Self-service pairing UI is not yet implemented.
         </div>
 
         {#if selfInfo}
@@ -400,39 +497,6 @@
             </div>
         {/if}
 
-        {#if pairingStep !== 'idle'}
-            <div class="pairing-modal">
-                <div class="modal-content">
-                    {#if pairingStep === 'hosting'}
-                        <h3>Waiting for connection...</h3>
-                        <div class="big-code">{pairingCode}</div>
-                        <p>Enter this code on the other server</p>
-                        <div class="spinner"></div>
-                        <button class="btn secondary" on:click={cancelPairing}>Cancel</button>
-
-                    {:else if pairingStep === 'approving'}
-                        <h3>Connection Request</h3>
-                        <p>Server <strong>{pendingPeer?.name || 'Unknown'}</strong> wants to connect.</p>
-                        <p class="mono-sm">ID: {pendingPeer?.id}</p>
-                        <div class="modal-actions">
-                            <button class="btn secondary" on:click={cancelPairing}>Deny</button>
-                            <button class="btn primary" on:click={approvePeer}>Approve</button>
-                        </div>
-
-                    {:else if pairingStep === 'connecting'}
-                        <h3>Connecting...</h3>
-                        <div class="spinner"></div>
-
-                    {:else if pairingStep === 'waiting_approval'}
-                        <h3>Waiting for approval...</h3>
-                        <p>Please approve the request on the Host server.</p>
-                        <div class="spinner"></div>
-                        <button class="btn secondary" on:click={cancelPairing}>Cancel</button>
-                    {/if}
-                </div>
-            </div>
-        {/if}
-
         <div class="list-container">
             {#if loading}
                 <div class="loading">Loading nodes...</div>
@@ -453,8 +517,8 @@
                         {#each serverNodes as node}
                             <tr>
                                 <td>
-                                    <span class="dot" class:online={node.status === 'active'} class:degraded={node.status === 'degraded'}></span>
-                                    {node.status === 'active' ? 'Online' : node.status === 'degraded' ? 'Unstable' : 'Offline'}
+                                    <span class="dot" class:online={node.status === 'online'} class:degraded={node.status === 'degraded'}></span>
+                                    {node.status === 'online' ? 'Online' : node.status === 'degraded' ? 'Unstable' : 'Offline'}
                                 </td>
                                 <td>{node.name}</td>
                                 <td><span class="role-badge {node.role}">{node.role}</span></td>
@@ -544,6 +608,20 @@
     .modal-actions { display: flex; gap: 10px; justify-content: center; margin-top: 20px; }
 
     .empty, .loading { padding: 3rem; text-align: center; color: #666; font-style: italic; }
+
+    .xelixir-settings { background: #1a1f2e; border: 1px solid rgba(168, 85, 247, 0.35); border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 1.5rem; }
+    .xelixir-header { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 0.75rem; }
+    .xelixir-header h3 { margin: 0; color: #c4b5fd; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; }
+    .xelixir-hint { color: #777; font-size: 0.8rem; }
+    .xelixir-toggle { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0; color: #ddd; font-size: 0.9rem; cursor: pointer; }
+    .xelixir-toggle input { transform: scale(1.1); cursor: pointer; }
+    .xelixir-toggle-hint { color: #666; font-size: 0.75rem; margin-left: auto; }
+    .xelixir-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+    .btn-text-link { background: none; border: none; color: #4a69bd; text-decoration: underline; cursor: pointer; padding: 0; font-size: 0.85rem; }
+    .btn-text-link:hover { color: #7b9ff0; }
+    .btn-text-link.danger { color: #ff6b6b; }
+    .btn-text-link.danger:hover { color: #ff8e8e; }
+    a.btn-text-link { display: inline-block; }
 
     .identity-card { background: #1a1f2e; border: 1px solid rgba(74, 105, 189, 0.3); border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 1.5rem; }
     .identity-card h3 { margin: 0 0 0.8rem 0; color: #7b9ff0; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; }

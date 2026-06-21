@@ -54,13 +54,11 @@ pub async fn get(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let loc: Option<Value> = state
-        .db
-        .select(("location", &*id))
+    let loc = state
+        .get_synced_entity("location", &id)
         .await
-        .map_err(db_err)?;
-
-    let loc = loc.ok_or_else(|| (StatusCode::NOT_FOUND, format!("Warehouse '{id}' not found")))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Warehouse '{id}' not found")))?;
 
     // Fetch racks belonging to this warehouse
     let racks: Vec<Value> = state

@@ -136,7 +136,7 @@
 
     async function loadRepair() {
         try {
-            const data = await api.get(`/rma/${orderId}`);
+            const data = await api.get(`/api/rma/${orderId}`);
             formData = { ...data };
             if (!Array.isArray(formData.partsUsed)) {
                 formData.partsUsed =[];
@@ -159,11 +159,11 @@
                 if (formData.orderNumber === 'AUTO-GEN') delete formData.orderNumber;
                 formData.orderType = 'repair';
                 formData.laborHours = parseFloat(formData.laborHours) || 0;
-                await api.post('/rma', formData);
+                await api.post('/api/rma', formData);
                 toastStore.add('Repair Created Successfully', 'success');
             } else {
                 formData.laborHours = parseFloat(formData.laborHours) || 0;
-                await api.put(`/rma/${orderId}`, formData);
+                await api.put(`/api/rma/${orderId}`, formData);
                 toastStore.add('Repair Updated', 'success');
             }
             goto(`${base}/dashboard/repairs`);
@@ -175,7 +175,7 @@
     async function deleteRepair() {
         if (!confirm('Are you sure you want to delete this Repair Order?')) return;
         try {
-            await api.delete(`/rma/${orderId}`);
+            await api.delete(`/api/rma/${orderId}`);
             toastStore.add('Repair Deleted', 'success');
             goto(`${base}/dashboard/repairs`);
         } catch (e) {

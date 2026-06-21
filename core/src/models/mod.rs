@@ -1,6 +1,9 @@
-pub mod sync_packet;
 pub mod odoo_types;
 pub mod action_proof;
+pub mod ai_task;
+pub mod ai_thought;
+pub mod ai_sop;
+pub mod ai_inbox;
 
 // === WMS Models (stripped from Sea-ORM) ===
 pub mod product;

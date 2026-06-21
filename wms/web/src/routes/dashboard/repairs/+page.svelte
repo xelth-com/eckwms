@@ -71,10 +71,10 @@
                     {#each orders as order}
                         <!-- svelte-ignore a11y-click-events-have-key-events -->
                         <tr on:click={() => openRepair(order.id)}>
-                            <td class="code">{order.orderNumber}</td>
-                            <td>{order.customerName}</td>
-                            <td class="code-sm">{order.productSku}</td>
-                            <td>{formatDate(order.startedAt || order.createdAt)}</td>
+                            <td class="code">{order.order_number}</td>
+                            <td>{order.customer_name}</td>
+                            <td class="code-sm">{order.product_sku}</td>
+                            <td>{formatDate(order.started_at || order.created_at)}</td>
                             <td>
                                 <span class="status-badge {order.status.toLowerCase()}">
                                     {order.status}

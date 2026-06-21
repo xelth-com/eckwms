@@ -1,2 +1,9 @@
 pub mod embeddings;
 pub mod summarization;
+pub mod image_optimizer;
+pub mod loop_guard;
+pub mod telemetry;
+pub mod observer;
+pub mod orchestrator;
+pub mod optimizer;
+pub mod tools;

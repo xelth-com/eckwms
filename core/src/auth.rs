@@ -6,15 +6,17 @@ use serde::{Deserialize, Serialize};
 pub struct Claims {
     pub sub: String,
     pub role: String,
+    pub auth_method: String,
     pub exp: i64,
     pub iat: i64,
 }
 
-pub fn create_token(user_id: &str, role: &str, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
+pub fn create_token(user_id: &str, role: &str, auth_method: &str, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
     let now = Utc::now();
     let claims = Claims {
         sub: user_id.to_string(),
         role: role.to_string(),
+        auth_method: auth_method.to_string(),
         iat: now.timestamp(),
         exp: (now + Duration::hours(24)).timestamp(),
     };

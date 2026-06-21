@@ -37,6 +37,37 @@ async fn main() {
                 Err(e) => tracing::warn!("Offline detection error: {e}"),
                 _ => {}
             }
+
+            // GC acked xelixir_task rows older than 1 h. The dispatcher
+            // polls `/E/x/result/<task_id>` to read the ack body, so we
+            // keep rows around for a window long enough that no caller
+            // is still polling, then drop them.
+            //
+            // `acked_at` is stored as an RFC3339 string (the WMS-side
+            // ack handler doesn't have access to SurrealDB native
+            // datetime construction without round-tripping). Compare on
+            // the string-coerced cutoff so the predicate doesn't blow
+            // up on type mismatch — and explicitly check `acked = true`
+            // (NOT `acked_at IS NOT NONE`) so non-acked rows never get
+            // collected even with a malformed timestamp.
+            let cutoff_iso = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+            let res = cleanup_db
+                .query("DELETE xelixir_task WHERE acked = true AND acked_at != NONE AND acked_at < $cutoff;")
+                .bind(("cutoff", cutoff_iso.clone()))
+                .await;
+            if let Err(e) = res {
+                tracing::warn!("xelixir_task GC error: {e}");
+            }
+
+            // Same GC policy for mesh_task — acked rows linger 1 h so the
+            // sender's poller has a window to read the result body, then drop.
+            let res = cleanup_db
+                .query("DELETE mesh_task WHERE acked = true AND acked_at != NONE AND acked_at < $cutoff;")
+                .bind(("cutoff", cutoff_iso))
+                .await;
+            if let Err(e) = res {
+                tracing::warn!("mesh_task GC error: {e}");
+            }
         }
     });
 
@@ -47,6 +78,18 @@ async fn main() {
         .route("/E/pull/{mesh_id}/{instance_id}", get(handlers::pull))
         .route("/E/mesh/{mesh_id}/status", get(handlers::mesh_status))
         .route("/E/mesh/{mesh_id}/resolve/{instance_id}", get(handlers::resolve_node))
+        .route("/E/registry", get(handlers::registry))
+        // Mesh-agnostic xelixir control plane (UUID-routed, NAT-friendly).
+        .route("/E/resolve/{instance_id}", get(handlers::x_resolve))
+        .route("/E/x/dispatch/{target_uuid}", post(handlers::x_dispatch))
+        .route("/E/x/poll/{self_uuid}", get(handlers::x_poll))
+        .route("/E/x/ack/{task_id}", post(handlers::x_ack))
+        .route("/E/x/result/{task_id}", get(handlers::x_result))
+        // Mesh-sync routing for NAT'd peers — separate queue from xelixir C2.
+        .route("/E/m/dispatch/{target_uuid}", post(handlers::m_dispatch))
+        .route("/E/m/poll/{self_uuid}", get(handlers::m_poll))
+        .route("/E/m/ack/{task_id}", post(handlers::m_ack))
+        .route("/E/m/result/{task_id}", get(handlers::m_result))
         .layer(CorsLayer::permissive())
         .with_state(db);
 
