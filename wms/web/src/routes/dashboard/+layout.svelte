@@ -13,6 +13,75 @@
     let showAmbiguousModal = false;
     let ambiguousCandidates = [];
 
+    // System Alert State
+    let activeAlert = null;
+    let showAlertModal = false;
+
+    // Quick Login Modal (privilege escalation from observer)
+    let showQuickLogin = false;
+    let quickLoginUser = '';
+    let quickLoginPass = '';
+    let quickLoginError = '';
+    let quickLoginLoading = false;
+
+    // Xelixir Remote Support approval modal (driven by WS XELIXIR_REQUESTED)
+    let showXelixirApproval = false;
+    let xelixirRequest = null;
+    let xelixirApproveBusy = false;
+
+    function handleForbidden(e) {
+        const state = authStore.getContext ? authStore.getContext() : null;
+        showQuickLogin = true;
+        quickLoginError = '';
+        quickLoginUser = '';
+        quickLoginPass = '';
+    }
+
+    async function approveXelixir() {
+        xelixirApproveBusy = true;
+        try {
+            const res = await fetch("/X/approve", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${$authStore.token}`,
+                },
+                body: "{}",
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || `Approve failed: ${res.status}`);
+            }
+            toastStore.add("Remote support session approved", "success");
+            showXelixirApproval = false;
+            xelixirRequest = null;
+        } catch (e) {
+            toastStore.add("Failed to approve: " + e.message, "error");
+        } finally {
+            xelixirApproveBusy = false;
+        }
+    }
+
+    function denyXelixir() {
+        // Local denial is purely UI — the request is dropped on this client.
+        // The cloud will see no status transition and can re-request later.
+        showXelixirApproval = false;
+        xelixirRequest = null;
+        toastStore.add("Remote support request denied", "info");
+    }
+
+    async function handleQuickLogin() {
+        quickLoginLoading = true;
+        quickLoginError = '';
+        const result = await authStore.login(quickLoginUser, quickLoginPass);
+        if (result.success) {
+            showQuickLogin = false;
+        } else {
+            quickLoginError = result.error || 'Login failed';
+        }
+        quickLoginLoading = false;
+    }
+
     onMount(() => {
         // 1. Auth Guard
         const unsubscribeAuth = authStore.subscribe((state) => {
@@ -26,8 +95,12 @@
         // 2. Init WebSocket
         wsStore.connect();
 
+        // 3. Listen for observer forbidden events
+        window.addEventListener('auth:forbidden', handleForbidden);
+
         return () => {
             unsubscribeAuth();
+            window.removeEventListener('auth:forbidden', handleForbidden);
         };
     });
 
@@ -60,6 +133,20 @@
         ambiguousCandidates = [];
     }
 
+    // Copy alert text to clipboard
+    let copyFeedback = "";
+    function copyAlert(withPrompt = false) {
+        if (!activeAlert) return;
+        let text = `${activeAlert.title}\n\n${activeAlert.message}`;
+        if (withPrompt) {
+            text = `Analyze this system anomaly report from eckWMS and suggest a root cause and fix:\n\n---\n${text}\n---\n\nTimestamp: ${new Date(activeAlert.timestamp).toISOString()}\nSeverity: ${activeAlert.severity || "critical"}`;
+        }
+        navigator.clipboard.writeText(text).then(() => {
+            copyFeedback = withPrompt ? "Copied with prompt!" : "Copied!";
+            setTimeout(() => copyFeedback = "", 2000);
+        });
+    }
+
     // Reactive listener for WebSocket messages
     $: if ($wsStore.lastMessage) {
         handleWsMessage($wsStore.lastMessage);
@@ -70,6 +157,22 @@
         if (Date.now() - (msg._receivedAt || 0) > 2000) return;
 
         // Handle Scan Events
+        // Handle System Alerts
+        if (msg.type === "SYSTEM_ALERT") {
+            activeAlert = msg;
+            toastStore.add(`CRITICAL: ${msg.title}`, "error", 10000);
+            return;
+        }
+
+        // Xelixir remote support: cloud requested a session and this node's
+        // auto_accept is off — surface a modal for the operator to allow/deny.
+        if (msg.type === "XELIXIR_REQUESTED") {
+            xelixirRequest = msg;
+            showXelixirApproval = true;
+            toastStore.add("Remote Support is requesting access", "warning", 8000);
+            return;
+        }
+
         if (msg.barcode || (msg.data && msg.data.barcode)) {
             const barcode = msg.barcode || msg.data.barcode;
             processScan(barcode);
@@ -230,12 +333,24 @@
                 Scrapers
             </a>
             <a
+                href="{base}/dashboard/ai"
+                class:active={$page.url.pathname.includes("/dashboard/ai")}
+            >
+                AI Operator Inbox
+            </a>
+            <a
                 href="{base}/dashboard/analysis"
                 class:active={$page.url.pathname.includes("/analysis")}
                 style="margin-top: 1rem; border-top: 1px solid #333; padding-top: 1rem;"
             >
                 Analysis
             </a>
+
+            {#if activeAlert}
+                <button class="nav-alert-btn" on:click={() => showAlertModal = true}>
+                    {activeAlert.title}
+                </button>
+            {/if}
         </nav>
 
         <div class="user-panel">
@@ -244,7 +359,7 @@
                     >{$authStore.currentUser?.username || "User"}</span
                 >
                 <span class="role"
-                    >{$authStore.currentUser?.role || "Operator"}</span
+                    >{$authStore.currentUser?.role || "Operator"}{#if $authStore.isKioskObserver} (read-only){/if}</span
                 >
             </div>
             <button on:click={handleLogout} class="logout-btn">Logout</button>
@@ -256,6 +371,41 @@
     </main>
 
     <ToastContainer />
+
+    {#if showAlertModal && activeAlert}
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <div class="modal-overlay" on:click={() => showAlertModal = false}>
+            <!-- svelte-ignore a11y-click-events-have-key-events -->
+            <div class="modal-card alert-modal" on:click|stopPropagation>
+                <div class="alert-header">
+                    <h3>System Anomaly Detected</h3>
+                    <button class="close-btn" on:click={() => showAlertModal = false}>&times;</button>
+                </div>
+
+                <div class="alert-content">
+                    <h4>{activeAlert.title}</h4>
+                    <p class="alert-desc">{activeAlert.message}</p>
+                </div>
+
+                <div class="alert-copy-bar">
+                    <button class="copy-btn" on:click={() => copyAlert(false)}>Copy Message</button>
+                    <button class="copy-btn copy-ai" on:click={() => copyAlert(true)}>Copy for AI</button>
+                    {#if copyFeedback}<span class="copy-feedback">{copyFeedback}</span>{/if}
+                </div>
+
+                <div class="alert-footer-badge">
+                    Encrypted report automatically sent to xelth.com support on {new Date(activeAlert.timestamp).toLocaleString()}
+                </div>
+
+                <div class="modal-actions-bar">
+                    <button class="cancel-btn" on:click={() => showAlertModal = false}>Close</button>
+                    <button class="candidate-btn" on:click={() => { activeAlert = null; showAlertModal = false; }}>
+                        Acknowledge &amp; Dismiss
+                    </button>
+                </div>
+            </div>
+        </div>
+    {/if}
 
     {#if showAmbiguousModal}
         <div class="modal-overlay" on:click={dismissAmbiguous}>
@@ -272,6 +422,49 @@
                     {/each}
                 </div>
                 <button class="cancel-btn" on:click={dismissAmbiguous}>Cancel</button>
+            </div>
+        </div>
+    {/if}
+
+    {#if showXelixirApproval && xelixirRequest}
+        <!-- High-priority Xelixir remote-support approval modal -->
+        <div class="modal-overlay">
+            <div class="modal-card xelixir-modal" on:click|stopPropagation>
+                <h3 style="color: #c4b5fd;">Remote Support Access Request</h3>
+                <p class="modal-hint">
+                    Remote Support (Xelixir) is requesting an interactive session on this device.
+                    Approving will start the agent and give support staff temporary control.
+                </p>
+                {#if xelixirRequest.device_id}
+                    <p class="mono-sm">Device: {xelixirRequest.device_id}</p>
+                {/if}
+                {#if xelixirRequest.timestamp}
+                    <p class="mono-sm">Requested at: {new Date(xelixirRequest.timestamp).toLocaleString()}</p>
+                {/if}
+                <div class="modal-actions-bar">
+                    <button class="cancel-btn" on:click={denyXelixir} disabled={xelixirApproveBusy}>Deny</button>
+                    <button class="quick-login-btn" on:click={approveXelixir} disabled={xelixirApproveBusy}>
+                        {xelixirApproveBusy ? 'Authorizing…' : 'Allow'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    {/if}
+
+    {#if showQuickLogin}
+        <div class="modal-overlay" on:click={() => showQuickLogin = false}>
+            <div class="modal-card" on:click|stopPropagation>
+                <h3 style="color: #4a69bd;">Privilege Escalation Required</h3>
+                <p class="modal-hint">This action requires elevated permissions. Log in with your credentials to proceed.</p>
+                <div class="quick-login-form">
+                    <input type="text" bind:value={quickLoginUser} placeholder="Username or Email" disabled={quickLoginLoading} />
+                    <input type="password" bind:value={quickLoginPass} placeholder="Password" disabled={quickLoginLoading} />
+                    {#if quickLoginError}<div class="quick-login-error">{quickLoginError}</div>{/if}
+                    <button class="quick-login-btn" on:click={handleQuickLogin} disabled={quickLoginLoading}>
+                        {quickLoginLoading ? 'Authenticating...' : 'Login'}
+                    </button>
+                    <button class="cancel-btn" on:click={() => showQuickLogin = false} style="margin-top: 0.5rem;">Cancel</button>
+                </div>
             </div>
         </div>
     {/if}
@@ -351,6 +544,38 @@
         color: white;
     }
 
+    .nav-alert-btn {
+        padding: 0.8rem 1rem;
+        background: #dc3545;
+        color: white;
+        text-align: left;
+        border: none;
+        border-radius: 6px;
+        font-weight: bold;
+        cursor: pointer;
+        animation: blink-bg 2s infinite;
+    }
+    @keyframes blink-bg {
+        0% { background-color: #dc3545; }
+        50% { background-color: #991b1b; }
+        100% { background-color: #dc3545; }
+    }
+
+    .alert-modal { border-color: #dc3545; }
+    .alert-header { display: flex; justify-content: space-between; align-items: center; }
+    .alert-header h3 { color: #ff6b6b; margin: 0; }
+    .close-btn { background: none; border: none; color: #888; font-size: 1.5rem; cursor: pointer; }
+    .alert-content h4 { color: #fff; font-size: 1.1rem; margin: 1rem 0 0.5rem; }
+    .alert-desc { color: #ccc; line-height: 1.5; font-family: monospace; background: #1a1010; padding: 1rem; border-left: 3px solid #dc3545; border-radius: 4px; }
+    .alert-copy-bar { display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; }
+    .copy-btn { background: #2a2a2a; color: #aaa; border: 1px solid #444; padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; transition: all 0.15s; }
+    .copy-btn:hover { background: #333; color: #fff; border-color: #666; }
+    .copy-btn.copy-ai { color: #a78bfa; border-color: #5b21b6; }
+    .copy-btn.copy-ai:hover { background: #2d1a4e; color: #c4b5fd; }
+    .copy-feedback { font-size: 0.75rem; color: #4ade80; }
+    .alert-footer-badge { margin-top: 1rem; font-size: 0.8rem; color: #a3bffa; background: rgba(74, 105, 189, 0.1); padding: 0.5rem; border-radius: 4px; text-align: center; border: 1px solid rgba(74, 105, 189, 0.3); }
+    .modal-actions-bar { display: flex; gap: 0.5rem; margin-top: 1rem; }
+
     .user-panel {
         border-top: 1px solid #333;
         padding-top: 1rem;
@@ -394,6 +619,8 @@
         overflow-y: auto;
         padding: 2rem 2rem 4rem 2rem;
         background: #121212;
+        /* positioning context so a page can go full-bleed (e.g. the map) */
+        position: relative;
     }
 
     /* Ambiguous collision modal */
@@ -411,4 +638,14 @@
     .candidate-sub { font-size: 0.8rem; color: #888; }
     .cancel-btn { width: 100%; background: #333; color: #aaa; border: 1px solid #444; padding: 0.6rem; border-radius: 6px; cursor: pointer; }
     .cancel-btn:hover { background: #444; color: #fff; }
+
+    .quick-login-form { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; }
+    .quick-login-form input { width: 100%; padding: 0.6rem; background: #1a1a1a; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 0.9rem; box-sizing: border-box; }
+    .quick-login-form input:focus { outline: none; border-color: #4a69bd; }
+    .quick-login-btn { width: 100%; padding: 0.6rem; background: #4a69bd; color: white; border: none; border-radius: 4px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+    .quick-login-btn:hover { background: #3d5aa8; }
+    .quick-login-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+    .quick-login-error { color: #ff6b6b; font-size: 0.85rem; text-align: center; }
+    .xelixir-modal { border-color: #a855f7; background: #1f1a2e; }
+    .xelixir-modal .modal-hint { color: #cbd5e1; }
 </style>

@@ -12,8 +12,10 @@
     let needsSetup = false;
     let setupEmail = '';
     let setupPassword = '';
+    let pollInterval;
+    let enableKiosk = false;
 
-    onMount(async () => {
+    async function checkSetupStatus() {
         try {
             const res = await fetch('/api/auth/setup-status');
             if (res.ok) {
@@ -21,16 +23,42 @@
                 if (data.needsSetup) {
                     needsSetup = true;
                     setupEmail = data.email;
-                    setupPassword = data.password;
-                    // Pre-fill the login form with setup credentials
-                    email = data.email;
-                    password = data.password;
+                    if (setupPassword !== data.password) {
+                        setupPassword = data.password;
+                        if (email === '' || email === data.email) {
+                            email = data.email;
+                            password = data.password;
+                        }
+                    }
+                } else {
+                    needsSetup = false;
+                    if (pollInterval) {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                    }
                 }
             }
         } catch (e) {
-            // ignore — server may not expose setup-status
+            // ignore — server may be temporarily down during restart
         }
+    }
+
+    onMount(() => {
+        checkSetupStatus();
+        pollInterval = setInterval(checkSetupStatus, 3000);
+        return () => {
+            if (pollInterval) clearInterval(pollInterval);
+        };
     });
+
+    // Kiosk auto-login: if authStore picked up a kiosk-token observer JWT
+    // (config `system_config:kiosk.enabled=true` AND request came from
+    // localhost), skip the password form and go straight to the dashboard.
+    // Guarded on `isKioskObserver` so a real user who deliberately navigates
+    // to /login to switch accounts isn't kicked back out.
+    $: if ($authStore.isKioskObserver && !$authStore.isLoading) {
+        goto(`${base || '/E'}/dashboard`);
+    }
 
     async function handleLogin() {
         if (!email || !password) {
@@ -44,6 +72,14 @@
         const result = await authStore.login(email, password);
 
         if (result.success) {
+            if (enableKiosk) {
+                const token = localStorage.getItem('auth_token');
+                await fetch('/api/admin/config/kiosk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ enabled: true })
+                }).catch(() => {});
+            }
             const pathBase = base || '/E';
             goto(`${pathBase}/dashboard`);
         } else {
@@ -90,6 +126,12 @@
                     </div>
                 </div>
                 <p class="setup-hint">This banner disappears once you create a real admin account.</p>
+                {#if needsSetup}
+                    <label class="kiosk-toggle">
+                        <input type="checkbox" bind:checked={enableKiosk} />
+                        <span>Enable Kiosk Auto-Login (observer mode for this device)</span>
+                    </label>
+                {/if}
             </div>
         {/if}
 
@@ -339,5 +381,20 @@
         margin-bottom: 1.5rem;
         font-size: 0.9rem;
         text-align: center;
+    }
+
+    .kiosk-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 0.75rem;
+        cursor: pointer;
+        font-size: 0.82rem;
+        color: #aaa;
+    }
+
+    .kiosk-toggle input[type="checkbox"] {
+        width: auto;
+        accent-color: #4a69bd;
     }
 </style>

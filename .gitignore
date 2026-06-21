@@ -7,8 +7,21 @@
 *.db
 data/
 .env
-Cargo.lock
+**/config.env
 
 # Added by eck-snapshot to ignore metadata directory
 .eck/
 .mcp.json
+_wms_run.log
+_wms_run.err.log
+
+# Playwright persistent browser profile created by scraper/server.js (session cookies)
+scraper/.browser-data/
+
+# Local run logs and scratch copies (swept in accidentally by auto-commit)
+wms_*.log
+tmp/*.log
+tmp/eckwmsr_scraper/
+
+# local env backups (contain secrets)
+.env.bak*

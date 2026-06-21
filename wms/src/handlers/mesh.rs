@@ -3,8 +3,9 @@ use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode},
     response::Response,
-    Json,
+    Extension, Json,
 };
+use eck_core::auth::Claims;
 use eck_core::sync::merkle::{self, MerkleRequest};
 use eck_core::utils::filestore::FileStore;
 use serde::Deserialize;
@@ -37,29 +38,68 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Json<Value> {
 }
 
 /// GET /api/mesh/nodes — Online peers discovered via relay (tracker only).
+///
+/// Returns `{ relay: "online" | "offline", nodes: [...] }` so the frontend can
+/// distinguish "relay unreachable" from "relay responded but no peers online".
 pub async fn nodes(State(state): State<Arc<AppState>>) -> Json<Value> {
     let nodes = match state.sync_engine.relay().get_mesh_status().await {
         Ok(n) => n,
         Err(e) => {
-            debug!("Relay unreachable, returning empty nodes: {}", e);
-            return Json(json!([]));
+            debug!("Relay unreachable: {}", e);
+            return Json(json!({
+                "relay": "offline",
+                "nodes": [],
+            }));
         }
     };
 
     let mapped: Vec<Value> = nodes
         .into_iter()
         .map(|n| {
+            let base = match &n.base_url {
+                Some(url) if !url.is_empty() => url.clone(),
+                _ => format!("http://{}:{}", n.external_ip, n.port),
+            };
             json!({
                 "instance_id": n.instance_id,
                 "status": n.status,
-                "role": "peer",
-                "base_url": format!("http://{}:{}", n.external_ip, n.port),
+                "role": "peer",  // legacy field, kept for back-compat with existing clients
+                "node_role": n.node_role.unwrap_or_else(|| "full".to_string()),
+                "base_url": base,
                 "last_seen": n.last_seen,
             })
         })
         .collect();
 
-    Json(json!(mapped))
+    Json(json!({
+        "relay": "online",
+        "nodes": mapped,
+    }))
+}
+
+/// GET /api/admin/known-nodes — ALL nodes across ALL meshes (admin only).
+///
+/// Proxies the relay's `/E/registry` (cross-tenant, gated by `RELAY_ADMIN_TOKEN`)
+/// so the cloud admin UI can list kiosks regardless of which mesh they're in —
+/// the "Request access" flow no longer needs the operator to know the UUID by hand.
+pub async fn known_nodes(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+) -> ApiResult<Json<Value>> {
+    if claims.role != "admin" {
+        return Err((StatusCode::FORBIDDEN, "admin only".into()));
+    }
+    let token = std::env::var("RELAY_ADMIN_TOKEN").unwrap_or_default();
+    if token.trim().is_empty() {
+        return Ok(Json(json!({
+            "nodes": [],
+            "note": "RELAY_ADMIN_TOKEN not configured — cross-mesh registry disabled on this relay",
+        })));
+    }
+    match state.sync_engine.relay().fetch_registry(&token).await {
+        Ok(nodes) => Ok(Json(json!({ "nodes": nodes }))),
+        Err(e) => Err((StatusCode::BAD_GATEWAY, format!("relay registry: {e}"))),
+    }
 }
 
 // ─── Merkle Tree (P2P) ──────────────────────────────────────────────────────
@@ -79,7 +119,13 @@ pub async fn merkle_state(
     State(state): State<Arc<AppState>>,
     Query(q): Query<MerkleQuery>,
 ) -> ApiResult<Json<merkle::MerkleNode>> {
-    let svc = merkle::MerkleService::new(state.db.clone(), state.instance_id.clone());
+    // Cache nodes advertise only their authoritative subset (is_cache=false).
+    // Full peers see the whole tree.
+    let svc = if state.node_role == "cache" {
+        merkle::MerkleService::new_cache_filtered(state.db.clone(), state.instance_id.clone())
+    } else {
+        merkle::MerkleService::new(state.db.clone(), state.instance_id.clone())
+    };
 
     let req = MerkleRequest {
         entity_type: q.entity_type,
@@ -131,10 +177,30 @@ pub async fn sync_pull(
         .take(0)
         .map_err(db_err)?;
 
+    // Blind-cache invariant (shared logic in eck_core::utils::crypto):
+    //   owner (has key)      → encrypt every row before it leaves the wire;
+    //   blind cache (no key) → serve ONLY ciphertext, WITHHOLD any plaintext it
+    //                          should never have held (e.g. full-era legacy);
+    //   plain full (no key)  → serve as-is.
+    let n = entities.len();
+    let has_key = eck_core::utils::crypto::data_key();
+    let is_cache = state.node_role == "cache";
+    let entities = eck_core::utils::crypto::prepare_outbound(entities, has_key, is_cache);
+    let withheld = n - entities.len();
+    if withheld > 0 {
+        warn!(
+            "P2P pull: blind cache WITHHELD {}/{} {} plaintext rows (must never serve cleartext a cache shouldn't hold)",
+            withheld, n, req.entity_type
+        );
+    }
+
     info!(
-        "P2P pull: serving {} {} entities",
+        "P2P pull: serving {}/{} {} entities (encrypted={}, withheld={})",
         entities.len(),
-        req.entity_type
+        n,
+        req.entity_type,
+        has_key.is_some(),
+        withheld
     );
 
     Ok(Json(
@@ -159,68 +225,104 @@ pub async fn sync_push(
     State(state): State<Arc<AppState>>,
     Json(req): Json<PushRequest>,
 ) -> ApiResult<Json<Value>> {
-    let mut applied = 0usize;
-    let merkle_svc = merkle::MerkleService::new(state.db.clone(), state.instance_id.clone());
-
-    for entity in &req.entities {
-        // Extract ID from the entity — try "id" field
-        let entity_id = match entity.get("id").and_then(|v| v.as_str()) {
-            Some(id) => id.to_string(),
-            None => {
-                warn!(
-                    "P2P push: skipping {} entity without id field",
-                    req.entity_type
-                );
-                continue;
-            }
-        };
-
-        // Strip "id" from the content to avoid SurrealDB conflicts with record ID
-        let mut clean = entity.clone();
-        if let Some(obj) = clean.as_object_mut() {
-            obj.remove("id");
-        }
-
-        // UPSERT into SurrealDB — generic, works for any entity type
-        let result: Result<Option<Value>, _> = state
-            .db
-            .upsert((&req.entity_type as &str, &entity_id as &str))
-            .content(clean)
-            .await;
-
-        match result {
-            Ok(_) => {
-                applied += 1;
-                // Update Merkle checksum
-                if let Err(e) = merkle_svc
-                    .record_checksum(&req.entity_type, &entity_id, entity)
-                    .await
-                {
-                    warn!("Checksum update failed for {}:{}: {}", req.entity_type, entity_id, e);
-                }
-            }
-            Err(e) => {
-                warn!(
-                    "P2P push: UPSERT failed for {}:{}: {}",
-                    req.entity_type, entity_id, e
-                );
-            }
-        }
-    }
-
-    info!(
-        "P2P push: applied {}/{} {} entities from {}",
-        applied,
-        req.entities.len(),
-        req.entity_type,
-        req.source_instance
-    );
+    let applied = apply_pushed_entities(
+        &state,
+        &req.entity_type,
+        &req.entities,
+        &req.source_instance,
+    )
+    .await;
 
     Ok(Json(json!({
         "success": true,
         "applied": applied,
         "entity_type": req.entity_type,
     })))
+}
+
+/// Reusable helper: applies a batch of pushed entities (conflict-resolve + merkle
+/// checksum update). Called by both the direct HTTP handler (`sync_push`) and
+/// the relay-routed mesh poller (`mesh_relay_poller`). Returns the count of
+/// entities actually written (a no-op upsert from VectorClock conflict
+/// resolution doesn't count).
+pub async fn apply_pushed_entities(
+    state: &Arc<AppState>,
+    entity_type: &str,
+    entities: &[Value],
+    source_instance: &str,
+) -> usize {
+    let started = std::time::Instant::now();
+    let mut applied = 0usize;
+    let merkle_svc = merkle::MerkleService::new(state.db.clone(), state.instance_id.clone());
+
+    for entity in entities {
+        // Prefer the canonical foo_id column (a bare UUID) for tables that
+        // carry one — that's what conflict::resolve_and_upsert and the merkle
+        // tree both use as the record key. Fall back to extracting the leaf
+        // from the implicit Thing id for tables without a dedicated column.
+        let id_field = match entity_type {
+            "registered_device" => Some("device_id"),
+            "order" => Some("order_id"),
+            _ => None,
+        };
+        let entity_id_opt = id_field
+            .and_then(|f| entity.get(f).and_then(|v| v.as_str()).map(String::from))
+            .or_else(|| entity.get("id").and_then(eck_core::sync::merkle::extract_entity_leaf_id));
+        let entity_id = match entity_id_opt {
+            Some(id) => id,
+            None => {
+                warn!(
+                    "P2P push: skipping {} entity without id field",
+                    entity_type
+                );
+                continue;
+            }
+        };
+
+        // Conflict-aware upsert using VectorClock causality
+        match eck_core::sync::conflict::resolve_and_upsert(
+            &state.db,
+            entity_type,
+            &entity_id,
+            entity.clone(),
+            &state.instance_id,
+        )
+        .await
+        {
+            Ok(written) => {
+                if written {
+                    applied += 1;
+                    // Update Merkle checksum
+                    if let Err(e) = merkle_svc
+                        .record_checksum(entity_type, &entity_id, entity)
+                        .await
+                    {
+                        warn!("Checksum update failed for {}:{}: {}", entity_type, entity_id, e);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "P2P push: conflict resolve failed for {}:{}: {}",
+                    entity_type, entity_id, e
+                );
+            }
+        }
+    }
+
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    let n = entities.len();
+    let per_row_us = if n > 0 {
+        (elapsed_ms as u64 * 1000) / n as u64
+    } else {
+        0
+    };
+    info!(
+        "P2P push: applied {}/{} {} entities from {} in {} ms ({} us/row avg)",
+        applied, n, entity_type, source_instance, elapsed_ms, per_row_us
+    );
+
+    applied
 }
 
 // ─── File Serve (P2P) ────────────────────────────────────────────────────────
@@ -232,6 +334,16 @@ pub async fn serve_mesh_file(
     State(state): State<Arc<AppState>>,
     Path(hash): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
+    // Blind-cache invariant (companion to sync_pull): a keyless cache must not be
+    // a file-content authority. CAS blobs are NOT envelope-encrypted, so serving
+    // raw bytes (e.g. odometer / Kennzeichen photos) would leak readable content a
+    // cache should never expose. Consumers hydrate files from the data owner.
+    if state.node_role == "cache" {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "blind cache does not serve file content".into(),
+        ));
+    }
     // Look up file_resource by SHA-256 hash
     let rows: Vec<Value> = state
         .db
@@ -266,4 +378,63 @@ pub async fn serve_mesh_file(
         .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
         .body(Body::from(bytes))
         .unwrap())
+}
+
+// ─── Task Queue (Reverse-Fetch) ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct TaskQuery {
+    pub instance_id: String,
+}
+
+/// GET /api/mesh/tasks?instance_id=xxx — Return pending tasks for the calling node.
+pub async fn get_tasks(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TaskQuery>,
+) -> ApiResult<Json<Vec<Value>>> {
+    let rows: Vec<Value> = state.db
+        .query("SELECT record::id(id) AS id, target_instance_id, action, ticket_id, created_at FROM mesh_task WHERE target_instance_id = $caller_id ORDER BY created_at ASC")
+        .bind(("caller_id", q.instance_id))
+        .await
+        .and_then(|mut r| r.take(0))
+        .map_err(db_err)?;
+
+    Ok(Json(rows))
+}
+
+/// DELETE /api/mesh/tasks/:id — Mark a task as completed (delete it).
+pub async fn delete_task(
+    State(state): State<Arc<AppState>>,
+    Path(task_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let _: Option<Value> = state.db
+        .delete(("mesh_task", task_id.as_str()))
+        .await
+        .map_err(db_err)?;
+
+    Ok(Json(json!({ "success": true })))
+}
+
+// ─── Raw Document Fetch (P2P) ───────────────────────────────────────────────
+
+/// GET /api/mesh/raw-docs/:ticket_id — return document_raw records for a ticket.
+/// Used by thin nodes to lazy-load heavy payloads from the fat node that imported them.
+pub async fn raw_docs(
+    State(state): State<Arc<AppState>>,
+    Path(ticket_id): Path<String>,
+) -> ApiResult<Json<Vec<Value>>> {
+    // Blind-cache invariant: `document_raw` payloads are never envelope-encrypted
+    // (and are intentionally never synced to caches in the first place). A keyless
+    // cache must not serve raw doc bodies — refuse on cache nodes (defense-in-depth).
+    if state.node_role == "cache" {
+        return Ok(Json(vec![]));
+    }
+    let rows: Vec<Value> = state.db
+        .query("SELECT record::id(id) AS id, type, ticket_id, payload, updated_at FROM document_raw WHERE record::id(id) = $tid OR ticket_id = $tid ORDER BY updated_at ASC")
+        .bind(("tid", ticket_id))
+        .await
+        .and_then(|mut r| r.take(0))
+        .map_err(db_err)?;
+
+    Ok(Json(rows))
 }

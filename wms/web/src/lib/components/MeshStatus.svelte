@@ -1,20 +1,38 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
     import { base } from '$app/paths';
+    import { get } from 'svelte/store';
+    import { authStore } from '$lib/stores/authStore';
 
     let meshNodes = [];
     let selfStatus = null;
+    let relayStatus = 'unknown'; // 'online' | 'offline' | 'unknown'
     let loading = true;
     let pollInterval;
 
+    function authHeaders() {
+        const state = get(authStore);
+        return state.token ? { 'Authorization': `Bearer ${state.token}` } : {};
+    }
+
     async function fetchMeshNodes() {
         try {
+            const headers = authHeaders();
             const [nodesRes, statusRes] = await Promise.all([
-                fetch('/api/mesh/nodes'),
-                fetch('/api/mesh/status')
+                fetch('/api/mesh/nodes', { headers }),
+                fetch('/api/mesh/status', { headers })
             ]);
-            if (nodesRes.ok) meshNodes = await nodesRes.json();
             if (statusRes.ok) selfStatus = await statusRes.json();
+            if (nodesRes.ok) {
+                const body = await nodesRes.json();
+                // Backend now returns { relay, nodes }; tolerate old array shape too
+                const allNodes = Array.isArray(body) ? body : (body.nodes || []);
+                relayStatus = Array.isArray(body) ? 'online' : (body.relay || 'unknown');
+                // Filter out self from peers list (shown separately)
+                meshNodes = selfStatus
+                    ? allNodes.filter(n => n.instance_id !== selfStatus.instance_id)
+                    : allNodes;
+            }
             loading = false;
         } catch (error) {
             console.error('Failed to fetch mesh nodes:', error);
@@ -41,48 +59,44 @@
         }
     }
 
+    // True if `host` is a bare IP literal (IPv4 or IPv6) — i.e. NOT a domain.
+    function isIpHost(host) {
+        if (!host) return false;
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true; // IPv4
+        if (host.includes(':')) return true;                   // IPv6
+        return false;
+    }
+
+    // The node's real domain, or '' when it has none (localhost / bare IP / no url).
+    function domainOf(baseUrl) {
+        if (!baseUrl) return '';
+        try {
+            const host = new URL(baseUrl).hostname;
+            if (!host || host === 'localhost' || isIpHost(host)) return '';
+            return host; // e.g. "pda.repair"
+        } catch (e) {
+            return '';
+        }
+    }
+
+    // Short, stable fallback when there's no domain: first UUID segment
+    // (e.g. "de1911de"), with legacy prefixes stripped.
+    function shortId(instanceId) {
+        let h = (instanceId || '')
+            .replace(/^production_/, '')
+            .replace(/^local_/, '')
+            .replace(/^instance_/, '');
+        if (h.includes('-')) h = h.split('-')[0];
+        return h.length > 20 ? h.substring(0, 20) : h;
+    }
+
+    // Display name per the rule: domain if the node has one, else its UUID.
+    function nodeName(baseUrl, instanceId) {
+        return domainOf(baseUrl) || shortId(instanceId);
+    }
+
     function getNodeLabel(node) {
-        const instanceId = node.instance_id;
-        const role = node.role.toUpperCase();
-
-        let identifier = '';
-
-        // If node has a non-localhost URL, use domain as identifier
-        if (node.base_url && !node.base_url.includes('localhost')) {
-            try {
-                const url = new URL(node.base_url);
-                identifier = url.hostname; // e.g., "pda.repair"
-            } catch (e) {
-                // URL parsing failed, fall through to hash extraction
-            }
-        }
-
-        // If no domain available, extract meaningful part from instance_id
-        if (!identifier) {
-            let hash = instanceId;
-
-            // Remove common prefixes
-            hash = hash.replace(/^production_/, '');
-            hash = hash.replace(/^local_/, '');
-            hash = hash.replace(/^instance_/, '');
-
-            // For UUIDs, take first two segments
-            if (hash.includes('-')) {
-                const uuidParts = hash.split('-');
-                if (uuidParts.length >= 5) {
-                    hash = uuidParts.slice(0, 2).join('-');
-                }
-            }
-
-            // Limit length if still too long
-            if (hash.length > 20) {
-                hash = hash.substring(0, 20);
-            }
-
-            identifier = hash;
-        }
-
-        return `${role}-${identifier}`;
+        return `${node.role.toUpperCase()}-${nodeName(node.base_url, node.instance_id)}`;
     }
 </script>
 
@@ -96,21 +110,26 @@
         {#if selfStatus}
             <div class="mesh-node self">
                 <span class="node-icon">🏠</span>
-                <span class="node-label" title="ID: {selfStatus.instance_id}">{selfStatus.instance_name || selfStatus.instance_id.substring(0, 8)}</span>
+                <span class="node-label" title="ID: {selfStatus.instance_id}">{nodeName(selfStatus.base_url, selfStatus.instance_id)}</span>
                 <span class="node-status online"></span>
             </div>
         {/if}
-        {#if meshNodes.length === 0}
+        {#if relayStatus === 'offline'}
+            <div class="mesh-node offline" title="Central tracker (relay) unreachable — peer discovery paused">
+                <span class="node-icon">📡</span>
+                <span class="node-label">Relay offline</span>
+            </div>
+        {:else if meshNodes.length === 0}
             <div class="mesh-node offline">
                 <span class="node-icon">⚠️</span>
                 <span class="node-label">No peers</span>
             </div>
         {:else}
             {#each meshNodes as node}
-                <div class="mesh-node" class:online={node.status === 'active'} class:degraded={node.status === 'degraded'} class:offline={node.status === 'offline'}>
+                <div class="mesh-node" class:online={node.status === 'online' || node.status === 'active'} class:degraded={node.status === 'degraded'} class:offline={node.status === 'offline'}>
                     <span class="node-icon">{getNodeIcon(node.role)}</span>
                     <span class="node-label">{getNodeLabel(node)}</span>
-                    <span class="node-status" class:online={node.status === 'active'} class:degraded={node.status === 'degraded'}></span>
+                    <span class="node-status" class:online={node.status === 'online' || node.status === 'active'} class:degraded={node.status === 'degraded'}></span>
                 </div>
             {/each}
         {/if}

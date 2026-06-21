@@ -7,7 +7,8 @@ const initialState = {
   isAuthenticated: false,
   currentUser: null,
   token: null,
-  isLoading: true
+  isLoading: true,
+  isKioskObserver: false
 };
 
 function createAuthStore() {
@@ -18,22 +19,37 @@ function createAuthStore() {
     init: async () => {
         if (!browser) return;
         const token = localStorage.getItem('auth_token');
-        if (!token) {
-            update(s => ({ ...s, isLoading: false }));
-            return;
+        if (token) {
+            try {
+                const res = await fetch('/api/auth/me', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!res.ok) throw new Error('Token invalid');
+                const user = await res.json();
+                update(s => ({ ...s, isAuthenticated: true, currentUser: user, token, isLoading: false }));
+                return;
+            } catch {
+                localStorage.removeItem('auth_token');
+                localStorage.removeItem('refresh_token');
+            }
         }
         try {
-            const res = await fetch('/api/auth/me', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error('Token invalid');
-            const user = await res.json();
-            update(s => ({ ...s, isAuthenticated: true, currentUser: user, token, isLoading: false }));
-        } catch {
-            localStorage.removeItem('auth_token');
-            localStorage.removeItem('refresh_token');
-            update(s => ({ ...s, isLoading: false }));
-        }
+            const res = await fetch('/api/auth/kiosk-token');
+            if (!res.ok) throw new Error('No kiosk token');
+            const data = await res.json();
+            if (data.success) {
+                update(s => ({
+                    ...s,
+                    isAuthenticated: true,
+                    currentUser: data.user,
+                    token: data.token,
+                    isKioskObserver: true,
+                    isLoading: false
+                }));
+                return;
+            }
+        } catch {}
+        update(s => ({ ...s, isLoading: false }));
     },
     setTokens: (accessToken, refreshToken, user) => {
         if (browser) {
@@ -71,6 +87,7 @@ function createAuthStore() {
                 isAuthenticated: true,
                 currentUser: data.user,
                 token: data.token,
+                isKioskObserver: false,
                 isLoading: false
             }));
             return { success: true };

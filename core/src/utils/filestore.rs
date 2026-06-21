@@ -139,6 +139,11 @@ impl FileStore {
         })
     }
 
+    /// Check whether a file exists on disk given a relative storage path.
+    pub fn exists(&self, storage_path: &str) -> bool {
+        PathBuf::from(&self.base_dir).join(storage_path).exists()
+    }
+
     /// Read file bytes from disk given a relative storage path.
     pub async fn read(&self, storage_path: &str) -> Result<Vec<u8>, String> {
         let abs_path = PathBuf::from(&self.base_dir).join(storage_path);

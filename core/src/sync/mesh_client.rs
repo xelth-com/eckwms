@@ -19,12 +19,41 @@ pub struct MeshClient {
     client: Client,
     peer_base_url: String,
     sync_secret: Option<String>,
+    /// `"full"` (default) or `"cache"`. Set from the relay's registration row
+    /// during discovery so the sync engine can skip cache peers in the
+    /// periodic loop — they own no canonical data.
+    node_role: String,
+    /// Peer's instance_id (UUID). Needed for relay-routed fallback when direct
+    /// HTTP fails — the relay's mesh queue is addressed by UUID, not URL.
+    target_instance_id: String,
 }
 
 impl MeshClient {
     pub fn new(peer_base_url: &str, sync_secret: Option<&str>) -> Self {
+        Self::new_full(peer_base_url, sync_secret, "full", "")
+    }
+
+    pub fn new_with_role(peer_base_url: &str, sync_secret: Option<&str>, role: &str) -> Self {
+        Self::new_full(peer_base_url, sync_secret, role, "")
+    }
+
+    pub fn new_full(
+        peer_base_url: &str,
+        sync_secret: Option<&str>,
+        role: &str,
+        target_instance_id: &str,
+    ) -> Self {
+        // 30s was inherited but is far too long when N entity_types × 60s
+        // cycle means a single unreachable peer stalls every cycle for 19×30s
+        // = ~10 min on this codebase. Cross-NAT setups expect some peers to
+        // be unreachable at any given time — fail fast.
+        //
+        // 5s connect + 8s overall is enough for healthy local LAN (<50ms) and
+        // healthy public HTTPS (typically 200–800ms across continents) while
+        // still cutting noise from dead peers by ~3.75×.
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(8))
             .build()
             .unwrap_or_default();
 
@@ -32,11 +61,21 @@ impl MeshClient {
             client,
             peer_base_url: peer_base_url.trim_end_matches('/').to_string(),
             sync_secret: sync_secret.map(|s| s.to_string()),
+            node_role: role.to_string(),
+            target_instance_id: target_instance_id.to_string(),
         }
     }
 
     pub fn peer_url(&self) -> &str {
         &self.peer_base_url
+    }
+
+    pub fn target_instance_id(&self) -> &str {
+        &self.target_instance_id
+    }
+
+    pub fn is_cache(&self) -> bool {
+        self.node_role == "cache"
     }
 
     fn auth_header(&self) -> Option<String> {
@@ -114,7 +153,26 @@ impl MeshClient {
             .map_err(|e| format!("Pull response parse failed: {}", e))?;
 
         match result.get("entities") {
-            Some(Value::Array(arr)) => Ok(arr.clone()),
+            Some(Value::Array(arr)) => {
+                // Blind-cache: the fulfiller encrypted each entity if it holds
+                // MESH_DATA_KEY. A node with the key decrypts here; a cache node
+                // (no key) keeps the ciphertext envelopes and stores them as-is.
+                // Mirrors relay_client::pull_entities_via_relay.
+                let entities = match crate::utils::crypto::data_key() {
+                    Some(key) => arr
+                        .iter()
+                        .map(|e| {
+                            if crate::utils::crypto::is_encrypted(e) {
+                                crate::utils::crypto::decrypt_json(&key, e).unwrap_or_else(|_| e.clone())
+                            } else {
+                                e.clone()
+                            }
+                        })
+                        .collect(),
+                    None => arr.clone(),
+                };
+                Ok(entities)
+            }
             _ => Ok(vec![]),
         }
     }
@@ -185,6 +243,81 @@ impl MeshClient {
             .map(|b| b.to_vec())
             .map_err(|e| format!("File response read failed: {}", e))
     }
+
+    // ─── Task Queue (Reverse-Fetch) ────────────────────────────────────────
+
+    /// Fetch pending tasks assigned to us from a peer node.
+    pub async fn fetch_tasks(&self, my_instance_id: &str) -> Result<Vec<Value>, String> {
+        let url = format!(
+            "{}/api/mesh/tasks?instance_id={}",
+            self.peer_base_url, my_instance_id
+        );
+
+        let mut http_req = self.client.get(&url);
+        if let Some(ref auth) = self.auth_header() {
+            http_req = http_req.header("authorization", auth);
+        }
+
+        let resp = http_req
+            .send()
+            .await
+            .map_err(|e| format!("Tasks GET failed ({}): {}", url, e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("Tasks GET {} returned {}", url, resp.status()));
+        }
+
+        resp.json::<Vec<Value>>()
+            .await
+            .map_err(|e| format!("Tasks response parse failed: {}", e))
+    }
+
+    /// Delete a completed task from a peer node.
+    pub async fn complete_task(&self, task_id: &str) -> Result<(), String> {
+        let url = format!("{}/api/mesh/tasks/{}", self.peer_base_url, task_id);
+
+        let mut http_req = self.client.delete(&url);
+        if let Some(ref auth) = self.auth_header() {
+            http_req = http_req.header("authorization", auth);
+        }
+
+        let resp = http_req
+            .send()
+            .await
+            .map_err(|e| format!("Task DELETE failed ({}): {}", url, e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("Task DELETE {} returned {}", url, resp.status()));
+        }
+
+        Ok(())
+    }
+
+    // ─── Raw Document Fetch ─────────────────────────────────────────────────
+
+    /// Fetch raw document payloads for a ticket from a peer (fat node).
+    /// Returns the ticket + all thread document_raw records.
+    pub async fn fetch_raw_docs(&self, ticket_id: &str) -> Result<Value, String> {
+        let url = format!("{}/api/mesh/raw-docs/{}", self.peer_base_url, ticket_id);
+
+        let mut http_req = self.client.get(&url);
+        if let Some(ref auth) = self.auth_header() {
+            http_req = http_req.header("authorization", auth);
+        }
+
+        let resp = http_req
+            .send()
+            .await
+            .map_err(|e| format!("Raw docs GET failed ({}): {}", url, e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("Raw docs GET {} returned {}", url, resp.status()));
+        }
+
+        resp.json::<Value>()
+            .await
+            .map_err(|e| format!("Raw docs response parse failed: {}", e))
+    }
 }
 
 /// Discover online peers from the relay and build MeshClients for each.
@@ -203,13 +336,50 @@ pub async fn discover_peers(
         }
     };
 
-    nodes
+    // Short, dedicated probe client for the LAN fast-path (B3): a peer that
+    // advertised a `lan_url` is preferred over its public `base_url` IF we can
+    // reach the private address quickly. Re-evaluated every discovery cycle, so
+    // it self-heals when the LAN path appears/disappears. Probes run concurrently.
+    let probe = Client::builder()
+        .connect_timeout(Duration::from_millis(800))
+        .timeout(Duration::from_millis(1200))
+        .build()
+        .unwrap_or_default();
+
+    let online = nodes
         .into_iter()
-        .filter(|n| n.instance_id != own_instance_id && n.status == "online")
-        .map(|n| {
-            let base = format!("http://{}:{}", n.external_ip, n.port);
-            debug!("Discovered peer {} at {}", n.instance_id, base);
-            MeshClient::new(&base, sync_secret)
-        })
-        .collect()
+        .filter(|n| n.instance_id != own_instance_id && n.status == "online");
+
+    let futs = online.map(|n| {
+        let probe = probe.clone();
+        async move {
+            let public = match &n.base_url {
+                Some(url) if !url.is_empty() => url.clone(),
+                _ => format!("http://{}:{}", n.external_ip, n.port),
+            };
+            let base = match n.lan_url.as_deref() {
+                Some(lan) if !lan.is_empty() && lan.trim_end_matches('/') != public => {
+                    let lan = lan.trim_end_matches('/');
+                    let healthy = probe
+                        .get(format!("{}/E/health", lan))
+                        .send()
+                        .await
+                        .map(|r| r.status().is_success())
+                        .unwrap_or(false);
+                    if healthy {
+                        debug!("peer {} reachable via LAN fast-path {}", n.instance_id, lan);
+                        lan.to_string()
+                    } else {
+                        public
+                    }
+                }
+                _ => public,
+            };
+            let role = n.node_role.as_deref().unwrap_or("full");
+            debug!("Discovered peer {} at {} (role={})", n.instance_id, base, role);
+            MeshClient::new_full(&base, sync_secret, role, &n.instance_id)
+        }
+    });
+
+    futures_util::future::join_all(futs).await
 }

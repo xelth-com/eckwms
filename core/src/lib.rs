@@ -1,5 +1,10 @@
+pub mod ai;
+pub mod anchor;
+pub mod audit;
 pub mod auth;
 pub mod db;
+pub mod licensing;
 pub mod models;
 pub mod sync;
 pub mod utils;
+pub mod xelixir;

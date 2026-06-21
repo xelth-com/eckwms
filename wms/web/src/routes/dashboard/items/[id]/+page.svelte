@@ -42,7 +42,7 @@
         const barcode = item.barcode;
         if (!barcode) return;
         try {
-            attachments = await api.get(`/api/attachments/product/${encodeURIComponent(barcode)}`);
+            attachments = await api.get(`/api/files/attachments?entity_type=product&entity_id=${encodeURIComponent(barcode)}`);
         } catch (e) {
             console.warn("Failed to load attachments", e);
         }

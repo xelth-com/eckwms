@@ -52,15 +52,10 @@ pub async fn get(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let picking: Option<Value> = state
-        .db
-        .select(("picking", &*id))
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match picking {
-        Some(v) => Ok(Json(v)),
-        None => Err((StatusCode::NOT_FOUND, format!("Picking '{id}' not found"))),
+    match state.get_synced_entity("picking", &id).await {
+        Ok(Some(v)) => Ok(Json(v)),
+        Ok(None) => Err((StatusCode::NOT_FOUND, format!("Picking '{id}' not found"))),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
 }
 

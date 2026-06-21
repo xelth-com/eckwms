@@ -1,6 +1,6 @@
 <script>
     import { page } from '$app/stores';
-    import { onMount } from 'svelte';
+    import { onMount, onDestroy } from 'svelte';
     import { api } from '$lib/api';
     import { goto } from '$app/navigation';
     import { base } from '$app/paths';
@@ -8,6 +8,7 @@
 
     const ticketId = $page.params.id;
 
+    let ticket = {};   // parent ticket payload from API
     let threads = [];
     let loading = true;
     let error = null;
@@ -15,14 +16,26 @@
     let allTickets = [];
     let relatedTickets = [];
 
-    // Track which threads are expanded (by documentId)
+    // Track which threads are expanded (by id)
     let expandedThreads = new Set();
+
+    let isFetchingFromPeer = false;
+    let pollTimer = null;
+    // Per-thread fetch state for lazy body loading. `threadBodies[id]` holds
+    // the loaded payload once fetched; `threadFetching` flags which thread is
+    // currently being pulled (spinner) so we never double-fetch.
+    let threadBodies = {};
+    let threadFetching = {};
+
+    onDestroy(() => {
+        if (pollTimer) clearTimeout(pollTimer);
+    });
 
     // attachment arrays keyed by document UUID
     let attachments = {};
 
     onMount(async () => {
-        await loadThreads();
+        await loadThreadsMeta();
         loadSimilar();
         // Load all tickets asynchronously for the "Related Tickets" feature
         api.get('/api/support/tickets').then(res => {
@@ -31,13 +44,19 @@
         }).catch(e => console.warn('Failed to load related tickets', e));
     });
 
-    async function loadThreads() {
+    // Fast path: pull only thread headers + ticket meta. No payload bodies,
+    // no attachments, no mesh-fetch. Page renders instantly with the summary
+    // and a list of collapsed thread rows. Bodies are fetched per-thread
+    // when the operator actually clicks one (see ensureThreadBody).
+    async function loadThreadsMeta() {
         loading = true;
         error = null;
         try {
-            threads = await api.get(`/api/support/tickets/${ticketId}/threads`);
-            // Load attachments for every thread in parallel
-            await Promise.all(threads.map(t => loadAttachments(t.documentId)));
+            const res = await api.get(`/api/support/tickets/${ticketId}/threads?meta_only=true`);
+            ticket = res.ticket || {};
+            threads = res.threads || [];
+            summary = res.ai_summary || '';
+            isFetchingFromPeer = false;
             computeRelatedTickets();
         } catch (e) {
             console.error(e);
@@ -48,27 +67,72 @@
         }
     }
 
+    // Lazy fetch of one thread's payload. Idempotent: re-callable cheaply once
+    // the body is cached. If the source node has not pushed the raw bundle yet,
+    // backend queues a mesh-task and returns is_fetching_from_peer=true; we
+    // poll the same endpoint every 3 s until the payload arrives.
+    async function ensureThreadBody(threadId) {
+        if (threadBodies[threadId] !== undefined) return;
+        if (threadFetching[threadId]) return;
+        threadFetching[threadId] = true;
+        threadFetching = threadFetching;
+        try {
+            const res = await api.get(`/api/support/tickets/${ticketId}/threads/${threadId}/payload`);
+            if (res.payload) {
+                threadBodies[threadId] = res.payload;
+                threadBodies = threadBodies;
+                // Now that the body is here, fetch attachments for this one thread.
+                loadAttachments(threadId);
+            } else if (res.is_fetching_from_peer) {
+                // Schedule a single retry; bail out if the user collapses meanwhile.
+                setTimeout(() => {
+                    if (expandedThreads.has(threadId) && threadBodies[threadId] === undefined) {
+                        threadFetching[threadId] = false;
+                        ensureThreadBody(threadId);
+                    } else {
+                        threadFetching[threadId] = false;
+                        threadFetching = threadFetching;
+                    }
+                }, 3000);
+                return;
+            }
+        } catch (e) {
+            console.warn('Thread payload fetch failed', e);
+        } finally {
+            if (threadBodies[threadId] !== undefined) {
+                threadFetching[threadId] = false;
+                threadFetching = threadFetching;
+            }
+        }
+    }
+
     async function loadAttachments(docId) {
         if (!docId) return;
         try {
-            const res = await api.get(`/api/attachments/document/${docId}`);
+            const res = await api.get(`/api/files/attachments?entity_type=document&entity_id=${docId}`);
             attachments[docId] = res || [];
         } catch {
             attachments[docId] = [];
         }
-        // Trigger reactivity
         attachments = attachments;
     }
 
-    // Reactively compute contact info
-    $: ticketNumber = threads[0]?.payload?.ticket?.ticketNumber ?? ticketId;
-    $: subject = threads[0]?.payload?.ticket?.subject ?? ticketId;
-    $: ticketStatus = threads[0]?.payload?.ticket?.status ?? '';
+    // Reactively compute contact info — uses `ticket` from API (parent ticket payload)
+    $: ticketNumber = ticket?.ticketNumber ?? threads[0]?.payload?.ticket?.ticketNumber ?? ticketId;
+    $: subject = ticket?.subject ?? threads[0]?.payload?.ticket?.subject ?? ticketId;
+    $: ticketStatus = ticket?.status ?? threads[0]?.payload?.ticket?.status ?? '';
 
-    $: contact = threads[0]?.payload?.ticket?.contact || {};
-    $: customer = contact.fullName || [contact.firstName, contact.lastName].filter(Boolean).join(' ') || threads[0]?.payload?.from || '';
-    $: customerEmail = contact.email || '';
-    $: customerPhone = contact.phone || '';
+    $: contact = ticket?.contact || threads[0]?.payload?.ticket?.contact || {};
+    // In meta_only mode there's no nested payload, so fall back to the
+    // top-level sender field that the backend projects out of the header.
+    $: customer = contact.fullName
+        || [contact.firstName, contact.lastName].filter(Boolean).join(' ')
+        || threads[0]?.payload?.from
+        || threadFrom(threads[0] || {})
+        || ticket?.customer
+        || '';
+    $: customerEmail = contact.email || ticket?.email || '';
+    $: customerPhone = contact.phone || ticket?.phone || '';
 
     function findVal(meta, keys) {
         if (!meta) return '';
@@ -82,7 +146,7 @@
         return '';
     }
 
-    $: meta = threads[0]?.payload?.ticket || {};
+    $: meta = ticket || threads[0]?.payload?.ticket || {};
     $: company = findVal(meta, ["company", "einrichtung"]);
     $: address = findVal(meta, ["address", "adresse"]);
     $: deviceModel = findVal(meta, ["inbody model", "inbodymodel"]);
@@ -162,6 +226,19 @@
         return { label: dir || '?', cls: 'other' };
     }
 
+    // Backend now returns scalar header fields at the top level in meta_only
+    // mode but keeps the legacy nested payload shape for full mode. These
+    // helpers paper over the difference so the template stays unified.
+    function threadDirection(t) { return t.direction ?? t.payload?.direction ?? ''; }
+    function threadFrom(t) { return t.from ?? t.fromEmailAddress ?? t.payload?.from ?? t.payload?.fromEmailAddress ?? ''; }
+    function threadCreatedTime(t) { return t.createdTime ?? t.payload?.createdTime ?? ''; }
+    function threadContent(t) {
+        // Body comes from threadBodies cache once loaded; otherwise nothing
+        // (the row is still collapsed at this point so it's never rendered).
+        const cached = threadBodies[t.id];
+        return cached?.content ?? cached?.plainText ?? t.payload?.content ?? '';
+    }
+
     function isImage(mimeType) {
         return (mimeType || '').startsWith('image/');
     }
@@ -212,6 +289,65 @@
     }
 
     // ── Create RMA ────────────────────────────────────────────────────────────
+    // --- Fix Location (geocoder override) -----------------------------------
+    let fixZip = '';
+    let fixCity = '';
+    let fixBusy = false;
+
+    async function fixLocationCall(body) {
+        fixBusy = true;
+        try {
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch('/api/geo/fix', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify(body),
+            });
+            if (!res.ok) {
+                const msg = await res.text().catch(() => res.statusText);
+                throw new Error(msg || `HTTP ${res.status}`);
+            }
+            return await res.json();
+        } finally {
+            fixBusy = false;
+        }
+    }
+
+    async function resetToHQ() {
+        try {
+            await fixLocationCall({ table: 'document', id: ticketId, mode: 'reset_home' });
+            toastStore.add('Pin reset to HQ', 'success');
+        } catch (e) {
+            toastStore.add('Reset failed: ' + e.message, 'error');
+        }
+    }
+
+    async function saveFixLocation() {
+        const zip = fixZip.trim();
+        const city = fixCity.trim();
+        if (!zip && !city) {
+            toastStore.add('Enter zip or city', 'warning');
+            return;
+        }
+        try {
+            await fixLocationCall({
+                table: 'document',
+                id: ticketId,
+                mode: 'edit',
+                zip: zip || null,
+                city: city || null,
+            });
+            toastStore.add('Address saved — geocoder will reprocess shortly', 'success');
+            fixZip = '';
+            fixCity = '';
+        } catch (e) {
+            toastStore.add('Save failed: ' + e.message, 'error');
+        }
+    }
+
     function createRMA() {
         const params = new URLSearchParams({
             ticketId,
@@ -242,14 +378,22 @@
             return;
         }
 
+        // Pull every body that isn't cached yet — sequential, so we don't
+        // dogpile the source node when 30+ threads need a mesh-fetch.
+        toastStore.add('Loading thread bodies...', 'info', 2000);
+        for (const t of threads) {
+            if (threadBodies[t.id] === undefined && t.payload?.content === undefined) {
+                await ensureThreadBody(t.id);
+            }
+        }
+
         const systemPrompt = "You are a technical support assistant. Summarize the following customer support email thread. Extract the core hardware or software problem, any troubleshooting steps already attempted, and the current status. Be concise and professional. Format the result in 2-3 short paragraphs.\n\n---\n\n";
 
         const parts = threads.map(t => {
-            const dir = t.payload?.direction || '?';
-            const from = t.payload?.from || '?';
-            const time = t.payload?.createdTime || '?';
-
-            const rawContent = t.payload?.content || t.payload?.summary || '';
+            const dir = threadDirection(t) || '?';
+            const from = threadFrom(t) || '?';
+            const time = threadCreatedTime(t) || '?';
+            const rawContent = threadContent(t) || threadBodies[t.id]?.summary || t.summary || '';
             const tempDiv = document.createElement("div");
             tempDiv.innerHTML = rawContent;
             const cleanText = (tempDiv.textContent || tempDiv.innerText || '').replace(/\s+/g, ' ').trim();
@@ -299,6 +443,8 @@
                     <button class="ai-btn" on:click={generateSummary} disabled={isSummarizing || threads.length === 0}>
                         {#if isSummarizing}
                             <span class="spinner">...</span> Summarizing
+                        {:else if summary}
+                            Regenerate Summary
                         {:else}
                             Summarize with AI
                         {/if}
@@ -343,6 +489,14 @@
                         </div>
                     </div>
                 {/if}
+            </div>
+
+            <div class="fix-location-bar">
+                <span class="fix-label">📍 Wrong pin on the map?</span>
+                <input type="text" placeholder="Zip (e.g. 60325)" bind:value={fixZip} disabled={fixBusy} class="fix-input" />
+                <input type="text" placeholder="City (e.g. Frankfurt)" bind:value={fixCity} disabled={fixBusy} class="fix-input" />
+                <button class="fix-btn primary" on:click={saveFixLocation} disabled={fixBusy}>Save &amp; re-geocode</button>
+                <button class="fix-btn warn" on:click={resetToHQ} disabled={fixBusy}>Reset to HQ</button>
             </div>
         </header>
 
@@ -406,65 +560,67 @@
             <div class="empty-state">No threads found for this ticket.</div>
         {:else}
             <div class="thread-list">
-                {#each threads as thread (thread.documentId)}
-                    {@const dir = directionLabel(thread.payload?.direction)}
-                    {@const isExpanded = expandedThreads.has(thread.documentId)}
+                {#each threads as thread (thread.id)}
+                    {@const dir = directionLabel(threadDirection(thread))}
+                    {@const isExpanded = expandedThreads.has(thread.id)}
+                    {@const body = threadContent(thread)}
+                    {@const fetching = threadFetching[thread.id]}
                     <div class="thread-card {dir.cls}" class:expanded={isExpanded}>
                         <!-- svelte-ignore a11y-click-events-have-key-events -->
                         <div class="thread-header" on:click={() => {
-                            if (expandedThreads.has(thread.documentId)) {
-                                expandedThreads.delete(thread.documentId);
+                            if (expandedThreads.has(thread.id)) {
+                                expandedThreads.delete(thread.id);
                             } else {
-                                expandedThreads.add(thread.documentId);
+                                expandedThreads.add(thread.id);
+                                ensureThreadBody(thread.id);
                             }
                             expandedThreads = expandedThreads;
                         }}>
                             <span class="expand-arrow">{isExpanded ? '▼' : '▶'}</span>
                             <span class="dir-badge {dir.cls}">{dir.label}</span>
-                            <span class="thread-from">{thread.payload?.from ?? ''}</span>
-                            <span class="thread-date">{formatDate(thread.payload?.createdTime)}</span>
+                            <span class="thread-from">{threadFrom(thread)}</span>
+                            <span class="thread-date">{formatDate(threadCreatedTime(thread))}</span>
                         </div>
 
-                        {#if thread.payload?.content}
-                            <!-- svelte-ignore a11y-click-events-have-key-events -->
-                            <div class="thread-body-wrapper" class:collapsed={!isExpanded}
-                                on:click={() => { if (!isExpanded) { expandedThreads.add(thread.documentId); expandedThreads = expandedThreads; } }}>
-                                <div class="thread-html-body">
-                                    {@html thread.payload.content}
-                                </div>
-                                {#if !isExpanded}
-                                    <div class="thread-fade"></div>
-                                {/if}
-                            </div>
-                        {:else}
-                            <div class="thread-empty">(no content)</div>
-                        {/if}
-
                         {#if isExpanded}
-                        {#if attachments[thread.documentId]?.length}
-                            <div class="attachment-list">
-                                {#each attachments[thread.documentId] as att}
-                                    <a
-                                        class="attachment-item"
-                                        href="{base}/api/files/{att.file_id}"
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        title={att.file_id}
-                                    >
-                                        {#if isImage(att.mime_type)}
-                                            <img
-                                                class="att-thumb"
-                                                src="{base}/api/files/{att.file_id}"
-                                                alt="attachment"
-                                            />
-                                        {:else}
-                                            <span class="att-icon">{fileIcon(att.mime_type)}</span>
-                                        {/if}
-                                        <span class="att-label">{att.mime_type}</span>
-                                    </a>
-                                {/each}
-                            </div>
-                        {/if}
+                            {#if fetching}
+                                <div class="thread-empty">
+                                    <span class="spinner">⏳</span> Loading from source node...
+                                </div>
+                            {:else if body}
+                                <div class="thread-body-wrapper">
+                                    <div class="thread-html-body">
+                                        {@html body}
+                                    </div>
+                                </div>
+                            {:else}
+                                <div class="thread-empty">(no content)</div>
+                            {/if}
+
+                            {#if attachments[thread.id]?.length}
+                                <div class="attachment-list">
+                                    {#each attachments[thread.id] as att}
+                                        <a
+                                            class="attachment-item"
+                                            href="{base}/api/files/{att.file_id}"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            title={att.file_id}
+                                        >
+                                            {#if isImage(att.mime_type)}
+                                                <img
+                                                    class="att-thumb"
+                                                    src="{base}/api/files/{att.file_id}"
+                                                    alt="attachment"
+                                                />
+                                            {:else}
+                                                <span class="att-icon">{fileIcon(att.mime_type)}</span>
+                                            {/if}
+                                            <span class="att-label">{att.mime_type}</span>
+                                        </a>
+                                    {/each}
+                                </div>
+                            {/if}
                         {/if}
                     </div>
                 {/each}
@@ -474,6 +630,25 @@
 </div>
 
 <style>
+    .peer-fetching-banner {
+        background: rgba(74, 105, 189, 0.15);
+        border: 1px solid #4a69bd;
+        color: #a3bffa;
+        padding: 1rem 1.5rem;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        font-size: 0.95rem;
+        animation: pulse-bg 2s infinite;
+    }
+    @keyframes pulse-bg {
+        0% { background: rgba(74, 105, 189, 0.15); }
+        50% { background: rgba(74, 105, 189, 0.25); }
+        100% { background: rgba(74, 105, 189, 0.15); }
+    }
+
     .detail-page { padding: 0; }
 
     .back-btn {
@@ -764,6 +939,35 @@
         border-color: #666;
     }
     .copy-ai-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Fix-location strip (geocoder override) */
+    .fix-location-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 1rem;
+        padding: 0.65rem 0.85rem;
+        background: #17120a;
+        border: 1px dashed #5c4418;
+        border-radius: 6px;
+    }
+    .fix-label { color: #fbbf24; font-size: 0.85rem; font-weight: 600; margin-right: 0.25rem; }
+    .fix-input {
+        background: #0f0f0f; color: #eee; border: 1px solid #333;
+        border-radius: 4px; padding: 0.35rem 0.55rem; font-size: 0.85rem;
+        min-width: 140px;
+    }
+    .fix-input:focus { outline: none; border-color: #f59e0b; }
+    .fix-btn {
+        padding: 0.4rem 0.85rem; border-radius: 4px; font-weight: 600;
+        font-size: 0.82rem; cursor: pointer; border: 1px solid transparent;
+    }
+    .fix-btn.primary { background: #2563eb; color: #fff; }
+    .fix-btn.primary:hover:not(:disabled) { background: #1d4fd1; }
+    .fix-btn.warn { background: #2a2a2a; color: #fbbf24; border-color: #f59e0b; }
+    .fix-btn.warn:hover:not(:disabled) { background: #3a2a0a; }
+    .fix-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
     /* AI Summary panel */
     .summary-panel {

@@ -4,24 +4,34 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-surrealdb = { version = "3", features = ["kv-surrealkv"] }
+surrealdb = { version = "3", features = ["kv-surrealkv", "protocol-ws"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
-aes-gcm = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
 rand = "0.8"
 hex = "0.4"
 sha2 = "0.10"
+regex = "1"
 thiserror = "2.0"
 tracing = "0.1"
 reqwest = { version = "0.12", features = ["json"] }
 anyhow = "1.0.102"
+futures-util = "0.3"
 murmur3 = "0.5"
 ed25519-dalek = { version = "2", features = ["pkcs8", "rand_core"] }
+chacha20poly1305 = "0.10"
 jsonwebtoken = "9.3"
 bcrypt = "0.15"
-# Hedera HCS integration uses REST API via reqwest (avoids openssl-sys/gRPC dependency)
-# The native `hedera` SDK crate requires OpenSSL which complicates Windows builds.
+# Audit-anchor: pure-Rust Hedera HCS over gRPC (tonic + rustls, NO openssl —
+# `cargo tree -i openssl-sys` must stay empty). We hand-build + Ed25519-sign
+# Hedera transactions against hedera-proto; no `hedera` SDK crate. Requires
+# `protoc` at build time (hedera-proto runs prost-build). See core/src/anchor.rs.
+# NB: the legacy reqwest path in sync/hedera.rs POSTs to a read-only mirror node
+# and cannot actually write to HCS — anchor.rs is the real submitter.
+hedera-proto = "0.20"
+tonic = { version = "0.12", default-features = false, features = ["codegen", "prost", "transport", "tls", "tls-webpki-roots"] }
+prost = "0.13"
+prost-types = "0.14"

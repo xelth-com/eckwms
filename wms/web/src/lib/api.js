@@ -23,7 +23,7 @@ function redirectToLogin() {
         localStorage.removeItem('token');
         localStorage.removeItem('auth_token');
         localStorage.removeItem('refresh_token');
-        window.location.href = `${BASE_URL}/login`;
+        window.location.href = `/E/login`;
     }
 }
 
@@ -34,8 +34,10 @@ async function request(endpoint, options = {}) {
         ...options.headers
     };
 
-    if (state.token) {
-        headers['Authorization'] = `Bearer ${state.token}`;
+    // Fallback to localStorage if authStore hasn't initialized yet (race with +page.js loaders)
+    const token = state.token || (typeof localStorage !== 'undefined' && localStorage.getItem('auth_token'));
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
     }
 
     const config = {
@@ -44,6 +46,19 @@ async function request(endpoint, options = {}) {
     };
 
     let response = await fetch(`${BASE_URL}${endpoint}`, config);
+
+    if (response.status === 403) {
+        try {
+            const data = await response.json();
+            if (data.code === 'OBSERVER_FORBIDDEN' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('auth:forbidden', { detail: data }));
+            }
+            throw new Error(data.error || 'Forbidden');
+        } catch (e) {
+            if (e.message === 'Forbidden') throw e;
+            throw new Error('Forbidden');
+        }
+    }
 
     if (response.status === 401) {
         const originalRequestConfig = config;
