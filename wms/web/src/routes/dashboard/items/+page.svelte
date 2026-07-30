@@ -3,6 +3,7 @@ import { onMount } from 'svelte';
 import { api } from '$lib/api';
 import { goto } from '$app/navigation';
 import { base } from '$app/paths';
+import { t } from '$lib/i18n';
 
 let items = [];
 let loading = true;
@@ -26,20 +27,20 @@ function openItem(id) {
 
 <div class="inventory-page">
 <header>
-<h1>Inventory</h1>
+<h1>{$t('items.title')}</h1>
 <div class="actions">
-<button class="action-btn primary">+ Add Item</button>
+<button class="action-btn primary">{$t('items.add_item')}</button>
 </div>
 </header>
 
 {#if loading}
-    <div class="loading">Loading inventory...</div>
+    <div class="loading">{$t('items.loading')}</div>
 {:else if error}
-    <div class="error">Failed to load items: {error}</div>
+    <div class="error">{$t('items.load_failed', { error })}</div>
 {:else}
     <div class="grid-container">
         {#if items.length === 0}
-            <div class="empty-state">No items found. Start by adding one.</div>
+            <div class="empty-state">{$t('items.empty')}</div>
         {/if}
 
         {#each items as item}
@@ -49,20 +50,20 @@ function openItem(id) {
                 <div class="card-header">
                     <span class="sku">{item.sku}</span>
                     <span class="status {item.is_active ? 'active' : 'inactive'}">
-                        {item.is_active ? 'Active' : 'Inactive'}
+                        {item.is_active ? $t('items.status_active') : $t('items.status_inactive')}
                     </span>
                 </div>
                 <div class="card-body">
                     <h3>{item.name}</h3>
-                    <p class="desc">{item.description || 'No description'}</p>
+                    <p class="desc">{item.description || $t('items.no_description')}</p>
                 </div>
                 <div class="card-footer">
                     <div class="stat">
-                        <span class="label">Qty</span>
+                        <span class="label">{$t('items.qty')}</span>
                         <span class="value">{item.quantity}</span>
                     </div>
                     <div class="stat">
-                        <span class="label">Location</span>
+                        <span class="label">{$t('items.location')}</span>
                         <span class="value">{item.place?.name || '-'}</span>
                     </div>
                 </div>

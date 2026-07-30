@@ -45,10 +45,23 @@ pub async fn start_observer_worker(state: Arc<AppState>) {
     let mut interval =
         tokio::time::interval(std::time::Duration::from_secs(PHASE1_INTERVAL_SECS));
     let mut tick: u64 = 0;
+    // Wallet-alert latch: level we last alerted at (0=ok, 1=low, 2=credit) +
+    // when — re-alert only on escalation or after 6h at the same level.
+    let mut wallet_alert_level: u8 = 0;
+    let mut wallet_alert_at: Option<std::time::Instant> = None;
+    // Parity-drift state: drift signatures seen on the PREVIOUS hourly run
+    // (alert only on persistence, so an in-flight sync doesn't cry wolf) +
+    // last-alert time for a 24h cooldown.
+    let mut parity_prev: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut parity_alert_at: Option<std::time::Instant> = None;
 
     loop {
         interval.tick().await;
         tick = tick.wrapping_add(1);
+        eck_core::metrics::tick(eck_core::metrics::M::ObserverCycle);
+
+        // ── Phase 0a: mesh-wallet balance (managed mode only) ──
+        check_wallet(&state, &mut wallet_alert_level, &mut wallet_alert_at).await;
 
         // ── Phase 0: Evaluate token budget and update circuit breaker ──
         // Runs on every tick (5min) so throttle reacts fast to spending spikes.
@@ -91,7 +104,145 @@ pub async fn start_observer_worker(state: Arc<AppState>) {
                 error!("[Observer] AI analysis cycle failed: {}", e);
             }
         }
+
+        // ── Phase 3: cross-node parity audit — free SQL + one GET per peer,
+        // hourly. Catches silent replication gaps (e.g. the 2026-07-09
+        // frozen-summaries bug) instead of waiting for a human to notice.
+        if tick % PHASE2_EVERY_N_TICKS == 0 {
+            run_parity_check(&state, &mut parity_prev, &mut parity_alert_at).await;
+        }
     }
+}
+
+// ── Phase 0a: mesh-wallet balance ───────────────────────────────────────────
+
+/// Alert when the shared mesh wallet runs low (<20% of the monthly grant with
+/// no extra pack left) or starts drawing credit. Latched: re-alerts only on
+/// escalation or after 6h at the same level. No-op outside managed mode.
+async fn check_wallet(
+    state: &Arc<AppState>,
+    alert_level: &mut u8,
+    alert_at: &mut Option<std::time::Instant>,
+) {
+    let q = match eck_core::ai::refresh_quota_if_stale(240).await {
+        Some(q) if q.monthly_grant > 0 => q,
+        _ => return, // studio mode / authority unreachable / never minted
+    };
+    let available = q.tokens_remaining + q.extra_balance.max(0);
+    let level: u8 = if q.loan_outstanding > 0 {
+        2
+    } else if (available as f64) < 0.2 * q.monthly_grant as f64 {
+        1
+    } else {
+        0
+    };
+
+    let escalated = level > *alert_level;
+    let stale_repeat = level > 0
+        && level == *alert_level
+        && alert_at.map_or(true, |t| t.elapsed() > std::time::Duration::from_secs(6 * 3600));
+    if escalated || stale_repeat {
+        let (severity, title) = if level == 2 {
+            ("critical", "AI wallet: drawing credit")
+        } else {
+            ("warning", "AI wallet: below 20%")
+        };
+        let msg = format!(
+            "Mesh AI wallet: {} remaining + {} extra of {} monthly grant; credit drawn: {} (limit {}).\n\n\
+             All nodes share this wallet — when it hits 0 and credit is exhausted, every AI worker \
+             fleet-wide goes 402-blind until the window resets or an admin refills (`/ai/quota`).",
+            q.tokens_remaining, q.extra_balance, q.monthly_grant, q.loan_outstanding, q.credit_limit
+        );
+        save_and_broadcast_alert(state, severity, title, &msg, false).await;
+        *alert_at = Some(std::time::Instant::now());
+    }
+    if level != *alert_level {
+        *alert_level = level;
+        if level == 0 {
+            *alert_at = None;
+        }
+    }
+}
+
+// ── Phase 3: cross-node parity audit ────────────────────────────────────────
+
+/// Compare this node's per-table parity snapshot against every reachable full
+/// peer. A drift must PERSIST across two consecutive hourly runs to alert
+/// (in-flight sync produces transient diffs), and alerts are limited to one
+/// per 24h. Thresholds: >10 rows absolute AND >2% relative.
+async fn run_parity_check(
+    state: &Arc<AppState>,
+    prev: &mut std::collections::HashSet<String>,
+    alert_at: &mut Option<std::time::Instant>,
+) {
+    let local = crate::handlers::mesh::parity_stats(state).await;
+    let peers = eck_core::sync::mesh_client::discover_peers(
+        state.sync_engine.relay(),
+        &state.instance_id,
+        state.sync_secret.as_deref(),
+    )
+    .await;
+
+    let mut current: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut lines: Vec<String> = Vec::new();
+
+    let drifted = |a: i64, b: i64| -> bool {
+        let abs = (a - b).abs();
+        let base = a.max(b).max(1) as f64;
+        abs > 10 && (abs as f64) / base > 0.02
+    };
+
+    for peer in peers.iter().filter(|p| !p.is_cache()) {
+        let remote = match peer.get_parity().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!("[Observer] parity fetch from {} failed: {}", peer.peer_url(), e);
+                continue;
+            }
+        };
+        let peer_id = remote
+            .get("instance_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or(peer.target_instance_id())
+            .to_string();
+        let short = &peer_id[..peer_id.len().min(8)];
+
+        if let (Some(lt), Some(rt)) = (
+            local.get("tables").and_then(|v| v.as_object()),
+            remote.get("tables").and_then(|v| v.as_object()),
+        ) {
+            for (table, lv) in lt {
+                let a = lv.as_i64().unwrap_or(0);
+                let b = rt.get(table).and_then(|v| v.as_i64()).unwrap_or(0);
+                if drifted(a, b) {
+                    current.insert(format!("{peer_id}:{table}"));
+                    lines.push(format!("- `{table}` vs {short}: local {a} / peer {b}"));
+                }
+            }
+        }
+        let ls = local.get("document_summarized").and_then(|v| v.as_i64()).unwrap_or(0);
+        let rs = remote.get("document_summarized").and_then(|v| v.as_i64()).unwrap_or(0);
+        if drifted(ls, rs) {
+            current.insert(format!("{peer_id}:document_summarized"));
+            lines.push(format!("- document summaries vs {short}: local {ls} / peer {rs}"));
+        }
+    }
+
+    // Alert only on drifts present in BOTH consecutive runs, max once per 24h.
+    let persistent: Vec<&String> = current.intersection(prev).collect();
+    if !persistent.is_empty()
+        && alert_at.map_or(true, |t| t.elapsed() > std::time::Duration::from_secs(24 * 3600))
+    {
+        let msg = format!(
+            "Cross-node replication drift persisted across two hourly checks:\n\n{}\n\n\
+             Some data is not converging between mesh nodes — check the sync engine \
+             logs and per-table merkle state before this snowballs.",
+            lines.join("\n")
+        );
+        save_and_broadcast_alert(state, "warning", "Mesh parity drift", &msg, false).await;
+        *alert_at = Some(std::time::Instant::now());
+    }
+    *prev = current;
 }
 
 // ── Phase 1: Deterministic checks (free, instant, reliable) ────────────────
@@ -194,12 +345,16 @@ async fn run_deterministic_checks(state: &Arc<AppState>) -> anyhow::Result<bool>
         }
     }
 
-    // 2. Detect stuck pending documents that have been pending for >2 hours with retries
+    // 2. Detect stuck pending documents that have been pending for >2 hours with retries.
+    //    An embedding-pending row that already HOLDS a vector is not stuck — the
+    //    vector arrived via mesh sync while the local status field (hash-ignored,
+    //    never synced on its own) went stale. The worker's 6h adopt sweep will
+    //    align it; don't alert or mark it failed.
     let stuck: Vec<Value> = state.db
         .query(
             "SELECT record::id(id) AS id, summary_status, embedding_status, summary_retries, embedding_retries \
              FROM document \
-             WHERE (summary_status = 'pending' OR embedding_status = 'pending') \
+             WHERE (summary_status = 'pending' OR (embedding_status = 'pending' AND embedding IS NONE)) \
              AND updated_at IS NOT NONE \
              AND updated_at < time::now() - 2h \
              AND ((summary_retries IS NOT NONE AND summary_retries >= 3) OR (embedding_retries IS NOT NONE AND embedding_retries >= 3)) \
@@ -215,8 +370,8 @@ async fn run_deterministic_checks(state: &Arc<AppState>) -> anyhow::Result<bool>
             .query(
                 "UPDATE document SET \
                  summary_status = IF summary_status = 'pending' AND summary_retries >= 3 THEN 'failed' ELSE summary_status END, \
-                 embedding_status = IF embedding_status = 'pending' AND embedding_retries >= 3 THEN 'failed' ELSE embedding_status END \
-                 WHERE (summary_status = 'pending' OR embedding_status = 'pending') \
+                 embedding_status = IF embedding_status = 'pending' AND embedding IS NONE AND embedding_retries >= 3 THEN 'failed' ELSE embedding_status END \
+                 WHERE (summary_status = 'pending' OR (embedding_status = 'pending' AND embedding IS NONE)) \
                  AND updated_at IS NOT NONE \
                  AND updated_at < time::now() - 2h \
                  AND ((summary_retries IS NOT NONE AND summary_retries >= 3) OR (embedding_retries IS NOT NONE AND embedding_retries >= 3)) \
@@ -250,6 +405,21 @@ async fn run_deterministic_checks(state: &Arc<AppState>) -> anyhow::Result<bool>
 
 // ── Phase 2: AI-based analysis ─────────────────────────────────────────────
 
+/// Best-effort observational read for the analysis inputs. A missing table
+/// (strict remote SurrealDB, namespace that never wrote it) or a transient DB
+/// hiccup yields an empty sample instead of aborting the whole cycle with a
+/// recurring ERROR line.
+async fn read_observational(state: &Arc<AppState>, sql: &str) -> Vec<Value> {
+    match state.db.query(sql).await {
+        Ok(mut r) => r.take(0).unwrap_or_default(),
+        Err(e) => {
+            let table = sql.split(" FROM ").nth(1).and_then(|s| s.split(' ').next()).unwrap_or("?");
+            tracing::debug!("[Observer] observational read of {} skipped: {}", table, e);
+            Vec::new()
+        }
+    }
+}
+
 async fn run_ai_analysis(state: &Arc<AppState>, http: &HttpClient) -> anyhow::Result<()> {
     let auth = eck_core::ai::AiAuth::resolve(http).await?;
     if !auth.is_configured() {
@@ -257,28 +427,22 @@ async fn run_ai_analysis(state: &Arc<AppState>, http: &HttpClient) -> anyhow::Re
     }
 
     let gen_model = std::env::var("GEMINI_GENERATION_MODEL")
-        .unwrap_or_else(|_| "gemini-3.1-flash-lite".to_string());
+        .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
 
     // Gather recent logs — window matches Phase 2 cadence (hourly). A wider
     // 24h window caused stale-data alerts for already-mitigated loops after
     // the 2026-04-21 incident: Gemini re-flagged docs from that afternoon for
     // the entire next day until the window rolled past. Phase 1 covers the
     // short horizon; Phase 2 is second-opinion on what's happening *now*.
-    let telemetry: Vec<Value> = state
-        .db
-        .query("SELECT * FROM ai_telemetry WHERE timestamp > time::now() - 1h LIMIT 100")
-        .await?
-        .take(0)?;
-    let sync_errors: Vec<Value> = state
-        .db
-        .query("SELECT * FROM sync_history WHERE status = 'error' AND started_at > time::now() - 1h LIMIT 50")
-        .await?
-        .take(0)?;
-    let pending_docs: Vec<Value> = state
-        .db
-        .query("SELECT record::id(id) as id, embedding_status, summary_status FROM document WHERE embedding_status = 'pending' OR summary_status = 'pending' LIMIT 50")
-        .await?
-        .take(0)?;
+    // Reads are best-effort: on a strict remote server a namespace that never
+    // wrote a table (e.g. pda-wms lacks sync_history) errors the SELECT — that
+    // just means "nothing to report", not a failed cycle.
+    let telemetry =
+        read_observational(state, "SELECT * FROM ai_telemetry WHERE timestamp > time::now() - 1h LIMIT 100").await;
+    let sync_errors =
+        read_observational(state, "SELECT * FROM sync_history WHERE status = 'error' AND started_at > time::now() - 1h LIMIT 50").await;
+    let pending_docs =
+        read_observational(state, "SELECT record::id(id) as id, embedding_status, summary_status FROM document WHERE (embedding_status = 'pending' AND embedding IS NONE) OR summary_status = 'pending' LIMIT 50").await;
 
     // Skip if system is completely idle to save tokens
     if telemetry.is_empty() && sync_errors.is_empty() && pending_docs.is_empty() {

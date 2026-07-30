@@ -1,6 +1,7 @@
 <script>
     import { onMount } from 'svelte';
     import { toastStore } from '$lib/stores/toastStore';
+    import { t, tr } from '$lib/i18n';
 
     // Config state
     let selectedType = null;
@@ -238,7 +239,7 @@
 
     async function generatePDF() {
         if (!selectedType) {
-            toastStore.add('Please select a label type first', 'error');
+            toastStore.add(tr('print.select_type_first'), 'error');
             return;
         }
         loading = true;
@@ -280,7 +281,7 @@
 
             if (!response.ok) {
                 const err = await response.text();
-                throw new Error(err || 'Failed to generate PDF');
+                throw new Error(err || tr('print.generate_failed'));
             }
 
             const blob = await response.blob();
@@ -292,7 +293,7 @@
             a.click();
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
-            toastStore.add('Labels generated successfully!', 'success');
+            toastStore.add(tr('print.generated_success'), 'success');
         } catch (e) {
             console.error(e);
             toastStore.add(e.message, 'error');
@@ -349,35 +350,35 @@
 
 <div class="print-page">
     <header>
-        <h1>Printing Center</h1>
+        <h1>{$t('print.title')}</h1>
     </header>
 
     <!-- Page Layout Editor -->
     <div class="card">
-        <h2>Page Layout (A4)</h2>
+        <h2>{$t('print.page_layout')}</h2>
 
         <!-- Quick Controls -->
         <div class="config-bar">
             <div class="field-group">
-                <label>Columns</label>
+                <label>{$t('print.col_columns')}</label>
                 <input type="number" bind:value={cols} min="1" max="10" on:change={onLayoutChange} />
             </div>
             <div class="field-group">
-                <label>Rows</label>
+                <label>{$t('print.col_rows')}</label>
                 <input type="number" bind:value={rows} min="1" max="20" on:change={onLayoutChange} />
             </div>
             <div class="field-group">
-                <label>Count</label>
+                <label>{$t('print.col_count')}</label>
                 <input type="number" bind:value={count} />
             </div>
             <div class="field-group">
-                <label>Start #</label>
+                <label>{$t('print.col_start')}</label>
                 <input type="number" bind:value={startNumber} />
             </div>
             <div class="toggle-group">
                 <label>
                     <input type="checkbox" bind:checked={isTightMode} />
-                    Tight Mode (Overlap)
+                    {$t('print.tight_mode')}
                 </label>
             </div>
         </div>
@@ -402,19 +403,19 @@
                 <!-- Margin Inputs (Absolute positioned relative to page) -->
                 <div class="margin-control top">
                     <input type="number" bind:value={marginTop} min="0" />
-                    <span>Top</span>
+                    <span>{$t('print.margin_top')}</span>
                 </div>
                 <div class="margin-control left">
                     <input type="number" bind:value={marginLeft} min="0" />
-                    <span>Left</span>
+                    <span>{$t('print.margin_left')}</span>
                 </div>
                 <div class="margin-control right">
                     <input type="number" bind:value={marginRight} min="0" />
-                    <span>Right</span>
+                    <span>{$t('print.margin_right')}</span>
                 </div>
                 <div class="margin-control bottom">
                     <input type="number" bind:value={marginBottom} min="0" />
-                    <span>Bottom</span>
+                    <span>{$t('print.margin_bottom')}</span>
                 </div>
 
                 <!-- Grid Container (Lives inside margins) -->
@@ -446,25 +447,25 @@
         </div>
 
         <div class="dims-info">
-            Label Size: <strong>{labelDims.w} x {labelDims.h} mm</strong>
+            {$t('print.label_size_prefix')} <strong>{labelDims.w} x {labelDims.h} mm</strong>
         </div>
     </div>
 
     <!-- Label Type Selection -->
     <div class="card">
-        <h2>Select Template</h2>
+        <h2>{$t('print.select_template')}</h2>
         <div class="type-grid">
             <button class="type-card" class:active={selectedType === 'i'} on:click={() => selectType('i')}>
-                <h3>Items</h3>
+                <h3>{$t('print.type_items')}</h3>
             </button>
             <button class="type-card" class:active={selectedType === 'b'} on:click={() => selectType('b')}>
-                <h3>Boxes</h3>
+                <h3>{$t('print.type_boxes')}</h3>
             </button>
             <button class="type-card" class:active={selectedType === 'p'} on:click={() => selectType('p')}>
-                <h3>Places</h3>
+                <h3>{$t('print.type_places')}</h3>
             </button>
             <button class="type-card" class:active={selectedType === 'l'} on:click={() => selectType('l')}>
-                <h3>Labels</h3>
+                <h3>{$t('print.type_labels')}</h3>
             </button>
         </div>
     </div>
@@ -473,20 +474,20 @@
     {#if selectedType === 'p'}
     <div class="card">
         <div class="card-header">
-            <h2>Warehouse Locations</h2>
+            <h2>{$t('print.warehouse_locations')}</h2>
             <button class="btn-sm" on:click={() => showPlanner = !showPlanner}>
-                {showPlanner ? 'Print Mode' : 'Planner'}
+                {showPlanner ? $t('print.print_mode') : $t('print.planner')}
             </button>
         </div>
 
         {#if !showPlanner}
         <div class="rack-select">
-            <label>Select Rack:</label>
+            <label>{$t('print.select_rack')}</label>
             <select bind:value={selectedRack} on:change={onRackSelect}>
-                <option value="">-- Manual Configuration --</option>
+                <option value="">{$t('print.manual_config')}</option>
                 {#each registeredRacks as rack}
                 <option value={rack.id}>
-                    {rack.name} ({rack.columns}x{rack.rows}, ID: {rack.start_index}+)
+                    {$t('print.rack_option', { name: rack.name, cols: rack.columns, rows: rack.rows, start: rack.start_index })}
                 </option>
                 {/each}
             </select>
@@ -494,7 +495,7 @@
         {:else}
         <div class="planner">
             <table class="rack-table">
-                <thead><tr><th>Name</th><th>Size</th><th>Range</th></tr></thead>
+                <thead><tr><th>{$t('print.th_name')}</th><th>{$t('print.th_size')}</th><th>{$t('print.th_range')}</th></tr></thead>
                 <tbody>
                     {#each registeredRacks as rack}
                     <tr>
@@ -512,10 +513,10 @@
 
     <!-- Content Styling -->
     <div class="card">
-        <h2>Content Positioning</h2>
+        <h2>{$t('print.content_positioning')}</h2>
         <div class="styling-layout">
             <div class="preview-box">
-                <h3 style="color: #888; font-size: 0.9rem; margin: 0;">Live Preview ({layoutKey})</h3>
+                <h3 style="color: #888; font-size: 0.9rem; margin: 0;">{$t('print.live_preview', { layout: layoutKey })}</h3>
                 <!-- Single Label Preview -->
                 <div class="label-preview" style="aspect-ratio: {labelDims.aspect};">
                     {#if selectedType}
@@ -536,23 +537,23 @@
                             on:click={() => selectedElement = 'serial'}>123456</div>
                     {:else}
                         <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #888; text-align: center;">
-                            <p style="margin: 0; font-size: 0.9rem;">Select a label type above</p>
+                            <p style="margin: 0; font-size: 0.9rem;">{$t('print.select_type_above')}</p>
                         </div>
                     {/if}
                 </div>
-                <p class="preview-hint">Actual size: {labelDims.w} x {labelDims.h} mm</p>
+                <p class="preview-hint">{$t('print.actual_size', { w: labelDims.w, h: labelDims.h })}</p>
             </div>
 
             <div class="styling-controls">
                 {#if selectedType}
                     <div class="control-group">
-                        <label>Element</label>
+                        <label>{$t('print.el_element')}</label>
                         <select bind:value={selectedElement}>
-                            <option value="qr1">QR1 (Main)</option>
+                            <option value="qr1">{$t('print.el_qr1')}</option>
                             <option value="qr2">QR2</option>
                             <option value="qr3">QR3</option>
-                            <option value="checksum">Checksum</option>
-                            <option value="serial">Serial</option>
+                            <option value="checksum">{$t('print.el_checksum')}</option>
+                            <option value="serial">{$t('print.el_serial')}</option>
                         </select>
                     </div>
                     <div class="control-row">
@@ -560,17 +561,17 @@
                         <div class="c-item"><label>Y%</label><input type="number" bind:value={styleCfg[selectedElement].y} min="-50" max="150" step="0.5"/></div>
                     </div>
                     <div class="control-group">
-                        <label>Scale (0.05 - 2.0)</label>
+                        <label>{$t('print.el_scale')}</label>
                         <input type="number" bind:value={styleCfg[selectedElement].scale} step="0.05" min="0.05" max="2" />
                     </div>
                     <div class="control-group">
-                        <label>Serial Digits (0 = all)</label>
-                        <input type="number" bind:value={serialDigits} min="0" max="18" title="Show last N digits of serial. 0 = all digits" />
+                        <label>{$t('print.el_serial_digits')}</label>
+                        <input type="number" bind:value={serialDigits} min="0" max="18" title={$t('print.el_serial_digits_tip')} />
                     </div>
-                    <button class="btn-sm" on:click={resetToDefault}>Reset to Default</button>
+                    <button class="btn-sm" on:click={resetToDefault}>{$t('print.reset_default')}</button>
                 {:else}
                     <div style="padding: 40px 20px; text-align: center; color: #666;">
-                        <p style="margin: 0; font-size: 0.9rem;">Select a label type to customize positioning</p>
+                        <p style="margin: 0; font-size: 0.9rem;">{$t('print.select_type_customize')}</p>
                     </div>
                 {/if}
             </div>
@@ -580,7 +581,7 @@
     <!-- Generate -->
     <div class="actions">
         <button class="btn primary large" on:click={generatePDF} disabled={loading || !selectedType}>
-            {loading ? 'Generating...' : 'Generate PDF'}
+            {loading ? $t('print.generating') : $t('print.generate_pdf')}
         </button>
     </div>
 </div>

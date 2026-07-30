@@ -82,6 +82,43 @@ impl MeshClient {
         self.sync_secret.as_ref().map(|s| format!("Bearer {}", s))
     }
 
+    /// Fetch the peer's parity snapshot (per-table row counts + derivative
+    /// counts) for the cross-node drift audit. The response shape is owned by
+    /// the app layer — this just transports authenticated JSON.
+    pub async fn get_parity(&self) -> Result<serde_json::Value, String> {
+        let url = format!("{}/api/mesh/parity", self.peer_base_url);
+        let mut req = self.client.get(&url);
+        if let Some(ref auth) = self.auth_header() {
+            req = req.header("authorization", auth);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("parity GET failed ({}): {}", url, e))?;
+        if !resp.status().is_success() {
+            return Err(format!("parity GET {} returned {}", url, resp.status()));
+        }
+        resp.json::<serde_json::Value>()
+            .await
+            .map_err(|e| format!("parity body: {}", e))
+    }
+
+    /// Poke the peer to run its task queue NOW — used right after queueing a
+    /// `mesh_task` for it, so a reachable peer serves the reverse-fetch in
+    /// seconds instead of waiting for its next poll cycle. Best-effort.
+    pub async fn nudge_tasks(&self) -> Result<(), String> {
+        let url = format!("{}/api/mesh/tasks/nudge", self.peer_base_url);
+        let mut req = self.client.post(&url);
+        if let Some(ref auth) = self.auth_header() {
+            req = req.header("authorization", auth);
+        }
+        let resp = req.send().await.map_err(|e| format!("nudge POST failed ({}): {}", url, e))?;
+        if !resp.status().is_success() {
+            return Err(format!("nudge POST {} returned {}", url, resp.status()));
+        }
+        Ok(())
+    }
+
     // ─── Merkle Tree ─────────────────────────────────────────────────────────
 
     /// Fetch Merkle tree state from a peer (level 0 = root, level 1 = bucket).
@@ -105,11 +142,20 @@ impl MeshClient {
             .map_err(|e| format!("Merkle GET failed ({}): {}", url, e))?;
 
         if !resp.status().is_success() {
-            return Err(format!(
-                "Merkle GET {} returned {}",
-                url,
-                resp.status()
-            ));
+            let status = resp.status();
+            // A 4xx on the merkle endpoint means the peer does not recognise this
+            // entity_type — typically a fleet member on an older binary that
+            // predates the type being added to SYNC_ENTITY_TYPES. Signal it with a
+            // distinct sentinel so the sync cycle SKIPS this (peer, type) pair
+            // without counting a failure or logging alarm while the fleet rolls
+            // forward. 5xx / transport errors stay real failures (worth backoff).
+            if status.is_client_error() {
+                return Err(format!(
+                    "ENTITY_UNSUPPORTED: {} returned {} — peer does not know entity_type '{}'",
+                    url, status, req.entity_type
+                ));
+            }
+            return Err(format!("Merkle GET {} returned {}", url, status));
         }
 
         resp.json::<MerkleNode>()
@@ -328,6 +374,7 @@ pub async fn discover_peers(
     own_instance_id: &str,
     sync_secret: Option<&str>,
 ) -> Vec<MeshClient> {
+    crate::metrics::tick(crate::metrics::M::DiscoverPeers);
     let nodes = match relay.get_mesh_status().await {
         Ok(n) => n,
         Err(e) => {

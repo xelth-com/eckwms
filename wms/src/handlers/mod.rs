@@ -31,3 +31,5 @@ pub mod voice;
 pub mod xelixir;
 pub mod ops;
 pub mod gdpr;
+pub mod odoo;
+pub mod i18n;

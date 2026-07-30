@@ -2,6 +2,7 @@
 **/node_modules
 **/build
 !wms/web/build
+!pos/web/build
 **/.svelte-kit
 **/.eck
 *.db
@@ -20,8 +21,17 @@ scraper/.browser-data/
 
 # Local run logs and scratch copies (swept in accidentally by auto-commit)
 wms_*.log
+wms.*.log
 tmp/*.log
 tmp/eckwmsr_scraper/
+scraper/*.log
 
 # local env backups (contain secrets)
 .env.bak*
+
+# never track env variants or runtime logs (the .env.*-backup suffixes dodged the old rule — live key leaked into history 2026-07-29)
+.env.*
+*.log
+tmp_threads.json
+opencode.json
+antigravity

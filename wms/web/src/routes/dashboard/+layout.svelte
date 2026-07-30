@@ -4,10 +4,179 @@
     import { toastStore } from "$lib/stores/toastStore";
     import ToastContainer from "$lib/components/ToastContainer.svelte";
     import MeshStatus from "$lib/components/MeshStatus.svelte";
+    import LanguageCycleButton from "$lib/components/LanguageCycleButton.svelte";
+    import ChangePasswordModal from "$lib/components/ChangePasswordModal.svelte";
+    import { KEEP_ALIVE_VIEWS, KEEP_ALIVE_MAX, KEEP_ALIVE_TTL_MS, keepAliveEntry } from "$lib/keepAlive";
     import { goto } from "$app/navigation";
     import { onMount, onDestroy } from "svelte";
     import { page } from "$app/stores";
     import { base } from "$app/paths";
+    import { t, tr, locale, availableLocales, localeName, setLocale, refreshAvailableLocales } from "$lib/i18n";
+
+    // Settings language switcher (visible to all authenticated users).
+    // The admin sees one extra row in the list — "Add language…" — which
+    // morphs the select into a 2-letter code input (Enter starts the job,
+    // Escape returns to the select).
+    const ADD_LANG_OPTION = "__add__";
+    let addMode = false;
+
+    function onLangSelect(e) {
+        if (e.target.value === ADD_LANG_OPTION) {
+            e.target.value = $locale; // don't let the sentinel stick as selection
+            addMode = true;
+            return;
+        }
+        setLocale(e.target.value, $authStore.currentUser?.id ?? null);
+    }
+
+    function cancelAddLang() {
+        if (addLangState === "running") return; // job in flight — keep showing it
+        addMode = false;
+        newLang = "";
+        addLangState = "";
+        addLangError = "";
+    }
+
+    function focusOnMount(node) {
+        node.focus();
+    }
+
+    // ── Admin: add a UI language at runtime ─────────────────────────────────
+    // The server machine-translates the whole English label set into the new
+    // language (background job); we poll its status and refresh the picker on
+    // completion.
+    let newLang = "";
+    let addLangState = ""; // '' | 'running' | 'done' | 'failed'
+    let addLangDone = 0;
+    let addLangTotal = 0;
+    let addLangError = "";
+    let addLangPoll = null;
+
+    async function addLanguage() {
+        const code = (newLang || "").trim().toLowerCase();
+        if (!/^[a-z]{2}$/.test(code)) {
+            addLangState = "failed";
+            addLangError = tr("shell.add_language_invalid");
+            return;
+        }
+        addLangState = "running";
+        addLangError = "";
+        addLangDone = 0;
+        addLangTotal = 0;
+        try {
+            const res = await fetch("/api/admin/i18n/languages", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${$authStore.token}`,
+                },
+                body: JSON.stringify({ lang: code }),
+            });
+            if (res.status === 409) {
+                // Already running (single-flight) — just attach to its status.
+                pollAddLang(code);
+                return;
+            }
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || `HTTP ${res.status}`);
+            }
+            pollAddLang(code);
+        } catch (e) {
+            addLangState = "failed";
+            addLangError = e.message;
+        }
+    }
+
+    function pollAddLang(code) {
+        if (addLangPoll) clearInterval(addLangPoll);
+        addLangPoll = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/admin/i18n/languages/${code}/status`, {
+                    headers: { Authorization: `Bearer ${$authStore.token}` },
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                const s = data.status || {};
+                addLangState = s.state || "running";
+                addLangDone = s.done || 0;
+                addLangTotal = s.total || 0;
+                addLangError = s.error || "";
+                if (s.state === "done" || s.state === "failed") {
+                    clearInterval(addLangPoll);
+                    addLangPoll = null;
+                    if (s.state === "done") {
+                        await refreshAvailableLocales($authStore.token);
+                        newLang = "";
+                        addMode = false; // input reverts to the (now longer) select
+                        toastStore.add(tr("shell.add_language_done"), "success");
+                    }
+                }
+            } catch {
+                /* transient — keep polling */
+            }
+        }, 1500);
+    }
+
+    // ── POS module (paid tier) ──────────────────────────────────────────────
+    // The register entry point + the kiosk boot-mode control appear only when
+    // the server has POS mounted (POS_ENABLED). Kiosk config is node-local.
+    let posEnabled = false;
+    let kioskEnabled = false;
+    let kioskMode = "wms";
+
+    async function loadPosStatus() {
+        try {
+            const res = await fetch("/api/pos/status");
+            if (res.ok) posEnabled = (await res.json()).enabled === true;
+        } catch { /* older server without the endpoint — keep hidden */ }
+    }
+
+    async function loadKioskConfig() {
+        try {
+            const res = await fetch("/api/admin/config/kiosk", {
+                headers: { Authorization: `Bearer ${$authStore.token}` },
+            });
+            if (res.ok) {
+                const cfg = await res.json();
+                kioskEnabled = cfg.enabled === true;
+                kioskMode = cfg.mode === "pos" ? "pos" : "wms";
+            }
+        } catch { /* control keeps its defaults */ }
+    }
+
+    async function saveKioskConfig() {
+        try {
+            const res = await fetch("/api/admin/config/kiosk", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${$authStore.token}`,
+                },
+                body: JSON.stringify({ enabled: kioskEnabled, mode: kioskMode }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || `HTTP ${res.status}`);
+            }
+            toastStore.add(tr("shell.kiosk_config_saved"), "success");
+        } catch (e) {
+            toastStore.add(tr("shell.kiosk_config_failed", { error: e.message }), "error");
+        }
+    }
+
+    function openPos() {
+        // Fullscreen needs a user gesture. Chromium exits fullscreen on
+        // navigation, so the POS app re-requests it on its first tap too.
+        const go = () => { window.location.href = "/K/"; };
+        try {
+            const p = document.documentElement.requestFullscreen?.();
+            if (p && typeof p.then === "function") p.then(go, go);
+            else go();
+        } catch {
+            go();
+        }
+    }
 
     // Ambiguous collision modal state
     let showAmbiguousModal = false;
@@ -28,6 +197,46 @@
     let showXelixirApproval = false;
     let xelixirRequest = null;
     let xelixirApproveBusy = false;
+
+    // The dashboard index hosts the full-bleed logistics map: it fills the whole
+    // right pane and must NOT scroll (the map resizes itself instead). Every
+    // other dashboard page keeps the padded, scrollable .content.
+    // ── Keep-alive cache (see lib/keepAlive.js) ─────────────────────────────
+    // Current route path with the base prefix stripped (so it matches the
+    // registry's relative paths, e.g. "/dashboard/support").
+    $: relPath = (() => {
+        const p = $page.url.pathname;
+        const r = base && p.startsWith(base) ? p.slice(base.length) : p;
+        return r || "/";
+    })();
+    $: currentEntry = keepAliveEntry(relPath);
+    // The map view is full-bleed; everything else keeps the padded .content.
+    $: isFullbleed = !!(currentEntry && currentEntry.fullbleed);
+
+    // LRU of mounted views: [{ path, lastUsed }], most-recently-used first.
+    let cached = [];
+    $: if (currentEntry) touchCache(currentEntry.path);
+    function touchCache(path) {
+        const t = Date.now();
+        cached = [{ path, lastUsed: t }, ...cached.filter((c) => c.path !== path)]
+            .slice(0, KEEP_ALIVE_MAX);
+    }
+    function compForPath(path) {
+        return KEEP_ALIVE_VIEWS.find((v) => v.path === path)?.component;
+    }
+    function isFullbleedPath(path) {
+        return !!KEEP_ALIVE_VIEWS.find((v) => v.path === path)?.fullbleed;
+    }
+    // TTL: drop hidden views idle past the threshold (never the current one).
+    onMount(() => {
+        const iv = setInterval(() => {
+            const t = Date.now();
+            cached = cached.filter(
+                (c) => c.path === relPath || t - c.lastUsed < KEEP_ALIVE_TTL_MS,
+            );
+        }, 60_000);
+        return () => clearInterval(iv);
+    });
 
     function handleForbidden(e) {
         const state = authStore.getContext ? authStore.getContext() : null;
@@ -52,11 +261,11 @@
                 const err = await res.json().catch(() => ({}));
                 throw new Error(err.error || `Approve failed: ${res.status}`);
             }
-            toastStore.add("Remote support session approved", "success");
+            toastStore.add(tr("shell.toast_remote_approved"), "success");
             showXelixirApproval = false;
             xelixirRequest = null;
         } catch (e) {
-            toastStore.add("Failed to approve: " + e.message, "error");
+            toastStore.add(tr("shell.toast_approve_failed", { error: e.message }), "error");
         } finally {
             xelixirApproveBusy = false;
         }
@@ -67,7 +276,7 @@
         // The cloud will see no status transition and can re-request later.
         showXelixirApproval = false;
         xelixirRequest = null;
-        toastStore.add("Remote support request denied", "info");
+        toastStore.add(tr("shell.toast_remote_denied"), "info");
     }
 
     async function handleQuickLogin() {
@@ -90,10 +299,21 @@
                 const pathBase = base || '/E';
                 goto(`${pathBase}/login`);
             }
+            // Cashiers work the register — the dashboard isn't theirs.
+            if (!state.isLoading && state.isAuthenticated && state.currentUser?.role === 'cashier') {
+                window.location.replace('/K/');
+            }
         });
 
         // 2. Init WebSocket
         wsStore.connect();
+
+        // 2b. Discover customer-added languages so the picker includes them.
+        refreshAvailableLocales($authStore.token);
+
+        // 2c. POS module availability + (admin) kiosk boot-mode config.
+        loadPosStatus();
+        if ($authStore.currentUser?.role === 'admin') loadKioskConfig();
 
         // 3. Listen for observer forbidden events
         window.addEventListener('auth:forbidden', handleForbidden);
@@ -107,6 +327,7 @@
     onDestroy(() => {
         // Don't close WS on destroy of layout if navigating within dashboard,
         // but fine for now as +layout is persistent.
+        if (addLangPoll) clearInterval(addLangPoll);
     });
 
     function handleLogout() {
@@ -114,6 +335,13 @@
         wsStore.close();
         goto(`${base}/login`);
     }
+
+    // Change-password modal. Opens on demand, or is forced (non-dismissable)
+    // when the account is flagged mustChangePassword (bulk-seeded shared pw).
+    let showChangePassword = false;
+    $: forcedPasswordChange =
+        $authStore.currentUser?.mustChangePassword === true &&
+        !$authStore.isKioskObserver;
 
     function resolveCandidate(candidate) {
         showAmbiguousModal = false;
@@ -142,7 +370,7 @@
             text = `Analyze this system anomaly report from eckWMS and suggest a root cause and fix:\n\n---\n${text}\n---\n\nTimestamp: ${new Date(activeAlert.timestamp).toISOString()}\nSeverity: ${activeAlert.severity || "critical"}`;
         }
         navigator.clipboard.writeText(text).then(() => {
-            copyFeedback = withPrompt ? "Copied with prompt!" : "Copied!";
+            copyFeedback = withPrompt ? tr("shell.copied_with_prompt") : tr("shell.copied");
             setTimeout(() => copyFeedback = "", 2000);
         });
     }
@@ -160,7 +388,7 @@
         // Handle System Alerts
         if (msg.type === "SYSTEM_ALERT") {
             activeAlert = msg;
-            toastStore.add(`CRITICAL: ${msg.title}`, "error", 10000);
+            toastStore.add(tr("shell.toast_critical", { title: msg.title }), "error", 10000);
             return;
         }
 
@@ -169,7 +397,7 @@
         if (msg.type === "XELIXIR_REQUESTED") {
             xelixirRequest = msg;
             showXelixirApproval = true;
-            toastStore.add("Remote Support is requesting access", "warning", 8000);
+            toastStore.add(tr("shell.toast_remote_requesting"), "warning", 8000);
             return;
         }
 
@@ -180,9 +408,9 @@
         }
 
         if (msg.success && msg.data) {
-            toastStore.add(`Operation Success`, "success");
+            toastStore.add(tr("shell.toast_operation_success"), "success");
         } else if (msg.type === "ERROR" || msg.error) {
-            toastStore.add(msg.text || msg.error || "Error occurred", "error");
+            toastStore.add(msg.text || msg.error || tr("shell.toast_error_occurred"), "error");
         } else if (msg.text) {
             toastStore.add(msg.text, "info");
         }
@@ -192,7 +420,7 @@
         // Play sound (optional, browser policy might block)
         // const audio = new Audio('/beep.mp3'); audio.play().catch(e=>{});
 
-        toastStore.add("Scanning...", "info", 1000);
+        toastStore.add(tr("shell.toast_scanning"), "info", 1000);
 
         try {
             const res = await fetch("/api/scan", {
@@ -206,7 +434,7 @@
 
             if (!res.ok) {
                 const err = await res.json();
-                throw new Error(err.error || "Scan failed");
+                throw new Error(err.error || tr("shell.scan_failed"));
             }
 
             const data = await res.json();
@@ -215,13 +443,13 @@
             if (data.type === "ambiguous") {
                 ambiguousCandidates = data.data?.candidates || [];
                 showAmbiguousModal = true;
-                toastStore.add("Multiple matches — please select", "warning");
+                toastStore.add(tr("shell.toast_multiple_matches"), "warning");
                 return;
             }
 
             // Soft trust warning
             if (data.trust === "soft") {
-                toastStore.add("Opened via external code. Please verify data.", "warning", 4000);
+                toastStore.add(tr("shell.toast_soft_trust"), "warning", 4000);
             }
 
             // Show result
@@ -235,7 +463,7 @@
             } else if (data.type === "box" && data.data?.id) {
                 console.log("Box scanned:", data.data);
                 toastStore.add(
-                    `Box ${data.data.name || data.data.id} scanned`,
+                    tr("shell.toast_box_scanned", { name: data.data.name || data.data.id }),
                     "success",
                 );
             } else if (data.type === "place" && data.data?.id) {
@@ -247,7 +475,7 @@
             }
         } catch (e) {
             console.error("Scan error:", e);
-            toastStore.add(`Error: ${e.message}`, "error");
+            toastStore.add(tr("shell.toast_error", { error: e.message }), "error");
         }
     }
 </script>
@@ -260,90 +488,110 @@
 
         <!-- Mesh Network Status -->
         <div class="mesh-section">
-            <div class="section-label">Connected Servers:</div>
+            <div class="section-label">{$t('shell.connected_servers')}</div>
             <MeshStatus />
         </div>
 
+        <!-- Kiosk observer language cycle (headline feature): big tap target near
+             the top of the menu. Regular users use the settings dropdown below. -->
+        {#if $authStore.isKioskObserver || $authStore.currentUser?.role === 'observer'}
+            <div class="lang-cycle-section">
+                <LanguageCycleButton />
+            </div>
+        {/if}
+
         <nav>
+            {#if posEnabled && ($authStore.currentUser?.role === 'admin' || $authStore.currentUser?.role === 'operator')}
+                <button class="nav-pos" on:click={openPos}>
+                    🧾 {$t('shell.nav_pos')}
+                </button>
+            {/if}
             <a
                 href="{base}/dashboard"
                 class:active={$page.url.pathname === `${base}/dashboard` ||
                     $page.url.pathname === "/dashboard"}
             >
-                Dashboard
+                {$t('shell.nav_dashboard')}
             </a>
             <a
-                href="{base}/dashboard/items"
-                class:active={$page.url.pathname.includes("/items")}
+                href="{base}/dashboard/inventory"
+                class:active={$page.url.pathname.includes("/dashboard/inventory") ||
+                    $page.url.pathname.includes("/items")}
             >
-                Inventory
+                {$t('shell.nav_inventory')}
             </a>
             <a
                 href="{base}/dashboard/warehouse"
                 class:active={$page.url.pathname.includes("/warehouse")}
             >
-                Warehouse
+                {$t('shell.nav_warehouse')}
             </a>
             <a
                 href="{base}/dashboard/shipping"
                 class:active={$page.url.pathname.includes("/shipping")}
             >
-                Shipping
+                {$t('shell.nav_shipping')}
             </a>
             <a
                 href="{base}/dashboard/rma"
                 class:active={$page.url.pathname.includes("/rma")}
             >
-                RMA Requests
+                {$t('shell.nav_rma')}
             </a>
             <a
                 href="{base}/dashboard/repairs"
                 class:active={$page.url.pathname.includes("/repairs")}
             >
-                Repairs
+                {$t('shell.nav_repairs')}
             </a>
             <a
                 href="{base}/dashboard/support"
                 class:active={$page.url.pathname.includes("/support")}
             >
-                Support
+                {$t('shell.nav_support')}
             </a>
             <a
                 href="{base}/dashboard/print"
                 class:active={$page.url.pathname.includes("/print")}
             >
-                Printing
+                {$t('shell.nav_printing')}
             </a>
             <a
                 href="{base}/dashboard/devices"
                 class:active={$page.url.pathname.includes("/devices")}
             >
-                Devices
+                {$t('shell.nav_devices')}
             </a>
             <a
                 href="{base}/dashboard/users"
                 class:active={$page.url.pathname.includes("/users")}
             >
-                Users
+                {$t('shell.nav_users')}
+            </a>
+            <a
+                href="{base}/dashboard/connector"
+                class:active={$page.url.pathname.includes("/connector")}
+            >
+                {$t('shell.nav_connector')}
             </a>
             <a
                 href="{base}/dashboard/scrapers"
                 class:active={$page.url.pathname.includes("/scrapers")}
             >
-                Scrapers
+                {$t('shell.nav_scrapers')}
             </a>
             <a
                 href="{base}/dashboard/ai"
                 class:active={$page.url.pathname.includes("/dashboard/ai")}
             >
-                AI Operator Inbox
+                {$t('shell.nav_ai_inbox')}
             </a>
             <a
                 href="{base}/dashboard/analysis"
                 class:active={$page.url.pathname.includes("/analysis")}
                 style="margin-top: 1rem; border-top: 1px solid #333; padding-top: 1rem;"
             >
-                Analysis
+                {$t('shell.nav_analysis')}
             </a>
 
             {#if activeAlert}
@@ -351,23 +599,129 @@
                     {activeAlert.title}
                 </button>
             {/if}
+
+            <!-- POS not active on this node → upsell button pinned to the
+                 bottom (mirrors the golden top button that paid nodes get). -->
+            {#if !posEnabled && ($authStore.currentUser?.role === 'admin' || $authStore.currentUser?.role === 'operator')}
+                <a
+                    href="{base}/dashboard/pos-promo"
+                    class="nav-pos-promo"
+                    class:active={$page.url.pathname.includes("/pos-promo")}
+                >
+                    💶 {$t('shell.nav_pos_promo')}
+                </a>
+            {/if}
         </nav>
 
         <div class="user-panel">
             <div class="user-info">
                 <span class="username"
-                    >{$authStore.currentUser?.username || "User"}</span
+                    >{$authStore.currentUser?.username || $t('shell.user_fallback')}</span
                 >
                 <span class="role"
-                    >{$authStore.currentUser?.role || "Operator"}{#if $authStore.isKioskObserver} (read-only){/if}</span
+                    >{$authStore.currentUser?.role || $t('shell.role_fallback')}{#if $authStore.isKioskObserver} {$t('shell.read_only')}{/if}</span
                 >
             </div>
-            <button on:click={handleLogout} class="logout-btn">Logout</button>
+
+            <!-- Settings language switcher (all authenticated users). For the
+                 admin the list carries one extra row — "Add language…" — which
+                 swaps this select for a 2-letter code input in the same spot. -->
+            <label class="lang-setting">
+                <span class="lang-setting-label">{$t('shell.language')}</span>
+                {#if addMode}
+                    <input
+                        class="add-lang-input"
+                        type="text"
+                        maxlength="2"
+                        bind:value={newLang}
+                        placeholder={$t('shell.add_language_hint')}
+                        disabled={addLangState === 'running'}
+                        use:focusOnMount
+                        on:keydown={(e) => {
+                            if (e.key === 'Enter') addLanguage();
+                            else if (e.key === 'Escape') cancelAddLang();
+                        }}
+                        on:blur={() => { if (addLangState !== 'running' && !newLang) cancelAddLang(); }}
+                    />
+                    {#if addLangState === 'running'}
+                        <span class="add-lang-status"
+                            >{$t('shell.add_language_progress', { done: addLangDone, total: addLangTotal })}</span
+                        >
+                    {:else if addLangState === 'failed'}
+                        <span class="add-lang-status err"
+                            >{$t('shell.add_language_failed', { error: addLangError })}</span
+                        >
+                    {:else}
+                        <span class="add-lang-status">{$t('shell.add_language_hint')} ⏎</span>
+                    {/if}
+                {:else}
+                    <select
+                        class="lang-select"
+                        value={$locale}
+                        on:change={onLangSelect}
+                        aria-label={$t('shell.change_language')}
+                    >
+                        {#each $availableLocales as code}
+                            <option value={code}>{localeName(code)}</option>
+                        {/each}
+                        {#if $authStore.currentUser?.role === 'admin'}
+                            <option value={ADD_LANG_OPTION}>+ {$t('shell.add_language')}…</option>
+                        {/if}
+                    </select>
+                {/if}
+            </label>
+
+            <!-- Kiosk boot config (admin, node-local): whether this node's
+                 kiosk screen auto-loads, and what it loads — the observer
+                 dashboard or the POS register. -->
+            {#if $authStore.currentUser?.role === 'admin' && !$authStore.isKioskObserver}
+                <div class="kiosk-config">
+                    <label class="kiosk-config-row">
+                        <input type="checkbox" bind:checked={kioskEnabled} on:change={saveKioskConfig} />
+                        <span>{$t('shell.kiosk_autologin')}</span>
+                    </label>
+                    {#if kioskEnabled && posEnabled}
+                        <label class="lang-setting">
+                            <span class="lang-setting-label">{$t('shell.kiosk_boot_mode')}</span>
+                            <select class="lang-select" bind:value={kioskMode} on:change={saveKioskConfig}>
+                                <option value="wms">{$t('shell.kiosk_mode_wms')}</option>
+                                <option value="pos">{$t('shell.kiosk_mode_pos')}</option>
+                            </select>
+                        </label>
+                    {/if}
+                </div>
+            {/if}
+
+            {#if !$authStore.isKioskObserver}
+                <button on:click={() => (showChangePassword = true)} class="change-pw-btn">
+                    {$t('shell.change_password')}
+                </button>
+            {/if}
+
+            <button on:click={handleLogout} class="logout-btn">{$t('shell.logout')}</button>
         </div>
     </aside>
 
-    <main class="content">
-        <slot />
+    {#if forcedPasswordChange || showChangePassword}
+        <ChangePasswordModal
+            forced={forcedPasswordChange}
+            on:done={() => (showChangePassword = false)}
+            on:close={() => (showChangePassword = false)}
+        />
+    {/if}
+
+    <main class="content" class:fullbleed={isFullbleed}>
+        <!-- Keep-alive cache: registered tabs (lib/keepAlive.js) stay mounted
+             across navigation, shown only when current, hidden (display:none)
+             but alive otherwise — so returning is instant and keeps their state. -->
+        {#each cached as c (c.path)}
+            <div class="ka-host" class:fullbleed-host={isFullbleedPath(c.path)}
+                 style:display={c.path === relPath ? null : "none"}>
+                <svelte:component this={compForPath(c.path)} active={c.path === relPath} />
+            </div>
+        {/each}
+        <!-- Non-cached routes render normally. -->
+        {#if !currentEntry}<slot />{/if}
     </main>
 
     <ToastContainer />
@@ -378,7 +732,7 @@
             <!-- svelte-ignore a11y-click-events-have-key-events -->
             <div class="modal-card alert-modal" on:click|stopPropagation>
                 <div class="alert-header">
-                    <h3>System Anomaly Detected</h3>
+                    <h3>{$t('shell.alert_title')}</h3>
                     <button class="close-btn" on:click={() => showAlertModal = false}>&times;</button>
                 </div>
 
@@ -388,19 +742,19 @@
                 </div>
 
                 <div class="alert-copy-bar">
-                    <button class="copy-btn" on:click={() => copyAlert(false)}>Copy Message</button>
-                    <button class="copy-btn copy-ai" on:click={() => copyAlert(true)}>Copy for AI</button>
+                    <button class="copy-btn" on:click={() => copyAlert(false)}>{$t('shell.copy_message')}</button>
+                    <button class="copy-btn copy-ai" on:click={() => copyAlert(true)}>{$t('shell.copy_for_ai')}</button>
                     {#if copyFeedback}<span class="copy-feedback">{copyFeedback}</span>{/if}
                 </div>
 
                 <div class="alert-footer-badge">
-                    Encrypted report automatically sent to xelth.com support on {new Date(activeAlert.timestamp).toLocaleString()}
+                    {$t('shell.alert_report_sent', { date: new Date(activeAlert.timestamp).toLocaleString() })}
                 </div>
 
                 <div class="modal-actions-bar">
-                    <button class="cancel-btn" on:click={() => showAlertModal = false}>Close</button>
+                    <button class="cancel-btn" on:click={() => showAlertModal = false}>{$t('shell.close')}</button>
                     <button class="candidate-btn" on:click={() => { activeAlert = null; showAlertModal = false; }}>
-                        Acknowledge &amp; Dismiss
+                        {$t('shell.acknowledge_dismiss')}
                     </button>
                 </div>
             </div>
@@ -410,8 +764,8 @@
     {#if showAmbiguousModal}
         <div class="modal-overlay" on:click={dismissAmbiguous}>
             <div class="modal-card" on:click|stopPropagation>
-                <h3>Multiple Matches Found</h3>
-                <p class="modal-hint">This barcode matched multiple records. Select the correct one:</p>
+                <h3>{$t('shell.ambiguous_title')}</h3>
+                <p class="modal-hint">{$t('shell.ambiguous_hint')}</p>
                 <div class="candidates-list">
                     {#each ambiguousCandidates as c}
                         <button class="candidate-btn" on:click={() => resolveCandidate(c)}>
@@ -421,7 +775,7 @@
                         </button>
                     {/each}
                 </div>
-                <button class="cancel-btn" on:click={dismissAmbiguous}>Cancel</button>
+                <button class="cancel-btn" on:click={dismissAmbiguous}>{$t('shell.cancel')}</button>
             </div>
         </div>
     {/if}
@@ -430,21 +784,20 @@
         <!-- High-priority Xelixir remote-support approval modal -->
         <div class="modal-overlay">
             <div class="modal-card xelixir-modal" on:click|stopPropagation>
-                <h3 style="color: #c4b5fd;">Remote Support Access Request</h3>
+                <h3 style="color: #c4b5fd;">{$t('shell.xelixir_title')}</h3>
                 <p class="modal-hint">
-                    Remote Support (Xelixir) is requesting an interactive session on this device.
-                    Approving will start the agent and give support staff temporary control.
+                    {$t('shell.xelixir_hint')}
                 </p>
                 {#if xelixirRequest.device_id}
-                    <p class="mono-sm">Device: {xelixirRequest.device_id}</p>
+                    <p class="mono-sm">{$t('shell.xelixir_device', { id: xelixirRequest.device_id })}</p>
                 {/if}
                 {#if xelixirRequest.timestamp}
-                    <p class="mono-sm">Requested at: {new Date(xelixirRequest.timestamp).toLocaleString()}</p>
+                    <p class="mono-sm">{$t('shell.xelixir_requested_at', { time: new Date(xelixirRequest.timestamp).toLocaleString() })}</p>
                 {/if}
                 <div class="modal-actions-bar">
-                    <button class="cancel-btn" on:click={denyXelixir} disabled={xelixirApproveBusy}>Deny</button>
+                    <button class="cancel-btn" on:click={denyXelixir} disabled={xelixirApproveBusy}>{$t('shell.deny')}</button>
                     <button class="quick-login-btn" on:click={approveXelixir} disabled={xelixirApproveBusy}>
-                        {xelixirApproveBusy ? 'Authorizing…' : 'Allow'}
+                        {xelixirApproveBusy ? $t('shell.authorizing') : $t('shell.allow')}
                     </button>
                 </div>
             </div>
@@ -454,16 +807,16 @@
     {#if showQuickLogin}
         <div class="modal-overlay" on:click={() => showQuickLogin = false}>
             <div class="modal-card" on:click|stopPropagation>
-                <h3 style="color: #4a69bd;">Privilege Escalation Required</h3>
-                <p class="modal-hint">This action requires elevated permissions. Log in with your credentials to proceed.</p>
+                <h3 style="color: #4a69bd;">{$t('shell.escalation_title')}</h3>
+                <p class="modal-hint">{$t('shell.escalation_hint')}</p>
                 <div class="quick-login-form">
-                    <input type="text" bind:value={quickLoginUser} placeholder="Username or Email" disabled={quickLoginLoading} />
-                    <input type="password" bind:value={quickLoginPass} placeholder="Password" disabled={quickLoginLoading} />
+                    <input type="text" bind:value={quickLoginUser} placeholder={$t('shell.username_or_email')} disabled={quickLoginLoading} />
+                    <input type="password" bind:value={quickLoginPass} placeholder={$t('shell.password')} disabled={quickLoginLoading} />
                     {#if quickLoginError}<div class="quick-login-error">{quickLoginError}</div>{/if}
                     <button class="quick-login-btn" on:click={handleQuickLogin} disabled={quickLoginLoading}>
-                        {quickLoginLoading ? 'Authenticating...' : 'Login'}
+                        {quickLoginLoading ? $t('shell.authenticating') : $t('shell.login')}
                     </button>
-                    <button class="cancel-btn" on:click={() => showQuickLogin = false} style="margin-top: 0.5rem;">Cancel</button>
+                    <button class="cancel-btn" on:click={() => showQuickLogin = false} style="margin-top: 0.5rem;">{$t('shell.cancel')}</button>
                 </div>
             </div>
         </div>
@@ -555,6 +908,58 @@
         cursor: pointer;
         animation: blink-bg 2s infinite;
     }
+
+    /* POS register entry — the paid-tier headline action, styled apart
+       from the plain nav links. */
+    .nav-pos {
+        padding: 0.8rem 1rem;
+        background: rgba(245, 185, 66, 0.08);
+        color: #f5b942;
+        text-align: left;
+        border: 1px solid rgba(245, 185, 66, 0.35);
+        border-radius: 6px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        margin-bottom: 0.5rem;
+    }
+    .nav-pos:hover {
+        background: rgba(245, 185, 66, 0.18);
+        color: #ffd27a;
+    }
+
+    /* Upsell button — pinned to the bottom of the nav (margin-top:auto pushes
+       it down since nav is a flex column with flex:1). */
+    .nav-pos-promo {
+        margin-top: auto;
+        padding: 0.8rem 1rem;
+        background: rgba(245, 185, 66, 0.06);
+        color: #f5b942;
+        text-decoration: none;
+        border: 1px dashed rgba(245, 185, 66, 0.4);
+        border-radius: 6px;
+        font-weight: 600;
+        transition: all 0.2s;
+    }
+    .nav-pos-promo:hover { background: rgba(245, 185, 66, 0.15); color: #ffd27a; }
+    .nav-pos-promo.active { background: rgba(245, 185, 66, 0.2); color: #ffd27a; }
+
+    .kiosk-config {
+        margin-bottom: 0.75rem;
+    }
+    .kiosk-config-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: #a8a8c0;
+        font-size: 0.85rem;
+        cursor: pointer;
+        margin-bottom: 0.5rem;
+    }
+    .kiosk-config-row input[type="checkbox"] {
+        accent-color: #4a69bd;
+    }
     @keyframes blink-bg {
         0% { background-color: #dc3545; }
         50% { background-color: #991b1b; }
@@ -615,6 +1020,87 @@
         border-color: #ff6b6b;
     }
 
+    .change-pw-btn {
+        width: 100%;
+        background: #2a2a2a;
+        color: #a8a8c0;
+        border: 1px solid #333;
+        padding: 0.5rem;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-bottom: 0.5rem;
+        transition: all 0.2s;
+    }
+
+    .change-pw-btn:hover {
+        background: #333;
+        border-color: #4a6cf7;
+    }
+
+    /* Kiosk observer language cycle placement */
+    .lang-cycle-section {
+        margin-bottom: 1rem;
+    }
+
+    /* Settings language switcher */
+    .lang-setting {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        margin-bottom: 1rem;
+    }
+
+    .lang-setting-label {
+        font-size: 0.65rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #666;
+        letter-spacing: 0.5px;
+    }
+
+    .lang-select {
+        width: 100%;
+        background: #2a2a2a;
+        color: #ddd;
+        border: 1px solid #333;
+        padding: 0.45rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        cursor: pointer;
+    }
+
+    .lang-select:focus {
+        outline: none;
+        border-color: #4a69bd;
+    }
+
+    /* Admin: the "Add language…" row swaps the select for this input in place. */
+    .add-lang-input {
+        width: 100%;
+        box-sizing: border-box;
+        background: #2a2a2a;
+        color: #ddd;
+        border: 1px solid #4a69bd;
+        border-radius: 4px;
+        padding: 0.45rem 0.5rem;
+        font-size: 0.85rem;
+        text-transform: lowercase;
+    }
+
+    .add-lang-input:focus {
+        outline: none;
+        border-color: #4a69bd;
+    }
+
+    .add-lang-status {
+        font-size: 0.75rem;
+        color: #a8a8c0;
+    }
+
+    .add-lang-status.err {
+        color: #ff6b6b;
+    }
+
     .content {
         overflow-y: auto;
         padding: 2rem 2rem 4rem 2rem;
@@ -622,6 +1108,19 @@
         /* positioning context so a page can go full-bleed (e.g. the map) */
         position: relative;
     }
+
+    /* Full-bleed pages (the logistics map) fill the pane edge-to-edge and never
+       scroll — drop the padding and clip, so an inset:0 child can't spill past
+       the viewport and spawn a scrollbar. The map resizes to fit instead. */
+    .content.fullbleed {
+        padding: 0;
+        overflow: hidden;
+    }
+
+    /* Keep-alive hosts: each holds one cached tab. Flow tabs render normally;
+       a full-bleed tab (the map) fills the pane. Hidden ones are display:none. */
+    .ka-host { min-height: 0; }
+    .ka-host.fullbleed-host { position: absolute; inset: 0; }
 
     /* Ambiguous collision modal */
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 9999; display: flex; align-items: center; justify-content: center; }

@@ -12,7 +12,7 @@ const OPTIMIZER_INTERVAL_SECS: u64 = 3600; // hourly
 const BATCH_LIMIT: usize = 5;
 const RATE_LIMIT_MS: u64 = 1000;
 
-const SYSTEM_PROMPT: &str = r#"You are the SOP (Standard Operating Procedure) Optimizer for eckWMS — a Rust-based WMS/ERP for InBody medical devices.
+const SYSTEM_PROMPT_TEMPLATE: &str = r#"You are the SOP (Standard Operating Procedure) Optimizer for eckWMS — a Rust-based WMS/ERP for {{PRODUCT_DOMAIN}}.
 You analyze a single completed task that required human intervention and distill it into a reusable, generalized SOP the Orchestrator can apply to similar future tasks via retrieval.
 
 STRICT OUTPUT RULES:
@@ -27,6 +27,15 @@ PII SAFETY — HARD REQUIREMENT:
 - If the only way to describe the situation is via specific PII, return {"title":"SKIP","trigger_context":"SKIP","rule":"SKIP"} and nothing else.
 
 If the interaction is not generalizable (one-off, trivial, or dominated by PII), also return the SKIP sentinel."#;
+
+/// SOP optimizer system prompt with the tenant's product-domain phrase spliced
+/// in (env `ECK_TENANT_BRAND`/`ECK_TENANT_VERTICAL`; neutral when unset).
+fn system_prompt_text() -> &'static str {
+    static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        SYSTEM_PROMPT_TEMPLATE.replace("{{PRODUCT_DOMAIN}}", &crate::ai::branding::product_domain_phrase())
+    })
+}
 
 pub async fn start_optimizer_worker(state: Arc<AppState>) {
     // Stagger startup so the optimizer doesn't compete with observer/orchestrator
@@ -109,7 +118,7 @@ async fn run_extraction_cycle(state: &Arc<AppState>, http: &HttpClient) -> anyho
     }
 
     let gen_model = std::env::var("GEMINI_GENERATION_MODEL")
-        .unwrap_or_else(|_| "gemini-3.1-flash-lite".to_string());
+        .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
 
     // Find recent ai_inbox replies whose parent task is completed and not yet
     // analyzed. We scope to the last 24h to cap cost per cycle.
@@ -240,7 +249,7 @@ async fn process_task(
     );
 
     let payload = json!({
-        "systemInstruction": { "parts": [{ "text": SYSTEM_PROMPT }] },
+        "systemInstruction": { "parts": [{ "text": system_prompt_text() }] },
         "contents": [{ "parts": [{ "text": user_prompt }] }],
         "generationConfig": {
             "responseMimeType": "application/json",

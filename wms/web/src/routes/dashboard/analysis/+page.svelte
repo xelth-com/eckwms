@@ -2,6 +2,7 @@
     import { onMount } from 'svelte';
     import { api } from '$lib/api';
     import { toastStore } from '$lib/stores/toastStore.js';
+    import { t, tr } from '$lib/i18n';
 
     let loading = false;
     let dumpData = [];
@@ -13,7 +14,7 @@
     let enrichNote = '';
 
     // Prompt builder state
-    let systemPrompt = `You are an expert technical support analyst for InBody devices.
+    let systemPrompt = `You are an expert technical support analyst for the company devices.
 I will provide you with a log of our recent support tickets.
 Please analyze these conversations and identify:
 1. The most common hardware issues.
@@ -30,9 +31,9 @@ Here is the data:
         try {
             const res = await api.get('/api/analysis/support-dump');
             dumpData = res || [];
-            toastStore.add(`Loaded ${dumpData.length} tickets for analysis`, 'success');
+            toastStore.add(tr('analysis.loaded_tickets', { count: dumpData.length }), 'success');
         } catch (e) {
-            toastStore.add('Failed to fetch data: ' + e.message, 'error');
+            toastStore.add(tr('analysis.fetch_failed', { error: e.message }), 'error');
         } finally {
             loading = false;
         }
@@ -47,7 +48,7 @@ Here is the data:
 
     async function enrichCsv() {
         if (!csvFile) {
-            toastStore.add('Select a .csv file first', 'warning');
+            toastStore.add(tr('analysis.select_csv'), 'warning');
             return;
         }
         enrichLoading = true;
@@ -64,14 +65,14 @@ Here is the data:
             });
             if (!res.ok) {
                 const errText = await res.text();
-                throw new Error(errText || `Request failed: ${res.status}`);
+                throw new Error(errText || tr('analysis.request_failed', { status: res.status }));
             }
             const data = await res.json();
             enrichResults = data.results || [];
             enrichNote = data.note || '';
-            toastStore.add(`Enriched ${enrichResults.length} rows`, 'success');
+            toastStore.add(tr('analysis.enriched_rows', { count: enrichResults.length }), 'success');
         } catch (err) {
-            toastStore.add('Enrichment failed: ' + err.message, 'error');
+            toastStore.add(tr('analysis.enrichment_failed', { error: err.message }), 'error');
         } finally {
             enrichLoading = false;
         }
@@ -79,7 +80,7 @@ Here is the data:
 
     async function copyPromptToAI() {
         if (dumpData.length === 0) {
-            toastStore.add('Please fetch data first', 'warning');
+            toastStore.add(tr('analysis.fetch_first'), 'warning');
             return;
         }
 
@@ -89,7 +90,7 @@ Here is the data:
         }
 
         if (filtered.length === 0) {
-            toastStore.add(`No tickets found with status: ${filterStatus}`, 'warning');
+            toastStore.add(tr('analysis.no_tickets_status', { status: filterStatus }), 'warning');
             return;
         }
 
@@ -101,73 +102,72 @@ Here is the data:
 
         try {
             await navigator.clipboard.writeText(compiledText);
-            toastStore.add(`Copied prompt with ${filtered.length} tickets to clipboard!`, 'success');
+            toastStore.add(tr('analysis.copied_prompt', { count: filtered.length }), 'success');
         } catch (err) {
-            toastStore.add('Failed to copy: ' + err.message, 'error');
+            toastStore.add(tr('analysis.copy_failed', { error: err.message }), 'error');
         }
     }
 </script>
 
 <div class="analysis-page">
     <header>
-        <h1>AI Analysis & Research</h1>
-        <p class="subtitle">Sandbox for analyzing database records, finding patterns, and generating LLM prompts.</p>
+        <h1>{$t('analysis.page_title')}</h1>
+        <p class="subtitle">{$t('analysis.subtitle')}</p>
     </header>
 
     <div class="grid">
         <div class="card">
             <div class="card-header">
-                <h2>Support Knowledge Extractor</h2>
-                <span class="badge">Ready</span>
+                <h2>{$t('analysis.extractor_title')}</h2>
+                <span class="badge">{$t('analysis.badge_ready')}</span>
             </div>
             <p class="desc">
-                Pulls all support ticket conversations, strips HTML formatting, and builds a massive text block.
-                You can copy this directly into Claude or ChatGPT to identify recurring issues or generate troubleshooting guides.
+                {$t('analysis.extractor_desc')}
             </p>
 
             <div class="controls">
                 <button class="btn secondary" on:click={fetchDump} disabled={loading}>
-                    {loading ? 'Fetching DB...' : '1. Fetch Database Records'}
+                    {loading ? $t('analysis.fetching_db') : $t('analysis.fetch_db')}
                 </button>
                 <span class="record-count">
                     {#if dumpData.length > 0}
-                        {dumpData.length} records loaded in memory
+                        {$t('analysis.records_loaded', { count: dumpData.length })}
                     {/if}
                 </span>
             </div>
 
             <div class="prompt-builder" class:disabled={dumpData.length === 0}>
-                <label>Filter Tickets to Include:</label>
+                <label>{$t('analysis.filter_label')}</label>
                 <select bind:value={filterStatus}>
-                    <option value="Closed">Closed / Resolved Only</option>
-                    <option value="All">All Tickets</option>
-                    <option value="Open">Open Only</option>
+                    <option value="Closed">{$t('analysis.filter_closed')}</option>
+                    <option value="All">{$t('analysis.filter_all')}</option>
+                    <option value="Open">{$t('analysis.filter_open')}</option>
                 </select>
 
-                <label>System Prompt (Instructions for AI):</label>
+                <label>{$t('analysis.system_prompt_label')}</label>
                 <textarea bind:value={systemPrompt} rows="8"></textarea>
 
                 <button class="btn primary" on:click={copyPromptToAI} disabled={dumpData.length === 0}>
-                    2. Copy Full Prompt to AI
+                    {$t('analysis.copy_prompt_btn')}
                 </button>
             </div>
         </div>
 
         <div class="card">
             <div class="card-header">
-                <h2>Batch Data Enrichment (CSV)</h2>
-                <span class="badge">Ready</span>
+                <h2>{$t('analysis.enrich_title')}</h2>
+                <span class="badge">{$t('analysis.badge_ready')}</span>
             </div>
             <p class="desc">
-                Upload a headerless CSV (one record per line). Each row is sent to a Gemini agent equipped with
-                <code>search_database</code>; the agent deduces location / device / issue and matches it against
-                our <code>order</code> and <code>document</code> tables. Review the AI's guesses before acting.
+                {$t('analysis.enrich_desc_1')}
+                <code>search_database</code>{$t('analysis.enrich_desc_2')}
+                <code>order</code> {$t('analysis.enrich_desc_3')} <code>document</code> {$t('analysis.enrich_desc_4')}
             </p>
 
             <div class="controls">
                 <input type="file" accept=".csv,text/csv" on:change={onCsvSelected} disabled={enrichLoading} />
                 <button class="btn primary" on:click={enrichCsv} disabled={enrichLoading || !csvFile}>
-                    {enrichLoading ? 'Enriching…' : 'Enrich Data via AI'}
+                    {enrichLoading ? $t('analysis.enriching') : $t('analysis.enrich_btn')}
                 </button>
             </div>
 
@@ -180,12 +180,12 @@ Here is the data:
                     <table class="enrich-table">
                         <thead>
                             <tr>
-                                <th>Raw row</th>
-                                <th>Order #</th>
-                                <th>Customer</th>
-                                <th>Model</th>
-                                <th>Issue</th>
-                                <th>Conf.</th>
+                                <th>{$t('analysis.th_raw_row')}</th>
+                                <th>{$t('analysis.th_order_number')}</th>
+                                <th>{$t('analysis.th_customer')}</th>
+                                <th>{$t('analysis.th_model')}</th>
+                                <th>{$t('analysis.th_issue')}</th>
+                                <th>{$t('analysis.th_conf')}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -207,15 +207,14 @@ Here is the data:
 
         <div class="card wip">
             <div class="card-header">
-                <h2>Automated Issue Resolution (RAG)</h2>
-                <span class="badge wip-badge">WIP</span>
+                <h2>{$t('analysis.rag_title')}</h2>
+                <span class="badge wip-badge">{$t('analysis.badge_wip')}</span>
             </div>
             <p class="desc">
-                Future module: Instead of manually copying text to ChatGPT, this tool will use our internal Gemini API integration
-                (via <code>rig-core</code>) to automatically search past tickets and suggest a solution for a specific problem.
+                {$t('analysis.rag_desc_1')} <code>rig-core</code>{$t('analysis.rag_desc_2')}
             </p>
             <div class="placeholder-box">
-                Internal AI Vector Search coming soon...
+                {$t('analysis.rag_placeholder')}
             </div>
         </div>
     </div>

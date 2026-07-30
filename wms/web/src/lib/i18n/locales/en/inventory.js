@@ -1,0 +1,16 @@
+export default {
+    title: 'Inventory',
+    load_failed: 'Failed to load: {error}',
+    discrepancies_only: 'Discrepancies only',
+    refresh: 'Refresh',
+    loading: 'Loading…',
+    empty: 'Nothing counted yet. Count on the Warehouse → Stocktake screen.',
+    summary: '{rows} rows · {pcs} pcs counted total',
+    th_time: 'Time',
+    th_location: 'Location',
+    th_warehouse: 'Warehouse',
+    th_code: 'Code',
+    th_name: 'Name',
+    th_ist: 'Ist',
+    th_soll: 'Soll',
+};

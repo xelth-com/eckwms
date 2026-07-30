@@ -120,6 +120,19 @@ async fn main() -> Result<(), anyhow::Error> {
 
     info!("Starting 9eck legacy migrator...");
 
+    // ── Standalone device-id migration (SurrealDB only — no PostgreSQL) ───────
+    // `--devices`: one-shot, idempotent re-key of legacy ANDROID_ID-keyed
+    // `registered_device` rows to server-minted UUIDs (see migrate_device_ids).
+    // Runs BEFORE the PG connect so it works on a fresh deploy with no legacy PG.
+    if env::args().any(|a| a == "--devices") {
+        let db_path = env::var("SURREAL_DB_PATH").unwrap_or_else(|_| "data/wms.db".into());
+        info!("Connecting to SurrealDB: {}", db_path);
+        let sdb = db::connect(&db_path).await?;
+        migrate_device_ids(&sdb).await?;
+        info!("Device-id migration complete!");
+        return Ok(());
+    }
+
     let pg_url = env::var("LEGACY_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgres@localhost/eckwms".into());
 
@@ -158,7 +171,14 @@ async fn main() -> Result<(), anyhow::Error> {
          DEFINE FIELD embedding ON document TYPE option<array<float>>;
          DEFINE INDEX IF NOT EXISTS document_embedding ON document FIELDS embedding
              HNSW DIMENSION 768 DIST COSINE TYPE F32;
-         DEFINE INDEX IF NOT EXISTS doc_content_bm25 ON document FIELDS payload.content SEARCH ANALYZER custom_analyzer BM25;
+         -- Full-text over MASKED fields only (ai_summary + distilled subject);
+         -- the legacy payload.content index searched raw text that
+         -- support_ticket rows don't carry. Kept in sync with the wms
+         -- ensure-indexes block, which also REMOVEs the legacy index.
+         -- v3 syntax: FULLTEXT (the old SEARCH keyword silently fails).
+         DEFINE INDEX IF NOT EXISTS doc_summary_bm25 ON document FIELDS ai_summary FULLTEXT ANALYZER custom_analyzer BM25;
+         DEFINE INDEX IF NOT EXISTS doc_subject_bm25 ON document FIELDS meta.subject FULLTEXT ANALYZER custom_analyzer BM25;
+         DEFINE INDEX IF NOT EXISTS doc_pii_fps_idx ON document FIELDS pii_fingerprints;
 
          -- Vector + BM25 indexes for partner (360-degree view)
          DEFINE FIELD IF NOT EXISTS embedding ON partner TYPE option<array<float>>;
@@ -180,7 +200,17 @@ async fn main() -> Result<(), anyhow::Error> {
          DEFINE INDEX IF NOT EXISTS picking_embedding ON picking FIELDS embedding
              HNSW DIMENSION 768 DIST COSINE TYPE F32;
          DEFINE INDEX IF NOT EXISTS picking_tracking_bm25 ON picking FIELDS tracking_number SEARCH ANALYZER custom_analyzer BM25;
-         DEFINE INDEX IF NOT EXISTS picking_recipient_bm25 ON picking FIELDS recipient_name SEARCH ANALYZER custom_analyzer BM25;",
+         DEFINE INDEX IF NOT EXISTS picking_recipient_bm25 ON picking FIELDS recipient_name SEARCH ANALYZER custom_analyzer BM25;
+
+         -- Polling-status indexes. The embedding worker + observer poll
+         -- WHERE embedding_status/summary_status = 'pending' every few seconds;
+         -- without these each poll is a full table scan (idle-CPU root cause).
+         DEFINE INDEX IF NOT EXISTS document_embstatus_idx ON document FIELDS embedding_status;
+         DEFINE INDEX IF NOT EXISTS document_sumstatus_idx ON document FIELDS summary_status;
+         DEFINE INDEX IF NOT EXISTS order_embstatus_idx ON order FIELDS embedding_status;
+         DEFINE INDEX IF NOT EXISTS partner_embstatus_idx ON partner FIELDS embedding_status;
+         DEFINE INDEX IF NOT EXISTS product_embstatus_idx ON product FIELDS embedding_status;
+         DEFINE INDEX IF NOT EXISTS picking_embstatus_idx ON picking FIELDS embedding_status;",
     )
     .await?;
 
@@ -651,6 +681,147 @@ async fn migrate_attachments(
         created += 1;
     }
     info!("  Attachments migrated: {} graph edges created.", created);
+    Ok(())
+}
+
+// ─── Device-id migration: ANDROID_ID key → UUID key ─────────────────────────
+
+/// Extract the bare record-id leaf from a `SELECT *` row's `id` field, across the
+/// shapes the SurrealDB SDK may serialize it as (see core/src/sync/merkle.rs):
+///   * `"registered_device:00000000-…"`            (Thing string, maybe backticked)
+///   * `{ "tb": "registered_device", "id": "0000…" }`
+///   * `{ "tb": "registered_device", "id": { "String": "0000…" } }`
+fn device_row_leaf(row: &serde_json::Value) -> Option<String> {
+    match row.get("id")? {
+        serde_json::Value::String(s) => Some(
+            s.rsplit(':').next().unwrap_or(s).trim_matches('`').to_string(),
+        ),
+        serde_json::Value::Object(o) => match o.get("id")? {
+            serde_json::Value::String(s) => Some(s.trim_matches('`').to_string()),
+            serde_json::Value::Object(io) => {
+                io.get("String").and_then(|v| v.as_str()).map(|s| s.to_string())
+            }
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// One-shot, idempotent: re-key every legacy `registered_device` row whose record
+/// id is NOT a UUID (i.e. the 16-hex `Settings.Secure.ANDROID_ID`) to a freshly
+/// minted UUID, moving the old id into the `android_id` field and tombstoning the
+/// old row so mesh sync converges. Rows that are already UUID-keyed are skipped,
+/// so re-running is safe. (The Rust UUID-aware `register_device` resolves such a
+/// device back to its new UUID via the preserved `public_key` anchor.)
+async fn migrate_device_ids(sdb: &db::SurrealDb) -> Result<(), anyhow::Error> {
+    info!("Migrating legacy ANDROID_ID-keyed registered_device rows → UUID keys...");
+
+    let mut res = sdb
+        .query("SELECT * FROM registered_device WHERE deleted_at IS NONE")
+        .await?;
+    let rows: Vec<serde_json::Value> = res.take(0)?;
+    info!("  {} live device row(s)", rows.len());
+
+    // State dump (audit) before mutating — id leaf, is-uuid, android_id, status.
+    for row in &rows {
+        let leaf = device_row_leaf(row).unwrap_or_else(|| "?".into());
+        info!(
+            "    row id={} is_uuid={} android_id={} status={}",
+            leaf,
+            Uuid::parse_str(&leaf).is_ok(),
+            row.get("android_id").and_then(|v| v.as_str()).unwrap_or("-"),
+            row.get("status").and_then(|v| v.as_str()).unwrap_or("-"),
+        );
+    }
+
+    let mut migrated = 0u32;
+    let mut reused = 0u32;
+    let mut skipped = 0u32;
+
+    for row in &rows {
+        let Some(leaf) = device_row_leaf(row) else {
+            tracing::warn!("  could not read record id; skipping row");
+            skipped += 1;
+            continue;
+        };
+
+        // Already UUID-keyed -> nothing to do (idempotent re-run).
+        if Uuid::parse_str(&leaf).is_ok() {
+            skipped += 1;
+            continue;
+        }
+
+        let pk = row.get("public_key").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        // Self-heal: if a UUID-keyed sibling with the SAME public_key already
+        // exists (e.g. a prior partial run created the successor but failed to
+        // tombstone this old row), REUSE that UUID instead of minting a second
+        // one — otherwise a re-run would create duplicate device rows.
+        let mut reuse: Option<String> = None;
+        if !pk.is_empty() {
+            let mut r = sdb
+                .query("SELECT * FROM registered_device WHERE public_key = $pk AND deleted_at IS NONE")
+                .bind(("pk", pk.clone()))
+                .await?;
+            let sibs: Vec<serde_json::Value> = r.take(0)?;
+            for s in &sibs {
+                if let Some(sl) = device_row_leaf(s) {
+                    if sl != leaf && Uuid::parse_str(&sl).is_ok() {
+                        reuse = Some(sl);
+                        break;
+                    }
+                }
+            }
+        }
+
+        match reuse {
+            Some(u) => {
+                info!("  {} -> {} (reused existing UUID sibling)", leaf, u);
+                reused += 1;
+            }
+            None => {
+                let new_uuid = Uuid::new_v4().to_string();
+                let android_id = row
+                    .get("android_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| leaf.clone());
+
+                // Successor record: copy every stored field, re-point device_id/android_id.
+                let mut content = row.clone();
+                if let Some(obj) = content.as_object_mut() {
+                    obj.remove("id"); // let .upsert assign the new UUID key
+                    obj.insert("device_id".into(), json!(new_uuid));
+                    obj.insert("android_id".into(), json!(android_id));
+                    obj.insert("updated_at".into(), json!(Utc::now().to_rfc3339()));
+                    obj.remove("deleted_at"); // NONE (unset), NOT NULL — SurrealDB
+                    // distinguishes them and Option<String> rejects an explicit
+                    // null ("expected string, got null"), 500ing DeviceRecord reads.
+                }
+
+                let _: Option<serde_json::Value> = sdb
+                    .upsert(("registered_device", new_uuid.as_str()))
+                    .content(content)
+                    .await?;
+                info!("  {} -> {} (new UUID, android_id preserved)", leaf, new_uuid);
+                migrated += 1;
+            }
+        }
+
+        // Tombstone the old ANDROID_ID-keyed row (SurrealDB v3: type::record,
+        // backtick-quoted id — same pattern as support::scrub_summaries).
+        let now = Utc::now().to_rfc3339();
+        sdb.query("UPDATE type::record($rid) SET deleted_at = $now, updated_at = $now")
+            .bind(("rid", format!("registered_device:`{}`", leaf)))
+            .bind(("now", now))
+            .await?;
+    }
+
+    info!(
+        "Device-id migration: {} re-keyed (new), {} reused-existing, {} already-UUID/skipped.",
+        migrated, reused, skipped
+    );
     Ok(())
 }
 

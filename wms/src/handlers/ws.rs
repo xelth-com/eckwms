@@ -1,12 +1,13 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Query, State,
     },
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 
@@ -31,32 +32,63 @@ struct AckMessage {
     status: String,
 }
 
-/// GET /E/ws — WebSocket upgrade handler
+/// GET /E/ws?token=<jwt> — WebSocket upgrade handler.
+///
+/// The broadcast stream carries operator-only events (TRIP_LIVE vehicle
+/// positions, AI observer output, agent status), so subscribing requires a
+/// valid JWT — passed as a query param because the browser WebSocket API
+/// can't set an Authorization header. Tokenless connections are still
+/// accepted for the legacy PDA DEVICE_IDENTIFY→ACK handshake, but they get
+/// no broadcast subscription and nothing they send is relayed anywhere.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    let authed = params
+        .get("token")
+        .map(|t| eck_core::auth::validate_token(t, &state.jwt_secret).is_ok())
+        .unwrap_or(false);
+    ws.on_upgrade(move |socket| handle_socket(socket, state, authed))
 }
 
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
-    let (mut sender, mut receiver) = socket.split();
-    let tx = state.ws_tx.clone();
-    let mut rx = tx.subscribe();
-
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>, authed: bool) {
     let client_id = format!("web_{}", uuid::Uuid::new_v4());
-    info!("WMS WebSocket client connected: {}", client_id);
+    info!(
+        "WMS WebSocket client connected: {} (authed={})",
+        client_id, authed
+    );
 
-    let mut send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            if sender.send(Message::Text(msg.into())).await.is_err() {
-                break;
+    if authed {
+        let (mut sender, mut receiver) = socket.split();
+        let mut rx = state.ws_tx.subscribe();
+
+        let mut send_task = tokio::spawn(async move {
+            while let Ok(msg) = rx.recv().await {
+                if sender.send(Message::Text(msg.into())).await.is_err() {
+                    break;
+                }
             }
-        }
-    });
+        });
 
-    let tx2 = tx.clone();
-    let mut recv_task = tokio::spawn(async move {
+        // Drain incoming frames to keep the socket alive, but NEVER feed
+        // client input back into the broadcast: ws_tx is a server-authored
+        // event stream, and relaying arbitrary client text let any connected
+        // client inject fake events (INVENTORY_UPDATED, TRIP_LIVE, …) into
+        // every open dashboard.
+        let mut recv_task = tokio::spawn(async move {
+            while let Some(Ok(_)) = receiver.next().await {}
+        });
+
+        tokio::select! {
+            _ = &mut send_task => recv_task.abort(),
+            _ = &mut recv_task => send_task.abort(),
+        };
+    } else {
+        // Unauthenticated (legacy PDA path): no broadcast subscription — the
+        // stream leaks operator data. Answer DEVICE_IDENTIFY with a direct
+        // ACK on this socket only.
+        let (mut sender, mut receiver) = socket.split();
         while let Some(Ok(msg)) = receiver.next().await {
             if let Message::Text(text) = msg {
                 let text_str: &str = &text;
@@ -69,20 +101,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                             status: "connected".to_string(),
                         };
                         if let Ok(ack_json) = serde_json::to_string(&ack) {
-                            let _ = tx2.send(ack_json);
+                            if sender.send(Message::Text(ack_json.into())).await.is_err() {
+                                break;
+                            }
                         }
-                        continue;
                     }
                 }
-                let _ = tx2.send(text_str.to_string());
             }
         }
-    });
-
-    tokio::select! {
-        _ = &mut send_task => recv_task.abort(),
-        _ = &mut recv_task => send_task.abort(),
-    };
+    }
 
     info!("WMS WebSocket client disconnected: {}", client_id);
 }

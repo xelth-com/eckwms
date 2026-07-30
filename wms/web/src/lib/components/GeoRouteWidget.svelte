@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { base } from '$app/paths';
   import api from '$lib/api';
+  import { t, tr } from '$lib/i18n';
 
   export let targetLat = null;
   export let targetLng = null;
@@ -26,14 +27,14 @@
       }
 
       if (targetLat == null || targetLng == null) {
-        error = 'No coordinates available';
+        error = tr('map.no_coords');
         loading = false;
         return;
       }
 
       tasks = await api.get(`/api/geo/nearby?target_lat=${targetLat}&target_lng=${targetLng}`);
     } catch (e) {
-      error = e.message || 'Failed to fetch nearby tasks';
+      error = e.message || tr('map.fetch_failed');
     } finally {
       loading = false;
     }
@@ -49,9 +50,9 @@
 <div class="geo-route-widget">
   <button on:click={findNearby} disabled={loading} class="find-btn">
     {#if loading}
-      Searching...
+      {$t('map.searching')}
     {:else}
-      Find Nearby Tasks on Route
+      {$t('map.find_nearby')}
     {/if}
   </button>
 
@@ -65,18 +66,18 @@
         <li class="task-item">
           <div class="task-header">
             <span class="task-title">{task.orderNumber} — {task.customerName}</span>
-            <span class="badge {badgeClass(task.badge)}">{task.badge}</span>
+            <span class="badge {badgeClass(task.badge)}">{task.badge === 'Bingo' ? $t('map.badge_bingo') : task.badge === 'Normal' ? $t('map.badge_normal') : $t('map.badge_far')}</span>
           </div>
           <div class="task-meta">
-            <span>{task.distanceKm.toFixed(1)} km to target</span>
-            <span class="cost">cost: {task.cost.toFixed(2)}</span>
+            <span>{$t('map.km_to_target', { km: task.distanceKm.toFixed(1) })}</span>
+            <span class="cost">{$t('map.cost', { cost: task.cost.toFixed(2) })}</span>
             <span class="status">{task.status}</span>
           </div>
         </li>
       {/each}
     </ul>
   {:else if !loading && !error}
-    <p class="empty">Click the button to find tasks along the route.</p>
+    <p class="empty">{$t('map.route_empty')}</p>
   {/if}
 </div>
 

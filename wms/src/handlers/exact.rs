@@ -22,6 +22,77 @@ fn pick_str<'a>(obj: &'a Value, keys: &[&str]) -> &'a str {
     ""
 }
 
+/// Next `_vclock` for a synced record, advancing THIS node's counter from
+/// whatever it currently holds. These tables (product/partner/stock_position/
+/// quotation/sales_order) are in SYNC_ENTITY_TYPES, so a merge-import that
+/// changes content but leaves `_vclock` null/stale never propagates — the peer
+/// drops it as "local wins/equal" and the two nodes churn forever re-pushing the
+/// same rows (the partner-churn mesh incident). Setting an advancing vclock makes
+/// the import dominate and converge. One extra read per row — fine for a batch.
+async fn next_vclock(state: &AppState, table: &str, id: &str) -> Value {
+    // NB: `type::thing($tb, $id)` does NOT match all-digit string ids (they're
+    // stored backtick-quoted, e.g. `partner:`00193``), so read via `type::record`
+    // with the explicit backtick-quoted thing — same as import_ticket.
+    let rid = format!("{}:`{}`", table, id);
+    let existing: Option<Value> = state
+        .db
+        .query("SELECT _vclock FROM type::record($rid) LIMIT 1")
+        .bind(("rid", rid))
+        .await
+        .and_then(|mut r| r.take(0))
+        .ok()
+        .flatten();
+    eck_core::sync::conflict::next_local_vclock(
+        existing.as_ref().and_then(|v| v.get("_vclock")),
+        &state.instance_id,
+    )
+}
+
+/// POST /api/exact/backfill-vclocks — one-shot: stamp an advancing `_vclock` on
+/// every Exact-imported synced row that currently has none. Rows imported before
+/// the vclock fix are null-clocked, so a peer can't tell this node's enriched
+/// version dominates and drops the update as "local wins/equal" — the mesh then
+/// churns re-pushing the same rows forever (the partner-churn incident). Stamping
+/// a vclock lets this node's version win and the two nodes converge. Idempotent.
+pub async fn backfill_vclocks(
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Json<Value>> {
+    let tables = ["product", "partner", "stock_position", "quotation", "sales_order"];
+    let now = Utc::now().to_rfc3339();
+    let mut per_table = serde_json::Map::new();
+    let mut total = 0i64;
+    for table in tables {
+        let ids: Vec<Value> = state
+            .db
+            .query("SELECT record::id(id) AS id FROM type::table($tb) WHERE _vclock = NONE")
+            .bind(("tb", table.to_string()))
+            .await
+            .and_then(|mut r| r.take(0))
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let mut n = 0i64;
+        for row in &ids {
+            let id = match row.get("id").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let vclock = next_vclock(&state, table, &id).await;
+            let rid = format!("{}:`{}`", table, id);
+            let _: Result<Option<Value>, _> = state
+                .db
+                .query("UPDATE type::record($rid) MERGE { _vclock: $vc, updated_at: $now }")
+                .bind(("rid", rid))
+                .bind(("vc", vclock))
+                .bind(("now", now.clone()))
+                .await
+                .map(|_| None);
+            n += 1;
+        }
+        per_table.insert(table.to_string(), json!(n));
+        total += n;
+    }
+    Ok(Json(json!({ "success": true, "stamped": total, "per_table": per_table })))
+}
+
 /// POST /api/exact/import-items — import products from Exact Online
 pub async fn import_items(
     State(state): State<Arc<AppState>>,
@@ -42,6 +113,7 @@ pub async fn import_items(
         let name = pick_str(item, &["description", "Description", "name", "Name"]);
         let barcode = pick_str(item, &["barcode", "Barcode"]);
         let default_code = pick_str(item, &["code", "Code"]);
+        let vclock = next_vclock(&state, "product", ext_id).await;
 
         let _: Result<Option<Value>, _> = state.db
             .upsert(("product", ext_id))
@@ -52,6 +124,7 @@ pub async fn import_items(
                 "default_code": default_code,
                 "barcode": barcode,
                 "payload": item,
+                "_vclock": vclock,
                 "updated_at": Utc::now().to_rfc3339(),
             }))
             .await;
@@ -84,6 +157,7 @@ pub async fn import_customers(
         let phone = pick_str(item, &["phone", "Phone"]);
         let city = pick_str(item, &["city", "City"]);
         let country = pick_str(item, &["country", "Country"]);
+        let vclock = next_vclock(&state, "partner", ext_id).await;
 
         let _: Result<Option<Value>, _> = state.db
             .upsert(("partner", ext_id))
@@ -96,6 +170,7 @@ pub async fn import_customers(
                 "city": city,
                 "country": country,
                 "payload": item,
+                "_vclock": vclock,
                 "updated_at": Utc::now().to_rfc3339(),
             }))
             .await;
@@ -125,6 +200,7 @@ pub async fn import_stock_positions(
         if item_code.is_empty() { skipped += 1; continue; }
 
         let ext_id = format!("{}_{}", item_code, wh_code);
+        let vclock = next_vclock(&state, "stock_position", &ext_id).await;
         let _: Result<Option<Value>, _> = state.db
             .upsert(("stock_position", ext_id.as_str()))
             .merge(json!({
@@ -137,6 +213,7 @@ pub async fn import_stock_positions(
                 "projected_stock": item.get("projected_stock").or(item.get("ProjectedStock")),
                 "reorder_point": item.get("reorder_point").or(item.get("ReorderPoint")),
                 "payload": item,
+                "_vclock": vclock,
                 "updated_at": Utc::now().to_rfc3339(),
             }))
             .await;
@@ -165,6 +242,7 @@ pub async fn import_quotations(
         if number.is_empty() { skipped += 1; continue; }
 
         let ext_id = number.replace(['/', ' '], "_");
+        let vclock = next_vclock(&state, "quotation", &ext_id).await;
         let _: Result<Option<Value>, _> = state.db
             .upsert(("quotation", ext_id.as_str()))
             .merge(json!({
@@ -178,6 +256,7 @@ pub async fn import_quotations(
                 "quotation_date": item.get("quotation_date").or(item.get("QuotationDate")),
                 "description": item.get("description").or(item.get("Description")),
                 "payload": item,
+                "_vclock": vclock,
                 "updated_at": Utc::now().to_rfc3339(),
             }))
             .await;
@@ -207,6 +286,7 @@ pub async fn import_sales_orders(
 
         let customer_name = pick_str(item, &["deliver_to_name", "DeliverToName", "ordered_by_name", "OrderedByName"]);
         let status = pick_str(item, &["status", "Status"]);
+        let vclock = next_vclock(&state, "sales_order", order_number).await;
 
         let _: Result<Option<Value>, _> = state.db
             .upsert(("sales_order", order_number))
@@ -219,6 +299,7 @@ pub async fn import_sales_orders(
                 "currency": item.get("currency").or(item.get("Currency")),
                 "order_date": item.get("order_date").or(item.get("OrderDate")),
                 "payload": item,
+                "_vclock": vclock,
                 "updated_at": Utc::now().to_rfc3339(),
             }))
             .await;

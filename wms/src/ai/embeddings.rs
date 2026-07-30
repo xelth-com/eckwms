@@ -12,9 +12,113 @@ const BATCH_LIMIT: usize = 50;
 const LOOP_INTERVAL_SECS: u64 = 5;
 const RATE_LIMIT_MS: u64 = 200;
 const MAX_RETRIES: i64 = 5;
+/// Idle-poll backoff cap. With the `embedding_status` index the per-cycle
+/// "any pending?" probe is a cheap seek, but when nothing is pending for many
+/// cycles we also stretch the interval (LOOP_INTERVAL_SECS → up to
+/// LOOP_INTERVAL_SECS * (1 + IDLE_BACKOFF_CAP)) so a fully-embedded node idles.
+const IDLE_BACKOFF_CAP: u64 = 11; // 5s base → up to 60s when fully idle
+
+/// Canonical `embedding_model` id written for on-device (local-mode) vectors.
+/// Kept as a literal here (not behind the feature) so `effective_embed_model`
+/// and its test compile whether or not `local-embed` is enabled. Must match
+/// `local_embed::MODEL_NAME`.
+const LOCAL_EMBED_MODEL: &str = "jina-embeddings-v2-base-de";
+
+/// Runtime embedding-backend selector. `ECK_EMBED_MODE=local` → on-device Jina
+/// (requires the `local-embed` feature to be compiled in); anything else, or an
+/// unset var, → the cloud (Gemini/Vertex) path. The fleet ships one binary and
+/// this env var alone decides. Parsed once and cached (the value can't change
+/// mid-process), which also makes the "asked for local but built cloud-only"
+/// warning fire exactly once.
+pub fn embed_mode() -> &'static str {
+    use std::sync::OnceLock;
+    static MODE: OnceLock<&'static str> = OnceLock::new();
+    *MODE.get_or_init(|| {
+        let raw = std::env::var("ECK_EMBED_MODE").ok();
+        let mode = resolve_embed_mode(raw.as_deref());
+        let asked_local = raw
+            .as_deref()
+            .map(|v| v.trim().eq_ignore_ascii_case("local"))
+            .unwrap_or(false);
+        if asked_local && mode == "cloud" {
+            warn!(
+                "[Embeddings] ECK_EMBED_MODE=local requested but this binary was built \
+                 without the `local-embed` feature — using cloud embeddings"
+            );
+        }
+        mode
+    })
+}
+
+/// Pure mode resolver: maps the raw `ECK_EMBED_MODE` value to `"local"`/`"cloud"`
+/// with the feature gate applied, and no process-global state. Split out from
+/// `embed_mode` so it can be unit-tested without racing other tests on the env.
+fn resolve_embed_mode(env_val: Option<&str>) -> &'static str {
+    let want_local = env_val
+        .map(|v| v.trim().eq_ignore_ascii_case("local"))
+        .unwrap_or(false);
+    if !want_local {
+        return "cloud";
+    }
+    // Env asked for local; honour it only if the backend was compiled in.
+    #[cfg(feature = "local-embed")]
+    {
+        "local"
+    }
+    #[cfg(not(feature = "local-embed"))]
+    {
+        "cloud"
+    }
+}
+
+/// Model name to record with a vector and to name in telemetry. Local mode
+/// always writes the on-device model id (so a future migration can tell
+/// on-device vectors from cloud ones and requeue across spaces); cloud mode
+/// keeps the configured cloud model name unchanged.
+pub fn effective_embed_model(cloud_model: &str) -> String {
+    effective_embed_model_for(embed_mode(), cloud_model)
+}
+
+/// Pure `(mode, cloud_model) → model name` mapping — unit-testable without env.
+fn effective_embed_model_for(mode: &str, cloud_model: &str) -> String {
+    if mode == "local" {
+        LOCAL_EMBED_MODEL.to_string()
+    } else {
+        cloud_model.to_string()
+    }
+}
+
+/// Dispatch one embed call to the on-device model (local mode) or the cloud
+/// provider (cloud mode). Returns `(vector, usage)`; local usage is `Value::Null`
+/// (nothing was billed) so the existing telemetry guard naturally skips it.
+async fn embed_dispatch(
+    http: &HttpClient,
+    auth: &eck_core::ai::AiAuth,
+    emb_model: &str,
+    text: &str,
+    local: bool,
+) -> Result<(Vec<f32>, Value), anyhow::Error> {
+    #[cfg(feature = "local-embed")]
+    if local {
+        let vector = super::local_embed::embed(text).await?;
+        return Ok((vector, Value::Null));
+    }
+    // `local` is never true when the feature is compiled out (embed_mode can't
+    // return "local" then); bind it so the parameter isn't flagged unused.
+    let _ = local;
+    auth.embed_content(http, emb_model, text, EMBEDDING_DIM).await
+}
 
 /// Spawns the background embedding worker that processes pending documents and orders.
-pub async fn start_embedding_worker(db: SurrealDb, gen_model: String, emb_model: String) {
+///
+/// Vectors are mesh-synced content (see merkle.rs IGNORED_FIELDS note,
+/// 2026-07-12): the worker only picks rows whose vector is ABSENT, and bumps
+/// this node's `_vclock` on every success write so its vector dominates
+/// vector-less peer copies. Symmetric mesh: every AI-enabled node runs the
+/// worker and whoever meets the missing vector first authors it. Asymmetric
+/// (one AI-dedicated box): set `ECK_EMBED_WORKER=0` on all other nodes — they
+/// consume vectors from the mesh and never call the embed API themselves.
+pub async fn start_embedding_worker(db: SurrealDb, gen_model: String, emb_model: String, instance_id: String) {
     // Initial delay to let the server finish startup
     tokio::time::sleep(std::time::Duration::from_secs(15)).await;
     info!("[Embeddings] Worker started ({LOOP_INTERVAL_SECS}s interval)");
@@ -22,7 +126,144 @@ pub async fn start_embedding_worker(db: SurrealDb, gen_model: String, emb_model:
     // Reset retryable embeddings on startup. Includes 'paused_by_observer'
     // (retry counter cleared — loop root cause was fixed at the import
     // layer). Docs exhausted at MAX_RETRIES stay 'error' permanently.
+    reset_retryable(&db).await;
+
+    let http = HttpClient::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .expect("failed to build embeddings HTTP client");
+    let guard = Arc::new(LoopGuard::new());
+
+    // Adaptive idle backoff. The per-cycle "any pending?" probe is now an index
+    // seek (see the embedding_status indexes in main.rs / migrator), but when a
+    // node is fully embedded we additionally stretch the interval so it stays
+    // truly idle instead of waking all 5 tables every 5s. Resets to the base
+    // interval the moment work reappears.
+    let mut idle_cycles: u64 = 0;
+    // Periodic self-heal: transient-failure victims (429/502 bursts) used to
+    // sit in 'error' until the next process restart.
+    let mut last_reset = std::time::Instant::now();
+    const RESET_EVERY: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
+    loop {
+        let sleep_secs = LOOP_INTERVAL_SECS + idle_cycles.min(IDLE_BACKOFF_CAP) * LOOP_INTERVAL_SECS;
+        tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
+        eck_core::metrics::tick(eck_core::metrics::M::EmbeddingCycle);
+        if last_reset.elapsed() >= RESET_EVERY {
+            reset_retryable(&db).await;
+            last_reset = std::time::Instant::now();
+        }
+
+        // Resolve auth each cycle: in managed mode this returns a process-cached
+        // Vertex bearer and transparently re-mints it before expiry.
+        let auth = match eck_core::ai::AiAuth::resolve(&http).await {
+            Ok(a) if a.is_configured() => a,
+            resolved => {
+                // Local mode embeds on-device and skips extract_and_anonymize,
+                // so it needs NO cloud auth. Fall through with a placeholder
+                // Studio auth (process_table never uses it for a network call in
+                // local mode). Cloud mode keeps the original back-off/skip.
+                if embed_mode() == "local" {
+                    eck_core::ai::AiAuth::studio(String::new())
+                } else {
+                    if let Err(e) = resolved {
+                        warn!("[Embeddings] token resolve failed: {e}");
+                    }
+                    idle_cycles = (idle_cycles + 1).min(IDLE_BACKOFF_CAP); // not configured / error — back off
+                    continue;
+                }
+            }
+        };
+
+        let mut found_total = 0usize;
+        for table in &["document", "order", "partner", "product", "picking"] {
+            let mut attempts = 0;
+            loop {
+                attempts += 1;
+                match process_table(&db, &http, &auth, table, &gen_model, &emb_model, &guard, &instance_id).await {
+                    Ok(found) => {
+                        found_total += found;
+                        break;
+                    }
+                    Err(e) if e.to_string().contains("Transaction conflict") && attempts <= 3 => {
+                        warn!("[Embeddings] {table} write conflict, retry {attempts}/3");
+                        tokio::time::sleep(std::time::Duration::from_millis(500 * attempts as u64)).await;
+                    }
+                    Err(e) => {
+                        warn!("[Embeddings] {table} cycle error: {e}");
+                        break;
+                    }
+                }
+            }
+        }
+
+        eck_core::metrics::add(eck_core::metrics::M::EmbeddingRows, found_total as u64);
+        if found_total > 0 {
+            if idle_cycles > 0 {
+                info!("[Embeddings] work resumed ({found_total} pending) — polling every {LOOP_INTERVAL_SECS}s");
+            }
+            idle_cycles = 0;
+        } else {
+            let was_active = idle_cycles == 0;
+            idle_cycles = (idle_cycles + 1).min(IDLE_BACKOFF_CAP);
+            if was_active {
+                info!(
+                    "[Embeddings] no pending rows across all tables — backing off polling toward {}s idle",
+                    LOOP_INTERVAL_SECS + IDLE_BACKOFF_CAP * LOOP_INTERVAL_SECS
+                );
+            }
+        }
+    }
+}
+
+/// Requeue retryable rows (error/skipped/paused, plus Observer-killed
+/// zombies) across all embedded tables. Runs at worker start and every ~6h
+/// so transient-failure victims self-heal without a process restart.
+async fn reset_retryable(db: &SurrealDb) {
     for table in &["document", "order", "partner", "product", "picking"] {
+        // Seed rows that never entered the pipeline (embedding_status absent —
+        // e.g. scraper/migrator imports that predate embedding, or import
+        // paths that don't set 'pending'). Policy: everything that helps run
+        // the workshop/warehouse gets embedded — orders, partners/addresses,
+        // products, pickings, and summarized documents. Raw conversation
+        // bodies (`support_thread`) are deliberately NOT embedded: only the
+        // ticket-level summaries are (2026-07-12 decision).
+        let thread_filter = if *table == "document" {
+            " AND type != 'support_thread'"
+        } else {
+            ""
+        };
+        let seed = db
+            .query(&format!(
+                "UPDATE {table} SET \
+                    embedding_status = 'pending', \
+                    embedding_retries = 0 \
+                 WHERE embedding_status IS NONE AND embedding IS NONE{thread_filter} \
+                 RETURN NONE"
+            ))
+            .await;
+        if let Err(e) = seed {
+            warn!("[Embeddings] Failed to seed {table}: {e}");
+        }
+
+        // Adopt mesh-arrived vectors: a row whose vector synced in from the
+        // authoring node may still carry stale LOCAL bookkeeping ('pending',
+        // 'error', 'unavailable' — status fields are hash-ignored and don't
+        // sync on their own). Vector present = done; align the local status
+        // so health views and requeue sweeps see the truth.
+        let adopt = db
+            .query(&format!(
+                "UPDATE {table} SET \
+                    embedding_status = 'complete', \
+                    embedding_error = NONE \
+                 WHERE embedding IS NOT NONE AND embedding_status != 'complete' \
+                 RETURN NONE"
+            ))
+            .await;
+        if let Err(e) = adopt {
+            warn!("[Embeddings] Failed to adopt synced vectors on {table}: {e}");
+        }
+
         let reset = db
             .query(&format!(
                 "UPDATE {table} SET \
@@ -56,46 +297,6 @@ pub async fn start_embedding_worker(db: SurrealDb, gen_model: String, emb_model:
             warn!("[Embeddings] Failed to resurrect {table} zombies: {e}");
         }
     }
-
-    let http = HttpClient::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .expect("failed to build embeddings HTTP client");
-    let guard = Arc::new(LoopGuard::new());
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(LOOP_INTERVAL_SECS));
-
-    loop {
-        interval.tick().await;
-
-        // Resolve auth each cycle: in managed mode this returns a process-cached
-        // Vertex bearer and transparently re-mints it before expiry.
-        let auth = match eck_core::ai::AiAuth::resolve(&http).await {
-            Ok(a) if a.is_configured() => a,
-            Ok(_) => continue, // not configured this cycle — skip quietly
-            Err(e) => {
-                warn!("[Embeddings] token resolve failed: {e}");
-                continue;
-            }
-        };
-
-        for table in &["document", "order", "partner", "product", "picking"] {
-            let mut attempts = 0;
-            loop {
-                attempts += 1;
-                match process_table(&db, &http, &auth, table, &gen_model, &emb_model, &guard).await {
-                    Ok(()) => break,
-                    Err(e) if e.to_string().contains("Transaction conflict") && attempts <= 3 => {
-                        warn!("[Embeddings] {table} write conflict, retry {attempts}/3");
-                        tokio::time::sleep(std::time::Duration::from_millis(500 * attempts as u64)).await;
-                    }
-                    Err(e) => {
-                        warn!("[Embeddings] {table} cycle error: {e}");
-                        break;
-                    }
-                }
-            }
-        }
-    }
 }
 
 async fn process_table(
@@ -106,10 +307,11 @@ async fn process_table(
     gen_model: &str,
     emb_model: &str,
     guard: &LoopGuard,
-) -> Result<(), anyhow::Error> {
+    instance_id: &str,
+) -> Result<usize, anyhow::Error> {
     // ── Circuit breaker check ──
     match current_budget_level() {
-        BudgetLevel::Halt => return Ok(()), // complete stop
+        BudgetLevel::Halt => return Ok(0), // complete stop
         BudgetLevel::Throttle => {
             tokio::time::sleep(std::time::Duration::from_secs(THROTTLE_DELAY_SECS)).await;
         }
@@ -124,16 +326,22 @@ async fn process_table(
               OR updated_at IS NONE \
               OR time::now() > updated_at + type::duration(string::concat(math::pow(2, embedding_retries ?? 0), 'm')))"
     );
+    // `embedding IS NONE` is what makes vectors safe to mesh-sync: a row whose
+    // vector already arrived from the authoring node is never re-embedded here,
+    // so the fleet converges on exactly one vector per row instead of N
+    // divergent ones (the pre-2026-07 non-convergence). Re-embedding is
+    // requested by NULLING the vector (a synced, hash-visible signal) — see
+    // the summarization worker's re-queue write.
     let query = if table == "document" {
         format!(
             "SELECT record::id(id) AS id, type, status, meta, ai_summary, ticket_id, embedding_status, \
              (SELECT payload FROM document_raw WHERE record::id(id) = record::id($parent.id) LIMIT 1)[0].payload AS payload \
-             FROM {table} WHERE embedding_status = 'pending' {backoff_filter} LIMIT {BATCH_LIMIT}"
+             FROM {table} WHERE embedding_status = 'pending' AND embedding IS NONE {backoff_filter} LIMIT {BATCH_LIMIT}"
         )
     } else {
         format!(
             "SELECT record::id(id) AS id, `payload`, type, ai_summary, name, description, email, phone, order_number, embedding_status \
-             FROM {table} WHERE embedding_status = 'pending' {backoff_filter} LIMIT {BATCH_LIMIT}"
+             FROM {table} WHERE embedding_status = 'pending' AND embedding IS NONE {backoff_filter} LIMIT {BATCH_LIMIT}"
         )
     };
 
@@ -143,8 +351,15 @@ async fn process_table(
         .take(0)?;
 
     if rows.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
+
+    // Local mode: on-device embedding, no cloud calls. Decided once per cycle
+    // (the env var can't change mid-process).
+    let local = embed_mode() == "local";
+    // Model name stamped onto every vector written this cycle (and used for
+    // telemetry naming). Identical to `emb_model` in cloud mode.
+    let db_model = effective_embed_model(emb_model);
 
     let mut count = 0u32;
     for row in &rows {
@@ -159,7 +374,12 @@ async fn process_table(
             continue;
         }
 
-        let text = build_embedding_text(table, row);
+        // Tiered PII policy (ai::pii_policy): effective-clear embeddings skip
+        // every masking pass below and embed raw field values — either the
+        // backend is local (nothing leaves the box) or the customer explicitly
+        // opted out (no-secrets mesh, wants recall).
+        let clear = crate::ai::pii_policy::effective_clear(crate::ai::pii_policy::Surface::Embedding);
+        let text = build_embedding_text(table, row, clear);
         if text.is_empty() {
             db.query(&format!(
                 "UPDATE type::record($rid) SET embedding_status = 'skipped', embedding_retries = (embedding_retries ?? 0) + 1, \
@@ -171,9 +391,15 @@ async fn process_table(
             continue;
         }
 
-        // Anonymize PII before embedding
+        // Anonymize PII before embedding (all passes skipped in clear mode).
         let (mut anonymized_text, mut fingerprints) = match table {
-            "document" => {
+            _ if clear => (text.clone(), vec![]),
+            // Local mode skips the Gemini-based extract_and_anonymize pass: the
+            // deterministic field masking already ran in build_embedding_text and
+            // the scrub_pii_regex egress filter below still runs, so on-device
+            // vectors land in the same masked space as cloud ones. In local mode
+            // the "document" arm therefore falls through to the raw-text default.
+            "document" if !local => {
                 match extract_and_anonymize(http, auth, &text, gen_model).await {
                     Ok(result) => result,
                     Err(e) => {
@@ -188,32 +414,73 @@ async fn process_table(
             _ => (text.clone(), vec![]),
         };
 
-        // Final deterministic egress filter: nothing matching a high-confidence
-        // PII pattern (email/phone/IBAN/card/VAT-Id) reaches the cloud embedder,
-        // regardless of path — including the extractor-failure fallback above
-        // (which would otherwise embed RAW text) and the structured order/
-        // partner/picking paths that only mask known name fields.
-        let (scrubbed, mut egress_fps) = scrub_pii_regex(&anonymized_text);
-        anonymized_text = scrubbed;
-        fingerprints.append(&mut egress_fps);
+        if !clear {
+            // Final deterministic egress filter: nothing matching a high-confidence
+            // PII pattern (email/phone/IBAN/card/VAT-Id) reaches the cloud embedder,
+            // regardless of path — including the extractor-failure fallback above
+            // (which would otherwise embed RAW text) and the structured order/
+            // partner/picking paths that only mask known name fields.
+            let (scrubbed, mut egress_fps) = scrub_pii_regex(&anonymized_text);
+            anonymized_text = scrubbed;
+            fingerprints.append(&mut egress_fps);
+        }
+        // Tokens already BAKED into the source text (masked summaries carry
+        // Name_/Email_ tokens from summarization; build_embedding_text
+        // tokenizes the meta identity fields inline) never went through the
+        // extractor/scrub, so they were MISSING from `pii_fingerprints` —
+        // which silently excluded document rows from GDPR erasure matching
+        // (`gdpr::erase` matches CONTAINSANY on this array) and from exact
+        // token search. Union them in.
+        let mut baked = eck_core::utils::anonymizer::extract_pii_tokens(&anonymized_text);
+        fingerprints.append(&mut baked);
+        // Identity-field tokens are ALWAYS derived for document rows — even on
+        // clear meshes, where the text carries no tokens at all: they are the
+        // GDPR-erasure index key (`gdpr::erase` CONTAINSANY) and the exact
+        // token-search key, both of which must keep working regardless of the
+        // egress policy. Pure local hashing, nothing leaves the node.
+        if table == "document" {
+            if let Some(meta) = row.get("meta") {
+                for (field, label) in [
+                    ("customer", "Name"),
+                    ("email", "Email"),
+                    ("phone", "Phone"),
+                    ("address", "Address"),
+                ] {
+                    if let Some(v) = meta.get(field).and_then(|v| v.as_str()) {
+                        if !v.trim().is_empty() {
+                            fingerprints.push(obfuscate_pii(v.trim(), label));
+                        }
+                    }
+                }
+            }
+        }
+        fingerprints.sort();
+        fingerprints.dedup();
 
         let record_id = format!("{table}:`{id}`");
-        match auth.embed_content(http, emb_model, &anonymized_text, EMBEDDING_DIM).await {
+        match embed_dispatch(http, auth, emb_model, &anonymized_text, local).await {
             Ok((embedding, usage)) => {
+                // `embedding_model` travels with the vector (both are hashed
+                // content) so a future model migration can find and requeue
+                // foreign-model vectors instead of silently mixing spaces. Local
+                // mode stamps the on-device model id (see effective_embed_model).
                 let updated: Vec<Value> = db.query(&format!(
-                    "UPDATE type::record($rid) SET embedding = $emb, embedding_status = 'complete', \
+                    "UPDATE type::record($rid) SET embedding = $emb, embedding_model = $model, \
+                         embedding_status = 'complete', \
                          embedding_error = NONE, pii_fingerprints = $fingerprints \
                      RETURN record::id(id) AS id"
                 ))
                 .bind(("rid", record_id.clone()))
                 .bind(("emb", embedding))
+                .bind(("model", db_model.clone()))
                 .bind(("fingerprints", fingerprints))
                 .await?
                 .take(0)?;
 
-                // Telemetry always logs — Gemini was paid either way.
+                // Telemetry logs only when something was billed. Local mode
+                // returns a null usage (nothing billed) so this is skipped.
                 if !usage.is_null() {
-                    log_telemetry(db, "embedding", emb_model, &record_id, &usage).await;
+                    log_telemetry(db, "embedding", &db_model, &record_id, &usage).await;
                 }
 
                 if updated.is_empty() {
@@ -237,19 +504,59 @@ async fn process_table(
                 } else {
                     count += 1;
                     guard.clear(&guard_key);
+                    // `embedding` is part of the content hash (merkle) —
+                    // advance this node's vclock so the fresh vector strictly
+                    // dominates a peer's vector-less copy (same pattern as the
+                    // summarization worker's ai_summary bump, d4c8559).
+                    if let Err(e) = eck_core::sync::conflict::bump_local_vclock_by_leaf(
+                        db, table, &id, instance_id,
+                    ).await {
+                        warn!("[Embeddings] vclock bump failed for {record_id}: {e}");
+                    }
                     info!("[Embeddings] Embedded {record_id}");
                 }
             }
             Err(e) => {
-                warn!("[Embeddings] Failed to embed {record_id}: {e}");
-                db.query(&format!(
-                    "UPDATE type::record($rid) SET embedding_status = 'error', embedding_error = $err, \
-                     embedding_retries = (embedding_retries ?? 0) + 1, updated_at = time::now()"
-                ))
-                .bind(("rid", record_id.clone()))
-                .bind(("err", e.to_string()))
-                .await?
-                .check()?;
+                let es = e.to_string();
+                // The embedding BACKEND is unavailable (managed authority built
+                // without a text-brain / embedding model). This is not a
+                // per-document failure — retrying every doc forever just burns
+                // the retry budget and trips the Observer's "stuck documents"
+                // alert. Park the doc terminally as 'unavailable' (no retry
+                // bump, not 'pending' so it won't be re-selected or alerted);
+                // it re-embeds only when explicitly re-queued after the backend
+                // gains embedding support.
+                let backend_missing = es.contains("text-brain")
+                    || es.contains("embedding requires")
+                    || es.contains("503");
+                if backend_missing {
+                    // Backend has no embedding model at all → park the ENTIRE
+                    // backlog for this table in one sweep (not one-by-one: the
+                    // high-retry docs are past the backoff cap and would never
+                    // be re-selected, so they'd loop through the Observer's
+                    // "stuck" alert forever). One bulk UPDATE clears pending +
+                    // error, leaving the pending pool empty so the alert stops.
+                    // A re-queue revives them once the backend gains embeddings.
+                    warn!("[Embeddings] {table}: embedding backend unavailable ({es}) — parking the whole pending/error backlog as 'unavailable'");
+                    db.query(&format!(
+                        "UPDATE {table} SET embedding_status = 'unavailable', embedding_error = $err, updated_at = time::now() \
+                         WHERE embedding_status IN ['pending', 'error']"
+                    ))
+                    .bind(("err", es))
+                    .await?
+                    .check()?;
+                    return Ok(rows.len());
+                } else {
+                    warn!("[Embeddings] Failed to embed {record_id}: {e}");
+                    db.query(
+                        "UPDATE type::record($rid) SET embedding_status = 'error', embedding_error = $err, \
+                         embedding_retries = (embedding_retries ?? 0) + 1, updated_at = time::now()",
+                    )
+                    .bind(("rid", record_id.clone()))
+                    .bind(("err", es))
+                    .await?
+                    .check()?;
+                }
             }
         }
 
@@ -261,18 +568,40 @@ async fn process_table(
         info!("[Embeddings] {table}: {count} records embedded");
     }
 
-    Ok(())
+    // Return the count of candidate rows found this cycle (not just successfully
+    // embedded) so the worker's idle backoff treats "found rows but all errored/
+    // skipped" as active and keeps polling at the base interval.
+    Ok(rows.len())
 }
 
 // ── PII Anonymization ─────────────────────────────────────────────
 
 /// Use Gemini to extract PII from unstructured document text, then replace with SimHash tokens.
-async fn extract_and_anonymize(
+///
+/// `pub(crate)` so the on-device NER eval harness (`ai::local_ner`) can compare
+/// its PER entities against this cloud path side by side.
+pub(crate) async fn extract_and_anonymize(
     http: &HttpClient,
     auth: &eck_core::ai::AiAuth,
     text: &str,
     model: &str,
 ) -> Result<(String, Vec<String>), anyhow::Error> {
+    // On-device path (ECK_PII_NER=local): run the deterministic regex backstop
+    // + the local German NER for names, skip Gemini entirely. Streets are masked
+    // by scrub_pii_regex's Address pattern; LOC/ORG are intentionally left in the
+    // clear. On any local NER error we fall through to the Gemini path below
+    // (never fail the document). Compiled out — and thus byte-identical to the
+    // old cloud-only behaviour — when the feature or env is off.
+    #[cfg(feature = "local-embed")]
+    if crate::ai::local_ner::ner_mode() == "local" {
+        match local_extract_and_anonymize(text).await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                warn!("[Embeddings] local NER extraction failed ({e}) — falling back to Gemini");
+            }
+        }
+    }
+
     // Deterministic regex backstop FIRST: emails/phones/IBANs/cards/VAT-Ids are
     // masked before the raw text is ever embedded in the cloud extraction
     // prompt below. The LLM then only has to find names/addresses the regex
@@ -332,6 +661,25 @@ async fn extract_and_anonymize(
         fingerprints.push(token);
     }
 
+    Ok((anonymized, fingerprints))
+}
+
+/// On-device replacement for `extract_and_anonymize` (ECK_PII_NER=local). Runs
+/// the same deterministic `scrub_pii_regex` backstop as the cloud path (now also
+/// masking German street+house-number addresses), then masks person names found
+/// by the local German NER with the identical `obfuscate_pii`/`replace_pii_ci`
+/// tokens — so on-device summaries land in the same masked space as cloud ones,
+/// with zero Gemini calls. LOC/ORG entities are deliberately NOT masked (cities
+/// stay in the clear for the embedding's coarse-geo signal).
+#[cfg(feature = "local-embed")]
+async fn local_extract_and_anonymize(text: &str) -> Result<(String, Vec<String>), anyhow::Error> {
+    let (mut anonymized, mut fingerprints) = scrub_pii_regex(text);
+    let names = crate::ai::local_ner::extract_person_names(&anonymized).await?;
+    for name in names {
+        let token = obfuscate_pii(&name, "Name");
+        anonymized = replace_pii_ci(&anonymized, &name, &token);
+        fingerprints.push(token);
+    }
     Ok((anonymized, fingerprints))
 }
 
@@ -428,12 +776,19 @@ fn anonymize_picking_fields(row: &Value, text: &str) -> (String, Vec<String>) {
 /// they're coarse geo, not PII. Returns the summary unchanged when no
 /// Adressen block is found (free-form summaries, non-ticket docs).
 ///
-/// The heuristic: grab the first non-empty, non-InBody-HQ line after
+/// The heuristic: grab the first non-empty, non-own-HQ line after
 /// "**Adressen:**", strip any trailing "(ermittelt via ...)" parenthetical,
 /// then extract the street portion (= everything before the 5-digit zip)
 /// and mask only that. When parse_zip_city fails — e.g. the model returned
 /// a non-German address — mask the whole line as a fallback.
 fn mask_ai_summary_address(summary: &str) -> String {
+    mask_ai_summary_address_with(summary, eck_core::utils::anonymizer::own_address_markers())
+}
+
+/// Inner form taking the own-company address markers explicitly (env
+/// `ECK_OWN_ADDRESS_MARKERS` in production; injected in tests). EMPTY markers =
+/// skip nothing.
+fn mask_ai_summary_address_with(summary: &str, own_markers: &[String]) -> String {
     let marker = "**Adressen:**";
     let Some(marker_pos) = summary.find(marker) else { return summary.to_string(); };
     let after = &summary[marker_pos + marker.len()..];
@@ -443,8 +798,10 @@ fn mask_ai_summary_address(summary: &str) -> String {
         if clean.is_empty() { continue; }
         if clean.starts_with("===") { break; }
         let lower = clean.to_lowercase();
-        // Skip InBody HQ / known office addresses — not customer PII.
-        if lower.contains("eschborn") || lower.contains("mergenthalerallee") || lower.contains("inbody") {
+        // Skip the operating company's OWN HQ / office address — not customer
+        // PII. Markers come from env `ECK_OWN_ADDRESS_MARKERS` (empty = skip
+        // nothing).
+        if own_markers.iter().any(|m| lower.contains(m.as_str())) {
             continue;
         }
 
@@ -486,7 +843,10 @@ fn mask_ai_summary_address(summary: &str) -> String {
     summary.to_string()
 }
 
-fn build_embedding_text(table: &str, row: &Value) -> String {
+/// `clear` = effective-clear embedding policy (ai::pii_policy): identity
+/// fields go in RAW instead of as SimHash tokens — recall over pseudonymity,
+/// by mesh-wide decision or because the embedder is local.
+fn build_embedding_text(table: &str, row: &Value, clear: bool) -> String {
     let mut parts = Vec::new();
 
     match table {
@@ -542,23 +902,28 @@ fn build_embedding_text(table: &str, row: &Value) -> String {
             if doc_type == "support_ticket" {
                 if let Some(meta) = row.get("meta") {
                     let get = |k: &str| meta.get(k).and_then(|v| v.as_str()).unwrap_or("").trim();
+                    // Identity fields: SimHash token by default, RAW under the
+                    // clear embedding policy (recall over pseudonymity).
+                    let ident = |v: &str, label: &str| -> String {
+                        if clear { v.to_string() } else { obfuscate_pii(v, label) }
+                    };
                     if !get("ticket_number").is_empty() { parts.push(format!("Ticket #{}", get("ticket_number"))); }
                     if !get("subject").is_empty() { parts.push(format!("Subject: {}", get("subject"))); }
                     if !get("status").is_empty() { parts.push(format!("Status: {}", get("status"))); }
                     if !get("customer").is_empty() {
-                        parts.push(format!("Customer: {}", obfuscate_pii(get("customer"), "Name")));
+                        parts.push(format!("Customer: {}", ident(get("customer"), "Name")));
                     }
                     if !get("company").is_empty() { parts.push(format!("Company: {}", get("company"))); }
                     if !get("email").is_empty() {
-                        parts.push(format!("Email: {}", obfuscate_pii(get("email"), "Email")));
+                        parts.push(format!("Email: {}", ident(get("email"), "Email")));
                     }
                     if !get("phone").is_empty() {
-                        parts.push(format!("Phone: {}", obfuscate_pii(get("phone"), "Phone")));
+                        parts.push(format!("Phone: {}", ident(get("phone"), "Phone")));
                     }
                     if !get("device_model").is_empty() { parts.push(format!("Device: {}", get("device_model"))); }
                     if !get("serial_number").is_empty() { parts.push(format!("Serial: {}", get("serial_number"))); }
                     if !get("address").is_empty() {
-                        parts.push(format!("Address: {}", obfuscate_pii(get("address"), "Address")));
+                        parts.push(format!("Address: {}", ident(get("address"), "Address")));
                     }
                     if !get("city").is_empty() { parts.push(format!("City: {}", get("city"))); }
                     if !get("zip").is_empty() { parts.push(format!("Zip: {}", get("zip"))); }
@@ -566,14 +931,18 @@ fn build_embedding_text(table: &str, row: &Value) -> String {
                 // ai_summary carries a "**Adressen:**" block when the model
                 // used Google Search to resolve an incomplete address. Mask
                 // that street line with the same Address_<hash> token so the
-                // open-web-sourced address never reaches the embedder.
+                // open-web-sourced address never reaches the embedder (as-is
+                // under the clear policy — the summary is the LLM surface's
+                // output and follows ITS policy at write time).
                 if let Some(s) = row.get("ai_summary").and_then(|v| v.as_str()) {
                     if !s.is_empty() {
-                        parts.push(format!("Summary: {}", mask_ai_summary_address(s)));
+                        let s = if clear { s.to_string() } else { mask_ai_summary_address(s) };
+                        parts.push(format!("Summary: {s}"));
                     }
                 }
                 let full = parts.join("\n");
-                return if full.len() > 8000 { full[..8000].to_string() } else { full };
+                let end = crate::ai::floor_char_boundary(&full, 8000);
+                return full[..end].to_string();
             }
 
             // support_thread: embed the actual thread content
@@ -689,24 +1058,32 @@ fn build_embedding_text(table: &str, row: &Value) -> String {
     }
 
     let full = parts.join("\n");
-    // Truncate to ~8000 chars to stay within embedding model limits
-    if full.len() > 8000 {
-        full[..8000].to_string()
-    } else {
-        full
-    }
+    // Truncate to ~8000 bytes (char-boundary-safe) to stay within embedding model limits
+    let end = crate::ai::floor_char_boundary(&full, 8000);
+    full[..end].to_string()
 }
 
 // ── Embedding API ─────────────────────────────────────────────────
 
 /// Embed a search query using Gemini. Anonymizes PII before embedding to match the database vectors. Returns 768-dim vector.
 pub async fn embed_query(text: &str) -> Result<Vec<f32>, anyhow::Error> {
+    // Local mode: embed on-device with no cloud auth and no GEMINI_* env — a
+    // local-only node may have none set. The query still passes through the
+    // deterministic PII egress filter so it lands in the SAME masked space as
+    // the stored document vectors (the LLM-based extract pass is skipped).
+    #[cfg(feature = "local-embed")]
+    if embed_mode() == "local" {
+        let (scrubbed, _fingerprints) = scrub_pii_regex(text);
+        return super::local_embed::embed(&scrubbed).await;
+    }
+
     let http = HttpClient::new();
     let auth = eck_core::ai::AiAuth::resolve(&http).await?;
     if !auth.is_configured() {
         anyhow::bail!("AI auth not configured ({} mode)", auth.mode());
     }
 
+    // GEMINI_* are read only on the cloud path — local mode returned above.
     let gen_model = std::env::var("GEMINI_GENERATION_MODEL")
         .expect("GEMINI_GENERATION_MODEL must be set in .env");
     let emb_model = std::env::var("GEMINI_EMBEDDING_MODEL")
@@ -750,6 +1127,77 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resolve_embed_mode_parses_env_without_global_state() {
+        // Pure parser — no env mutation, so it can't race other tests. With the
+        // default feature set `local-embed` is compiled in, so "local" resolves
+        // to local; a cloud-only build resolves everything to cloud.
+        let local_expected = if cfg!(feature = "local-embed") { "local" } else { "cloud" };
+        assert_eq!(resolve_embed_mode(None), "cloud");
+        assert_eq!(resolve_embed_mode(Some("")), "cloud");
+        assert_eq!(resolve_embed_mode(Some("cloud")), "cloud");
+        assert_eq!(resolve_embed_mode(Some("gemini")), "cloud");
+        assert_eq!(resolve_embed_mode(Some("local")), local_expected);
+        assert_eq!(resolve_embed_mode(Some("  LOCAL  ")), local_expected);
+    }
+
+    #[test]
+    fn effective_embed_model_switches_on_mode() {
+        // Pure mapping keyed on the mode argument — no global state.
+        assert_eq!(
+            effective_embed_model_for("cloud", "gemini-embedding-2"),
+            "gemini-embedding-2"
+        );
+        assert_eq!(
+            effective_embed_model_for("local", "gemini-embedding-2"),
+            "jina-embeddings-v2-base-de"
+        );
+    }
+
+    /// End-to-end on-device embed. Ignored: it downloads ~322 MB of weights on
+    /// first run and needs the `local-embed` feature. Run explicitly with:
+    ///   cargo test -p wms --bin wms -- --ignored local_embed --nocapture
+    #[cfg(feature = "local-embed")]
+    #[tokio::test]
+    #[ignore]
+    async fn local_embed_produces_normalized_768d_vector() {
+        // ~520-char German support-ticket-style sentence.
+        let sentence = "Der ZetaBody 770 Körperanalyse-Automat im Fitnessstudio zeigt beim \
+            Einschalten sofort einen Fehlercode auf dem Display an und bricht die Messung \
+            nach wenigen Sekunden mit einem lauten Klicken wieder ab. Der Betreiber \
+            berichtet, dass das Gerät zuvor mehrfach neu gestartet und die Steckverbindungen \
+            geprüft wurden, ohne dass sich das Verhalten geändert hat. Er bittet dringend um \
+            eine schnelle Diagnose und Reparatur, da das Gerät täglich im Dauereinsatz \
+            benötigt wird und der Ausfall den Betrieb erheblich stört.";
+        assert!(
+            sentence.chars().count() >= 500,
+            "test sentence must be ~500 chars, got {}",
+            sentence.chars().count()
+        );
+
+        let t0 = std::time::Instant::now();
+        let a = crate::ai::local_embed::embed(sentence)
+            .await
+            .expect("first embed failed");
+        let first_ms = t0.elapsed().as_millis();
+
+        let t1 = std::time::Instant::now();
+        let b = crate::ai::local_embed::embed(sentence)
+            .await
+            .expect("second embed failed");
+        let second_ms = t1.elapsed().as_millis();
+
+        assert_eq!(a.len(), 768, "expected 768 dims, got {}", a.len());
+        let norm: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-3, "vector not L2-normalized: |v|={norm}");
+        assert_eq!(a, b, "same input must produce an identical vector");
+
+        println!(
+            "local embed latency: first(incl. model load/download)={first_ms}ms, \
+             warm={second_ms}ms, |v|={norm:.6}"
+        );
+    }
+
+    #[test]
     fn replace_pii_ci_tolerates_case_and_whitespace() {
         // LLM echoes "Hans Müller"; source has different casing + double space.
         let body = "Kunde hans  müller meldet Defekt.";
@@ -766,12 +1214,12 @@ mod tests {
 
     #[test]
     fn mask_ai_summary_address_masks_street_keeps_zip_city() {
-        std::env::set_var("SYNC_SECRET", "test_pepper_for_mask_tests");
+        std::env::set_var("SYNC_SECRET", "test_secret");
         let summary = "=== LOGISTIK & KONTAKTE ===\n\
             **Firma / Einrichtung:** Acme GmbH\n\
             **Adressen:** Musterstraße 42, 12345 Berlin (ermittelt via Google Search)\n\
             === TECHNISCHE DETAILS ===\n\
-            **Gerät / Modell:** InBody 770";
+            **Gerät / Modell:** ZetaBody 770";
 
         let masked = mask_ai_summary_address(summary);
 
@@ -790,22 +1238,25 @@ mod tests {
     }
 
     #[test]
-    fn mask_ai_summary_address_skips_inbody_hq() {
-        std::env::set_var("SYNC_SECRET", "test_pepper_for_mask_tests");
-        let summary = "**Adressen:** Mergenthalerallee 73, 65760 Eschborn (InBody HQ)";
-        assert_eq!(mask_ai_summary_address(summary), summary);
+    fn mask_ai_summary_address_skips_own_hq() {
+        std::env::set_var("SYNC_SECRET", "test_secret");
+        // Own-company markers injected (the env `ECK_OWN_ADDRESS_MARKERS`
+        // equivalent) — the HQ header line is left untouched.
+        let own = ["beispielstadt".to_string(), "musterallee".to_string()];
+        let summary = "**Adressen:** Musterallee 73, 12345 Beispielstadt (own HQ)";
+        assert_eq!(mask_ai_summary_address_with(summary, &own), summary);
     }
 
     #[test]
     fn mask_ai_summary_address_noop_without_marker() {
-        std::env::set_var("SYNC_SECRET", "test_pepper_for_mask_tests");
+        std::env::set_var("SYNC_SECRET", "test_secret");
         let summary = "Just a free-form summary with no Adressen block.";
         assert_eq!(mask_ai_summary_address(summary), summary);
     }
 
     #[test]
     fn mask_ai_summary_address_masks_whole_line_when_no_zip() {
-        std::env::set_var("SYNC_SECRET", "test_pepper_for_mask_tests");
+        std::env::set_var("SYNC_SECRET", "test_secret");
         let summary = "**Adressen:** 221B Baker Street, London";
         let masked = mask_ai_summary_address(summary);
         assert!(!masked.contains("Baker Street"), "non-German address line should still be masked; got:\n{masked}");
@@ -825,10 +1276,10 @@ mod tests {
             }
         };
 
-        std::env::set_var("SYNC_SECRET", "test_secret_123");
+        std::env::set_var("SYNC_SECRET", "test_secret");
 
         let sample_text = "Ticket from Hans Müller. Address: Alexanderplatz 1, 10115 Berlin. \
-            Issue: My InBody 770 device is sparking and won't turn on. \
+            Issue: My ZetaBody 770 device is sparking and won't turn on. \
             Please call me at +49 123 456789.";
 
         println!("\n=== PII Anonymization E2E Test ===");
@@ -836,7 +1287,7 @@ mod tests {
 
         let client = HttpClient::new();
         let auth = eck_core::ai::AiAuth::studio(&api_key);
-        let (anonymized, fingerprints) = extract_and_anonymize(&client, &auth, sample_text, "gemini-3.1-flash-lite")
+        let (anonymized, fingerprints) = extract_and_anonymize(&client, &auth, sample_text, "gemini-3.5-flash-lite")
             .await
             .expect("extract_and_anonymize failed");
 
@@ -899,12 +1350,12 @@ mod tests {
             }
         };
 
-        std::env::set_var("SYNC_SECRET", "test_secret_123");
+        std::env::set_var("SYNC_SECRET", "test_secret");
 
         let gen_model = std::env::var("GEMINI_GENERATION_MODEL")
-            .unwrap_or_else(|_| "gemini-3.1-flash-lite".to_string());
+            .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
         let emb_model = std::env::var("GEMINI_EMBEDDING_MODEL")
-            .unwrap_or_else(|_| "gemini-embedding-2-preview".to_string());
+            .unwrap_or_else(|_| "gemini-embedding-2".to_string());
         let auth = eck_core::ai::AiAuth::studio(&api_key);
 
         // 1. Initialize SurrealDB via eck_core (same path as production)

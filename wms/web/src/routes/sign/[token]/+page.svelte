@@ -56,7 +56,7 @@
 <div class="sign-page">
     <div class="card">
         <div class="logo">
-            <span class="e-label">/E/</span> eckWMS <span class="badge">InBody</span>
+            <span class="e-label">/E/</span> eckWMS <span class="badge">Repairs</span>
         </div>
 
         {#if loading}
@@ -124,7 +124,7 @@
     .sign-page {
         display: flex; justify-content: center; align-items: flex-start;
         padding: 3rem 1rem; background: #121212; min-height: 100vh; color: #fff;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR Variable', 'Noto Sans JP Variable', 'Noto Sans SC Variable', sans-serif;
     }
     .card {
         background: #1e1e1e; padding: 2.5rem; border-radius: 12px;

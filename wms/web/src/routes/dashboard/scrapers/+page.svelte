@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import { api } from "$lib/api";
     import { toastStore } from "$lib/stores/toastStore.js";
+    import { t, tr } from "$lib/i18n";
 
     // Single-retry wrapper for scraper calls. The Node/Playwright scraper
     // serializes all requests through a browser lock and occasionally
@@ -120,6 +121,7 @@
     let excelConfigSaving = false;
     let excelImportAllRunning = false;
     let excelImportAllProgress = '';
+    let excelImportAllFailed = false;
 
     onMount(async () => {
         if (scraperOnline === null) {
@@ -170,13 +172,13 @@
                         return;
                     } catch {}
                 }
-                scraperStartError = 'Process started but scraper did not become reachable within 20s. Check server logs.';
+                scraperStartError = tr('scrapers.start_timeout');
                 scraperOnline = false;
             } else {
-                scraperStartError = res.error || 'Unknown error';
+                scraperStartError = res.error || tr('scrapers.unknown_error');
             }
         } catch (e) {
-            scraperStartError = e.message || 'Failed to call start endpoint';
+            scraperStartError = e.message || tr('scrapers.start_call_failed');
         } finally {
             scraperStarting = false;
         }
@@ -206,9 +208,9 @@ ${scraperStartError}
 Analyze and suggest a fix. Be concise.`.trim();
         try {
             await navigator.clipboard.writeText(txt);
-            toastStore.add('Error copied for AI analysis', 'success');
+            toastStore.add(tr('scrapers.copied_for_ai'), 'success');
         } catch (err) {
-            toastStore.add('Failed to copy: ' + err.message, 'error');
+            toastStore.add(tr('scrapers.copy_failed', { error: err.message }), 'error');
         }
     }
 
@@ -301,9 +303,9 @@ Analyze and suggest a fix. Be concise.`.trim();
             exactImportResult = res;
             const count = res.updated ?? res.imported ?? 0;
             const skip = res.skipped ?? 0;
-            toastStore.add(count > 0 ? `Updated ${count} records in DB` : `All ${skip} records already up to date`, count > 0 ? 'success' : 'info');
+            toastStore.add(count > 0 ? tr('scrapers.exact_updated', { count }) : tr('scrapers.exact_up_to_date', { count: skip }), count > 0 ? 'success' : 'info');
         } catch (e) {
-            toastStore.add('Import failed: ' + e.message, 'error');
+            toastStore.add(tr('scrapers.import_failed', { error: e.message }), 'error');
         } finally {
             exactImportRunning = false;
         }
@@ -340,13 +342,13 @@ Analyze and suggest a fix. Be concise.`.trim();
             });
             zohoImportResult = res;
             if (res.imported > 0) {
-                toastStore.add(`Imported ${res.imported} thread(s) to system`, 'success');
+                toastStore.add(tr('scrapers.threads_imported', { count: res.imported }), 'success');
             } else {
-                toastStore.add('Import finished with errors', 'error');
+                toastStore.add(tr('scrapers.import_errors'), 'error');
             }
         } catch (e) {
             zohoImportResult = { success: false, imported: 0, errors: [e.message] };
-            toastStore.add('Import failed: ' + e.message, 'error');
+            toastStore.add(tr('scrapers.import_failed', { error: e.message }), 'error');
         } finally {
             zohoImportRunning = false;
         }
@@ -364,7 +366,7 @@ Analyze and suggest a fix. Be concise.`.trim();
         const delay = zohoImportDelay;
 
         // Phase 1: save all ticket metadata to DB + get sync statuses
-        zohoImportAllProgress = `Saving ${tickets.length} ticket metadata…`;
+        zohoImportAllProgress = tr('scrapers.saving_metadata', { count: tickets.length });
         let syncedIds = new Set();
         try {
             const metaRes = await api.post('/api/support/import-tickets', { tickets });
@@ -374,7 +376,7 @@ Analyze and suggest a fix. Be concise.`.trim();
                 }
             }
         } catch (e) {
-            errorList.push(`Metadata save failed: ${e.message}`);
+            errorList.push(tr('scrapers.meta_save_failed', { error: e.message }));
             zohoImportAllStats.errors++;
         }
 
@@ -382,7 +384,7 @@ Analyze and suggest a fix. Be concise.`.trim();
         zohoImportAllStats = { ...zohoImportAllStats, total: needsSync.length,
             skipped: tickets.length - needsSync.length };
         if (syncedIds.size > 0) {
-            zohoImportAllProgress = `Skipping ${syncedIds.size} already synced, ${needsSync.length} to process…`;
+            zohoImportAllProgress = tr('scrapers.skipping_synced', { synced: syncedIds.size, todo: needsSync.length });
             await new Promise(r => setTimeout(r, 1000));
         }
 
@@ -391,16 +393,16 @@ Analyze and suggest a fix. Be concise.`.trim();
             const t = needsSync[i];
             const ticketNum = t.ticketNumber || t.id;
             zohoImportAllStats = { ...zohoImportAllStats, current: i + 1 };
-            zohoImportAllProgress = `#${ticketNum}: fetching threads…`;
+            zohoImportAllProgress = tr('scrapers.progress_fetching', { num: ticketNum });
 
             try {
                 const threadRes = await fetchThreadsWithRetry(t.id);
 
                 if (!threadRes.success || !threadRes.threads?.length) {
                     zohoImportAllStats = { ...zohoImportAllStats, skipped: zohoImportAllStats.skipped + 1 };
-                    zohoImportAllProgress = `#${ticketNum}: no threads, skipped`;
+                    zohoImportAllProgress = tr('scrapers.progress_no_threads', { num: ticketNum });
                 } else {
-                    zohoImportAllProgress = `#${ticketNum}: saving ${threadRes.threads.length} threads…`;
+                    zohoImportAllProgress = tr('scrapers.progress_saving', { num: ticketNum, count: threadRes.threads.length });
                     const saveRes = await api.post('/api/support/import-thread', {
                         ticketId: t.id,
                         threads: threadRes.threads,
@@ -437,11 +439,11 @@ Analyze and suggest a fix. Be concise.`.trim();
         zohoImportAllRunning = false;
 
         if (zohoImportAllStats.imported > 0) {
-            toastStore.add(`Imported ${threadCount} threads from ${zohoImportAllStats.imported} tickets (${syncedIds.size} already synced)`, 'success');
+            toastStore.add(tr('scrapers.import_all_done', { threads: threadCount, tickets: zohoImportAllStats.imported, synced: syncedIds.size }), 'success');
         } else if (zohoImportAllStats.skipped === tickets.length) {
-            toastStore.add('All tickets skipped (no threads found)', 'warning');
+            toastStore.add(tr('scrapers.all_skipped'), 'warning');
         } else {
-            toastStore.add('Import finished with errors', 'error');
+            toastStore.add(tr('scrapers.import_errors'), 'error');
         }
     }
 
@@ -453,10 +455,10 @@ Analyze and suggest a fix. Be concise.`.trim();
         try {
             const res = await api.post('/api/support/import-tickets', { tickets });
             zohoSaveTicketsResult = res;
-            toastStore.add(`Saved ${res.created} new, updated ${res.updated} tickets`, 'success');
+            toastStore.add(tr('scrapers.tickets_saved', { created: res.created, updated: res.updated }), 'success');
         } catch (e) {
             zohoSaveTicketsResult = { success: false, created: 0, updated: 0, errors: [e.message] };
-            toastStore.add('Save tickets failed: ' + e.message, 'error');
+            toastStore.add(tr('scrapers.save_tickets_failed', { error: e.message }), 'error');
         } finally {
             zohoSaveTicketsRunning = false;
         }
@@ -477,7 +479,7 @@ Analyze and suggest a fix. Be concise.`.trim();
             let tickets;
             if (zohoResult?.tickets?.length) {
                 // Save metadata first, get statuses
-                zohoImportAllProgress = `Saving ${zohoResult.tickets.length} ticket metadata…`;
+                zohoImportAllProgress = tr('scrapers.saving_metadata', { count: zohoResult.tickets.length });
                 const metaRes = await api.post('/api/support/import-tickets', { tickets: zohoResult.tickets });
                 const syncedIds = new Set();
                 if (metaRes.statuses) {
@@ -491,7 +493,7 @@ Analyze and suggest a fix. Be concise.`.trim();
                 zohoImportAllStats.skipped = syncedIds.size;
             } else {
                 // No fetch — load unsynced tickets from DB via import-tickets with empty array
-                zohoImportAllProgress = 'Loading unsynced tickets from DB…';
+                zohoImportAllProgress = tr('scrapers.loading_unsynced');
                 const metaRes = await api.post('/api/support/import-tickets', { tickets: [] });
                 tickets = [];
                 if (metaRes.statuses) {
@@ -509,20 +511,20 @@ Analyze and suggest a fix. Be concise.`.trim();
 
             if (tickets.length === 0) {
                 zohoSyncResult = { success: true, tickets_synced: 0, threads_imported: 0, tickets_remaining: 0, errors: [] };
-                toastStore.add('All tickets are fully synced!', 'success');
+                toastStore.add(tr('scrapers.all_synced'), 'success');
                 zohoSyncRunning = false;
                 zohoImportAllProgress = '';
                 return;
             }
 
-            zohoImportAllProgress = `${tickets.length} tickets to sync (${zohoImportAllStats.skipped} already done)…`;
+            zohoImportAllProgress = tr('scrapers.sync_todo', { count: tickets.length, done: zohoImportAllStats.skipped });
             await new Promise(r => setTimeout(r, 1000));
 
             for (let i = 0; i < tickets.length; i++) {
                 const t = tickets[i];
                 const ticketNum = t.ticketNumber;
                 zohoImportAllStats = { ...zohoImportAllStats, current: i + 1 };
-                zohoImportAllProgress = `#${ticketNum}: fetching threads…`;
+                zohoImportAllProgress = tr('scrapers.progress_fetching', { num: ticketNum });
 
                 try {
                     const threadRes = await fetchThreadsWithRetry(t.id);
@@ -530,7 +532,7 @@ Analyze and suggest a fix. Be concise.`.trim();
                     if (!threadRes.success || !threadRes.threads?.length) {
                         zohoImportAllStats = { ...zohoImportAllStats, skipped: zohoImportAllStats.skipped + 1 };
                     } else {
-                        zohoImportAllProgress = `#${ticketNum}: saving ${threadRes.threads.length} threads…`;
+                        zohoImportAllProgress = tr('scrapers.progress_saving', { num: ticketNum, count: threadRes.threads.length });
                         const saveRes = await api.post('/api/support/import-thread', {
                             ticketId: t.id,
                             threads: threadRes.threads,
@@ -576,9 +578,9 @@ Analyze and suggest a fix. Be concise.`.trim();
         zohoSyncRunning = false;
 
         if (zohoImportAllStats.imported > 0) {
-            toastStore.add(`Synced ${zohoImportAllStats.imported} tickets (${threadCount} threads)`, 'success');
+            toastStore.add(tr('scrapers.synced_toast', { tickets: zohoImportAllStats.imported, threads: threadCount }), 'success');
         } else {
-            toastStore.add('Sync finished — nothing new to sync', 'success');
+            toastStore.add(tr('scrapers.sync_nothing'), 'success');
         }
     }
 
@@ -620,20 +622,20 @@ Analyze and suggest a fix. Be concise.`.trim();
     }
 
     function summarizeError(error) {
-        if (!error) return 'Unknown error';
+        if (!error) return tr('scrapers.err_unknown');
         const e = String(error).toLowerCase();
-        if (e.includes('timeout') || e.includes('timed out')) return 'Timeout';
-        if (e.includes('econnrefused') || e.includes('connection refused')) return 'Connection refused';
-        if (e.includes('navigation') || e.includes('goto')) return 'Navigation failed';
-        if (e.includes('selector') || e.includes('locator')) return 'Element not found';
-        if (e.includes('login') || e.includes('auth') || e.includes('session')) return 'Auth failed';
-        if (e.includes('captcha') || e.includes('2fa')) return '2FA/Captcha';
-        if (e.includes('network') || e.includes('dns') || e.includes('fetch')) return 'Network error';
-        if (e.includes('certificate') || e.includes('ssl')) return 'SSL error';
-        if (e.includes('403') || e.includes('forbidden')) return 'Forbidden';
-        if (e.includes('404') || e.includes('not found')) return 'Not found';
-        if (e.includes('500') || e.includes('server error')) return 'Server error';
-        if (e.includes('rate') || e.includes('limit') || e.includes('throttl')) return 'Rate limited';
+        if (e.includes('timeout') || e.includes('timed out')) return tr('scrapers.err_timeout');
+        if (e.includes('econnrefused') || e.includes('connection refused')) return tr('scrapers.err_conn_refused');
+        if (e.includes('navigation') || e.includes('goto')) return tr('scrapers.err_navigation');
+        if (e.includes('selector') || e.includes('locator')) return tr('scrapers.err_element');
+        if (e.includes('login') || e.includes('auth') || e.includes('session')) return tr('scrapers.err_auth');
+        if (e.includes('captcha') || e.includes('2fa')) return tr('scrapers.err_2fa');
+        if (e.includes('network') || e.includes('dns') || e.includes('fetch')) return tr('scrapers.err_network');
+        if (e.includes('certificate') || e.includes('ssl')) return tr('scrapers.err_ssl');
+        if (e.includes('403') || e.includes('forbidden')) return tr('scrapers.err_forbidden');
+        if (e.includes('404') || e.includes('not found')) return tr('scrapers.err_notfound');
+        if (e.includes('500') || e.includes('server error')) return tr('scrapers.err_server');
+        if (e.includes('rate') || e.includes('limit') || e.includes('throttl')) return tr('scrapers.err_rate');
         const short = String(error).split('\n')[0].substring(0, 60);
         return short.length < String(error).length ? short + '...' : short;
     }
@@ -662,9 +664,9 @@ Analyze this error and suggest a fix. Be concise.
 
         try {
             await navigator.clipboard.writeText(debugText);
-            toastStore.add('Error copied for AI analysis', 'success');
+            toastStore.add(tr('scrapers.copied_for_ai'), 'success');
         } catch (err) {
-            toastStore.add('Failed to copy: ' + err.message, 'error');
+            toastStore.add(tr('scrapers.copy_failed', { error: err.message }), 'error');
         }
     }
 
@@ -703,12 +705,12 @@ Analyze this error and suggest a fix. Be concise.
             if (res.success) {
                 excelSourcePath = res.sourcePath;
                 excelExportPath = res.exportPath;
-                toastStore.add('Excel paths saved', 'success');
+                toastStore.add(tr('scrapers.excel_paths_saved'), 'success');
             } else {
-                toastStore.add('Failed to save: ' + res.error, 'error');
+                toastStore.add(tr('scrapers.save_failed', { error: res.error }), 'error');
             }
         } catch (e) {
-            toastStore.add('Failed to save config: ' + e.message, 'error');
+            toastStore.add(tr('scrapers.save_config_failed', { error: e.message }), 'error');
         } finally {
             excelConfigSaving = false;
         }
@@ -731,16 +733,16 @@ Analyze this error and suggest a fix. Be concise.
             }
         };
 
-        checkField('Issue Description', dbR.issue_description, exR.errorDescription, 'issueDescription');
-        checkField('Resolution', dbR.resolution, exR.troubleshooting, 'resolution');
-        checkField('Status', dbR.status, exR.status, 'status');
-        checkField('Product Model', dbR.product_name, exR.model, 'productName');
-        checkField('Serial Number', dbR.serial_number, exR.serial_number, 'serialNumber');
-        checkField('Customer Name', dbR.customer_name, exR.customer_name, 'customerName');
+        checkField(tr('scrapers.field_issue'), dbR.issue_description, exR.errorDescription, 'issueDescription');
+        checkField(tr('scrapers.field_resolution'), dbR.resolution, exR.troubleshooting, 'resolution');
+        checkField(tr('scrapers.field_status'), dbR.status, exR.status, 'status');
+        checkField(tr('scrapers.field_product'), dbR.product_name, exR.model, 'productName');
+        checkField(tr('scrapers.field_serial'), dbR.serial_number, exR.serial_number, 'serialNumber');
+        checkField(tr('scrapers.field_customer'), dbR.customer_name, exR.customer_name, 'customerName');
 
         const dbDate = dbR.started_at ? dbR.started_at.slice(0, 10) : '';
         const exDate = exR.dateOfReceipt || '';
-        checkField('Date of Receipt', dbDate, exDate, 'startedAt');
+        checkField(tr('scrapers.field_receipt'), dbDate, exDate, 'startedAt');
 
         return { conflicts, safeUpdates };
     }
@@ -812,7 +814,7 @@ Analyze this error and suggest a fix. Be concise.
                 const exR = exMap.get(dbR.order_number);
 
                 if (!exR) {
-                    changes.push({ ...dbR, _changeType: 'New', _diffs: ['Record missing in Excel'] });
+                    changes.push({ ...dbR, _changeType: 'New', _diffs: [tr('scrapers.diff_missing_excel')] });
                     continue;
                 }
 
@@ -820,19 +822,22 @@ Analyze this error and suggest a fix. Be concise.
                 const diffs = [];
                 const dbStatus = dbR.status === 'completed' ? 'completed' : 'in_progress';
                 if (dbStatus !== exR.status) {
-                    diffs.push(`Status: ${exR.status === 'completed' ? 'Done' : 'WIP'} ➔ ${dbStatus === 'completed' ? 'Done' : 'WIP'}`);
+                    diffs.push(tr('scrapers.diff_status', {
+                        from: exR.status === 'completed' ? tr('scrapers.status_done') : tr('scrapers.status_wip'),
+                        to: dbStatus === 'completed' ? tr('scrapers.status_done') : tr('scrapers.status_wip'),
+                    }));
                 }
 
                 const dbReso = (dbR.resolution || '').trim();
                 const exReso = (exR.troubleshooting || '').trim();
                 if (dbReso !== exReso && dbReso !== '') {
-                    diffs.push('Resolution updated');
+                    diffs.push(tr('scrapers.diff_resolution'));
                 }
 
                 const dbDesc = (dbR.issue_description || '').trim();
                 const exDesc = (exR.errorDescription || '').trim();
                 if (dbDesc !== exDesc && dbDesc !== '') {
-                    diffs.push('Issue updated');
+                    diffs.push(tr('scrapers.diff_issue'));
                 }
 
                 if (diffs.length > 0) {
@@ -845,7 +850,7 @@ Analyze this error and suggest a fix. Be concise.
             excelDbSelected = new Set(changes.map(r => r.order_number));
         } catch (e) {
             excelDbRepairs = [];
-            toastStore.add('Failed to scan changes: ' + e.message, 'error');
+            toastStore.add(tr('scrapers.scan_failed', { error: e.message }), 'error');
         } finally {
             excelDbLoading = false;
         }
@@ -989,16 +994,17 @@ Analyze this error and suggest a fix. Be concise.
         excelImportResult = { created, updated, errors };
         excelImporting = false;
         if (created + updated > 0) {
-            toastStore.add(`Imported ${created} new, updated ${updated} repairs`, 'success');
+            toastStore.add(tr('scrapers.repairs_imported', { created, updated }), 'success');
         }
         if (errors.length > 0) {
-            toastStore.add(`${errors.length} error(s) during import`, 'error');
+            toastStore.add(tr('scrapers.import_error_count', { count: errors.length }), 'error');
         }
     }
 
     async function importAllFromExcel() {
         excelImportAllRunning = true;
-        excelImportAllProgress = 'Fetching all DB records...';
+        excelImportAllFailed = false;
+        excelImportAllProgress = tr('scrapers.fetching_db');
         let created = 0, updated = 0;
         const errors = [];
 
@@ -1011,13 +1017,13 @@ Analyze this error and suggest a fix. Be concise.
             }
 
             // Fetch all Excel records
-            excelImportAllProgress = 'Fetching all Excel records...';
+            excelImportAllProgress = tr('scrapers.fetching_excel');
             const excelRes = await api.post('/S/api/excel/read', { limit: 10000, offset: 0 });
             const allRepairs = excelRes.repairs || [];
             const total = allRepairs.length;
 
             if (total === 0) {
-                toastStore.add('No records found in Excel', 'warning');
+                toastStore.add(tr('scrapers.no_excel_records'), 'warning');
                 excelImportAllRunning = false;
                 excelImportAllProgress = '';
                 return;
@@ -1025,7 +1031,7 @@ Analyze this error and suggest a fix. Be concise.
 
             for (let i = 0; i < total; i++) {
                 const repair = allRepairs[i];
-                excelImportAllProgress = `Importing ${i + 1} of ${total}...`;
+                excelImportAllProgress = tr('scrapers.importing_progress', { current: i + 1, total });
 
                 const payload = {
                     orderNumber: repair.repairNumber,
@@ -1084,17 +1090,18 @@ Analyze this error and suggest a fix. Be concise.
                 if ((i + 1) % 15 === 0) await new Promise(r => setTimeout(r, 50));
             }
 
-            excelImportAllProgress = `Done! Created: ${created}, Updated: ${updated}, Errors: ${errors.length}`;
+            excelImportAllProgress = tr('scrapers.import_all_done_msg', { created, updated, errors: errors.length });
             if (created + updated > 0) {
-                toastStore.add(`Import All: ${created} created, ${updated} updated`, 'success');
+                toastStore.add(tr('scrapers.import_all_toast', { created, updated }), 'success');
             }
             if (errors.length > 0) {
-                toastStore.add(`${errors.length} error(s) during import`, 'error');
+                toastStore.add(tr('scrapers.import_error_count', { count: errors.length }), 'error');
                 console.warn('Import All errors:', errors);
             }
         } catch (e) {
-            excelImportAllProgress = `Failed: ${e.message}`;
-            toastStore.add(`Import All failed: ${e.message}`, 'error');
+            excelImportAllFailed = true;
+            excelImportAllProgress = tr('scrapers.failed_prefix', { error: e.message });
+            toastStore.add(tr('scrapers.import_all_failed', { error: e.message }), 'error');
         }
 
         excelImportAllRunning = false;
@@ -1131,14 +1138,14 @@ Analyze this error and suggest a fix. Be concise.
             const res = await api.post('/S/api/excel/export', { repairs: repairsToExport });
             if (res.success) {
                 excelExportResult = { written: res.count, errors: [] };
-                toastStore.add(`Exported ${res.count} repair(s) to InBody_Export.xlsx`, 'success');
+                toastStore.add(tr('scrapers.exported_toast', { count: res.count }), 'success');
             } else {
                 excelExportResult = { written: 0, errors: [res.error] };
-                toastStore.add(`Export failed: ${res.error}`, 'error');
+                toastStore.add(tr('scrapers.export_failed', { error: res.error }), 'error');
             }
         } catch (e) {
             excelExportResult = { written: 0, errors: [e.message] };
-            toastStore.add(`Export failed: ${e.message}`, 'error');
+            toastStore.add(tr('scrapers.export_failed', { error: e.message }), 'error');
         } finally {
             excelExporting = false;
         }
@@ -1179,9 +1186,9 @@ Analyze this error and suggest a fix. Be concise.
 
         try {
             await navigator.clipboard.writeText(debugText);
-            toastStore.add("Debug info copied to clipboard!", "success");
+            toastStore.add(tr('scrapers.debug_copied'), "success");
         } catch (err) {
-            toastStore.add("Failed to copy: " + err.message, "error");
+            toastStore.add(tr('scrapers.copy_failed', { error: err.message }), "error");
         }
     }
 
@@ -1192,7 +1199,7 @@ Analyze this error and suggest a fix. Be concise.
             const res = await api.get('/api/admin/db/backups');
             dbBackups = res.backups || [];
         } catch (e) {
-            toastStore.add('Failed to load backups: ' + e.message, 'error');
+            toastStore.add(tr('scrapers.load_backups_failed', { error: e.message }), 'error');
         } finally {
             dbBackupsLoading = false;
         }
@@ -1205,27 +1212,21 @@ Analyze this error and suggest a fix. Be concise.
             toastStore.add(res.message, 'success');
             await loadBackups();
         } catch (e) {
-            toastStore.add('Backup failed: ' + e.message, 'error');
+            toastStore.add(tr('scrapers.backup_failed', { error: e.message }), 'error');
         } finally {
             dbBackupRunning = false;
         }
     }
 
     async function restoreBackup(filename) {
-        const yes = confirm(
-            `⚠️ RESTORE DATABASE FROM BACKUP?\n\n` +
-            `File: ${filename}\n\n` +
-            `This will OVERWRITE all current data with the backup contents.\n` +
-            `This action CANNOT be undone.\n\n` +
-            `Are you absolutely sure?`
-        );
+        const yes = confirm(tr('scrapers.restore_confirm', { filename }));
         if (!yes) return;
         dbRestoreRunning = filename;
         try {
             const res = await api.post(`/api/admin/db/restore/${encodeURIComponent(filename)}`);
             toastStore.add(res.message, 'success');
         } catch (e) {
-            toastStore.add('Restore failed: ' + e.message, 'error');
+            toastStore.add(tr('scrapers.restore_failed', { error: e.message }), 'error');
         } finally {
             dbRestoreRunning = null;
         }
@@ -1240,10 +1241,10 @@ Analyze this error and suggest a fix. Be concise.
 
 <div class="scrapers-page">
     <header>
-        <h1>🤖 Scrapers & Integrations</h1>
+        <h1>🤖 {$t('scrapers.title')}</h1>
         <div class="header-actions">
             <button class="refresh-btn" on:click={loadData} disabled={loading}>
-                {loading ? "↻ Loading..." : "↻ Refresh"}
+                {loading ? $t('scrapers.loading_btn') : $t('scrapers.refresh')}
             </button>
         </div>
     </header>
@@ -1254,26 +1255,26 @@ Analyze this error and suggest a fix. Be concise.
             class:active={activeTab === "scraper"}
             on:click={() => { activeTab = "scraper"; if (scraperOnline === null) loadScraperStatus(); }}
         >
-            🎛️ Scraper Admin
+            🎛️ {$t('scrapers.tab_scraper')}
         </button>
         <button
             class="tab"
             class:active={activeTab === "sync"}
             on:click={() => (activeTab = "sync")}
         >
-            🔄 Sync History
+            🔄 {$t('scrapers.tab_sync')}
         </button>
         <button
             class="tab"
             class:active={activeTab === "database"}
             on:click={() => { activeTab = "database"; if (dbBackups.length === 0) loadBackups(); }}
         >
-            🗄️ Database
+            🗄️ {$t('scrapers.tab_database')}
         </button>
     </div>
 
     {#if error}
-        <div class="error">Failed to load data: {error}</div>
+        <div class="error">{$t('scrapers.load_failed', { error })}</div>
     {:else if activeTab === "scraper"}
         <div class="scraper-section">
             <div class="scraper-status-bar">
@@ -1286,32 +1287,32 @@ Analyze this error and suggest a fix. Be concise.
                     ></span>
                     <span class="status-label">
                         {#if scraperStarting}
-                            Starting scraper...
+                            {$t('scrapers.status_starting')}
                         {:else if scraperOnline === true}
-                            Playwright Scraper — running on port {scraperStatus?.port ?? 3211}
+                            {$t('scrapers.status_running', { port: scraperStatus?.port ?? 3211 })}
                         {:else if scraperOnline === false}
-                            Scraper offline
+                            {$t('scrapers.status_offline')}
                         {:else}
-                            Scraper status unknown
+                            {$t('scrapers.status_unknown')}
                         {/if}
                     </span>
                 </div>
                 <div class="status-actions">
                     {#if scraperOnline !== true && !scraperStarting}
                         <button class="run-btn start-scraper-btn" on:click={startScraper}>
-                            Start Scraper
+                            {$t('scrapers.start_scraper')}
                         </button>
                     {/if}
                     <button class="refresh-btn small" on:click={loadScraperStatus} disabled={scraperStarting}>
-                        ↻ Check Status
+                        {$t('scrapers.check_status')}
                     </button>
                 </div>
             </div>
             {#if scraperStartError}
                 <div class="scraper-start-error">
                     <div class="error-row">
-                        <span class="error-badge">Failed: {summarizeError(scraperStartError)}</span>
-                        <button class="action-btn copy-btn" on:click={copyStartError}>Copy to AI</button>
+                        <span class="error-badge">{$t('scrapers.failed_badge', { msg: summarizeError(scraperStartError) })}</span>
+                        <button class="action-btn copy-btn" on:click={copyStartError}>{$t('scrapers.copy_to_ai')}</button>
                     </div>
                     <div class="error-detail">{scraperStartError}</div>
                 </div>
@@ -1326,7 +1327,7 @@ Analyze this error and suggest a fix. Be concise.
                     </div>
                     <div class="card-controls">
                         <label class="control-row">
-                            <span>Limit</span>
+                            <span>{$t('scrapers.limit')}</span>
                             <select bind:value={opalLimit} disabled={opalRunning}>
                                 <option value={5}>5</option>
                                 <option value={10}>10</option>
@@ -1337,31 +1338,31 @@ Analyze this error and suggest a fix. Be concise.
                         <label class="toggle-row">
                             <input type="checkbox" bind:checked={opalDebug} disabled={opalRunning} />
                             <span class="toggle-label" class:debug-on={opalDebug}>
-                                {opalDebug ? '🔍 Debug (headed)' : 'Headless'}
+                                {opalDebug ? $t('scrapers.debug_headed') : $t('scrapers.headless')}
                             </span>
                         </label>
                     </div>
                     {#if opalDebug}
-                        <div class="debug-hint">Browser window will open with 600ms slow-motion.</div>
+                        <div class="debug-hint">{$t('scrapers.debug_hint')}</div>
                     {/if}
                     <button class="run-btn opal-run" on:click={testOpalFetch} disabled={opalRunning || scraperOnline !== true}>
-                        {#if opalRunning}<span class="spinner">⏳</span> Running{opalDebug ? ' (watch browser)' : '...'}
-                        {:else}🚀 Run Fetch{/if}
+                        {#if opalRunning}<span class="spinner">⏳</span> {$t('scrapers.running')}{opalDebug ? $t('scrapers.watch_browser') : '...'}
+                        {:else}{$t('scrapers.run_fetch')}{/if}
                     </button>
                     {#if opalResult}
                         <div class="result-box" class:result-ok={opalResult.success} class:result-err={!opalResult.success}>
                             {#if opalResult.success}
-                                <div class="result-summary">✅ {opalResult.count} orders fetched in {opalResult.duration}s</div>
+                                <div class="result-summary">{$t('scrapers.result_orders', { count: opalResult.count, duration: opalResult.duration })}</div>
                             {:else}
                                 <div class="error-row">
                                     <span class="error-badge">❌ {summarizeError(opalResult.error)}</span>
-                                    <button class="action-btn copy-btn" on:click={() => copyScraperError('OPAL', opalResult)}>🤖 Copy for AI</button>
+                                    <button class="action-btn copy-btn" on:click={() => copyScraperError('OPAL', opalResult)}>{$t('scrapers.copy_for_ai')}</button>
                                 </div>
                                 <div class="error-detail">{opalResult.error}</div>
                             {/if}
                             {#if opalResult.orders?.length}
                                 <button class="toggle-json" on:click={() => opalJsonOpen = !opalJsonOpen}>
-                                    {opalJsonOpen ? '▼' : '▶'} View JSON ({opalResult.orders.length} orders)
+                                    {opalJsonOpen ? '▼' : '▶'} {$t('scrapers.view_json_orders', { count: opalResult.orders.length })}
                                 </button>
                                 {#if opalJsonOpen}<pre class="result-json">{JSON.stringify(opalResult.orders, null, 2)}</pre>{/if}
                             {/if}
@@ -1377,7 +1378,7 @@ Analyze this error and suggest a fix. Be concise.
                     </div>
                     <div class="card-controls">
                         <label class="control-row">
-                            <span>Limit</span>
+                            <span>{$t('scrapers.limit')}</span>
                             <select bind:value={dhlLimit} disabled={dhlRunning}>
                                 <option value={5}>5</option>
                                 <option value={10}>10</option>
@@ -1388,31 +1389,31 @@ Analyze this error and suggest a fix. Be concise.
                         <label class="toggle-row">
                             <input type="checkbox" bind:checked={dhlDebug} disabled={dhlRunning} />
                             <span class="toggle-label" class:debug-on={dhlDebug}>
-                                {dhlDebug ? '🔍 Debug (headed)' : 'Headless'}
+                                {dhlDebug ? $t('scrapers.debug_headed') : $t('scrapers.headless')}
                             </span>
                         </label>
                     </div>
                     {#if dhlDebug}
-                        <div class="debug-hint">Browser window will open with 600ms slow-motion.</div>
+                        <div class="debug-hint">{$t('scrapers.debug_hint')}</div>
                     {/if}
                     <button class="run-btn dhl-run" on:click={testDhlFetch} disabled={dhlRunning || scraperOnline !== true}>
-                        {#if dhlRunning}<span class="spinner">⏳</span> Running{dhlDebug ? ' (watch browser)' : '...'}
-                        {:else}🚀 Run Fetch{/if}
+                        {#if dhlRunning}<span class="spinner">⏳</span> {$t('scrapers.running')}{dhlDebug ? $t('scrapers.watch_browser') : '...'}
+                        {:else}{$t('scrapers.run_fetch')}{/if}
                     </button>
                     {#if dhlResult}
                         <div class="result-box" class:result-ok={dhlResult.success} class:result-err={!dhlResult.success}>
                             {#if dhlResult.success}
-                                <div class="result-summary">✅ {dhlResult.count} shipments fetched in {dhlResult.duration}s</div>
+                                <div class="result-summary">{$t('scrapers.result_shipments', { count: dhlResult.count, duration: dhlResult.duration })}</div>
                             {:else}
                                 <div class="error-row">
                                     <span class="error-badge">❌ {summarizeError(dhlResult.error)}</span>
-                                    <button class="action-btn copy-btn" on:click={() => copyScraperError('DHL', dhlResult)}>🤖 Copy for AI</button>
+                                    <button class="action-btn copy-btn" on:click={() => copyScraperError('DHL', dhlResult)}>{$t('scrapers.copy_for_ai')}</button>
                                 </div>
                                 <div class="error-detail">{dhlResult.error}</div>
                             {/if}
                             {#if dhlResult.shipments?.length}
                                 <button class="toggle-json" on:click={() => dhlJsonOpen = !dhlJsonOpen}>
-                                    {dhlJsonOpen ? '▼' : '▶'} View JSON ({dhlResult.shipments.length} shipments)
+                                    {dhlJsonOpen ? '▼' : '▶'} {$t('scrapers.view_json_shipments', { count: dhlResult.shipments.length })}
                                 </button>
                                 {#if dhlJsonOpen}<pre class="result-json">{JSON.stringify(dhlResult.shipments, null, 2)}</pre>{/if}
                             {/if}
@@ -1428,7 +1429,7 @@ Analyze this error and suggest a fix. Be concise.
                     </div>
                     <div class="card-controls">
                         <label class="control-row">
-                            <span>Entity</span>
+                            <span>{$t('scrapers.entity')}</span>
                             <select bind:value={exactEntityType} disabled={exactRunning}>
                                 <option value="items">Items</option>
                                 <option value="stock-positions">Stock Positions</option>
@@ -1437,7 +1438,7 @@ Analyze this error and suggest a fix. Be concise.
                             </select>
                         </label>
                         <label class="control-row">
-                            <span>Limit</span>
+                            <span>{$t('scrapers.limit')}</span>
                             <select bind:value={exactLimit} disabled={exactRunning}>
                                 <option value={0}>All</option>
                                 <option value={50}>50</option>
@@ -1447,55 +1448,55 @@ Analyze this error and suggest a fix. Be concise.
                             </select>
                         </label>
                         <label class="control-row">
-                            <span>Start Page</span>
+                            <span>{$t('scrapers.start_page')}</span>
                             <input type="number" bind:value={exactStartPage} min="1" disabled={exactRunning} style="width: 60px; padding: 0.3rem; background: #2a2a2a; color: white; border: 1px solid #444; border-radius: 4px;" />
                         </label>
                         <label class="control-row">
-                            <span>Delay (ms)</span>
+                            <span>{$t('scrapers.delay_ms')}</span>
                             <input type="number" bind:value={exactDelayMs} min="500" step="500" disabled={exactRunning} style="width: 70px; padding: 0.3rem; background: #2a2a2a; color: white; border: 1px solid #444; border-radius: 4px;" />
                         </label>
                         <label class="toggle-row">
                             <input type="checkbox" bind:checked={exactDebug} disabled={exactRunning} />
                             <span class="toggle-label" class:debug-on={exactDebug}>
-                                {exactDebug ? '🔍 Debug (headed)' : 'Headless'}
+                                {exactDebug ? $t('scrapers.debug_headed') : $t('scrapers.headless')}
                             </span>
                         </label>
                     </div>
                     {#if exactDebug}
-                        <div class="debug-hint">Browser window will open with 600ms slow-motion.</div>
+                        <div class="debug-hint">{$t('scrapers.debug_hint')}</div>
                     {/if}
                     <button class="run-btn exact-run" on:click={testExactFetch} disabled={exactRunning || scraperOnline !== true}>
-                        {#if exactRunning}<span class="spinner">⏳</span> Fetching...
-                        {:else}🚀 Fetch from Exact{/if}
+                        {#if exactRunning}<span class="spinner">⏳</span> {$t('scrapers.fetching')}
+                        {:else}{$t('scrapers.fetch_exact')}{/if}
                     </button>
                     {#if exactResult}
                         <div class="result-box" class:result-ok={exactResult.success} class:result-err={!exactResult.success}>
                             {#if exactResult.success}
-                                <div class="result-summary">✅ {exactResult.count ?? exactResult.rows?.length ?? 0} records fetched in {exactResult.duration}s</div>
+                                <div class="result-summary">{$t('scrapers.result_records', { count: exactResult.count ?? exactResult.rows?.length ?? 0, duration: exactResult.duration })}</div>
                             {:else}
                                 <div class="error-row">
                                     <span class="error-badge">❌ {summarizeError(exactResult.error)}</span>
-                                    <button class="action-btn copy-btn" on:click={() => copyScraperError('Exact Online', exactResult)}>🤖 Copy for AI</button>
+                                    <button class="action-btn copy-btn" on:click={() => copyScraperError('Exact Online', exactResult)}>{$t('scrapers.copy_for_ai')}</button>
                                 </div>
                                 <div class="error-detail">{exactResult.error}</div>
                             {/if}
                             {#if exactResult.rows?.length}
                                 <button class="toggle-json" on:click={() => exactJsonOpen = !exactJsonOpen}>
-                                    {exactJsonOpen ? '▼' : '▶'} View JSON ({exactResult.rows.length} records)
+                                    {exactJsonOpen ? '▼' : '▶'} {$t('scrapers.view_json_records', { count: exactResult.rows.length })}
                                 </button>
                                 {#if exactJsonOpen}<pre class="result-json">{JSON.stringify(exactResult.rows, null, 2)}</pre>{/if}
 
                                 <button class="run-btn import-run" on:click={importExactData} disabled={exactImportRunning}>
-                                    {#if exactImportRunning}<span class="spinner">⏳</span> Saving...
-                                    {:else}💾 Save to Database{/if}
+                                    {#if exactImportRunning}<span class="spinner">⏳</span> {$t('scrapers.saving')}
+                                    {:else}{$t('scrapers.save_to_db')}{/if}
                                 </button>
                             {/if}
                             {#if exactImportResult}
                                 <div class="result-box result-ok" style="margin-top: 0.5rem;">
                                     <div class="result-summary">
-                                        ✅ Imported: {exactImportResult.updated ?? exactImportResult.imported ?? 0} | Skipped: {exactImportResult.skipped ?? 0}
+                                        {$t('scrapers.import_result', { imported: exactImportResult.updated ?? exactImportResult.imported ?? 0, skipped: exactImportResult.skipped ?? 0 })}
                                         {#if (exactImportResult.updated ?? exactImportResult.imported ?? 0) === 0 && (exactImportResult.skipped ?? 0) === 0}
-                                            <span style="color: #888; margin-left: 0.5rem;">(all data already up to date)</span>
+                                            <span style="color: #888; margin-left: 0.5rem;">{$t('scrapers.all_up_to_date')}</span>
                                         {/if}
                                     </div>
                                 </div>
@@ -1508,11 +1509,11 @@ Analyze this error and suggest a fix. Be concise.
                 <div class="provider-card zoho-card">
                     <div class="card-header">
                         <span class="card-title">🟣 Zoho Desk</span>
-                        <span class="card-hint">desk.inbodysupport.eu</span>
+                        <span class="card-hint">support desk</span>
                     </div>
                     <div class="card-controls">
                         <label class="control-row">
-                            <span>Limit</span>
+                            <span>{$t('scrapers.limit')}</span>
                             <select bind:value={zohoLimit} disabled={zohoRunning}>
                                 <option value={10}>10</option>
                                 <option value={50}>50</option>
@@ -1525,53 +1526,53 @@ Analyze this error and suggest a fix. Be concise.
                         <label class="toggle-row">
                             <input type="checkbox" bind:checked={zohoDebug} disabled={zohoRunning} />
                             <span class="toggle-label" class:debug-on={zohoDebug}>
-                                {zohoDebug ? '🔍 Debug (headed)' : 'Headless'}
+                                {zohoDebug ? $t('scrapers.debug_headed') : $t('scrapers.headless')}
                             </span>
                         </label>
                     </div>
                     {#if zohoDebug}
-                        <div class="debug-hint">Browser window will open with 600ms slow-motion.</div>
+                        <div class="debug-hint">{$t('scrapers.debug_hint')}</div>
                     {/if}
                     <button class="run-btn zoho-run" on:click={testZohoFetch} disabled={zohoRunning || scraperOnline !== true}>
-                        {#if zohoRunning}<span class="spinner">⏳</span> Running{zohoDebug ? ' (watch browser)' : '...'}
-                        {:else}🚀 Fetch Tickets{/if}
+                        {#if zohoRunning}<span class="spinner">⏳</span> {$t('scrapers.running')}{zohoDebug ? $t('scrapers.watch_browser') : '...'}
+                        {:else}{$t('scrapers.fetch_tickets')}{/if}
                     </button>
                     {#if zohoResult}
                         <div class="result-box" class:result-ok={zohoResult.success} class:result-err={!zohoResult.success}>
                             {#if zohoResult.success}
-                                <div class="result-summary">✅ {zohoResult.count ?? zohoResult.tickets?.length ?? 0} tickets in {zohoResult.duration}s</div>
+                                <div class="result-summary">{$t('scrapers.result_tickets', { count: zohoResult.count ?? zohoResult.tickets?.length ?? 0, duration: zohoResult.duration })}</div>
                             {:else}
                                 <div class="error-row">
                                     <span class="error-badge">❌ {summarizeError(zohoResult.error)}</span>
-                                    <button class="action-btn copy-btn" on:click={() => copyScraperError('Zoho Desk', zohoResult)}>🤖 Copy for AI</button>
+                                    <button class="action-btn copy-btn" on:click={() => copyScraperError('Zoho Desk', zohoResult)}>{$t('scrapers.copy_for_ai')}</button>
                                 </div>
                                 <div class="error-detail">{zohoResult.error}</div>
                             {/if}
                             {#if zohoResult.tickets?.length}
                                 <button class="toggle-json" on:click={() => zohoJsonOpen = !zohoJsonOpen}>
-                                    {zohoJsonOpen ? '▼' : '▶'} View JSON ({zohoResult.tickets.length} tickets)
+                                    {zohoJsonOpen ? '▼' : '▶'} {$t('scrapers.view_json_tickets', { count: zohoResult.tickets.length })}
                                 </button>
                                 {#if zohoJsonOpen}<pre class="result-json">{JSON.stringify(zohoResult.tickets, null, 2)}</pre>{/if}
                                 <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px;">
                                     <button class="run-btn import-run" on:click={saveTicketsToDB}
                                         disabled={zohoSaveTicketsRunning}>
-                                        {#if zohoSaveTicketsRunning}<span class="spinner">⏳</span> Saving...
-                                        {:else}💾 Save Metadata{/if}
+                                        {#if zohoSaveTicketsRunning}<span class="spinner">⏳</span> {$t('scrapers.saving')}
+                                        {:else}{$t('scrapers.save_metadata')}{/if}
                                     </button>
                                     {#if zohoSaveTicketsResult}
                                         <span style="font-size: 0.8em;">
-                                            {zohoSaveTicketsResult.success ? '✅' : '⚠️'} {zohoSaveTicketsResult.created} new, {zohoSaveTicketsResult.updated} updated
+                                            {zohoSaveTicketsResult.success ? '✅' : '⚠️'} {$t('scrapers.save_meta_result', { created: zohoSaveTicketsResult.created, updated: zohoSaveTicketsResult.updated })}
                                         </span>
                                     {/if}
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px;">
                                     <button class="run-btn import-run" on:click={importAllTickets}
                                         disabled={zohoImportAllRunning || scraperOnline !== true}>
-                                        {#if zohoImportAllRunning}<span class="spinner">⏳</span> Importing…
-                                        {:else}📥 Import All (threads + attachments){/if}
+                                        {#if zohoImportAllRunning}<span class="spinner">⏳</span> {$t('scrapers.importing')}
+                                        {:else}{$t('scrapers.import_all')}{/if}
                                     </button>
                                     <label style="font-size: 0.8em; display: flex; align-items: center; gap: 4px;">
-                                        Delay
+                                        {$t('scrapers.delay_word')}
                                         <input type="number" bind:value={zohoImportDelay} min="500" step="500"
                                             disabled={zohoImportAllRunning}
                                             style="width: 70px; padding: 2px 4px; background: #1e293b; color: #e2e8f0; border: 1px solid #475569; border-radius: 4px;" />
@@ -1589,8 +1590,8 @@ Analyze this error and suggest a fix. Be concise.
                                         </div>
                                         <div style="display: flex; gap: 12px; opacity: 0.8;">
                                             <span style="color: #4ade80;">✓ {zohoImportAllStats.imported}</span>
-                                            <span style="color: #94a3b8;">⊘ {zohoImportAllStats.skipped} skipped</span>
-                                            {#if zohoImportAllStats.errors > 0}<span style="color: #f87171;">✗ {zohoImportAllStats.errors} errors</span>{/if}
+                                            <span style="color: #94a3b8;">⊘ {$t('scrapers.skipped_label', { count: zohoImportAllStats.skipped })}</span>
+                                            {#if zohoImportAllStats.errors > 0}<span style="color: #f87171;">✗ {$t('scrapers.errors_label', { count: zohoImportAllStats.errors })}</span>{/if}
                                         </div>
                                     </div>
                                 {/if}
@@ -1600,8 +1601,8 @@ Analyze this error and suggest a fix. Be concise.
                             <div class="result-box" class:result-ok={zohoImportAllResult.success} class:result-err={!zohoImportAllResult.success}>
                                 <div class="result-summary">
                                     {zohoImportAllResult.success ? '✅' : '⚠️'}
-                                    {zohoImportAllResult.imported} tickets ({zohoImportAllResult.threadCount || 0} threads) from {zohoImportAllResult.total}
-                                    {#if zohoImportAllResult.skipped > 0} · {zohoImportAllResult.skipped} skipped{/if}
+                                    {$t('scrapers.import_all_result', { imported: zohoImportAllResult.imported, threads: zohoImportAllResult.threadCount || 0, total: zohoImportAllResult.total })}
+                                    {#if zohoImportAllResult.skipped > 0} · {$t('scrapers.import_all_skipped', { count: zohoImportAllResult.skipped })}{/if}
                                 </div>
                                 {#if zohoImportAllResult.errors?.length}
                                     <div class="import-errors">
@@ -1618,19 +1619,19 @@ Analyze this error and suggest a fix. Be concise.
                         <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                             <button class="run-btn import-run" on:click={syncMissingThreads}
                                 disabled={zohoSyncRunning || scraperOnline !== true}>
-                                {#if zohoSyncRunning}<span class="spinner">⏳</span> Syncing…
-                                {:else}🔄 Sync Missing Threads{/if}
+                                {#if zohoSyncRunning}<span class="spinner">⏳</span> {$t('scrapers.syncing')}
+                                {:else}{$t('scrapers.sync_missing')}{/if}
                             </button>
                             <label style="font-size: 0.8em; display: flex; align-items: center; gap: 4px;">
-                                Delay
+                                {$t('scrapers.delay_word')}
                                 <input type="number" bind:value={zohoImportDelay} min="500" step="500"
                                     disabled={zohoSyncRunning}
                                     style="width: 70px; padding: 2px 4px; background: #1e293b; color: #e2e8f0; border: 1px solid #475569; border-radius: 4px;" />
                                 ms
                             </label>
                             <span style="font-size: 0.8em; opacity: 0.7;">
-                                {#if zohoResult?.tickets?.length}Uses fetched tickets{:else}Uses tickets from DB{/if}
-                                — skips already synced
+                                {#if zohoResult?.tickets?.length}{$t('scrapers.uses_fetched')}{:else}{$t('scrapers.uses_db')}{/if}
+                                — {$t('scrapers.skips_synced')}
                             </span>
                         </div>
                         {#if zohoSyncRunning && zohoImportAllStats.total > 0}
@@ -1644,8 +1645,8 @@ Analyze this error and suggest a fix. Be concise.
                                 </div>
                                 <div style="display: flex; gap: 12px; opacity: 0.8;">
                                     <span style="color: #4ade80;">✓ {zohoImportAllStats.imported}</span>
-                                    <span style="color: #94a3b8;">⊘ {zohoImportAllStats.skipped} synced</span>
-                                    {#if zohoImportAllStats.errors > 0}<span style="color: #f87171;">✗ {zohoImportAllStats.errors} errors</span>{/if}
+                                    <span style="color: #94a3b8;">⊘ {$t('scrapers.synced_label', { count: zohoImportAllStats.skipped })}</span>
+                                    {#if zohoImportAllStats.errors > 0}<span style="color: #f87171;">✗ {$t('scrapers.errors_label', { count: zohoImportAllStats.errors })}</span>{/if}
                                 </div>
                             </div>
                         {/if}
@@ -1653,11 +1654,11 @@ Analyze this error and suggest a fix. Be concise.
                             <div class="result-box" style="margin-top: 6px;" class:result-ok={zohoSyncResult.success} class:result-err={!zohoSyncResult.success}>
                                 <div class="result-summary">
                                     {zohoSyncResult.success ? '✅' : '⚠️'}
-                                    Synced {zohoSyncResult.tickets_synced} tickets ({zohoSyncResult.threads_imported} threads).
+                                    {$t('scrapers.sync_result', { tickets: zohoSyncResult.tickets_synced, threads: zohoSyncResult.threads_imported })}
                                     {#if zohoSyncResult.tickets_remaining > 0}
-                                        <strong>{zohoSyncResult.tickets_remaining} remaining.</strong>
+                                        <strong>{$t('scrapers.remaining', { count: zohoSyncResult.tickets_remaining })}</strong>
                                     {:else}
-                                        All done!
+                                        {$t('scrapers.all_done')}
                                     {/if}
                                 </div>
                                 {#if zohoSyncResult.errors?.length}
@@ -1676,36 +1677,36 @@ Analyze this error and suggest a fix. Be concise.
                             <input
                                 type="text"
                                 bind:value={zohoThreadTicketId}
-                                placeholder="Ticket ID for email threads"
+                                placeholder={$t('scrapers.placeholder_ticket_id')}
                                 disabled={zohoThreadRunning}
                                 class="ticket-id-input"
                             />
                             <button class="run-btn zoho-run" on:click={testZohoFetchThreads}
                                 disabled={zohoThreadRunning || !zohoThreadTicketId || scraperOnline !== true}>
-                                {#if zohoThreadRunning}<span class="spinner">⏳</span> Fetching...
-                                {:else}📧 Fetch Threads{/if}
+                                {#if zohoThreadRunning}<span class="spinner">⏳</span> {$t('scrapers.fetching')}
+                                {:else}{$t('scrapers.fetch_threads')}{/if}
                             </button>
                         </div>
                         {#if zohoThreadResult}
                             <div class="result-box" class:result-ok={zohoThreadResult.success} class:result-err={!zohoThreadResult.success}>
                                 {#if zohoThreadResult.success}
-                                    <div class="result-summary">✅ {zohoThreadResult.count} threads in {zohoThreadResult.duration}s</div>
+                                    <div class="result-summary">{$t('scrapers.result_threads', { count: zohoThreadResult.count, duration: zohoThreadResult.duration })}</div>
                                 {:else}
                                     <div class="error-row">
                                         <span class="error-badge">❌ {summarizeError(zohoThreadResult.error)}</span>
-                                        <button class="action-btn copy-btn" on:click={() => copyScraperError('Zoho Threads', zohoThreadResult)}>🤖 Copy for AI</button>
+                                        <button class="action-btn copy-btn" on:click={() => copyScraperError('Zoho Threads', zohoThreadResult)}>{$t('scrapers.copy_for_ai')}</button>
                                     </div>
                                     <div class="error-detail">{zohoThreadResult.error}</div>
                                 {/if}
                                 {#if zohoThreadResult.threads?.length}
                                     <button class="toggle-json" on:click={() => zohoThreadJsonOpen = !zohoThreadJsonOpen}>
-                                        {zohoThreadJsonOpen ? '▼' : '▶'} View threads ({zohoThreadResult.threads.length})
+                                        {zohoThreadJsonOpen ? '▼' : '▶'} {$t('scrapers.view_threads', { count: zohoThreadResult.threads.length })}
                                     </button>
                                     {#if zohoThreadJsonOpen}<pre class="result-json">{JSON.stringify(zohoThreadResult.threads, null, 2)}</pre>{/if}
                                     <button class="run-btn import-run" on:click={importThreadsToSystem}
                                         disabled={zohoImportRunning}>
-                                        {#if zohoImportRunning}<span class="spinner">⏳</span> Saving...
-                                        {:else}💾 Save to System{/if}
+                                        {#if zohoImportRunning}<span class="spinner">⏳</span> {$t('scrapers.saving')}
+                                        {:else}{$t('scrapers.save_to_system')}{/if}
                                     </button>
                                 {/if}
                             </div>
@@ -1713,9 +1714,9 @@ Analyze this error and suggest a fix. Be concise.
                         {#if zohoImportResult}
                             <div class="result-box" class:result-ok={zohoImportResult.success} class:result-err={!zohoImportResult.success}>
                                 {#if zohoImportResult.success}
-                                    <div class="result-summary">✅ {zohoImportResult.imported} thread(s) saved to documents table</div>
+                                    <div class="result-summary">{$t('scrapers.threads_saved', { count: zohoImportResult.imported })}</div>
                                 {:else}
-                                    <div class="result-summary error">❌ Import failed ({zohoImportResult.imported} saved)</div>
+                                    <div class="result-summary error">{$t('scrapers.import_failed_count', { count: zohoImportResult.imported })}</div>
                                 {/if}
                                 {#if zohoImportResult.errors?.length}
                                     <div class="import-errors">
@@ -1726,7 +1727,7 @@ Analyze this error and suggest a fix. Be concise.
                                 {/if}
                                 {#if zohoImportResult.documents?.length}
                                     <div class="import-ids">
-                                        Document IDs: {zohoImportResult.documents.join(', ')}
+                                        {$t('scrapers.document_ids', { ids: zohoImportResult.documents.join(', ') })}
                                     </div>
                                 {/if}
                             </div>
@@ -1738,18 +1739,18 @@ Analyze this error and suggest a fix. Be concise.
             <!-- ── Excel Reparaturliste ─────────────────────────────────── -->
             <div class="excel-section">
                 <div class="excel-header">
-                    <span class="excel-title">📋 Excel Reparaturliste</span>
+                    <span class="excel-title">📋 {$t('scrapers.excel_title')}</span>
                     <button class="run-btn excel-info-btn" on:click={loadExcelInfo} disabled={excelInfoLoading || scraperOnline !== true}>
-                        {excelInfoLoading ? '...' : 'i'} Info
+                        {excelInfoLoading ? '...' : 'i'} {$t('scrapers.info')}
                     </button>
                 </div>
 
                 {#if excelInfo}
                     <div class="excel-info-bar" class:info-ok={excelInfo.success} class:info-err={!excelInfo.success}>
                         {#if excelInfo.success}
-                            <span>{excelInfo.totalRepairs} repairs | Last: {excelInfo.lastRepairNumber} | Modified: {new Date(excelInfo.lastModified).toLocaleDateString('de-DE')}</span>
+                            <span>{$t('scrapers.excel_info', { total: excelInfo.totalRepairs, last: excelInfo.lastRepairNumber, date: new Date(excelInfo.lastModified).toLocaleDateString('de-DE') })}</span>
                         {:else}
-                            <span class="error">File error: {excelInfo.error}</span>
+                            <span class="error">{$t('scrapers.file_error', { error: excelInfo.error })}</span>
                         {/if}
                     </div>
                 {/if}
@@ -1757,25 +1758,25 @@ Analyze this error and suggest a fix. Be concise.
                 {#if excelConfigLoaded}
                     <div class="excel-paths">
                         <div class="excel-path-row">
-                            <label class="path-label">Source file</label>
-                            <input class="path-input" type="text" bind:value={excelSourcePath} placeholder="Path to .xlsm file" />
+                            <label class="path-label">{$t('scrapers.source_file')}</label>
+                            <input class="path-input" type="text" bind:value={excelSourcePath} placeholder={$t('scrapers.placeholder_xlsm')} />
                         </div>
                         <div class="excel-path-row">
-                            <label class="path-label">Export file</label>
-                            <input class="path-input" type="text" bind:value={excelExportPath} placeholder="Auto: source name + _eck.xlsx" />
+                            <label class="path-label">{$t('scrapers.export_file')}</label>
+                            <input class="path-input" type="text" bind:value={excelExportPath} placeholder={$t('scrapers.placeholder_export')} />
                         </div>
                         <button class="run-btn excel-save-paths" on:click={saveExcelConfig} disabled={excelConfigSaving}>
-                            {excelConfigSaving ? '...' : '💾'} Save paths
+                            {excelConfigSaving ? '...' : '💾'} {$t('scrapers.save_paths')}
                         </button>
                     </div>
                 {/if}
 
                 <div class="excel-mode-tabs">
                     <button class="excel-tab" class:active={excelMode === 'import'} on:click={() => excelMode = 'import'}>
-                        📥 Import (Excel → DB)
+                        {$t('scrapers.tab_import')}
                     </button>
                     <button class="excel-tab" class:active={excelMode === 'export'} on:click={() => excelMode = 'export'}>
-                        📤 Export (DB → Excel)
+                        {$t('scrapers.tab_export')}
                     </button>
                 </div>
 
@@ -1783,7 +1784,7 @@ Analyze this error and suggest a fix. Be concise.
                     <div class="excel-panel">
                         <div class="excel-controls-row">
                             <label class="control-row">
-                                <span>Show last</span>
+                                <span>{$t('scrapers.show_last')}</span>
                                 <select bind:value={excelLimit} disabled={excelLoading}>
                                     <option value={10}>10</option>
                                     <option value={30}>30</option>
@@ -1793,19 +1794,19 @@ Analyze this error and suggest a fix. Be concise.
                                 </select>
                             </label>
                             <button class="run-btn excel-run" on:click={readExcelRepairs} disabled={excelLoading || scraperOnline !== true}>
-                                {#if excelLoading}<span class="spinner">⏳</span> Reading...
-                                {:else}📖 Read Excel{/if}
+                                {#if excelLoading}<span class="spinner">⏳</span> {$t('scrapers.reading')}
+                                {:else}{$t('scrapers.read_excel')}{/if}
                             </button>
                             <button class="run-btn excel-run" on:click={importAllFromExcel}
                                 disabled={excelImportAllRunning || excelInfoLoading || excelLoading || scraperOnline !== true}>
-                                {#if excelImportAllRunning}<span class="spinner">⏳</span> Importing...
-                                {:else}📥 Import All to DB{/if}
+                                {#if excelImportAllRunning}<span class="spinner">⏳</span> {$t('scrapers.importing')}
+                                {:else}{$t('scrapers.import_all_db')}{/if}
                             </button>
                         </div>
 
                         {#if excelImportAllRunning || excelImportAllProgress}
-                            <div class="result-box" class:result-ok={!excelImportAllRunning && !excelImportAllProgress.startsWith('Failed')}
-                                class:result-err={excelImportAllProgress.startsWith('Failed')}>
+                            <div class="result-box" class:result-ok={!excelImportAllRunning && !excelImportAllFailed}
+                                class:result-err={excelImportAllFailed}>
                                 <div class="result-summary">{excelImportAllProgress}</div>
                             </div>
                         {/if}
@@ -1818,23 +1819,23 @@ Analyze this error and suggest a fix. Be concise.
 
                         {#if excelRepairs.length > 0}
                             <div class="excel-table-info">
-                                Showing {excelRepairs.length} of {excelTotal} repairs (newest first)
+                                {$t('scrapers.showing_repairs', { shown: excelRepairs.length, total: excelTotal })}
                             </div>
                             <div class="excel-table-wrap">
                                 <table class="excel-table">
                                     <thead>
                                         <tr>
                                             <th><input type="checkbox" checked={excelSelected.size === excelRepairs.length && excelRepairs.length > 0} on:change={toggleExcelSelectAll} /></th>
-                                            <th>Status</th>
-                                            <th>Row</th>
-                                            <th>Repair #</th>
-                                            <th>Ticket</th>
-                                            <th>Model</th>
-                                            <th>Serial</th>
-                                            <th>Customer</th>
-                                            <th>Error</th>
-                                            <th>Received</th>
-                                            <th>Status</th>
+                                            <th>{$t('scrapers.th_status')}</th>
+                                            <th>{$t('scrapers.th_row')}</th>
+                                            <th>{$t('scrapers.th_repair')}</th>
+                                            <th>{$t('scrapers.th_ticket')}</th>
+                                            <th>{$t('scrapers.th_model')}</th>
+                                            <th>{$t('scrapers.th_serial')}</th>
+                                            <th>{$t('scrapers.th_customer')}</th>
+                                            <th>{$t('scrapers.th_error')}</th>
+                                            <th>{$t('scrapers.th_received')}</th>
+                                            <th>{$t('scrapers.th_status')}</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -1843,10 +1844,10 @@ Analyze this error and suggest a fix. Be concise.
                                                 <td><input type="checkbox" checked={excelSelected.has(r.repairNumber)} disabled={r._importStatus === 'Conflict' || r._importStatus === 'Unchanged'} on:change={() => toggleExcelSelect(r.repairNumber)} /></td>
                                                 <td>
                                                     <span class="change-badge" class:new={r._importStatus === 'New'} class:update={r._importStatus === 'Auto-fill'} class:conflict={r._importStatus === 'Conflict'} class:unchanged={r._importStatus === 'Unchanged'} class:resolved={r._importStatus === 'Resolved'}>
-                                                        {r._importStatus}
+                                                        {r._importStatus === 'New' ? $t('scrapers.status_new') : r._importStatus === 'Auto-fill' ? $t('scrapers.status_autofill') : r._importStatus === 'Conflict' ? $t('scrapers.status_conflict') : r._importStatus === 'Unchanged' ? $t('scrapers.status_unchanged') : r._importStatus === 'Resolved' ? $t('scrapers.status_resolved') : r._importStatus}
                                                     </span>
                                                     {#if r._importStatus === 'Conflict'}
-                                                        <button class="btn-icon review-btn" title="Review Conflict" on:click={() => openConflictModal(r)}>Review</button>
+                                                        <button class="btn-icon review-btn" title={$t('scrapers.review_conflict_tip')} on:click={() => openConflictModal(r)}>{$t('scrapers.review')}</button>
                                                     {/if}
                                                 </td>
                                                 <td class="muted">{r.excelRow}</td>
@@ -1871,11 +1872,11 @@ Analyze this error and suggest a fix. Be concise.
                             <div class="excel-actions-row">
                                 <button class="run-btn excel-run" on:click={importSelectedToDb}
                                     disabled={excelImporting || excelSelected.size === 0}>
-                                    {#if excelImporting}<span class="spinner">⏳</span> Importing...
-                                    {:else}📥 Import {excelSelected.size} selected to DB{/if}
+                                    {#if excelImporting}<span class="spinner">⏳</span> {$t('scrapers.importing')}
+                                    {:else}{$t('scrapers.import_selected', { count: excelSelected.size })}{/if}
                                 </button>
                                 <button class="toggle-json" on:click={() => excelJsonOpen = !excelJsonOpen}>
-                                    {excelJsonOpen ? '▼' : '▶'} Raw JSON
+                                    {excelJsonOpen ? '▼' : '▶'} {$t('scrapers.raw_json')}
                                 </button>
                             </div>
 
@@ -1887,7 +1888,7 @@ Analyze this error and suggest a fix. Be concise.
                                 <div class="result-box" class:result-ok={excelImportResult.errors.length === 0} class:result-err={excelImportResult.errors.length > 0}>
                                     <div class="result-summary">
                                         {excelImportResult.errors.length === 0 ? '✅' : '⚠️'}
-                                        Created: {excelImportResult.created}, Updated: {excelImportResult.updated}
+                                        {$t('scrapers.excel_import_result', { created: excelImportResult.created, updated: excelImportResult.updated })}
                                     </div>
                                     {#if excelImportResult.errors.length > 0}
                                         <div class="import-errors">
@@ -1905,24 +1906,24 @@ Analyze this error and suggest a fix. Be concise.
                     <div class="excel-panel">
                         <div class="excel-controls-row">
                             <button class="run-btn excel-run" on:click={scanDbChangesForExcel} disabled={excelDbLoading}>
-                                {#if excelDbLoading}<span class="spinner">⏳</span> Scanning...
-                                {:else}🔍 Scan for Changes (DB vs Excel){/if}
+                                {#if excelDbLoading}<span class="spinner">⏳</span> {$t('scrapers.scanning')}
+                                {:else}{$t('scrapers.scan_changes')}{/if}
                             </button>
                         </div>
 
                         {#if excelDbRepairs.length > 0}
                             <div class="excel-table-info">
-                                Found {excelDbRepairs.length} change(s) ready to be applied to Excel
+                                {$t('scrapers.found_changes', { count: excelDbRepairs.length })}
                             </div>
                             <div class="excel-table-wrap">
                                 <table class="excel-table">
                                     <thead>
                                         <tr>
                                             <th><input type="checkbox" checked={excelDbSelected.size === excelDbRepairs.length && excelDbRepairs.length > 0} on:change={toggleDbSelectAll} /></th>
-                                            <th>Repair #</th>
-                                            <th>Change Type</th>
-                                            <th>Differences</th>
-                                            <th>Status (DB)</th>
+                                            <th>{$t('scrapers.th_repair')}</th>
+                                            <th>{$t('scrapers.th_change_type')}</th>
+                                            <th>{$t('scrapers.th_differences')}</th>
+                                            <th>{$t('scrapers.th_status_db')}</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -1932,7 +1933,7 @@ Analyze this error and suggest a fix. Be concise.
                                                 <td class="mono">{r.order_number}</td>
                                                 <td>
                                                     <span class="change-badge" class:new={r._changeType === 'New'} class:update={r._changeType === 'Update'}>
-                                                        {r._changeType}
+                                                        {r._changeType === 'New' ? $t('scrapers.change_new') : r._changeType === 'Update' ? $t('scrapers.change_update') : r._changeType}
                                                     </span>
                                                 </td>
                                                 <td>
@@ -1956,8 +1957,8 @@ Analyze this error and suggest a fix. Be concise.
                             <div class="excel-actions-row">
                                 <button class="run-btn excel-run" on:click={exportSelectedToExcel}
                                     disabled={excelExporting || excelDbSelected.size === 0}>
-                                    {#if excelExporting}<span class="spinner">⏳</span> Writing...
-                                    {:else}📤 Write {excelDbSelected.size} selected to Excel{/if}
+                                    {#if excelExporting}<span class="spinner">⏳</span> {$t('scrapers.writing')}
+                                    {:else}{$t('scrapers.write_selected', { count: excelDbSelected.size })}{/if}
                                 </button>
                             </div>
 
@@ -1965,7 +1966,7 @@ Analyze this error and suggest a fix. Be concise.
                                 <div class="result-box" class:result-ok={excelExportResult.errors.length === 0} class:result-err={excelExportResult.errors.length > 0}>
                                     <div class="result-summary">
                                         {excelExportResult.errors.length === 0 ? '✅' : '⚠️'}
-                                        Written: {excelExportResult.written}
+                                        {$t('scrapers.excel_export_result', { written: excelExportResult.written })}
                                     </div>
                                     {#if excelExportResult.errors.length > 0}
                                         <div class="import-errors">
@@ -1977,49 +1978,49 @@ Analyze this error and suggest a fix. Be concise.
                                 </div>
                             {/if}
                         {:else if !excelDbLoading}
-                            <div class="excel-empty">No CS- repairs in database yet. Import from Excel first.</div>
+                            <div class="excel-empty">{$t('scrapers.excel_empty')}</div>
                         {/if}
                     </div>
                 {/if}
             </div>
 
             <div class="creds-note">
-                Credentials are read from server <code>.env</code>
-                (OPAL_USERNAME / DHL_USERNAME). Excel file path: <code>EXCEL_REPAIR_FILE</code>.
+                {$t('scrapers.creds_note_pre')} <code>.env</code>
+                {$t('scrapers.creds_note_mid')} <code>EXCEL_REPAIR_FILE</code>.
             </div>
         </div>
 
     {:else if activeTab === "database"}
         <div class="database-section">
             <p class="section-desc">
-                Automated nightly backups run at 3:00 AM (keeps last 7). You can also create or restore backups manually.
+                {$t('scrapers.db_desc')}
             </p>
 
             <div class="db-actions">
                 <button class="run-btn" on:click={createBackup} disabled={dbBackupRunning}>
-                    {#if dbBackupRunning}<span class="spinner">⏳</span> Creating...
-                    {:else}📦 Create Backup Now{/if}
+                    {#if dbBackupRunning}<span class="spinner">⏳</span> {$t('scrapers.creating')}
+                    {:else}{$t('scrapers.create_backup')}{/if}
                 </button>
                 <button class="run-btn refresh-btn" on:click={loadBackups} disabled={dbBackupsLoading}>
                     {#if dbBackupsLoading}<span class="spinner">⏳</span>
-                    {:else}🔄{/if} Refresh
+                    {:else}🔄{/if} {$t('scrapers.refresh_word')}
                 </button>
             </div>
 
             {#if dbBackups.length === 0}
                 <div class="empty-state">
-                    <p>📭 No backups yet</p>
-                    <small>Create your first backup or wait for the nightly job.</small>
+                    <p>{$t('scrapers.empty_backups')}</p>
+                    <small>{$t('scrapers.empty_backups_hint')}</small>
                 </div>
             {:else}
                 <div class="table-container">
                     <table>
                         <thead>
                             <tr>
-                                <th>Filename</th>
-                                <th>Size</th>
-                                <th>Created</th>
-                                <th>Actions</th>
+                                <th>{$t('scrapers.th_filename')}</th>
+                                <th>{$t('scrapers.th_size')}</th>
+                                <th>{$t('scrapers.th_created')}</th>
+                                <th>{$t('scrapers.th_actions')}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -2035,9 +2036,9 @@ Analyze this error and suggest a fix. Be concise.
                                             disabled={dbRestoreRunning !== null}
                                         >
                                             {#if dbRestoreRunning === backup.filename}
-                                                <span class="spinner">⏳</span> Restoring...
+                                                <span class="spinner">⏳</span> {$t('scrapers.restoring')}
                                             {:else}
-                                                ♻️ Restore
+                                                {$t('scrapers.restore')}
                                             {/if}
                                         </button>
                                     </td>
@@ -2052,14 +2053,13 @@ Analyze this error and suggest a fix. Be concise.
     {:else if activeTab === "sync"}
         <div class="sync-section">
             <p class="section-desc">
-                Synchronization history with external services (OPAL, DHL, Odoo).
-                OPAL syncs every hour (on the hour), DHL syncs at :30 past the hour. Active 8 AM - 6 PM.
+                {$t('scrapers.sync_desc')}
             </p>
 
             {#if syncHistory.length === 0}
                 <div class="empty-state">
-                    <p>📭 No sync history yet</p>
-                    <small>Synchronizations will appear automatically</small>
+                    <p>{$t('scrapers.empty_sync')}</p>
+                    <small>{$t('scrapers.empty_sync_hint')}</small>
                 </div>
             {:else}
                 <div class="table-container">
@@ -2067,14 +2067,14 @@ Analyze this error and suggest a fix. Be concise.
                         <thead>
                             <tr>
                                 <th></th>
-                                <th>Time</th>
-                                <th>Provider</th>
-                                <th>Status</th>
-                                <th>Created</th>
-                                <th>Updated</th>
-                                <th>Skipped</th>
-                                <th>Duration</th>
-                                <th>Actions</th>
+                                <th>{$t('scrapers.th_time')}</th>
+                                <th>{$t('scrapers.th_provider')}</th>
+                                <th>{$t('scrapers.th_status')}</th>
+                                <th>{$t('scrapers.th_created')}</th>
+                                <th>{$t('scrapers.th_updated')}</th>
+                                <th>{$t('scrapers.th_skipped')}</th>
+                                <th>{$t('scrapers.th_duration')}</th>
+                                <th>{$t('scrapers.th_actions')}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -2100,7 +2100,7 @@ Analyze this error and suggest a fix. Be concise.
                                     </td>
                                     <td>
                                         <span class="sync-badge" class:success={sync.status === "success"} class:error={sync.status === "error"} class:running={sync.status === "running"}>
-                                            {sync.status === "success" ? "✅ Success" : sync.status === "error" ? "❌ Error" : "⏳ Running"}
+                                            {sync.status === "success" ? $t('scrapers.sync_success') : sync.status === "error" ? $t('scrapers.sync_error') : $t('scrapers.sync_running')}
                                         </span>
                                     </td>
                                     <td class="stat-cell">{sync.created || 0}</td>
@@ -2109,8 +2109,8 @@ Analyze this error and suggest a fix. Be concise.
                                     <td class="duration-cell">{sync.duration ? (sync.duration / 1000).toFixed(1) + "s" : "-"}</td>
                                     <td on:click|stopPropagation>
                                         {#if sync.status === "error" && (sync.errorDetail || sync.debugInfo)}
-                                            <button class="action-btn copy-btn" on:click={() => copyDebugInfo(sync)} title="Copy debug info for AI">
-                                                🤖 Copy for AI
+                                            <button class="action-btn copy-btn" on:click={() => copyDebugInfo(sync)} title={$t('scrapers.copy_debug_tip')}>
+                                                {$t('scrapers.copy_for_ai')}
                                             </button>
                                         {:else}
                                             <span class="muted">-</span>
@@ -2122,40 +2122,40 @@ Analyze this error and suggest a fix. Be concise.
                                         <td colspan="9">
                                             <div class="debug-details">
                                                 <div class="debug-section">
-                                                    <h4>⚠️ Error</h4>
-                                                    <pre class="error-message">{sync.errorDetail || "No error detail"}</pre>
+                                                    <h4>⚠️ {$t('scrapers.debug_error')}</h4>
+                                                    <pre class="error-message">{sync.errorDetail || $t('scrapers.no_error_detail')}</pre>
                                                 </div>
                                                 {#if sync.debugInfo}
                                                     <div class="debug-section">
-                                                        <h4>🔍 Debug Information</h4>
+                                                        <h4>🔍 {$t('scrapers.debug_info')}</h4>
                                                         <div class="debug-grid">
                                                             {#if sync.debugInfo.error_category}
                                                                 <div class="debug-item">
-                                                                    <label>Category:</label>
+                                                                    <label>{$t('scrapers.debug_category')}</label>
                                                                     <span class="category-badge" class:playwright={sync.debugInfo.error_category === "playwright_scraper"}>{sync.debugInfo.error_category}</span>
                                                                 </div>
                                                             {/if}
                                                             {#if sync.debugInfo.likely_cause}
                                                                 <div class="debug-item">
-                                                                    <label>Likely Cause:</label>
+                                                                    <label>{$t('scrapers.debug_cause')}</label>
                                                                     <span class="highlight">{sync.debugInfo.likely_cause}</span>
                                                                 </div>
                                                             {/if}
                                                             {#if sync.debugInfo.ai_analysis_hint}
                                                                 <div class="debug-item">
-                                                                    <label>💡 AI Hint:</label>
+                                                                    <label>{$t('scrapers.debug_ai_hint')}</label>
                                                                     <span class="ai-hint">{sync.debugInfo.ai_analysis_hint}</span>
                                                                 </div>
                                                             {/if}
                                                         </div>
                                                         {#if sync.debugInfo.playwright_stderr}
                                                             <div class="stderr-section">
-                                                                <h5>📋 Playwright Output (stderr):</h5>
+                                                                <h5>{$t('scrapers.debug_stderr')}</h5>
                                                                 <pre class="stderr-output">{sync.debugInfo.playwright_stderr}</pre>
                                                             </div>
                                                         {/if}
                                                         <details class="raw-json">
-                                                            <summary>🔧 Raw Debug JSON</summary>
+                                                            <summary>{$t('scrapers.debug_raw_json')}</summary>
                                                             <pre>{JSON.stringify(sync.debugInfo, null, 2)}</pre>
                                                         </details>
                                                     </div>
@@ -2177,17 +2177,17 @@ Analyze this error and suggest a fix. Be concise.
     <div class="modal-overlay" on:click={() => conflictModalOpen = false}>
         <div class="modal-card conflict-modal" on:click|stopPropagation>
             <div class="modal-header">
-                <h3>Conflict: {currentConflict.repairNumber}</h3>
+                <h3>{$t('scrapers.conflict_title', { num: currentConflict.repairNumber })}</h3>
                 <button class="close-btn" on:click={() => conflictModalOpen = false}>&times;</button>
             </div>
-            <p class="modal-desc">The database already contains information that differs from the Excel file. Please choose which data to keep.</p>
+            <p class="modal-desc">{$t('scrapers.conflict_desc')}</p>
 
             <table class="conflict-table">
                 <thead>
                     <tr>
-                        <th>Field</th>
-                        <th>Current DB Value</th>
-                        <th>Excel Value (Incoming)</th>
+                        <th>{$t('scrapers.th_field')}</th>
+                        <th>{$t('scrapers.th_db_value')}</th>
+                        <th>{$t('scrapers.th_excel_value')}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -2203,10 +2203,10 @@ Analyze this error and suggest a fix. Be concise.
 
             <div class="modal-actions-bar">
                 <button class="btn secondary" on:click={() => conflictModalOpen = false}>
-                    Keep DB Data (Skip)
+                    {$t('scrapers.keep_db')}
                 </button>
                 <button class="btn primary" on:click={resolveConflict}>
-                    Accept Excel Data (Overwrite)
+                    {$t('scrapers.accept_excel')}
                 </button>
             </div>
         </div>

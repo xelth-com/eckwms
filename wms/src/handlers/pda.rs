@@ -44,14 +44,52 @@ fn is_duplicate(msg_id: &str) -> bool {
     seen.insert(msg_id.to_string(), now).is_some()
 }
 
-async fn device_status(state: &AppState, device_id: &str) -> Option<String> {
-    let dev: Option<super::device::DeviceRecord> = state
+/// Resolve a device by its record key (the canonical UUID) first, then — for the
+/// ANDROID_ID→UUID migration window — by its `android_id` field, so a device that
+/// still authenticates with its pre-migration ANDROID_ID subject keeps resolving
+/// to its (now UUID-keyed) row. Soft-deleted tombstones are ignored.
+pub(crate) async fn resolve_device(
+    state: &AppState,
+    id: &str,
+) -> Option<super::device::DeviceRecord> {
+    if id.is_empty() {
+        return None;
+    }
+    // Field query + untyped rows, NOT `select(("registered_device", id))` into
+    // a typed take: since the SurrealDB 3.2.x bump the typed conversion fails
+    // on live rows and `.ok()` turned that into "no such device" — every PDA
+    // got 403 "Device not registered" and the day's trips piled up on the
+    // relay (2026-07-23). See device::devices_from_rows; tombstones are
+    // filtered in code because a `deleted_at = NULL` poison row also defeats
+    // `IS NONE` in a WHERE clause.
+    let mut resp = state
         .db
-        .select(("registered_device", device_id))
+        .query("SELECT * FROM registered_device WHERE device_id = $id LIMIT 3")
+        .bind(("id", id.to_string()))
         .await
-        .ok()
-        .flatten();
-    dev.filter(|d| d.deleted_at.is_none()).map(|d| d.status)
+        .ok()?;
+    let rows: Vec<serde_json::Value> = resp.take(0).ok()?;
+    let by_uuid = super::device::devices_from_rows(rows)
+        .into_iter()
+        .find(|d| d.deleted_at.is_none());
+    if by_uuid.is_some() {
+        return by_uuid;
+    }
+    // Fallback: legacy device still sending its raw ANDROID_ID after migration.
+    let mut resp = state
+        .db
+        .query("SELECT * FROM registered_device WHERE android_id = $aid LIMIT 3")
+        .bind(("aid", id.to_string()))
+        .await
+        .ok()?;
+    let rows: Vec<serde_json::Value> = resp.take(0).ok()?;
+    super::device::devices_from_rows(rows)
+        .into_iter()
+        .find(|d| d.deleted_at.is_none())
+}
+
+async fn device_status(state: &AppState, device_id: &str) -> Option<String> {
+    resolve_device(state, device_id).await.map(|d| d.status)
 }
 
 /// Reject scans/events from unknown or non-active devices.
@@ -90,18 +128,25 @@ pub async fn status(
     Extension(claims): Extension<Claims>,
 ) -> ApiResult<Json<Value>> {
     let mut device_state = "active".to_string();
+    // Canonical UUID of the authenticated device, echoed back so an already-paired
+    // device that still authenticates with its legacy ANDROID_ID subject can adopt
+    // its UUID on the next heartbeat — no re-pairing needed.
+    let mut device_uuid: Option<String> = None;
 
     if claims.auth_method == "ed25519_signature" {
-        match device_status(&state, &claims.sub).await {
-            Some(s) if s == "blocked" => {
+        match resolve_device(&state, &claims.sub).await {
+            Some(dev) if dev.status == "blocked" => {
                 return Err((StatusCode::FORBIDDEN, "Device is blocked".into()))
             }
-            Some(s) => {
-                device_state = s;
+            Some(dev) => {
+                device_state = dev.status.clone();
+                device_uuid = Some(dev.device_id.clone());
+                // Bump last_seen by the resolved canonical id (works whether the
+                // JWT subject is the UUID or a legacy ANDROID_ID).
                 let _ = state
                     .db
                     .query("UPDATE registered_device SET last_seen_at = $now WHERE device_id = $id")
-                    .bind(("id", claims.sub.clone()))
+                    .bind(("id", dev.device_id.clone()))
                     .bind(("now", Utc::now().to_rfc3339()))
                     .await;
             }
@@ -119,6 +164,7 @@ pub async fn status(
         "status": device_state,
         "server": "wms",
         "version": env!("CARGO_PKG_VERSION"),
+        "device_uuid": device_uuid,
         "instance_id": state.instance_id,
         // Mesh identity + tier — the device orders the eckN default nodes by
         // mod3(mesh_id) for its failover list (no single node is the default).
@@ -165,9 +211,13 @@ fn scan_response(
     })
 }
 
-/// Plaintext SmartTag route codes the PDA produces after local decryption:
-/// `i-<uuid>` (item), `p-<uuid>` (place), `b-<uuid>` (box), `l-<uuid>` (label),
-/// `company-/person-/opp-<uuid>` (CRM). Returns (table, response_type, uuid).
+/// Plaintext SmartTag route codes the PDA produces after local decryption.
+/// Canonical single-letter prefixes (the V2 type byte IS the ASCII letter):
+/// `i-` item, `b-` box, `p-` place, `o-` order, `l-` label, `u-` user,
+/// `c-` company, `h-` person (human), `d-` deal/opportunity, `a-` article
+/// (reserved, no route yet). Legacy multi-letter spellings
+/// (`company-/person-/opp-`) stay accepted from old app versions.
+/// Returns (table, response_type, uuid).
 fn parse_typed_code(barcode: &str) -> Option<(&'static str, &'static str, String)> {
     let (prefix, id) = barcode.split_once('-')?;
     // UUID part: 36 chars with dashes re-joined
@@ -183,9 +233,9 @@ fn parse_typed_code(barcode: &str) -> Option<(&'static str, &'static str, String
         "b" | "box" => ("item", "box"),
         "p" | "place" | "loc" => ("location", "place"),
         "l" | "label" => ("item", "label"),
-        "company" => ("partner", "company"),
-        "person" => ("partner", "person"),
-        "opp" => ("partner", "opp"),
+        "c" | "company" => ("partner", "company"),
+        "h" | "person" => ("partner", "person"),
+        "d" | "opp" => ("partner", "opp"),
         _ => return None,
     };
     Some((mapped.0, mapped.1, id))
@@ -505,6 +555,107 @@ pub async fn repair_event(
     Ok(Json(json!({ "success": true })))
 }
 
+// ─── POST /api/repair/consume — write off a part onto a device in repair ─────
+
+fn consume_default_qty() -> f64 {
+    1.0
+}
+
+#[derive(Deserialize)]
+pub struct ConsumeRequest {
+    #[serde(default)]
+    pub source_device_id: String,
+    /// The device (serial) under repair — the part is consumed onto it.
+    #[serde(default)]
+    pub target_device_id: String,
+    /// Barcode of the consumed part (its `default_code`).
+    pub item_barcode: String,
+    /// Optional source shelf; omitted = auto-resolve the part's sole bin.
+    #[serde(default)]
+    pub shelf_barcode: Option<String>,
+    #[serde(default = "consume_default_qty")]
+    pub qty: f64,
+    #[serde(default)]
+    pub acting_user_id: Option<String>,
+}
+
+/// POST /api/repair/consume — decrement a part's bin (mirror of put-away),
+/// record a `part_consumed` repair_event for the GoBD audit trail, and return
+/// the new on-hand. Item-centric: scanning the part is enough when it lives in
+/// one bin. The Odoo projection is a separate, guarded step — it does NOT fire
+/// here.
+pub async fn consume(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ConsumeRequest>,
+) -> ApiResult<Json<Value>> {
+    if !body.source_device_id.is_empty() {
+        require_active_device(&state, &body.source_device_id).await?;
+    }
+
+    use crate::services::binmap::{take, TakeError, TakeReq};
+    let outcome = take(
+        &state,
+        TakeReq {
+            item_barcode: body.item_barcode.clone(),
+            shelf_barcode: body.shelf_barcode.clone(),
+            qty: body.qty,
+        },
+    )
+    .await
+    .map_err(|e| match e {
+        TakeError::UnknownPart(m) | TakeError::NoStock(m) => (StatusCode::NOT_FOUND, m),
+        TakeError::AmbiguousPart(m) => (StatusCode::CONFLICT, m),
+        TakeError::AmbiguousBin(bins) => (
+            StatusCode::CONFLICT,
+            json!({ "error": "ambiguous bin — specify shelf_barcode", "candidates": bins }).to_string(),
+        ),
+        TakeError::Bad(m) => (StatusCode::BAD_REQUEST, m),
+        TakeError::Db(m) => (StatusCode::INTERNAL_SERVER_ERROR, m),
+    })?;
+
+    let now = Utc::now().to_rfc3339();
+    let data = json!({
+        "item_barcode": body.item_barcode,
+        "default_code": outcome.default_code,
+        "location_id": outcome.location_id,
+        "shelf_barcode": outcome.shelf_barcode,
+        "qty_taken": outcome.qty_taken,
+        "shortfall": outcome.shortfall,
+    })
+    .to_string();
+    let _ = state
+        .db
+        .query(
+            "CREATE repair_event SET source_device_id = $src, target_device_id = $tgt, \
+             event_type = 'part_consumed', data = $data, acting_user_id = $au, created_at = $now",
+        )
+        .bind(("src", body.source_device_id.clone()))
+        .bind(("tgt", body.target_device_id.clone()))
+        .bind(("data", data))
+        .bind(("au", body.acting_user_id.clone()))
+        .bind(("now", now))
+        .await
+        .map_err(db_err)?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "product": {
+            "id": outcome.product_id,
+            "name": outcome.product_name,
+            "default_code": outcome.default_code,
+        },
+        "bin": {
+            "location_id": outcome.location_id,
+            "shelf_barcode": outcome.shelf_barcode,
+            "qty_before": outcome.qty_before,
+            "qty_after": outcome.bin_qty_after,
+        },
+        "qty_taken": outcome.qty_taken,
+        "shortfall": outcome.shortfall,
+        "product_onhand": outcome.product_onhand_after,
+    })))
+}
+
 // ─── Multi-user (PIN switching on the PDA) ───────────────────────────────────
 
 /// GET /api/users/active — users available on the PDA user-switch pad
@@ -512,9 +663,9 @@ pub async fn active_users(
     State(state): State<Arc<AppState>>,
 ) -> ApiResult<Json<Vec<Value>>> {
     let users: Vec<Value> = state
-        .users_db
+        .db
         .query(
-            "SELECT record::id(id) AS id, username, name, role FROM user \
+            "SELECT record::id(id) AS id, username, name, role, mustChangePassword FROM user \
              WHERE isActive = true AND deleted_at IS NONE ORDER BY username ASC",
         )
         .await
@@ -538,8 +689,8 @@ pub async fn verify_pin(
     Json(body): Json<VerifyPinRequest>,
 ) -> ApiResult<Json<Value>> {
     let rows: Vec<Value> = state
-        .users_db
-        .query("SELECT pin FROM user WHERE record::id(id) = $uid AND isActive = true AND deleted_at IS NONE LIMIT 1")
+        .db
+        .query("SELECT pin, mustChangePassword FROM user WHERE record::id(id) = $uid AND isActive = true AND deleted_at IS NONE LIMIT 1")
         .bind(("uid", body.user_id.clone()))
         .await
         .map_err(db_err)?
@@ -556,8 +707,14 @@ pub async fn verify_pin(
         return Err((StatusCode::FORBIDDEN, "User has no PIN configured".into()));
     }
 
+    let must_change_password = rows
+        .first()
+        .and_then(|r| r.get("mustChangePassword"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     match eck_core::auth::verify_password(&body.pin, hash) {
-        Ok(true) => Ok(Json(json!({ "success": true }))),
+        Ok(true) => Ok(Json(json!({ "success": true, "mustChangePassword": must_change_password }))),
         _ => Err((StatusCode::UNAUTHORIZED, "Invalid PIN".into())),
     }
 }
@@ -910,14 +1067,14 @@ pub async fn explorer_product_locations(
 
 // ─── CRM (PDA offline CRM workflow) ──────────────────────────────────────────
 //
-// SmartTag V2 CRM codes (`company-/person-/opp-<uuid>`) route to the PDA's
-// CrmEntityScreen. The screen fetches current entity data here and pushes
-// queued offline edits through /api/crm/update.
+// SmartTag V2 CRM codes (`c-/h-/d-<uuid>`, legacy `company-/person-/opp-`)
+// route to the PDA's CrmEntityScreen. The screen fetches current entity data
+// here and pushes queued offline edits through /api/crm/update.
 
 fn crm_table(entity_type: &str) -> Option<&'static str> {
     match entity_type {
-        "company" | "person" => Some("partner"),
-        "opp" | "opportunity" => Some("opportunity"),
+        "c" | "h" | "company" | "person" => Some("partner"),
+        "d" | "opp" | "opportunity" => Some("opportunity"),
         _ => None,
     }
 }

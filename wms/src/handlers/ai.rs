@@ -21,6 +21,114 @@ fn db_err(e: impl std::fmt::Display) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }
 
+/// GET /api/ai/usage — dashboard token-budget gauge + month-end forecast.
+///
+/// Combines the AUTHORITATIVE balance from the token authority (piggybacked on
+/// each mint: remaining / monthly_grant / loan_outstanding / period_ends_at)
+/// with the LOCAL burn rate from `ai_telemetry`, and computes whether the budget
+/// will survive to the period reset. The authority snapshot is ~hourly-stale
+/// (mint TTL), so `remaining` is age-corrected by subtracting tokens metered
+/// locally since the snapshot. Falls back to the old local-only estimate in
+/// studio mode / before the first managed mint (`source: "local"`).
+pub async fn get_ai_usage(
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Json<Value>> {
+    let sum_tokens = |rows: &[Value], k: &str| -> i64 {
+        rows.first()
+            .and_then(|v| v.get(k))
+            .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+            .unwrap_or(0)
+    };
+
+    // 24h spend (legacy gauge fields).
+    let day: Vec<Value> = state.db
+        .query("SELECT count() AS calls, math::sum(total_tokens) AS used \
+                FROM ai_telemetry WHERE timestamp > time::now() - 1d GROUP ALL")
+        .await.and_then(|mut r| r.take(0)).map_err(db_err)?;
+    let used_24h = sum_tokens(&day, "used");
+    let calls_24h = sum_tokens(&day, "calls");
+
+    // 7-day burn rate → tokens/day, the basis of the forecast.
+    let week: Vec<Value> = state.db
+        .query("SELECT math::sum(total_tokens) AS used \
+                FROM ai_telemetry WHERE timestamp > time::now() - 7d GROUP ALL")
+        .await.and_then(|mut r| r.take(0)).map_err(db_err)?;
+    let burn_per_day = (sum_tokens(&week, "used") as f64 / 7.0).max(0.0);
+
+    let mut out = json!({
+        "used_24h": used_24h,
+        "calls_24h": calls_24h,
+        "burn_per_day": burn_per_day.round() as i64,
+    });
+
+    // Wallet is per-MESH (shared). Pull a fresh authority snapshot when ours
+    // is >60s old so every node's gauge shows the same figure; falls back to
+    // the cached (mint/usage-piggybacked) snapshot when the authority is
+    // unreachable, and to the local estimate when never minted.
+    match eck_core::ai::refresh_quota_if_stale(60).await {
+        Some(q) => {
+            let now = chrono::Utc::now();
+            // Age-correct the snapshot: subtract tokens metered locally since the
+            // mint so `remaining` tracks reality between hourly snapshots.
+            let age_secs = (now.timestamp() - q.fetched_at_unix).max(0);
+            let since: Vec<Value> = state.db
+                .query("SELECT math::sum(total_tokens) AS used \
+                        FROM ai_telemetry WHERE timestamp > time::now() - type::duration($d) GROUP ALL")
+                .bind(("d", format!("{}s", age_secs)))
+                .await.and_then(|mut r| r.take(0)).map_err(db_err)?;
+            let used_since = sum_tokens(&since, "used");
+            let remaining_now = (q.tokens_remaining - used_since).max(0);
+            // v3 plan engine: extra packs are drawn after the monthly grant, so
+            // local burn overflowing the grant eats into the extra bucket.
+            let total_available =
+                (q.tokens_remaining + q.extra_balance.max(0) - used_since).max(0);
+            let extra_now = total_available - remaining_now;
+
+            let days_to_end = chrono::DateTime::parse_from_rfc3339(&q.period_ends_at)
+                .ok()
+                .map(|d| (d.timestamp() - now.timestamp()) as f64 / 86_400.0)
+                .unwrap_or(0.0)
+                .max(0.0);
+            let projected_use = burn_per_day * days_to_end;
+            let est_days_left = if burn_per_day > 1.0 {
+                Some(total_available as f64 / burn_per_day)
+            } else {
+                None // negligible burn → effectively unlimited
+            };
+            // Green only when no loan is outstanding AND the budget (monthly +
+            // extra pack) covers the projected spend to the period reset.
+            let will_last =
+                q.loan_outstanding == 0 && (total_available as f64) >= projected_use;
+            let est_empty_at = est_days_left
+                .filter(|d| !will_last) // only surface an exhaustion date when it matters
+                .map(|d| (now + chrono::Duration::seconds((d * 86_400.0) as i64)).to_rfc3339())
+                .unwrap_or_default();
+
+            out["source"] = json!("authority");
+            out["tokens_remaining"] = json!(remaining_now);
+            out["monthly_grant"] = json!(q.monthly_grant);
+            out["loan_outstanding"] = json!(q.loan_outstanding);
+            // v3 plan-engine buckets — 0 until the authority runs the v3 engine.
+            out["extra_balance"] = json!(extra_now);
+            out["credit_used"] = json!(q.loan_outstanding);
+            out["credit_limit"] = json!(q.credit_limit);
+            out["period_ends_at"] = json!(q.period_ends_at);
+            out["days_to_period_end"] = json!(days_to_end.round() as i64);
+            out["will_last"] = json!(will_last);
+            out["est_days_left"] = json!(est_days_left.map(|d| d.round() as i64).unwrap_or(-1));
+            out["est_empty_at"] = json!(est_empty_at);
+            // Legacy key kept = the per-client grant (was a hardcoded 500k).
+            out["promo_cap"] = json!(q.monthly_grant);
+        }
+        None => {
+            out["source"] = json!("local");
+            out["promo_cap"] = json!(500_000);
+        }
+    }
+
+    Ok(Json(out))
+}
+
 #[derive(Deserialize)]
 pub struct TaskQuery {
     pub state: Option<String>,
@@ -134,6 +242,19 @@ pub async fn reply_to_task(
         .check()
         .map_err(db_err)?;
 
+    // Resume the parked task directly — do NOT depend on the orchestrator's
+    // `LIVE SELECT ai_inbox` watcher (gated off by default; embedded SurrealDB live
+    // streams busy-spin a core). The 30s orchestrator poll then claims the now-
+    // `resumed` task. Mirrors what watch_inbox_live did.
+    let _ = state
+        .db
+        .query(
+            "UPDATE type::record($rid) SET state = 'resumed', updated_at = time::now() \
+             WHERE state = 'awaiting_human'",
+        )
+        .bind(("rid", rid.clone()))
+        .await;
+
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({ "status": "queued", "task_id": rid })),
@@ -142,7 +263,7 @@ pub async fn reply_to_task(
 
 // ─── CSV Enrichment ──────────────────────────────────────────────────────────
 
-const ENRICH_SYSTEM_PROMPT: &str = r#"You are a data enrichment assistant for eckWMS (an RMA/repair WMS for InBody medical devices).
+const ENRICH_SYSTEM_PROMPT_TEMPLATE: &str = r#"You are a data enrichment assistant for eckWMS (an RMA/repair WMS for {{PRODUCT_DOMAIN}}).
 
 You will receive ONE headerless CSV row as raw text. Columns are unknown — deduce them from content. Typical fragments include a city/location, a device model (e.g. 770, 270, H20N), and an issue note, in any order, with any separator.
 
@@ -159,6 +280,16 @@ Workflow:
      "confidence_score":    number between 0 and 1 }
 
 Confidence scoring: 0.9+ only when both the order number AND customer name match; 0.6–0.8 when one strong field matches; below 0.4 if you're guessing from weak cues. Do not call more than 2 tools per row."#;
+
+/// The CSV-enrichment system prompt with the tenant's product-domain phrase
+/// spliced in (env `ECK_TENANT_BRAND`/`ECK_TENANT_VERTICAL`; neutral when unset).
+fn enrich_system_prompt() -> &'static str {
+    static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        ENRICH_SYSTEM_PROMPT_TEMPLATE
+            .replace("{{PRODUCT_DOMAIN}}", &crate::ai::branding::product_domain_phrase())
+    })
+}
 
 const ENRICH_MAX_LINES: usize = 200;
 
@@ -308,7 +439,7 @@ where
     for (i, line) in lines.iter().enumerate() {
         let agent = client
             .agent(model)
-            .preamble(ENRICH_SYSTEM_PROMPT)
+            .preamble(enrich_system_prompt())
             .tool(SearchDatabaseTool { db: db.clone() })
             .build();
 

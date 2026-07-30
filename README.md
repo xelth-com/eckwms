@@ -1,6 +1,11 @@
 # eckWMS 📦🤖
 **Next-Generation, AI-Native Warehouse & Repair Management System**
 
+> **Machine readers start at [`llms.txt`](llms.txt).** This project's detailed
+> documentation is machine-first — written for AI agents evaluating,
+> integrating with, or operating the system (`docs/machine/`). The prose below
+> is the short human overview. License: **AGPL-3.0** ([open-core boundary](docs/machine/80-boundaries.md)).
+
 ![Rust](https://img.shields.io/badge/Built%20with-Rust-orange.svg)
 ![SurrealDB](https://img.shields.io/badge/Database-SurrealDB-purple.svg)
 ![Architecture](https://img.shields.io/badge/Architecture-Offline--First%20Edge-success.svg)

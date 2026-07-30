@@ -40,9 +40,9 @@ pub async fn start_scraper() -> impl IntoResponse {
     let scraper_dir = std::env::var("SCRAPER_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
-            // Try ../eckwmsr/scraper (sibling project), then ./scraper
+            // Try ../eckwms/scraper (legacy sibling project), then ./scraper
             let sibling = std::env::current_dir().unwrap_or_default()
-                .parent().unwrap_or(std::path::Path::new(".")).join("eckwmsr").join("scraper");
+                .parent().unwrap_or(std::path::Path::new(".")).join("eckwms").join("scraper");
             if sibling.join("server.js").exists() {
                 sibling
             } else {
@@ -80,8 +80,8 @@ pub async fn start_scraper() -> impl IntoResponse {
     }
 }
 
-/// Reverse proxy: forwards /S/* requests to the Node.js scraper on port 3211.
-/// Strips /S prefix: /S/debug → http://127.0.0.1:3211/debug
+/// Reverse proxy: forwards /S/* requests to the Node.js scraper on port 38211.
+/// Strips /S prefix: /S/debug → http://127.0.0.1:38211/debug
 pub async fn proxy_handler(
     State(state): State<Arc<AppState>>,
     method: Method,
@@ -89,16 +89,21 @@ pub async fn proxy_handler(
     headers: HeaderMap,
     body: Body,
 ) -> Result<Response<Body>, StatusCode> {
-    // Validate JWT
+    // Validate JWT (state.jwt_secret — NOT a separate env read, which fell
+    // back to "" and disagreed with the secret the rest of the app signs with)
     let token = headers
         .get("Authorization")
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_default();
-    if eck_core::auth::validate_token(token, &jwt_secret).is_err() {
-        return Err(StatusCode::UNAUTHORIZED);
+    let claims = eck_core::auth::validate_token(token, &state.jwt_secret)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // Mirror auth_middleware's observer rule: this proxy bypasses that layer,
+    // and the scraper's POST routes trigger logins/scrapes (mutations).
+    if claims.role == "observer" && method != Method::GET {
+        return Err(StatusCode::FORBIDDEN);
     }
 
     // Strip /S prefix

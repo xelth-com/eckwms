@@ -53,6 +53,23 @@ async fn resolve_latest_file(db: &eck_core::db::SurrealDb, initial_id: &str) -> 
     }
 }
 
+/// record::id() of the file_resource row for a CAS uuid — RELATE targets must
+/// be bound record ids: this SurrealDB's RELATE grammar accepts neither bare
+/// function calls nor indexed subquery paths (`(SELECT …)[0].id`) inline.
+async fn file_record_id(db: &eck_core::db::SurrealDb, cas_uuid: &str) -> Option<String> {
+    let rows: Vec<Value> = db
+        .query("SELECT record::id(id) AS rid FROM file_resource WHERE cas_uuid = $fid LIMIT 1")
+        .bind(("fid", cas_uuid.to_string()))
+        .await
+        .ok()?
+        .take(0)
+        .ok()?;
+    rows.first()
+        .and_then(|r| r.get("rid"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 // ─── Upload ──────────────────────────────────────────────────────────────────
 
 /// POST /api/files/upload — Multipart file upload with CAS deduplication.
@@ -81,6 +98,7 @@ pub async fn upload(
     let mut scan_mode = String::new();
     let mut barcode_data = String::new();
     let mut order_id = String::new();
+    let mut user_id = String::new();
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
         (StatusCode::BAD_REQUEST, format!("Multipart error: {}", e))
@@ -132,6 +150,9 @@ pub async fn upload(
             "orderId" => {
                 order_id = field.text().await.unwrap_or_default();
             }
+            "user_id" | "userId" => {
+                user_id = field.text().await.unwrap_or_default();
+            }
             _ => {
                 let _ = field.bytes().await;
             }
@@ -139,6 +160,43 @@ pub async fn upload(
     }
 
     let content = file_data.ok_or((StatusCode::BAD_REQUEST, "Missing file field".into()))?;
+
+    let record = upload_image_core(&state, ImageUploadParams {
+        content, file_name, mime_type, avatar_data, device_id, context,
+        claimed_id, entity_type, entity_id, scan_mode, barcode_data, order_id, user_id,
+    }).await?;
+    Ok((StatusCode::CREATED, Json(record)))
+}
+
+/// Parsed inputs of an image/file upload — shared by the multipart HTTP path
+/// (`upload`) and the relay `image_upload` mesh-task (which base64-decodes the
+/// bytes off the mesh queue), so a phone on mobile data can still land a photo in
+/// CAS through the relay polygon when the LAN master is unreachable.
+pub struct ImageUploadParams {
+    pub content: Vec<u8>,
+    pub file_name: String,
+    pub mime_type: String,
+    pub avatar_data: Option<Vec<u8>>,
+    pub device_id: String,
+    pub context: String,
+    pub claimed_id: Option<String>,
+    pub entity_type: Option<String>,
+    pub entity_id: Option<String>,
+    pub scan_mode: String,
+    pub barcode_data: String,
+    pub order_id: String,
+    /// Logged-in PDA user (server `user` record id). An upload that resolves to
+    /// no order/entity gets parked on this user as a `temp` attachment with a
+    /// one-week TTL instead of landing orphaned.
+    pub user_id: String,
+}
+
+/// CAS-save + dedupe + optional RELATE attachment, callable off the HTTP path.
+pub async fn upload_image_core(state: &Arc<AppState>, p: ImageUploadParams) -> ApiResult<Value> {
+    let ImageUploadParams {
+        content, file_name, mime_type, avatar_data, device_id, mut context,
+        claimed_id, mut entity_type, mut entity_id, scan_mode, barcode_data, order_id, user_id,
+    } = p;
 
     // PDA upload: synthesize a context string from the repair metadata
     if context.is_empty() && !scan_mode.is_empty() {
@@ -168,6 +226,15 @@ pub async fn upload(
 
     let file_record = if let Some(existing) = final_record {
         let final_id = existing.get("cas_uuid").and_then(|v| v.as_str()).unwrap_or(&cas_id);
+        // Re-upload of a previously deleted temp photo: the bytes are back on
+        // disk (store.save above rewrote them), so lift the tombstone.
+        if existing.get("deleted_at").map(|v| !v.is_null()).unwrap_or(false) {
+            let _ = state
+                .db
+                .query("UPDATE file_resource SET deleted_at = NONE WHERE cas_uuid = $fid")
+                .bind(("fid", final_id.to_string()))
+                .await;
+        }
         info!(
             "FileStore: deduplicated upload {} -> existing/optimized {}",
             file_name, final_id
@@ -248,31 +315,85 @@ pub async fn upload(
     }
 
     // Auto-attach via RELATE if entity_type + entity_id provided
+    let mut attached = false;
     if let (Some(et), Some(eid)) = (entity_type, entity_id) {
         if !et.is_empty() && !eid.is_empty() {
-            let relate_result: Result<Vec<Value>, _> = state
-                .db
-                .query(
-                    "RELATE type::record($et, $eid) -> has_attachment -> \
-                     (SELECT id FROM file_resource WHERE cas_uuid = $fid LIMIT 1)[0].id \
-                     SET created_at = time::now(), label = $ctx",
-                )
-                .bind(("et", et.clone()))
-                .bind(("eid", eid.clone()))
-                .bind(("fid", cas_id.clone()))
-                .bind(("ctx", context.clone()))
-                .await
-                .map_err(db_err)?
-                .take(0);
+            let relate_result: Result<Vec<Value>, String> = match file_record_id(&state.db, &cas_id).await {
+                Some(rid) => state
+                    .db
+                    .query(
+                        "RELATE (type::record($et, $eid)) -> has_attachment -> \
+                         (type::record('file_resource', $rid)) \
+                         SET created_at = time::now(), label = $ctx",
+                    )
+                    .bind(("et", et.clone()))
+                    .bind(("eid", eid.clone()))
+                    .bind(("rid", rid))
+                    .bind(("ctx", context.clone()))
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|mut r| r.take(0).map_err(|e| e.to_string())),
+                None => Err("file_resource row not found".into()),
+            };
 
             match relate_result {
-                Ok(_) => info!("Attached file {} to {}:{}", cas_id, et, eid),
+                Ok(_) => {
+                    attached = true;
+                    info!("Attached file {} to {}:{}", cas_id, et, eid);
+                }
                 Err(e) => warn!("RELATE attachment failed (non-fatal): {}", e),
             }
         }
     }
 
-    Ok((StatusCode::CREATED, Json(file_record)))
+    // Orphaned upload (no order/entity resolved): park it on the uploading USER
+    // as a `temp` attachment with a one-week TTL — nothing silently vanishes,
+    // but junk doesn't accumulate either. The PDA settings screen lists these
+    // for review; attaching to a real entity later (attach/redirect) clears the
+    // TTL, and the scheduler sweeps whatever is still unclaimed after a week.
+    if !attached && !user_id.is_empty() {
+        if let Some(rid) = file_record_id(&state.db, &cas_id).await {
+            // Skip when the file already hangs on anything (incl. an earlier temp
+            // park of the same bytes) — a dedup re-upload must not re-park or
+            // refresh the TTL.
+            let edge_count: Result<Vec<Value>, _> = state
+                .db
+                .query(
+                    "SELECT count() AS n FROM has_attachment \
+                     WHERE out = type::record('file_resource', $rid) GROUP ALL",
+                )
+                .bind(("rid", rid.clone()))
+                .await
+                .and_then(|mut r| r.take(0));
+            let has_edges = edge_count
+                .ok()
+                .and_then(|rows| rows.first().and_then(|r| r.get("n").and_then(|v| v.as_i64())))
+                .unwrap_or(0)
+                > 0;
+            if !has_edges {
+                let park: Result<Vec<Value>, _> = state
+                    .db
+                    .query(
+                        "RELATE (type::record('user', $uid)) -> has_attachment -> \
+                         (type::record('file_resource', $rid)) \
+                         SET created_at = time::now(), label = 'temp'; \
+                         UPDATE file_resource SET temp_expires_at = time::now() + 1w \
+                         WHERE cas_uuid = $fid",
+                    )
+                    .bind(("uid", user_id.clone()))
+                    .bind(("rid", rid))
+                    .bind(("fid", cas_id.clone()))
+                    .await
+                    .and_then(|mut r| r.take(0));
+                match park {
+                    Ok(_) => info!("Orphaned upload {} parked on user:{} (temp, 1w TTL)", cas_id, user_id),
+                    Err(e) => warn!("temp park on user failed (non-fatal): {}", e),
+                }
+            }
+        }
+    }
+
+    Ok(file_record)
 }
 
 // ─── Download / Serve ────────────────────────────────────────────────────────
@@ -286,6 +407,12 @@ pub async fn download(
     let record = resolve_latest_file(&state.db, &id)
         .await
         .ok_or((StatusCode::NOT_FOUND, "File not found".into()))?;
+
+    // Deleted temp photos are tombstoned (deleted_at), not dropped — the
+    // tombstone syncs to mesh peers like any record update. Serve nothing.
+    if record.get("deleted_at").map(|v| !v.is_null()).unwrap_or(false) {
+        return Err((StatusCode::NOT_FOUND, "File deleted".into()));
+    }
 
     let mime = record["mime_type"]
         .as_str()
@@ -321,15 +448,42 @@ pub async fn download(
         .ok_or((StatusCode::NOT_FOUND, "No storage path".into()))?;
 
     let store = filestore();
-    let bytes = store
-        .read(storage_path)
-        .await
-        .map_err(|e| (StatusCode::NOT_FOUND, e))?;
+    let mut source = "disk-cas";
+    let bytes = match store.read(storage_path).await {
+        Ok(b) => b,
+        Err(disk_err) => {
+            // Local CAS miss on a row that DID arrive over the mesh: only the
+            // `file_resource` metadata (+ inline avatar) replicates, never the
+            // blob. Pull it from the owning peer once, verify the sha, and land
+            // it in our own CAS — from then on this is a plain disk hit. Lazy by
+            // design: a peer only stores the attachments someone actually opened.
+            let hash = record["hash"].as_str().unwrap_or_default().to_string();
+            if hash.is_empty() {
+                return Err((StatusCode::NOT_FOUND, disk_err));
+            }
+            let fetched = state
+                .sync_engine
+                .fetch_file_from_peers(&hash)
+                .await
+                .ok_or((
+                    StatusCode::NOT_FOUND,
+                    format!("{} (and no mesh peer served {})", disk_err, hash),
+                ))?;
+            if let Err(e) = store.write_verified(storage_path, &fetched, &hash).await {
+                // Serve what we verified-or-failed to cache, but never hand out
+                // bytes that failed the hash check.
+                warn!("Mesh file hydrate {} failed: {}", hash, e);
+                return Err((StatusCode::NOT_FOUND, e));
+            }
+            source = "mesh-peer";
+            fetched
+        }
+    };
 
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, &mime)
-        .header("x-content-source", "disk-cas")
+        .header("x-content-source", source)
         .header(
             header::CONTENT_DISPOSITION,
             format!("inline; filename=\"{}\"", original_name),
@@ -410,16 +564,19 @@ pub async fn attach(
         .unwrap_or("")
         .to_string();
 
+    let rid = file_record_id(&state.db, &file_id)
+        .await
+        .ok_or((StatusCode::NOT_FOUND, "unknown file_id".into()))?;
     let result: Vec<Value> = state
         .db
         .query(
-            "RELATE type::record($et, $eid) -> has_attachment -> \
-             (SELECT id FROM file_resource WHERE cas_uuid = $fid LIMIT 1)[0].id \
+            "RELATE (type::record($et, $eid)) -> has_attachment -> \
+             (type::record('file_resource', $rid)) \
              SET created_at = time::now(), label = $label",
         )
-        .bind(("et", et))
+        .bind(("et", et.clone()))
         .bind(("eid", eid))
-        .bind(("fid", file_id))
+        .bind(("rid", rid))
         .bind(("label", label))
         .await
         .map_err(db_err)?
@@ -427,8 +584,234 @@ pub async fn attach(
         .map_err(db_err)?;
 
     match result.into_iter().next() {
-        Some(v) => Ok((StatusCode::CREATED, Json(v))),
+        Some(v) => {
+            // A real attachment claims the file — clear the temp TTL and drop
+            // the user park edge(s) so it no longer shows as "unbound".
+            if et != "user" {
+                clear_temp_park(&state.db, &file_id).await;
+            }
+            Ok((StatusCode::CREATED, Json(v)))
+        }
         None => Err(db_err("RELATE returned nothing")),
+    }
+}
+
+/// Remove the temp-park state of a file: TTL off, `temp` user edges gone.
+/// Called whenever the file gets attached to a real entity.
+async fn clear_temp_park(db: &eck_core::db::SurrealDb, cas_uuid: &str) {
+    let Some(rid) = file_record_id(db, cas_uuid).await else { return };
+    let r = db
+        .query(
+            "UPDATE file_resource SET temp_expires_at = NONE WHERE cas_uuid = $fid; \
+             DELETE has_attachment \
+             WHERE out = type::record('file_resource', $rid) AND label = 'temp'",
+        )
+        .bind(("fid", cas_uuid.to_string()))
+        .bind(("rid", rid))
+        .await;
+    if let Err(e) = r {
+        warn!("clear_temp_park({}) failed: {}", cas_uuid, e);
+    }
+}
+
+/// POST /api/files/redirect — re-home a user-parked temp photo onto the open
+/// repair order for a scanned serial (same resolution as the upload path).
+/// Body: { "file_id": "<cas_uuid>", "barcode": "<serial>" }
+pub async fn redirect(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let file_id = body["file_id"]
+        .as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "file_id required".into()))?
+        .to_string();
+    let barcode = body["barcode"]
+        .as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "barcode required".into()))?
+        .to_string();
+
+    let rows: Vec<Value> = state
+        .db
+        .query(
+            "SELECT record::id(id) AS rid, order_number FROM order \
+             WHERE serial_number = $key AND status NOT IN ['completed', 'closed', 'cancelled', 'done'] \
+             LIMIT 1",
+        )
+        .bind(("key", barcode.clone()))
+        .await
+        .map_err(db_err)?
+        .take(0)
+        .map_err(db_err)?;
+
+    let Some(row) = rows.first() else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("no open order for serial {barcode} — bind it in repair mode first"),
+        ));
+    };
+    let rid = row.get("rid").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let order_number = row.get("order_number").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+
+    let file_rid = file_record_id(&state.db, &file_id)
+        .await
+        .ok_or((StatusCode::NOT_FOUND, "unknown file_id".into()))?;
+    let relate: Vec<Value> = state
+        .db
+        .query(
+            "RELATE (type::record('order', $eid)) -> has_attachment -> \
+             (type::record('file_resource', $frid)) \
+             SET created_at = time::now(), label = $label",
+        )
+        .bind(("eid", rid.clone()))
+        .bind(("frid", file_rid))
+        .bind(("label", format!("redirect:{barcode}")))
+        .await
+        .map_err(db_err)?
+        .take(0)
+        .map_err(db_err)?;
+    if relate.is_empty() {
+        return Err(db_err("RELATE returned nothing — unknown file_id?"));
+    }
+
+    clear_temp_park(&state.db, &file_id).await;
+    info!("Redirected temp file {} -> order {} ({})", file_id, rid, order_number);
+    Ok(Json(serde_json::json!({
+        "ok": true, "order_id": rid, "order_number": order_number
+    })))
+}
+
+/// DELETE /api/files/temp/:id — delete a user-parked temp photo for good:
+/// attachment edges off, disk bytes off, row tombstoned (`deleted_at` syncs to
+/// mesh peers as a normal update). Refuses when a real attachment exists.
+pub async fn delete_temp(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let rows: Vec<Value> = state
+        .db
+        .query("SELECT cas_uuid, storage_path FROM file_resource WHERE cas_uuid = $fid AND deleted_at IS NONE LIMIT 1")
+        .bind(("fid", id.clone()))
+        .await
+        .map_err(db_err)?
+        .take(0)
+        .map_err(db_err)?;
+    let Some(record) = rows.first() else {
+        return Err((StatusCode::NOT_FOUND, "File not found".into()));
+    };
+
+    let rid = file_record_id(&state.db, &id)
+        .await
+        .ok_or((StatusCode::NOT_FOUND, "File not found".into()))?;
+    let real_edges: Vec<Value> = state
+        .db
+        .query(
+            "SELECT count() AS n FROM has_attachment \
+             WHERE out = type::record('file_resource', $rid) \
+             AND label != 'temp' GROUP ALL",
+        )
+        .bind(("rid", rid.clone()))
+        .await
+        .map_err(db_err)?
+        .take(0)
+        .map_err(db_err)?;
+    if real_edges
+        .first()
+        .and_then(|r| r.get("n").and_then(|v| v.as_i64()))
+        .unwrap_or(0)
+        > 0
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            "file is attached to a real entity — detach first".into(),
+        ));
+    }
+
+    let storage_path = record
+        .get("storage_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    state
+        .db
+        .query(
+            "DELETE has_attachment WHERE out = type::record('file_resource', $rid); \
+             UPDATE file_resource SET deleted_at = time::now(), temp_expires_at = NONE, \
+             avatar_b64 = NONE WHERE cas_uuid = $fid",
+        )
+        .bind(("rid", rid))
+        .bind(("fid", id.clone()))
+        .await
+        .map_err(db_err)?;
+
+    if !storage_path.is_empty() {
+        if let Err(e) = tokio::fs::remove_file(&storage_path).await {
+            warn!("delete_temp: disk remove {} failed: {}", storage_path, e);
+        }
+    }
+    info!("Deleted temp file {}", id);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Scheduler sweep: user-parked temp files past their one-week TTL are removed
+/// exactly like [`delete_temp`] — unless a real attachment appeared meanwhile,
+/// in which case the TTL is simply lifted.
+pub async fn sweep_expired_temp(db: &eck_core::db::SurrealDb) {
+    let rows: Result<Vec<Value>, _> = db
+        .query(
+            "SELECT cas_uuid, storage_path FROM file_resource \
+             WHERE temp_expires_at != NONE AND temp_expires_at < time::now() AND deleted_at IS NONE",
+        )
+        .await
+        .and_then(|mut r| r.take(0));
+    let Ok(rows) = rows else {
+        warn!("[temp-sweep] query failed");
+        return;
+    };
+    if rows.is_empty() {
+        return;
+    }
+    info!("[temp-sweep] {} expired temp file(s)", rows.len());
+    for row in rows {
+        let Some(cas) = row.get("cas_uuid").and_then(|v| v.as_str()) else { continue };
+        let cas = cas.to_string();
+        let Some(rid) = file_record_id(db, &cas).await else { continue };
+        let real: i64 = db
+            .query(
+                "SELECT count() AS n FROM has_attachment \
+                 WHERE out = type::record('file_resource', $rid) \
+                 AND label != 'temp' GROUP ALL",
+            )
+            .bind(("rid", rid.clone()))
+            .await
+            .and_then(|mut r| r.take::<Vec<Value>>(0))
+            .ok()
+            .and_then(|r| r.first().and_then(|x| x.get("n").and_then(|v| v.as_i64())))
+            .unwrap_or(0);
+        if real > 0 {
+            let _ = db
+                .query("UPDATE file_resource SET temp_expires_at = NONE WHERE cas_uuid = $fid")
+                .bind(("fid", cas.clone()))
+                .await;
+            continue;
+        }
+        let _ = db
+            .query(
+                "DELETE has_attachment WHERE out = type::record('file_resource', $rid); \
+                 UPDATE file_resource SET deleted_at = time::now(), temp_expires_at = NONE, \
+                 avatar_b64 = NONE WHERE cas_uuid = $fid",
+            )
+            .bind(("rid", rid))
+            .bind(("fid", cas.clone()))
+            .await;
+        if let Some(path) = row.get("storage_path").and_then(|v| v.as_str()) {
+            if !path.is_empty() {
+                if let Err(e) = tokio::fs::remove_file(path).await {
+                    warn!("[temp-sweep] disk remove {} failed: {}", path, e);
+                }
+            }
+        }
+        info!("[temp-sweep] removed expired temp file {}", cas);
     }
 }
 

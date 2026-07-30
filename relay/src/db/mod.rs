@@ -1,23 +1,18 @@
-use surrealdb::engine::local::{Db, SurrealKv};
-use surrealdb::Surreal;
+/// Backend-agnostic relay DB handle — embedded SurrealKv by default (edge
+/// nodes / kiosks), or the shared remote server when `SURREAL_REMOTE_URL`
+/// is set (paid eck1/eck2/eck3 engines). See `eck_core::db::connect_with_db`.
+pub type RelayDb = eck_core::db::SurrealDb;
 
-pub type RelayDb = Surreal<Db>;
-
-/// Initialize SurrealDB and define tables/indexes for the relay.
+/// Initialize SurrealDB for the relay (database `relay`).
 pub async fn init_db(path: &str) -> Result<RelayDb, surrealdb::Error> {
-    // Ensure the parent directory exists
+    // Ensure the parent directory exists (embedded mode only cares)
     if let Some(parent) = std::path::Path::new(path).parent() {
         let _ = std::fs::create_dir_all(parent);
     }
 
-    let db = Surreal::new::<SurrealKv>(path).await?;
-    db.use_ns("eck").use_db("relay").await?;
-
     // No schema definitions — SurrealDB schemaless mode (same approach as WMS)
     // Tables are auto-created on first write
-
-    tracing::info!("SurrealDB initialized (relay) at: {}", path);
-    Ok(db)
+    eck_core::db::connect_with_db(path, "relay").await
 }
 
 /// Delete expired packets (returns count via SurrealQL count function).

@@ -1,12 +1,27 @@
 <script>
     import { page } from '$app/stores';
     import { onMount, onDestroy } from 'svelte';
+    import { get } from 'svelte/store';
     import { api } from '$lib/api';
-    import { goto } from '$app/navigation';
+    import { goto, afterNavigate } from '$app/navigation';
     import { base } from '$app/paths';
     import { toastStore } from '$lib/stores/toastStore.js';
+    import { wsStore } from '$lib/stores/wsStore.js';
+    import { t, tr, locale, localeName } from '$lib/i18n';
 
     const ticketId = $page.params.id;
+
+    // Remember where we arrived from (map, ticket list, or a related ticket) so
+    // "← Back" returns there instead of always dumping to the list root. null on
+    // a cold load/refresh → Back falls back to the list.
+    let backTo = null;
+    afterNavigate((nav) => {
+        if (nav.from?.url) backTo = nav.from.url.pathname + nav.from.url.search;
+    });
+    function goBack() {
+        if (backTo) goto(backTo);
+        else goto(`${base}/dashboard/support`);
+    }
 
     let ticket = {};   // parent ticket payload from API
     let threads = [];
@@ -29,6 +44,7 @@
 
     onDestroy(() => {
         if (pollTimer) clearTimeout(pollTimer);
+        clearTranslationWatch();
     });
 
     // attachment arrays keyed by document UUID
@@ -36,6 +52,10 @@
 
     onMount(async () => {
         await loadThreadsMeta();
+        // Arm the locale-change watcher only after the first load so the
+        // reactive block below doesn't double-fetch on initial mount.
+        watchedLang = get(locale);
+        localeReady = true;
         loadSimilar();
         // Load all tickets asynchronously for the "Related Tickets" feature
         api.get('/api/support/tickets').then(res => {
@@ -44,26 +64,54 @@
         }).catch(e => console.warn('Failed to load related tickets', e));
     });
 
+    // Re-fetch with the new language if the operator switches locale while the
+    // page is open (the initial fetch is handled by onMount).
+    $: if (localeReady && $locale !== watchedLang) {
+        watchedLang = $locale;
+        showOriginal = false;
+        loadThreadsMeta({ silent: true });
+    }
+
     // Fast path: pull only thread headers + ticket meta. No payload bodies,
     // no attachments, no mesh-fetch. Page renders instantly with the summary
     // and a list of collapsed thread rows. Bodies are fetched per-thread
     // when the operator actually clicks one (see ensureThreadBody).
-    async function loadThreadsMeta() {
-        loading = true;
+    async function loadThreadsMeta(opts = {}) {
+        // `silent` re-fetches (locale switch, show-original toggle, translation_ready)
+        // update the summary in place without flashing the full-page spinner.
+        const silent = opts.silent === true;
+        if (!silent) loading = true;
         error = null;
+        // Cancel any in-flight translation watch from a previous fetch.
+        clearTranslationWatch();
+        // Ask the backend for the summary in the operator's language unless we're
+        // explicitly showing the English original (or the UI is already English).
+        const lang = showOriginal ? 'en' : get(locale);
+        let url = `/api/support/tickets/${ticketId}/threads?meta_only=true`;
+        if (lang && lang !== 'en') url += `&lang=${encodeURIComponent(lang)}`;
         try {
-            const res = await api.get(`/api/support/tickets/${ticketId}/threads?meta_only=true`);
+            const res = await api.get(url);
             ticket = res.ticket || {};
             threads = res.threads || [];
             summary = res.ai_summary || '';
+            // Marked variant carries reveal-highlight sentinels for display; falls
+            // back to the clean text for unauthorised viewers / older backends.
+            summaryMarked = res.ai_summary_marked || res.ai_summary || '';
+            // Translation state: `summary_lang` is the language the text above is
+            // actually in; `summary_pending` = a background translation is running.
+            summaryLang = res.summary_lang || 'en';
+            summaryPending = res.summary_pending === true;
             isFetchingFromPeer = false;
             computeRelatedTickets();
+            // Still translating — re-fetch once the WS event lands, with a ~15 s
+            // fallback re-fetch in case that broadcast is missed.
+            if (summaryPending) armTranslationWatch(lang);
         } catch (e) {
             console.error(e);
             error = e.message;
-            toastStore.add('Failed to load threads', 'error');
+            toastStore.add(tr('support.load_threads_failed'), 'error');
         } finally {
-            loading = false;
+            if (!silent) loading = false;
         }
     }
 
@@ -149,7 +197,7 @@
     $: meta = ticket || threads[0]?.payload?.ticket || {};
     $: company = findVal(meta, ["company", "einrichtung"]);
     $: address = findVal(meta, ["address", "adresse"]);
-    $: deviceModel = findVal(meta, ["inbody model", "inbodymodel"]);
+    $: deviceModel = findVal(meta, ["device model", "device_model", "model"]);
     $: serialNumber = findVal(meta, ["serial", "seriennummer"]);
     $: manufacturingDate = findVal(meta, ["herstellungsdatum", "manufacturing date", "manufacturing"]);
 
@@ -160,10 +208,10 @@
 
         const ageYears = (Date.now() - mfgDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
 
-        if (ageYears < 2.0) return { text: "Warranty Active", class: "w-ok" };
-        if (ageYears < 2.3) return { text: "Likely Warranty (Check Purchase Date)", class: "w-check" };
-        if (ageYears < 2.5) return { text: "Possible Goodwill (Kulanz)", class: "w-goodwill" };
-        return { text: "Out of Warranty", class: "w-expired" };
+        if (ageYears < 2.0) return { key: "warranty_active", class: "w-ok" };
+        if (ageYears < 2.3) return { key: "warranty_likely", class: "w-check" };
+        if (ageYears < 2.5) return { key: "warranty_goodwill", class: "w-goodwill" };
+        return { key: "warranty_expired", class: "w-expired" };
     }
 
     function computeRelatedTickets() {
@@ -221,9 +269,9 @@
     }
 
     function directionLabel(dir) {
-        if (dir === 'in') return { label: 'Inbound', cls: 'inbound' };
-        if (dir === 'out') return { label: 'Outbound', cls: 'outbound' };
-        return { label: dir || '?', cls: 'other' };
+        if (dir === 'in') return { key: 'dir_inbound', cls: 'inbound' };
+        if (dir === 'out') return { key: 'dir_outbound', cls: 'outbound' };
+        return { key: null, label: dir || '?', cls: 'other' };
     }
 
     // Backend now returns scalar header fields at the top level in meta_only
@@ -269,9 +317,84 @@
     }
 
     // ── AI Summary ────────────────────────────────────────────────────────────
-    let summary = '';
+    let summary = '';        // clean text - used for copy / RMA / Repair prefill
+    let summaryMarked = '';  // same text with restored-PII reveal sentinels - display only
     let isSummarizing = false;
     let summaryError = '';
+
+    // ── Summary translation ─────────────────────────────────────────────────────
+    // `summaryLang` = language the displayed summary is actually in ('en' until a
+    // translation lands); `summaryPending` = backend is translating in the
+    // background; `showOriginal` lets the operator flip back to the EN original.
+    let summaryLang = 'en';
+    let summaryPending = false;
+    let showOriginal = false;
+    // WS subscription + fallback timer that re-fetch once a pending translation is
+    // ready. Both are cleared on destroy and before every re-fetch.
+    let translationWsUnsub = null;
+    let translationTimer = null;
+    // Locale-change watcher state (armed by onMount after the first load).
+    let localeReady = false;
+    let watchedLang = null;
+
+    function clearTranslationWatch() {
+        if (translationTimer) { clearTimeout(translationTimer); translationTimer = null; }
+        if (translationWsUnsub) { translationWsUnsub(); translationWsUnsub = null; }
+    }
+
+    // Watch for the `translation_ready` broadcast for THIS ticket + language and
+    // re-fetch once so the freshly-translated summary replaces the pending one.
+    // The WS `source` is a Thing literal (document:`<id>`), so match by id.
+    function armTranslationWatch(lang) {
+        clearTranslationWatch();
+        let primed = false; // skip the synchronous replay of the store's current value
+        translationWsUnsub = wsStore.subscribe((s) => {
+            if (!primed) { primed = true; return; }
+            const m = s?.lastMessage;
+            if (!m || m.type !== 'translation_ready' || m.field !== 'summary') return;
+            if (m.lang !== lang) return;
+            if (typeof m.source === 'string' && !m.source.includes(ticketId)) return;
+            loadThreadsMeta({ silent: true });
+        });
+        translationTimer = setTimeout(() => {
+            translationTimer = null;
+            loadThreadsMeta({ silent: true });
+        }, 15000);
+    }
+
+    // Flip between the machine translation and the English original.
+    function toggleOriginal() {
+        showOriginal = !showOriginal;
+        loadThreadsMeta({ silent: true });
+    }
+
+    // Reveal sentinels (Unicode PUA) the backend wraps around each PII value it
+    // restored for authorised staff. Render restored values as a yellow highlight
+    // and flag any leftover Name_*/Email_* tokens (PII we could NOT restore from
+    // locally-available raw data) so it's obvious which is which. Built via
+    // fromCharCode to keep this source pure-ASCII.
+    const PII_OPEN = String.fromCharCode(0xE000);
+    const PII_CLOSE = String.fromCharCode(0xE001);
+    const PII_TOKEN_RE = /\b(?:Name|Email|Phone|Company|Address|Iban|VatId|Card)_[0-9A-F]{16}\b/g;
+    function escapeHtml(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function highlightSummary(s) {
+        if (!s) return '';
+        // Escape first (sentinels survive), then convert sentinels into highlight
+        // spans. Only when a reveal actually happened (a sentinel is present, i.e.
+        // the viewer is authorised) do we flag leftover tokens that could NOT be
+        // restored, so an unauthorised viewer's masked summary isn't mislabelled.
+        // Token pass runs last so it can't match inside a restored value.
+        let html = escapeHtml(s)
+            .split(PII_OPEN).join(`<span class="pii-revealed" title="${tr('support.pii_restored_title')}">`)
+            .split(PII_CLOSE).join('</span>');
+        if (s.includes(PII_OPEN)) {
+            html = html.replace(PII_TOKEN_RE,
+                (m) => `<span class="pii-unrevealed" title="${tr('support.pii_unrestored_title')}">${m}</span>`);
+        }
+        return html;
+    }
 
     async function generateSummary() {
         isSummarizing = true;
@@ -279,10 +402,17 @@
         try {
             const res = await api.post(`/api/support/tickets/${ticketId}/summary`, {});
             summary = res.summary ?? '';
-            if (!summary) summaryError = 'AI returned an empty response.';
+            summaryMarked = res.ai_summary_marked ?? summary;
+            // Freshly generated summary is the EN source again; drop any stale
+            // translation state (a re-fetch will re-resolve it for the locale).
+            summaryLang = 'en';
+            summaryPending = false;
+            showOriginal = false;
+            clearTranslationWatch();
+            if (!summary) summaryError = tr('support.ai_empty_response');
         } catch (e) {
             summaryError = e.message;
-            toastStore.add('AI summary failed: ' + e.message, 'error');
+            toastStore.add(tr('support.ai_summary_failed', { error: e.message }), 'error');
         } finally {
             isSummarizing = false;
         }
@@ -319,9 +449,9 @@
     async function resetToHQ() {
         try {
             await fixLocationCall({ table: 'document', id: ticketId, mode: 'reset_home' });
-            toastStore.add('Pin reset to HQ', 'success');
+            toastStore.add(tr('support.pin_reset_hq'), 'success');
         } catch (e) {
-            toastStore.add('Reset failed: ' + e.message, 'error');
+            toastStore.add(tr('support.reset_failed', { error: e.message }), 'error');
         }
     }
 
@@ -329,7 +459,7 @@
         const zip = fixZip.trim();
         const city = fixCity.trim();
         if (!zip && !city) {
-            toastStore.add('Enter zip or city', 'warning');
+            toastStore.add(tr('support.enter_zip_city'), 'warning');
             return;
         }
         try {
@@ -340,11 +470,11 @@
                 zip: zip || null,
                 city: city || null,
             });
-            toastStore.add('Address saved — geocoder will reprocess shortly', 'success');
+            toastStore.add(tr('support.address_saved'), 'success');
             fixZip = '';
             fixCity = '';
         } catch (e) {
-            toastStore.add('Save failed: ' + e.message, 'error');
+            toastStore.add(tr('support.save_failed', { error: e.message }), 'error');
         }
     }
 
@@ -374,13 +504,13 @@
 
     async function copyForAI() {
         if (!threads || threads.length === 0) {
-            toastStore.add('No threads to copy', 'warning');
+            toastStore.add(tr('support.no_threads_copy'), 'warning');
             return;
         }
 
         // Pull every body that isn't cached yet — sequential, so we don't
         // dogpile the source node when 30+ threads need a mesh-fetch.
-        toastStore.add('Loading thread bodies...', 'info', 2000);
+        toastStore.add(tr('support.loading_thread_bodies'), 'info', 2000);
         for (const t of threads) {
             if (threadBodies[t.id] === undefined && t.payload?.content === undefined) {
                 await ensureThreadBody(t.id);
@@ -403,7 +533,7 @@
         }).filter(Boolean);
 
         if (parts.length === 0) {
-            toastStore.add('No readable text found in threads', 'warning');
+            toastStore.add(tr('support.no_readable_text'), 'warning');
             return;
         }
 
@@ -411,24 +541,23 @@
 
         try {
             await navigator.clipboard.writeText(fullText);
-            toastStore.add('Copied! Paste it into ChatGPT, Claude, or Gemini.', 'success', 4000);
+            toastStore.add(tr('support.copied_paste_ai'), 'success', 4000);
         } catch (err) {
-            toastStore.add('Failed to copy: ' + err.message, 'error');
+            toastStore.add(tr('support.copy_failed', { error: err.message }), 'error');
         }
     }
 </script>
 
 <div class="detail-page">
     <div class="back-link">
-        <button class="back-btn" on:click={() => goto(`${base}/dashboard/support`)}>
-            ← Back to tickets
-        </button>
+        <button class="back-btn" on:click={goBack} title={$t('support.back_title')}>{$t('support.back')}</button>
+        <button class="back-btn back-btn-up" on:click={() => goto(`${base}/dashboard/support`)} title={$t('support.all_tickets_title')}>{$t('support.all_tickets')}</button>
     </div>
 
     {#if loading}
-        <div class="loading">Loading threads...</div>
+        <div class="loading">{$t('support.loading_threads')}</div>
     {:else if error}
-        <div class="error-box">Failed to load: {error}</div>
+        <div class="error-box">{$t('support.failed_to_load', { error })}</div>
     {:else}
         <header class="ticket-header">
             <div class="ticket-meta">
@@ -437,23 +566,23 @@
                     <span class="status-chip {statusClass(ticketStatus)}">{ticketStatus}</span>
                 {/if}
                 <div class="header-actions">
-                    <button class="copy-ai-btn" on:click={copyForAI} disabled={threads.length === 0} title="Copy cleaned text & prompt to clipboard">
-                        Copy for AI
+                    <button class="copy-ai-btn" on:click={copyForAI} disabled={threads.length === 0} title={$t('support.copy_ai_title')}>
+                        {$t('support.copy_for_ai')}
                     </button>
                     <button class="ai-btn" on:click={generateSummary} disabled={isSummarizing || threads.length === 0}>
                         {#if isSummarizing}
-                            <span class="spinner">...</span> Summarizing
+                            <span class="spinner">...</span> {$t('support.summarizing')}
                         {:else if summary}
-                            Regenerate Summary
+                            {$t('support.regenerate_summary')}
                         {:else}
-                            Summarize with AI
+                            {$t('support.summarize_with_ai')}
                         {/if}
                     </button>
                     <button class="rma-btn" on:click={createRMA} disabled={threads.length === 0}>
-                        Create RMA
+                        {$t('support.create_rma')}
                     </button>
                     <button class="repair-btn" on:click={createRepair} disabled={threads.length === 0}>
-                        Create Repair
+                        {$t('support.create_repair')}
                     </button>
                 </div>
             </div>
@@ -462,7 +591,7 @@
                 <div class="ticket-customer-box">
                     <div class="box-icon">👤</div>
                     <div class="box-details">
-                        <div class="box-title">{customer || 'Unknown Customer'}</div>
+                        <div class="box-title">{customer || $t('support.unknown_customer')}</div>
                         <div class="box-sub">
                             {#if company}<div class="c-item">🏢 {company}</div>{/if}
                             {#if customerEmail}<div class="c-item">✉️ {customerEmail}</div>{/if}
@@ -477,12 +606,12 @@
                         <div class="box-details">
                             <div class="box-title">{deviceModel || 'Unknown Device'}</div>
                             <div class="box-sub">
-                                {#if serialNumber}<div class="c-item mono">SN: {serialNumber}</div>{/if}
+                                {#if serialNumber}<div class="c-item mono">{$t('support.sn_label')} {serialNumber}</div>{/if}
                                 {#if manufacturingDate}
-                                    <div class="c-item">Mfg: {new Date(manufacturingDate).toLocaleDateString('de-DE')}</div>
+                                    <div class="c-item">{$t('support.mfg_label')} {new Date(manufacturingDate).toLocaleDateString('de-DE')}</div>
                                     {@const wStatus = getWarrantyStatus(manufacturingDate)}
                                     {#if wStatus}
-                                        <div class="warranty-badge {wStatus.class}">{wStatus.text}</div>
+                                        <div class="warranty-badge {wStatus.class}">{$t('support.' + wStatus.key)}</div>
                                     {/if}
                                 {/if}
                             </div>
@@ -492,18 +621,18 @@
             </div>
 
             <div class="fix-location-bar">
-                <span class="fix-label">📍 Wrong pin on the map?</span>
-                <input type="text" placeholder="Zip (e.g. 60325)" bind:value={fixZip} disabled={fixBusy} class="fix-input" />
-                <input type="text" placeholder="City (e.g. Frankfurt)" bind:value={fixCity} disabled={fixBusy} class="fix-input" />
-                <button class="fix-btn primary" on:click={saveFixLocation} disabled={fixBusy}>Save &amp; re-geocode</button>
-                <button class="fix-btn warn" on:click={resetToHQ} disabled={fixBusy}>Reset to HQ</button>
+                <span class="fix-label">{$t('support.wrong_pin')}</span>
+                <input type="text" placeholder={$t('support.zip_placeholder')} bind:value={fixZip} disabled={fixBusy} class="fix-input" />
+                <input type="text" placeholder={$t('support.city_placeholder')} bind:value={fixCity} disabled={fixBusy} class="fix-input" />
+                <button class="fix-btn primary" on:click={saveFixLocation} disabled={fixBusy}>{$t('support.save_regeocode')}</button>
+                <button class="fix-btn warn" on:click={resetToHQ} disabled={fixBusy}>{$t('support.reset_to_hq')}</button>
             </div>
         </header>
 
         {#if relatedTickets.length > 0}
             <div class="related-tickets-banner">
                 <div class="related-content">
-                    <strong>Found {relatedTickets.length} related ticket{relatedTickets.length > 1 ? 's' : ''}</strong> from the same customer or domain:
+                    <strong>{relatedTickets.length > 1 ? $t('support.related_found_bold_plural', { count: relatedTickets.length }) : $t('support.related_found_bold_one', { count: relatedTickets.length })}</strong> {$t('support.related_found_suffix')}
                     <div class="related-links">
                         {#each relatedTickets as rt}
                             <a href="{base}/dashboard/support/{rt.ticket_id}" class="related-link">
@@ -517,9 +646,9 @@
 
         {#if similarLoading || similarEntities.length > 0}
             <div class="semantic-matches-panel">
-                <div class="semantic-title">AI Semantic Matches</div>
+                <div class="semantic-title">{$t('support.semantic_matches')}</div>
                 {#if similarLoading}
-                    <div class="semantic-loading">Searching for similar entities...</div>
+                    <div class="semantic-loading">{$t('support.searching_entities')}</div>
                 {:else}
                     <div class="semantic-list">
                         {#each similarEntities as entity}
@@ -528,7 +657,7 @@
                                 href="{base}/dashboard/{entity.entity_type === 'ticket' ? 'support' : 'repairs'}/{entity.entity_id}"
                             >
                                 <span class="sem-type-badge" class:sem-ticket={entity.entity_type === 'ticket'} class:sem-repair={entity.entity_type === 'repair'}>
-                                    {entity.entity_type}
+                                    {entity.entity_type === 'ticket' ? $t('support.type_ticket') : entity.entity_type === 'repair' ? $t('support.type_repair') : entity.entity_type}
                                 </span>
                                 <span class="sem-label">{entity.label}</span>
                                 <span class="sem-score">{Math.round(entity.similarity * 100)}%</span>
@@ -541,23 +670,36 @@
 
         {#if summary || isSummarizing || summaryError}
             <div class="summary-panel">
-                <div class="summary-title">AI Summary</div>
+                <div class="summary-header">
+                    <div class="summary-title">{$t('support.ai_summary_title')}</div>
+                    {#if summaryPending}
+                        <span class="tr-badge tr-pending">{$t('support.translating_to', { lang: localeName($locale) })}</span>
+                    {:else if $locale !== 'en' && summary}
+                        {#if showOriginal}
+                            <span class="tr-badge">{$t('support.showing_original')}</span>
+                            <button class="tr-toggle" on:click={toggleOriginal}>{$t('support.show_translation')}</button>
+                        {:else if summaryLang !== 'en'}
+                            <span class="tr-badge">{$t('support.translated_badge')}</span>
+                            <button class="tr-toggle" on:click={toggleOriginal}>{$t('support.show_original')}</button>
+                        {/if}
+                    {/if}
+                </div>
                 {#if isSummarizing}
-                    <div class="summary-loading">Generating summary...</div>
+                    <div class="summary-loading">{$t('support.generating_summary')}</div>
                 {:else if summaryError}
                     <div class="summary-error">{summaryError}</div>
                 {:else}
-                    <div class="summary-text">{summary}</div>
+                    <div class="summary-text">{@html highlightSummary(summaryMarked || summary)}</div>
                     <div class="summary-actions">
-                        <button class="use-as-issue-btn" on:click={createRMA}>-> Use for new RMA</button>
-                        <button class="use-as-issue-btn" on:click={createRepair}>-> Use for new Repair</button>
+                        <button class="use-as-issue-btn" on:click={createRMA}>{$t('support.use_for_rma')}</button>
+                        <button class="use-as-issue-btn" on:click={createRepair}>{$t('support.use_for_repair')}</button>
                     </div>
                 {/if}
             </div>
         {/if}
 
         {#if threads.length === 0}
-            <div class="empty-state">No threads found for this ticket.</div>
+            <div class="empty-state">{$t('support.no_threads')}</div>
         {:else}
             <div class="thread-list">
                 {#each threads as thread (thread.id)}
@@ -577,15 +719,20 @@
                             expandedThreads = expandedThreads;
                         }}>
                             <span class="expand-arrow">{isExpanded ? '▼' : '▶'}</span>
-                            <span class="dir-badge {dir.cls}">{dir.label}</span>
+                            <span class="dir-badge {dir.cls}">{dir.key ? $t('support.' + dir.key) : dir.label}</span>
                             <span class="thread-from">{threadFrom(thread)}</span>
+                            {#if thread.body_pending && threadBodies[thread.id] === undefined}
+                                <!-- Body lives on the ticket's home node (raw texts don't
+                                     mesh) — signal that a click will fetch it on demand. -->
+                                <span class="remote-badge" title={$t('support.body_on_home_node_tip')}>☁ {$t('support.remote_body_badge')}</span>
+                            {/if}
                             <span class="thread-date">{formatDate(threadCreatedTime(thread))}</span>
                         </div>
 
                         {#if isExpanded}
                             {#if fetching}
                                 <div class="thread-empty">
-                                    <span class="spinner">⏳</span> Loading from source node...
+                                    <span class="spinner">⏳</span> {$t('support.loading_source_node')}
                                 </div>
                             {:else if body}
                                 <div class="thread-body-wrapper">
@@ -593,8 +740,19 @@
                                         {@html body}
                                     </div>
                                 </div>
+                            {:else if thread.body_pending}
+                                <!-- Fetch stalled or was abandoned (collapse mid-poll,
+                                     home node offline) — give the operator an explicit
+                                     retry instead of a dead "(no content)". -->
+                                <div class="thread-empty">
+                                    <button class="fetch-btn" on:click|stopPropagation={() => {
+                                        threadFetching[thread.id] = false;
+                                        threadFetching = threadFetching;
+                                        ensureThreadBody(thread.id);
+                                    }}>☁ {$t('support.fetch_from_home')}</button>
+                                </div>
                             {:else}
-                                <div class="thread-empty">(no content)</div>
+                                <div class="thread-empty">{$t('support.no_content')}</div>
                             {/if}
 
                             {#if attachments[thread.id]?.length}
@@ -611,7 +769,7 @@
                                                 <img
                                                     class="att-thumb"
                                                     src="{base}/api/files/{att.file_id}"
-                                                    alt="attachment"
+                                                    alt={$t('support.attachment_alt')}
                                                 />
                                             {:else}
                                                 <span class="att-icon">{fileIcon(att.mime_type)}</span>
@@ -630,6 +788,27 @@
 </div>
 
 <style>
+    .remote-badge {
+        font-size: 0.72rem;
+        padding: 0.1rem 0.45rem;
+        border-radius: 999px;
+        border: 1px solid rgba(74, 105, 189, 0.55);
+        color: #a3bffa;
+        background: rgba(74, 105, 189, 0.12);
+        white-space: nowrap;
+    }
+    .fetch-btn {
+        background: rgba(74, 105, 189, 0.15);
+        border: 1px solid #4a69bd;
+        color: #a3bffa;
+        padding: 0.35rem 0.9rem;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.85rem;
+    }
+    .fetch-btn:hover {
+        background: rgba(74, 105, 189, 0.3);
+    }
     .peer-fetching-banner {
         background: rgba(74, 105, 189, 0.15);
         border: 1px solid #4a69bd;
@@ -662,6 +841,8 @@
         transition: color 0.2s;
     }
     .back-btn:hover { color: #93c5fd; }
+    .back-btn-up { margin-left: 1.25rem; color: #888; }
+    .back-btn-up:hover { color: #ccc; }
 
     .loading { color: #aaa; text-align: center; padding: 3rem; }
     .error-box {
@@ -977,14 +1158,52 @@
         padding: 1.25rem 1.5rem;
         margin-bottom: 1.5rem;
     }
+    .summary-header {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.75rem;
+    }
     .summary-title {
         font-size: 0.75rem;
         font-weight: 700;
         text-transform: uppercase;
         color: #a855f7;
         letter-spacing: 0.5px;
-        margin-bottom: 0.75rem;
     }
+    /* Summary translation badge + toggle */
+    .tr-badge {
+        font-size: 0.65rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        padding: 0.12rem 0.5rem;
+        border-radius: 10px;
+        background: #2a1a4a;
+        color: #c4b5fd;
+        border: 1px solid #6d28d9;
+    }
+    .tr-badge.tr-pending {
+        background: #3a2a0a;
+        color: #fcd34d;
+        border-color: #b45309;
+        animation: tr-pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes tr-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.45; }
+    }
+    .tr-toggle {
+        background: none;
+        border: none;
+        color: #a855f7;
+        font-size: 0.72rem;
+        cursor: pointer;
+        padding: 0;
+        text-decoration: underline;
+    }
+    .tr-toggle:hover { color: #d8b4fe; }
     .summary-loading { color: #888; font-style: italic; }
     .summary-error { color: #fbbf24; font-size: 0.85rem; }
     .summary-text {
@@ -992,6 +1211,24 @@
         font-size: 0.9rem;
         line-height: 1.7;
         white-space: pre-wrap;
+    }
+    /* PII the backend restored locally for authorised staff - yellow highlight. */
+    .summary-text :global(.pii-revealed) {
+        background: #fde047;
+        color: #1a1a1a;
+        border-radius: 2px;
+        padding: 0 2px;
+        font-weight: 500;
+    }
+    /* PII left masked because its source isn't on this node - flag it so it's
+       clear why not everything is yellow. */
+    .summary-text :global(.pii-unrevealed) {
+        background: rgba(239, 68, 68, 0.18);
+        color: #fca5a5;
+        border-radius: 2px;
+        padding: 0 2px;
+        font-family: monospace;
+        font-size: 0.82em;
     }
     .use-as-issue-btn {
         margin-top: 0.75rem;

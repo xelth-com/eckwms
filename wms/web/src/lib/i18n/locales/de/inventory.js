@@ -1,0 +1,16 @@
+export default {
+    title: 'Inventar',
+    load_failed: 'Laden fehlgeschlagen: {error}',
+    discrepancies_only: 'Nur Abweichungen',
+    refresh: 'Aktualisieren',
+    loading: 'Wird geladen…',
+    empty: 'Noch nichts gezählt. Zählen Sie im Bildschirm Lager → Inventur.',
+    summary: '{rows} Zeilen · {pcs} Stück gezählt insgesamt',
+    th_time: 'Zeit',
+    th_location: 'Lagerort',
+    th_warehouse: 'Lager',
+    th_code: 'Code',
+    th_name: 'Name',
+    th_ist: 'Ist',
+    th_soll: 'Soll',
+};

@@ -6,6 +6,7 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
     import { api } from '$lib/api';
+    import { t, tr } from '$lib/i18n';
 
     export let targetLat = null;
     export let targetLng = null;
@@ -68,7 +69,7 @@
             const res = await api.get(`/api/geo/nearby?target_lat=${targetLat}&target_lng=${targetLng}`);
             tasks = res;
         } catch (e) {
-            error = e.message || 'Failed to load nearby tasks';
+            error = e.message || tr('map.load_nearby_failed');
             loading = false;
             return;
         }
@@ -87,7 +88,7 @@
         // Office marker
         window.L.marker([officeLat, officeLng], { icon: emojiIcon('🏢', 30) })
             .addTo(map)
-            .bindPopup('<b>Office (Eschborn)</b>');
+            .bindPopup(`<b>${tr('map.office_popup')}</b>`);
 
         // Target marker
         window.L.marker([targetLat, targetLng], { icon: emojiIcon('⭐', 30) })
@@ -107,7 +108,7 @@
                 .bindPopup(`
                     <b>${t.orderNumber}</b><br/>
                     ${t.customerName}<br/>
-                    <span style="color:${markerColor(t.cost)}">Cost: ${t.cost.toFixed(2)}</span> &middot; ${t.distanceKm.toFixed(1)} km
+                    <span style="color:${markerColor(t.cost)}">${tr('map.cost_label')} ${t.cost.toFixed(2)}</span> &middot; ${t.distanceKm.toFixed(1)} km
                 `);
         }
 
@@ -133,7 +134,7 @@
 <div class="geo-route-map-container">
     <div class="map-panel">
         {#if loading}
-            <div class="map-loading">Loading map...</div>
+            <div class="map-loading">{$t('map.loading_map_leaflet')}</div>
         {/if}
         {#if error}
             <div class="map-error">{error}</div>
@@ -142,9 +143,9 @@
     </div>
 
     <div class="list-panel">
-        <h3>Nearby Tasks ({tasks.length})</h3>
+        <h3>{$t('map.nearby_tasks', { count: tasks.length })}</h3>
         {#if tasks.length === 0 && !loading}
-            <p class="empty">No geocoded tasks found.</p>
+            <p class="empty">{$t('map.no_geocoded')}</p>
         {/if}
         <ul class="task-list">
             {#each tasks as task, i}
@@ -154,10 +155,10 @@
                         <div class="task-title">{task.orderNumber}</div>
                         <div class="task-sub">{task.customerName}</div>
                         <div class="task-meta">
-                            {task.distanceKm.toFixed(1)} km &middot; cost {task.cost.toFixed(2)}
+                            {task.distanceKm.toFixed(1)} km &middot; {$t('map.cost', { cost: task.cost.toFixed(2) })}
                         </div>
                     </div>
-                    <span class="badge {badgeClass(task.badge)}">{task.badge}</span>
+                    <span class="badge {badgeClass(task.badge)}">{task.badge === 'Bingo' ? $t('map.badge_bingo') : task.badge === 'Normal' ? $t('map.badge_normal') : $t('map.badge_far')}</span>
                 </li>
             {/each}
         </ul>

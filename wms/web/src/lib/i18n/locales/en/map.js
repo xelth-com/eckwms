@@ -1,0 +1,62 @@
+export default {
+    // DashboardMap — toasts
+    pin_moved_hq: 'Pin moved to HQ',
+    reset_failed: 'Reset failed: {error}',
+    visit_planned: 'Visit planned: {ref}',
+    plan_failed: 'Planning failed: {error}',
+    ship_delivered: 'Shipment marked as delivered',
+    resolve_failed: 'Resolve failed: {error}',
+    speech_unavailable: 'Speech recognition not available in browser',
+
+    // DashboardMap — popups
+    open_repair: 'Open Repair',
+    open_ticket: 'Open Ticket',
+    type_repair: 'Repair (Physical)',
+    type_ticket: 'Ticket (Online)',
+    status_label: 'Status:',
+    reset_hq: '📍 Reset to HQ',
+    plan_visit: '📅 Plan visit',
+    stuck_days: '⚠️ Stuck {days} days',
+    carrier_status: 'Carrier status:',
+    carrier_glitch: 'Possible carrier feed glitch — confirm delivery manually.',
+    mark_delivered: 'Mark as delivered',
+    km_actual: '{km} km (odometer)',
+    km_estimated: '{km} km (estimated)',
+    gobd_sealed: '🔒 GoBD-sealed',
+    trip: 'Trip',
+    start: 'Start',
+    finish: 'Finish',
+    in_progress: 'In progress',
+    stop: 'Stop',
+    more: '+{count} more…',
+    tasks_here: '{count} tasks here',
+
+    // DashboardMap — markup
+    loading_map: 'Loading Map…',
+    filter_assignee: 'Filter by assignee',
+    search_placeholder: 'Search no. / customer…',
+    clear_tip: 'Clear',
+    dictate_tip: 'Dictate',
+    assignee_repairs: 'Repairs',
+    assignee_unassigned: 'Unassigned',
+
+    // GeoRouteWidget
+    searching: 'Searching...',
+    find_nearby: 'Find Nearby Tasks on Route',
+    no_coords: 'No coordinates available',
+    fetch_failed: 'Failed to fetch nearby tasks',
+    badge_bingo: 'Bingo',
+    badge_normal: 'Normal',
+    badge_far: 'Far',
+    km_to_target: '{km} km to target',
+    cost: 'cost: {cost}',
+    route_empty: 'Click the button to find tasks along the route.',
+
+    // GeoRouteMap
+    load_nearby_failed: 'Failed to load nearby tasks',
+    office_popup: 'Office (Eschborn)',
+    cost_label: 'Cost:',
+    loading_map_leaflet: 'Loading map...',
+    nearby_tasks: 'Nearby Tasks ({count})',
+    no_geocoded: 'No geocoded tasks found.',
+};

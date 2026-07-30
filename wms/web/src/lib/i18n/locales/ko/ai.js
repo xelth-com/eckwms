@@ -1,0 +1,22 @@
+// AI 운영자 수신함.
+export default {
+    new_task_notify: "새 AI 작업에 주의가 필요합니다",
+    load_failed: "AI 작업을 불러오지 못했습니다",
+    enter_reply: "답변을 입력하세요",
+    reply_sent: "AI에 답변을 보냈습니다",
+    reply_failed: "답변을 보내지 못했습니다: {error}",
+    no_question: "AI가 일시 중지했지만 구체적인 질문을 제공하지 않았습니다.",
+    page_title: "AI 운영자 수신함",
+    refreshing: "새로고침 중…",
+    refresh: "새로고침",
+    page_desc: "사람의 개입이 필요한 작업입니다. AI 브레인이 실행을 일시 중지하고 진행을 위해 입력을 기다리고 있습니다.",
+    loading_tasks: "대기 중인 작업을 불러오는 중…",
+    error_generic: "오류: {error}",
+    empty_state: "모두 완료되었습니다. 사람의 입력을 기다리는 작업이 없습니다.",
+    task_label: "작업: {id}",
+    context_label: "컨텍스트",
+    ai_question_label: "AI 질문",
+    reply_placeholder: "여기에 AI에 대한 답변을 입력하세요…",
+    sending: "보내는 중…",
+    send_reply: "답변 보내기",
+};

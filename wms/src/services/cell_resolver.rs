@@ -291,6 +291,30 @@ async fn seal_trip(
         fahrtenbuch_canonical(FAHRTENBUCH_CANONICAL_VERSION, trip, trip_id, distance, odometer_gap_km);
     let hash = hex::encode(Sha256::digest(canonical.as_bytes()));
 
+    // IDEMPOTENT SEAL — the crux of the trip mesh non-convergence.
+    // Every node runs this resolver, and `hedera_seals` (which carries a per-node
+    // wall-clock `sealed_at`) is part of the merkle content hash. Appending a fresh
+    // seal on every resolution cycle made each node grow its OWN seal history at its
+    // OWN timestamps → two nodes NEVER produce the same content hash → "roots differ"
+    // forever (the churn we've chased ~"100 times"). A GoBD "new sealed version" is
+    // only warranted when the canonical hash actually changes; a re-resolution that
+    // reproduces the identical hash must be a no-op (no append, no re-write, no
+    // hedera submit) so the row stays byte-stable and the mesh can settle.
+    let existing_seal_hash: Vec<String> = db
+        .query("SELECT VALUE seal_hash FROM type::record('trip', $id) LIMIT 1")
+        .bind(("id", trip_id.to_string()))
+        .await
+        .and_then(|mut r| r.take(0))
+        .unwrap_or_default();
+    if existing_seal_hash.first().map(String::as_str) == Some(hash.as_str()) {
+        debug!(
+            "[CellResolver] trip {} already sealed (hash {}… unchanged) — skip append",
+            trip_id,
+            &hash[..8.min(hash.len())]
+        );
+        return;
+    }
+
     let receipt = hedera::submit_hash_if_configured(hedera_client, &hash).await;
 
     let seal = json!({
@@ -401,11 +425,20 @@ async fn opencellid_lookup(
     let body: Value = resp.json().await.ok()?;
     let lat = body.get("lat").and_then(|v| v.as_f64())?;
     let lon = body.get("lon").and_then(|v| v.as_f64())?;
-    let range = body.get("range").and_then(|v| v.as_f64()).unwrap_or(1500.0);
+    let mut range = body.get("range").and_then(|v| v.as_f64()).unwrap_or(1500.0);
+    let samples = body.get("samples").and_then(|v| v.as_i64()).unwrap_or(0);
+    // Single-observation towers are the 100-km-jump factory (2026-07-06: all
+    // four wild outliers, worst resolved to Kassel 163 km off the A5, had
+    // samples=1). Keep the position but declare the honest uncertainty — the
+    // distance filters and the device-side smoother σ both key off range_m.
+    if samples <= 1 {
+        range = range.max(20_000.0);
+    }
     Some(json!({
         "lat": lat,
         "lng": lon,
         "range_m": range,
+        "samples": samples,
         "mcc": mcc, "mnc": mnc, "tac": tac, "cid": cid,
         "source": "opencellid",
         "resolved_at": Utc::now().to_rfc3339(),

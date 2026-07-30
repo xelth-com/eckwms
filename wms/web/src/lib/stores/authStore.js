@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import { browser } from '$app/environment';
 import { base } from '$app/paths';
+import { applyUserLocale } from '$lib/i18n';
 
 // Simplified auth store based on the snapshot
 const initialState = {
@@ -26,7 +27,12 @@ function createAuthStore() {
                 });
                 if (!res.ok) throw new Error('Token invalid');
                 const user = await res.json();
+                // /me historically exposes the id as user_id; the login payload
+                // uses id. Normalize so consumers (locale override matching,
+                // per-user persistence) see one shape.
+                if (user && user.id == null && user.user_id != null) user.id = user.user_id;
                 update(s => ({ ...s, isAuthenticated: true, currentUser: user, token, isLoading: false }));
+                applyUserLocale(user);
                 return;
             } catch {
                 localStorage.removeItem('auth_token');
@@ -37,6 +43,12 @@ function createAuthStore() {
             const res = await fetch('/api/auth/kiosk-token');
             if (!res.ok) throw new Error('No kiosk token');
             const data = await res.json();
+            // Kiosk boot mode "pos": this device is a register — no observer
+            // token is minted, the shell goes straight to the POS PIN pad.
+            if (data.success && data.mode === 'pos' && !data.token) {
+                window.location.replace('/K/');
+                return;
+            }
             if (data.success) {
                 update(s => ({
                     ...s,
@@ -46,6 +58,7 @@ function createAuthStore() {
                     isKioskObserver: true,
                     isLoading: false
                 }));
+                applyUserLocale(data.user);
                 return;
             }
         } catch {}
@@ -65,6 +78,7 @@ function createAuthStore() {
             token: accessToken,
             isLoading: false
         }));
+        if (user) applyUserLocale(user);
     },
     login: async (username, password) => {
         update(s => ({ ...s, isLoading: true }));
@@ -90,6 +104,7 @@ function createAuthStore() {
                 isKioskObserver: false,
                 isLoading: false
             }));
+            applyUserLocale(data.user);
             return { success: true };
         } catch (e) {
             update(s => ({ ...s, isLoading: false }));
@@ -102,6 +117,13 @@ function createAuthStore() {
             localStorage.removeItem('refresh_token');
         }
         set({ ...initialState, isLoading: false });
+    },
+    // Clear the forced-password-change flag locally after a successful change,
+    // so the blocking modal unlocks without needing a re-login.
+    clearMustChangePassword: () => {
+        update(s => s.currentUser
+            ? { ...s, currentUser: { ...s.currentUser, mustChangePassword: false } }
+            : s);
     }
   };
 }

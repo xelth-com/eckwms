@@ -1,0 +1,62 @@
+export default {
+    // DashboardMap — toasts
+    pin_moved_hq: 'Метка перемещена в штаб-квартиру',
+    reset_failed: 'Сброс не удался: {error}',
+    visit_planned: 'Визит запланирован: {ref}',
+    plan_failed: 'Не удалось запланировать: {error}',
+    ship_delivered: 'Отправление отмечено как доставленное',
+    resolve_failed: 'Не удалось разрешить: {error}',
+    speech_unavailable: 'Распознавание речи недоступно в браузере',
+
+    // DashboardMap — popups
+    open_repair: 'Открыть ремонт',
+    open_ticket: 'Открыть тикет',
+    type_repair: 'Ремонт (физический)',
+    type_ticket: 'Тикет (онлайн)',
+    status_label: 'Статус:',
+    reset_hq: '📍 Сбросить в штаб-квартиру',
+    plan_visit: '📅 Запланировать визит',
+    stuck_days: '⚠️ Застряло на {days} дн.',
+    carrier_status: 'Статус перевозчика:',
+    carrier_glitch: 'Возможен сбой ленты перевозчика — подтвердите доставку вручную.',
+    mark_delivered: 'Отметить как доставленное',
+    km_actual: '{km} км (одометр)',
+    km_estimated: '{km} км (оценка)',
+    gobd_sealed: '🔒 Опечатано по GoBD',
+    trip: 'Поездка',
+    start: 'Старт',
+    finish: 'Финиш',
+    in_progress: 'В пути',
+    stop: 'Остановка',
+    more: '+{count} ещё…',
+    tasks_here: 'задач здесь: {count}',
+
+    // DashboardMap — markup
+    loading_map: 'Загрузка карты…',
+    filter_assignee: 'Фильтр по исполнителю',
+    search_placeholder: 'Поиск №  / клиент…',
+    clear_tip: 'Очистить',
+    dictate_tip: 'Диктовать',
+    assignee_repairs: 'Ремонты',
+    assignee_unassigned: 'Не назначено',
+
+    // GeoRouteWidget
+    searching: 'Поиск...',
+    find_nearby: 'Найти задачи рядом с маршрутом',
+    no_coords: 'Координаты недоступны',
+    fetch_failed: 'Не удалось загрузить задачи поблизости',
+    badge_bingo: 'Bingo',
+    badge_normal: 'Normal',
+    badge_far: 'Far',
+    km_to_target: '{km} км до цели',
+    cost: 'стоимость: {cost}',
+    route_empty: 'Нажмите кнопку, чтобы найти задачи вдоль маршрута.',
+
+    // GeoRouteMap
+    load_nearby_failed: 'Не удалось загрузить задачи поблизости',
+    office_popup: 'Офис (Eschborn)',
+    cost_label: 'Стоимость:',
+    loading_map_leaflet: 'Загрузка карты...',
+    nearby_tasks: 'Задачи поблизости ({count})',
+    no_geocoded: 'Геокодированные задачи не найдены.',
+};

@@ -5,6 +5,7 @@
     import { goto } from '$app/navigation';
     import { base } from '$app/paths';
     import { toastStore } from '$lib/stores/toastStore';
+    import { t, tr } from '$lib/i18n';
 
     let whId = $page.params.id;
     let warehouse = null;
@@ -41,7 +42,7 @@
             racks = warehouse.racks || [];
         } catch (e) {
             error = e.message;
-            toastStore.add('Error loading warehouse', 'error');
+            toastStore.add(tr('warehouse.load_error'), 'error');
         } finally {
             loading = false;
         }
@@ -142,7 +143,7 @@
                 posY: rack.posY
             });
         } catch (e) {
-            toastStore.add('Failed to save position', 'error');
+            toastStore.add(tr('warehouse.save_position_failed'), 'error');
         }
     }
 
@@ -174,14 +175,14 @@
                 racks[idx] = { ...racks[idx], ...updated };
                 racks = [...racks];
             }
-            toastStore.add('Rack updated', 'success');
+            toastStore.add(tr('warehouse.rack_updated'), 'success');
         } catch (e) {
             toastStore.add(e.message, 'error');
         }
     }
 
     async function createRack() {
-        const name = prompt("New Rack Name:");
+        const name = prompt(tr('warehouse.prompt_rack_name'));
         if (!name) return;
 
         try {
@@ -196,19 +197,19 @@
             });
             racks = [...racks, newRack];
             selectRack(newRack);
-            toastStore.add('Rack created', 'success');
+            toastStore.add(tr('warehouse.rack_created'), 'success');
         } catch (e) {
             toastStore.add(e.message, 'error');
         }
     }
 
     async function deleteRack() {
-        if (!selectedRack || !confirm('Delete this rack?')) return;
+        if (!selectedRack || !confirm(tr('warehouse.confirm_delete_rack'))) return;
         try {
             await api.delete(`/api/warehouse/racks/${selectedRack.id}`);
             racks = racks.filter(r => r.id !== selectedRack.id);
             selectedRack = null;
-            toastStore.add('Rack deleted', 'success');
+            toastStore.add(tr('warehouse.rack_deleted'), 'success');
         } catch (e) {
             toastStore.add(e.message, 'error');
         }
@@ -223,23 +224,23 @@
 
 <div class="blueprint-page">
     <div class="header">
-        <button class="back-btn" on:click={goBack}>← Back</button>
+        <button class="back-btn" on:click={goBack}>← {$t('warehouse.back')}</button>
         <div class="title-row">
             {#if warehouse}
-                <h1>{warehouse.name} <span class="blueprint-label">Blueprint</span></h1>
+                <h1>{warehouse.name} <span class="blueprint-label">{$t('warehouse.blueprint_label')}</span></h1>
                 <div class="actions">
                     <button class="btn {isEditing ? 'active' : ''}" on:click={toggleEdit}>
-                        {isEditing ? 'Done Editing' : 'Edit Layout'}
+                        {isEditing ? $t('warehouse.done_editing') : $t('warehouse.edit_layout')}
                     </button>
                 </div>
             {:else}
-                <h1>Warehouse Blueprint</h1>
+                <h1>{$t('warehouse.warehouse_blueprint')}</h1>
             {/if}
         </div>
     </div>
 
     {#if loading}
-        <div class="loading">Loading blueprint...</div>
+        <div class="loading">{$t('warehouse.loading_blueprint')}</div>
     {:else if error}
         <div class="error">{error}</div>
     {:else}
@@ -247,27 +248,27 @@
             <!-- Sidebar for editing -->
             {#if isEditing}
                 <div class="editor-sidebar">
-                    <h3>Rack Properties</h3>
+                    <h3>{$t('warehouse.rack_properties')}</h3>
                     <div class="sidebar-actions">
-                        <button class="btn primary full-width" on:click={createRack}>+ Add Rack</button>
+                        <button class="btn primary full-width" on:click={createRack}>{$t('warehouse.add_rack')}</button>
                     </div>
 
                     {#if selectedRack}
                         <div class="edit-form">
                             <div class="form-group">
-                                <label>Name</label>
+                                <label>{$t('warehouse.field_name')}</label>
                                 <input type="text" bind:value={rackForm.name} />
                             </div>
                             <div class="form-group">
-                                <label>Columns</label>
+                                <label>{$t('warehouse.field_columns')}</label>
                                 <input type="number" bind:value={rackForm.columns} />
                             </div>
                             <div class="form-group">
-                                <label>Rows</label>
+                                <label>{$t('warehouse.field_rows')}</label>
                                 <input type="number" bind:value={rackForm.rows} />
                             </div>
                             <div class="form-group">
-                                <label>Rotation (°)</label>
+                                <label>{$t('warehouse.field_rotation')}</label>
                                 <select bind:value={rackForm.rotation}>
                                     <option value={0}>0°</option>
                                     <option value={90}>90°</option>
@@ -276,12 +277,12 @@
                                 </select>
                             </div>
                             <div class="form-actions">
-                                <button class="btn secondary" on:click={deleteRack}>Delete</button>
-                                <button class="btn primary" on:click={saveRackDetails}>Update</button>
+                                <button class="btn secondary" on:click={deleteRack}>{$t('warehouse.delete')}</button>
+                                <button class="btn primary" on:click={saveRackDetails}>{$t('warehouse.update')}</button>
                             </div>
                         </div>
                     {:else}
-                        <div class="hint">Select a rack to edit properties.</div>
+                        <div class="hint">{$t('warehouse.select_rack_hint')}</div>
                     {/if}
                 </div>
             {/if}
@@ -310,7 +311,7 @@
                     {/each}
 
                     {#if racks.length === 0}
-                        <div class="empty-canvas">No racks. Click 'Edit Layout' to add one.</div>
+                        <div class="empty-canvas">{$t('warehouse.empty_canvas')}</div>
                     {/if}
                 </div>
             </div>
@@ -318,11 +319,11 @@
 
         <div class="controls">
             <div class="legend">
-                <div class="legend-item"><span class="box rack-box"></span> Rack</div>
-                <div class="legend-item"><span class="box selected-box"></span> Selected</div>
+                <div class="legend-item"><span class="box rack-box"></span> {$t('warehouse.legend_rack')}</div>
+                <div class="legend-item"><span class="box selected-box"></span> {$t('warehouse.legend_selected')}</div>
             </div>
             <div class="info">
-                {racks.length} racks | {isEditing ? 'Edit Mode Active' : 'View Mode'}
+                {racks.length} {$t('warehouse.racks_word')} | {isEditing ? $t('warehouse.edit_mode_active') : $t('warehouse.view_mode')}
             </div>
         </div>
     {/if}

@@ -30,6 +30,8 @@ pub mod delivery_tracking;
 pub mod sync_history;
 pub mod device_intake;
 pub mod inventory_discrepancy;
+pub mod i18n_label;
+pub mod translation;
 
 // === POS Models (stripped from Sea-ORM) ===
 pub mod pos;

@@ -5,6 +5,7 @@
     import { goto } from '$app/navigation';
     import { toastStore } from '$lib/stores/toastStore';
     import { base } from '$app/paths';
+    import { t, tr } from '$lib/i18n';
 
     let item = null;
     let attachments = [];
@@ -62,7 +63,7 @@
             item = updated;
             editForm = { ...item };
             isEditing = false;
-            toastStore.add('Item updated successfully', 'success');
+            toastStore.add(tr('items.update_success'), 'success');
         } catch (e) {
             toastStore.add(e.message, 'error');
         }
@@ -83,13 +84,13 @@
             const res = await api.post('/api/ai/analyze-image', { file_id: fileId });
             if (res.success) {
                 analysisResult = { fileId, data: res.analysis };
-                toastStore.add('Analysis complete', 'success');
+                toastStore.add(tr('items.analysis_complete'), 'success');
             }
         } catch (e) {
             if (e.message?.includes('503') || e.message?.includes('unavailable') || e.message?.includes('Service')) {
-                toastStore.add('AI Analysis unavailable (Check API Key or Config)', 'error', 5000);
+                toastStore.add(tr('items.ai_unavailable'), 'error', 5000);
             } else {
-                toastStore.add(e.message || 'Analysis failed', 'error');
+                toastStore.add(e.message || tr('items.analysis_failed'), 'error');
             }
         } finally {
             analyzingFileId = null;
@@ -99,33 +100,33 @@
 
 <div class="detail-page">
     <div class="header">
-        <button class="back-btn" on:click={goBack}>&larr; Back</button>
+        <button class="back-btn" on:click={goBack}>&larr; {$t('items.back')}</button>
         <div class="title-row">
             {#if item}
-                <h1>{isEditing ? 'Editing: ' : ''}{item.name}</h1>
+                <h1>{isEditing ? $t('items.editing_prefix') : ''}{item.name}</h1>
                 <div class="actions">
                     {#if isEditing}
-                        <button class="btn secondary" on:click={toggleEdit}>Cancel</button>
-                        <button class="btn primary" on:click={saveItem}>Save</button>
+                        <button class="btn secondary" on:click={toggleEdit}>{$t('items.cancel')}</button>
+                        <button class="btn primary" on:click={saveItem}>{$t('items.save')}</button>
                     {:else}
-                        <button class="btn primary" on:click={toggleEdit}>Edit Item</button>
+                        <button class="btn primary" on:click={toggleEdit}>{$t('items.edit_item')}</button>
                     {/if}
                 </div>
             {:else}
-                <h1>Item Details</h1>
+                <h1>{$t('items.item_details')}</h1>
             {/if}
         </div>
     </div>
 
     {#if loading}
-        <div class="loading">Loading details...</div>
+        <div class="loading">{$t('items.loading_details')}</div>
     {:else if error}
-        <div class="error">Error: {error}</div>
+        <div class="error">{$t('items.error_prefix', { error })}</div>
     {:else if item}
         <div class="detail-grid">
             <!-- Main Info -->
             <div class="section main-info">
-                <h3>Basic Information</h3>
+                <h3>{$t('items.basic_information')}</h3>
                 <div class="field">
                     <label>SKU</label>
                     {#if isEditing}
@@ -135,7 +136,7 @@
                     {/if}
                 </div>
                 <div class="field">
-                    <label>Name</label>
+                    <label>{$t('items.field_name')}</label>
                     {#if isEditing}
                         <input type="text" bind:value={editForm.name} />
                     {:else}
@@ -143,7 +144,7 @@
                     {/if}
                 </div>
                 <div class="field">
-                    <label>Barcode</label>
+                    <label>{$t('items.field_barcode')}</label>
                     {#if isEditing}
                         <input type="text" bind:value={editForm.barcode} class="code-input" />
                     {:else}
@@ -151,52 +152,52 @@
                     {/if}
                 </div>
                 <div class="field">
-                    <label>Type</label>
+                    <label>{$t('items.field_type')}</label>
                     <div class="value">{item.type || '-'}</div>
                 </div>
             </div>
 
             <!-- Stats -->
             <div class="section stats">
-                <h3>Inventory Status</h3>
+                <h3>{$t('items.inventory_status')}</h3>
                 <div class="stat-box">
-                    <span class="label">List Price</span>
+                    <span class="label">{$t('items.list_price')}</span>
                     <span class="val">${item.list_price?.toFixed(2) || '0.00'}</span>
                 </div>
                 <div class="stat-box">
-                    <span class="label">Cost Price</span>
+                    <span class="label">{$t('items.cost_price')}</span>
                     <span class="val">${item.standard_price?.toFixed(2) || '0.00'}</span>
                 </div>
                 <div class="stat-box">
-                    <span class="label">Weight</span>
+                    <span class="label">{$t('items.weight')}</span>
                     <span class="val">{item.weight || 0} kg</span>
                 </div>
                 <div class="stat-box">
-                    <span class="label">Volume</span>
+                    <span class="label">{$t('items.volume')}</span>
                     <span class="val">{item.volume || 0} m&sup3;</span>
                 </div>
                 <div class="stat-box">
-                    <span class="label">Status</span>
-                    <span class="val {item.active ? 'active' : 'inactive'}">{item.active ? 'Active' : 'Inactive'}</span>
+                    <span class="label">{$t('items.status')}</span>
+                    <span class="val {item.active ? 'active' : 'inactive'}">{item.active ? $t('items.status_active') : $t('items.status_inactive')}</span>
                 </div>
             </div>
 
             <!-- Photos / Gallery -->
             {#if attachments.length > 0}
                 <div class="section gallery-section">
-                    <h3>Visual Evidence ({attachments.length})</h3>
+                    <h3>{$t('items.visual_evidence', { count: attachments.length })}</h3>
                     <div class="gallery-grid">
                         {#each attachments as file}
                             <div class="photo-card" class:main={file.is_main}>
-                                <img src={fileUrl(file.file_id)} alt="Item photo" loading="lazy" />
+                                <img src={fileUrl(file.file_id)} alt={$t('items.item_photo_alt')} loading="lazy" />
                                 {#if file.is_main}
-                                    <span class="badge">MAIN</span>
+                                    <span class="badge">{$t('items.main_badge')}</span>
                                 {/if}
                                 <button
                                     class="ai-btn"
                                     on:click|stopPropagation={() => analyzeImage(file.file_id)}
                                     disabled={analyzingFileId === file.file_id}
-                                    title="AI Analyze"
+                                    title={$t('items.ai_analyze')}
                                 >
                                     {#if analyzingFileId === file.file_id}
                                         <span class="spinner">&#x21bb;</span>
@@ -211,7 +212,7 @@
                     {#if analysisResult}
                         <div class="analysis-overlay">
                             <div class="analysis-header">
-                                <h4>AI Analysis</h4>
+                                <h4>{$t('items.ai_analysis')}</h4>
                                 <button class="close-btn" on:click={() => analysisResult = null}>&times;</button>
                             </div>
                             <div class="analysis-content">
@@ -220,16 +221,16 @@
                                         <span class="tag condition {analysisResult.data.condition}">{analysisResult.data.condition}</span>
                                         {#if analysisResult.data.labels_visible !== undefined}
                                             <span class="tag {analysisResult.data.labels_visible ? 'good' : 'damaged'}">
-                                                Labels: {analysisResult.data.labels_visible ? 'Visible' : 'Missing'}
+                                                {analysisResult.data.labels_visible ? $t('items.labels_visible') : $t('items.labels_missing')}
                                             </span>
                                         {/if}
                                     </div>
                                 {/if}
                                 {#if analysisResult.data.description}
-                                    <p><strong>Description:</strong> {analysisResult.data.description}</p>
+                                    <p><strong>{$t('items.desc_label')}</strong> {analysisResult.data.description}</p>
                                 {/if}
                                 {#if analysisResult.data.ocr_text}
-                                    <p><strong>OCR:</strong> <code>{analysisResult.data.ocr_text}</code></p>
+                                    <p><strong>{$t('items.ocr_label')}</strong> <code>{analysisResult.data.ocr_text}</code></p>
                                 {/if}
                                 {#if analysisResult.data.tags}
                                     <div class="tags">

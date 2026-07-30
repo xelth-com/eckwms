@@ -3,6 +3,7 @@
     import { api } from '$lib/api';
     import { toastStore } from '$lib/stores/toastStore';
     import { base } from '$app/paths';
+    import { t, tr } from '$lib/i18n';
 
     let racks = [];
     let selectedRack = null;
@@ -34,7 +35,7 @@
         try {
             racks = await api.get('/api/warehouse/racks');
         } catch (e) {
-            toastStore.add('Failed to load racks', 'error');
+            toastStore.add(tr('warehouse.load_racks_failed'), 'error');
         }
     }
 
@@ -66,7 +67,7 @@
 
     async function saveRack() {
         if (!formData.name || !formData.columns || !formData.rows) {
-            toastStore.add('Please fill Name, Cols, and Rows', 'error');
+            toastStore.add(tr('warehouse.fill_required'), 'error');
             return;
         }
 
@@ -85,23 +86,23 @@
 
         try {
             await api.post('/api/warehouse/racks', data);
-            toastStore.add('Rack saved!', 'success');
+            toastStore.add(tr('warehouse.rack_saved'), 'success');
             if (!selectedRack) resetForm();
             await loadRacks();
         } catch (e) {
-            toastStore.add('Failed to save rack', 'error');
+            toastStore.add(tr('warehouse.save_rack_failed'), 'error');
         }
     }
 
     async function deleteRack() {
-        if (!selectedRack || !confirm('Delete this rack?')) return;
+        if (!selectedRack || !confirm(tr('warehouse.confirm_delete_rack'))) return;
         try {
             await api.delete(`/api/warehouse/racks/${selectedRack.id}`);
             resetForm();
             await loadRacks();
-            toastStore.add('Rack deleted', 'success');
+            toastStore.add(tr('warehouse.rack_deleted'), 'success');
         } catch (e) {
-            toastStore.add('Failed to delete rack', 'error');
+            toastStore.add(tr('warehouse.delete_rack_failed'), 'error');
         }
     }
 
@@ -188,72 +189,72 @@
 
 <div class="blueprint-page">
     <header>
-        <a href="{base}/dashboard/warehouse" class="back-link">Home</a>
-        <h1>Warehouse Blueprint</h1>
-        <div class="rack-count">{racks.length} rack{racks.length !== 1 ? 's' : ''}</div>
+        <a href="{base}/dashboard/warehouse" class="back-link">{$t('warehouse.home')}</a>
+        <h1>{$t('warehouse.warehouse_blueprint')}</h1>
+        <div class="rack-count">{$t('warehouse.rack_count', { count: racks.length })}</div>
     </header>
 
     {#if loading}
-        <div class="loading">Loading...</div>
+        <div class="loading">{$t('warehouse.loading')}</div>
     {:else}
         <div class="main-layout">
             <!-- Sidebar -->
             <div class="sidebar">
-                <h2>Rack Management</h2>
+                <h2>{$t('warehouse.rack_management')}</h2>
 
                 <!-- Rack Form -->
                 <div class="rack-form">
                     <div class="form-group">
-                        <label>Name</label>
-                        <input type="text" bind:value={formData.name} placeholder="e.g. Regal A">
+                        <label>{$t('warehouse.field_name')}</label>
+                        <input type="text" bind:value={formData.name} placeholder={$t('warehouse.placeholder_name')}>
                     </div>
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Cols</label>
+                            <label>{$t('warehouse.field_cols')}</label>
                             <input type="number" bind:value={formData.columns} min="1" placeholder="5">
                         </div>
                         <div class="form-group">
-                            <label>Rows</label>
+                            <label>{$t('warehouse.field_rows')}</label>
                             <input type="number" bind:value={formData.rows} min="1" placeholder="10">
                         </div>
                     </div>
 
                     <div class="form-group">
-                        <label>Start ID</label>
-                        <input type="number" bind:value={formData.startIndex} placeholder="Auto">
+                        <label>{$t('warehouse.field_start_id')}</label>
+                        <input type="number" bind:value={formData.startIndex} placeholder={$t('warehouse.placeholder_auto')}>
                     </div>
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Width (px)</label>
-                            <input type="number" bind:value={formData.visualWidth} placeholder="Auto">
+                            <label>{$t('warehouse.field_width')}</label>
+                            <input type="number" bind:value={formData.visualWidth} placeholder={$t('warehouse.placeholder_auto')}>
                         </div>
                         <div class="form-group">
-                            <label>Height (px)</label>
-                            <input type="number" bind:value={formData.visualHeight} placeholder="Auto">
+                            <label>{$t('warehouse.field_height')}</label>
+                            <input type="number" bind:value={formData.visualHeight} placeholder={$t('warehouse.placeholder_auto')}>
                         </div>
                     </div>
 
                     <div class="form-group">
-                        <label>Rotation</label>
+                        <label>{$t('warehouse.field_rotation_short')}</label>
                         <select bind:value={formData.rotation}>
-                            <option value={0}>0 (Horizontal)</option>
-                            <option value={90}>90 (Vertical)</option>
-                            <option value={180}>180 (Inverted)</option>
-                            <option value={270}>270 (Vert. Inverted)</option>
+                            <option value={0}>{$t('warehouse.rot_0')}</option>
+                            <option value={90}>{$t('warehouse.rot_90')}</option>
+                            <option value={180}>{$t('warehouse.rot_180')}</option>
+                            <option value={270}>{$t('warehouse.rot_270')}</option>
                         </select>
                     </div>
 
                     <div class="form-row">
                         <button class="btn btn-primary" on:click={saveRack}>
-                            {selectedRack ? 'Update' : 'Create'} Rack
+                            {selectedRack ? $t('warehouse.update_rack') : $t('warehouse.create_rack')}
                         </button>
-                        <button class="btn btn-secondary" on:click={resetForm}>Clear</button>
+                        <button class="btn btn-secondary" on:click={resetForm}>{$t('warehouse.clear')}</button>
                     </div>
 
                     {#if selectedRack}
-                        <button class="btn btn-delete" on:click={deleteRack}>Delete Rack</button>
+                        <button class="btn btn-delete" on:click={deleteRack}>{$t('warehouse.delete_rack')}</button>
                     {/if}
                 </div>
 
@@ -267,12 +268,12 @@
                             class:active={selectedRack?.id === rack.id}
                             on:click={() => selectRack(rack)}
                         >
-                            <div class="name">{rack.name || `Rack #${rack.id}`}</div>
-                            <div class="meta">{rack.columns}x{rack.rows} = {getTotalPlaces(rack)} places | Start: {rack.startIndex}</div>
+                            <div class="name">{rack.name || $t('warehouse.rack_hash', { id: rack.id })}</div>
+                            <div class="meta">{$t('warehouse.meta', { cols: rack.columns, rows: rack.rows, places: getTotalPlaces(rack), start: rack.startIndex })}</div>
                         </div>
                     {/each}
                     {#if racks.length === 0}
-                        <div class="no-racks">No racks yet. Create one above.</div>
+                        <div class="no-racks">{$t('warehouse.no_racks')}</div>
                     {/if}
                 </div>
             </div>

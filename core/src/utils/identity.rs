@@ -196,3 +196,34 @@ pub fn verify_signature(
 
     Ok(verifying_key.verify(message.as_bytes(), &signature).is_ok())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cross-platform golden vectors shared with the Android app
+    /// (eckwms-movFast SettingsManagerTest `computeMeshId matches Rust
+    /// dashed-UUID golden vectors`). The dashed lowercase UUID is the
+    /// CANONICAL mesh_id format (owner decision 2026-07-04); if either side
+    /// changes its derivation, one of these fails.
+    #[test]
+    fn test_compute_mesh_id_vectors() {
+        assert_eq!(compute_mesh_id(""), "e3b0c442-98fc-1c14-9afb-f4c8996fb924");
+        assert_eq!(compute_mesh_id("abc"), "ba7816bf-8f01-cfea-4141-40de5dae2223");
+        assert_eq!(
+            compute_mesh_id("hello"),
+            "2cf24dba-5fb0-a30e-26e8-3b2ac5b9e29e"
+        );
+    }
+
+    /// Primary-index vectors mirrored by the Android `orderedEckNodes` tests:
+    /// u32 BE of sha256(mesh_id)[..4] % 3 → "abc"=0, "alpha"=1, ""=2.
+    #[test]
+    fn test_compute_primary_index_vectors() {
+        assert_eq!(compute_primary_index("abc", 3), 0);
+        assert_eq!(compute_primary_index("alpha", 3), 1);
+        assert_eq!(compute_primary_index("", 3), 2);
+        // n == 0 must not panic
+        assert_eq!(compute_primary_index("anything", 0), 0);
+    }
+}

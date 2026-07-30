@@ -1,0 +1,22 @@
+// KI-Operator-Posteingang.
+export default {
+    new_task_notify: "Eine neue KI-Aufgabe erfordert Ihre Aufmerksamkeit",
+    load_failed: "KI-Aufgaben konnten nicht geladen werden",
+    enter_reply: "Bitte geben Sie eine Antwort ein",
+    reply_sent: "Antwort an die KI gesendet",
+    reply_failed: "Antwort konnte nicht gesendet werden: {error}",
+    no_question: "Die KI hat pausiert, aber keine konkrete Frage gestellt.",
+    page_title: "KI-Operator-Posteingang",
+    refreshing: "Wird aktualisiert…",
+    refresh: "Aktualisieren",
+    page_desc: "Aufgaben, die menschliches Eingreifen erfordern. Das KI-Gehirn hat die Ausführung angehalten und wartet auf Ihre Eingabe, um fortzufahren.",
+    loading_tasks: "Ausstehende Aufgaben werden geladen…",
+    error_generic: "Fehler: {error}",
+    empty_state: "Alles erledigt. Keine Aufgaben warten auf menschliche Eingabe.",
+    task_label: "Aufgabe: {id}",
+    context_label: "Kontext",
+    ai_question_label: "KI-Frage",
+    reply_placeholder: "Geben Sie hier Ihre Antwort an die KI ein…",
+    sending: "Wird gesendet…",
+    send_reply: "Antwort senden",
+};

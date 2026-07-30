@@ -1,0 +1,16 @@
+export default {
+    title: '재고',
+    load_failed: '불러오기 실패: {error}',
+    discrepancies_only: '차이만 표시',
+    refresh: '새로고침',
+    loading: '불러오는 중…',
+    empty: '아직 집계된 항목이 없습니다. 창고 → 실사 화면에서 집계하세요.',
+    summary: '{rows}행 · 총 {pcs}개 집계',
+    th_time: '시간',
+    th_location: '위치',
+    th_warehouse: '창고',
+    th_code: '코드',
+    th_name: '이름',
+    th_ist: '실사',
+    th_soll: '장부',
+};

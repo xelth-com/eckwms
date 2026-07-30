@@ -15,6 +15,22 @@ use serde_json::{json, Value};
 
 use crate::db::RelayDb;
 
+/// TTL cache for `/E/resolve` hits. The underlying `registration` SELECT costs
+/// ~1.7 s on a loaded relay box and node locations change only on a ~5 min
+/// heartbeat cadence, so a short TTL removes almost all of that latency
+/// without ever serving a meaningfully stale row. NOT_FOUND is deliberately
+/// not cached (a booting node must appear promptly).
+const RESOLVE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(20);
+const RESOLVE_CACHE_MAX: usize = 512;
+
+fn resolve_cache(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Value)>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Value)>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 // ─── GET /E/resolve/:instance_id ───────────────────────────────────────────
 // Mesh-agnostic UUID → location resolver. Returns the most recently-seen
 // `online` row for this instance_id across all meshes.
@@ -43,6 +59,15 @@ pub async fn resolve(
         }
     }
 
+    {
+        let cache = resolve_cache().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((at, row)) = cache.get(&instance_id) {
+            if at.elapsed() < RESOLVE_CACHE_TTL {
+                return Ok(Json(row.clone()));
+            }
+        }
+    }
+
     let row: Option<Value> = db
         .query(
             "SELECT record::id(id) AS id, instance_id, external_ip, port, status, \
@@ -60,6 +85,17 @@ pub async fn resolve(
         })?
         .take(0)
         .unwrap_or_default();
+
+    if let Some(row) = &row {
+        let mut cache = resolve_cache().lock().unwrap_or_else(|p| p.into_inner());
+        if cache.len() >= RESOLVE_CACHE_MAX {
+            cache.retain(|_, (at, _)| at.elapsed() < RESOLVE_CACHE_TTL);
+            if cache.len() >= RESOLVE_CACHE_MAX {
+                cache.clear(); // pathological churn — reset rather than grow
+            }
+        }
+        cache.insert(instance_id.clone(), (std::time::Instant::now(), row.clone()));
+    }
 
     row.map(Json).ok_or(StatusCode::NOT_FOUND)
 }

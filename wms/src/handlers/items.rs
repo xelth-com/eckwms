@@ -60,17 +60,21 @@ pub async fn update(
     Path(id): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let updated: Option<Value> = state
-        .db
-        .update(("item", &*id))
-        .content(payload)
+    // Route through put_synced_entity so the edit advances `_vclock`; existence
+    // check preserves the update-only 404 (the helper upserts).
+    if state
+        .get_synced_entity("item", &id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match updated {
-        Some(v) => Ok(Json(v)),
-        None => Err((StatusCode::NOT_FOUND, format!("Item '{id}' not found"))),
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .is_none()
+    {
+        return Err((StatusCode::NOT_FOUND, format!("Item '{id}' not found")));
     }
+    let updated = state
+        .put_synced_entity("item", &id, payload)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(updated))
 }
 
 /// DELETE /api/items/:id — delete an item

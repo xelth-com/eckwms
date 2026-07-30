@@ -2,6 +2,7 @@
     import { authStore } from '$lib/stores/authStore';
     import { onMount } from 'svelte';
     import { base } from '$app/paths';
+    import { t } from '$lib/i18n';
 
     // Мы больше не делаем авто-редирект, чтобы пользователи могли прочитать о системе.
     // Состояние авторизации используется только для переключения кнопки Login/Dashboard.
@@ -14,7 +15,7 @@
             eckWMS <span class="badge">RUST</span>
         </div>
         <div class="nav-links">
-            <a href="https://github.com/xelth-com/eckwmsr" target="_blank" rel="noreferrer" class="github-link">
+            <a href="https://github.com/xelth-com/eckwms" target="_blank" rel="noreferrer" class="github-link">
                 GitHub
             </a>
         </div>
@@ -22,53 +23,52 @@
 
     <main class="hero">
         <div class="hero-content">
-            <h1>Warehouse Management <br><span class="accent">Reimagined</span></h1>
+            <h1>{$t('shell.landing_headline')} <br><span class="accent">{$t('shell.landing_headline_accent')}</span></h1>
 
             <p class="description">
-                Welcome to <strong>eckWMS</strong> — a modern open-source warehouse management system.
-                Built with <strong>Rust</strong> and <strong>SvelteKit</strong> for blazing-fast performance.
+                {@html $t('shell.landing_description')}
             </p>
 
             <div class="cta-group">
                 {#if $authStore.isLoading}
-                    <button class="btn primary loading">Loading...</button>
+                    <button class="btn primary loading">{$t('shell.loading')}</button>
                 {:else if $authStore.isAuthenticated}
                     <a href="{base}/dashboard" class="btn primary">
-                        Open Dashboard &rarr;
+                        {$t('shell.landing_open_dashboard')} &rarr;
                     </a>
                 {:else}
                     <a href="{base}/login" class="btn primary">
-                        Sign In
+                        {$t('shell.landing_sign_in')}
                     </a>
                 {/if}
-                <a href="https://github.com/xelth-com/eckwmsr" target="_blank" rel="noreferrer" class="btn secondary">
-                    View Source
+                <a href="https://github.com/xelth-com/eckwms" target="_blank" rel="noreferrer" class="btn secondary">
+                    {$t('shell.landing_view_source')}
                 </a>
             </div>
         </div>
 
         <div class="features-grid">
             <div class="feature-card">
-                <h3>🚀 High Performance</h3>
-                <p>Rust backend delivers blazing-fast request processing with zero-cost abstractions and minimal memory usage.</p>
+                <h3>🚀 {$t('shell.landing_feat_perf_title')}</h3>
+                <p>{$t('shell.landing_feat_perf_desc')}</p>
             </div>
             <div class="feature-card">
-                <h3>📱 Smart Codes</h3>
-                <p>Support for intelligent barcodes (i/b/p/l) enabling offline validation and instant scanning.</p>
+                <h3>📱 {$t('shell.landing_feat_codes_title')}</h3>
+                <p>{$t('shell.landing_feat_codes_desc')}</p>
             </div>
             <div class="feature-card">
-                <h3>🔄 Odoo Sync</h3>
-                <p>Two-way synchronization with Odoo 17 ERP. Full warehouse accounting integration.</p>
+                <h3>🔄 {$t('shell.landing_feat_sync_title')}</h3>
+                <p>{$t('shell.landing_feat_sync_desc')}</p>
             </div>
             <div class="feature-card">
-                <h3>🔒 Zero-Knowledge</h3>
-                <p>Relay architecture enables data synchronization through untrusted networks with encryption.</p>
+                <h3>🔒 {$t('shell.landing_feat_zk_title')}</h3>
+                <p>{$t('shell.landing_feat_zk_desc')}</p>
             </div>
         </div>
     </main>
 
     <footer>
-        <p>&copy; {new Date().getFullYear()} xelth-com. Open Source Software.</p>
+        <p>{$t('shell.landing_footer', { year: new Date().getFullYear() })}</p>
     </footer>
 </div>
 
@@ -79,7 +79,7 @@
         color: #e0e0e0;
         display: flex;
         flex-direction: column;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Noto Sans KR Variable', 'Noto Sans JP Variable', 'Noto Sans SC Variable', sans-serif;
     }
 
     .navbar {

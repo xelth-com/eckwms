@@ -27,7 +27,20 @@ pub async fn start_cron_jobs(db: SurrealDb, instance_id: String) {
                 info!("[scheduler] Starting hourly sync cycle");
                 sync_opal(&db, &client, &iid).await;
                 sync_dhl(&db, &client, &iid).await;
-                sync_zoho(&db, &client, &iid, false).await;
+                {
+                    // Guarded: a panic inside one Zoho pass must not kill the
+                    // hourly loop for the rest of the process lifetime.
+                    let (db2, c2, i2) = (db.clone(), client.clone(), iid.clone());
+                    run_guarded(&db, &iid, "zoho_desk", async move {
+                        sync_zoho(&db2, &c2, &i2, false).await;
+                    })
+                    .await;
+                }
+                // Odoo on-hand projection (no-op unless ODOO_WRITE_ENABLED=true)
+                match crate::services::odoo::project_dirty(&db).await {
+                    Ok(s) => debug!("[scheduler] odoo projection: {}", s),
+                    Err(e) => warn!("[scheduler] odoo projection failed: {}", e),
+                }
             }
         });
     }
@@ -58,12 +71,101 @@ pub async fn start_cron_jobs(db: SurrealDb, instance_id: String) {
             }
         });
     }
+
+    // Task 3: temp-photo TTL sweep — orphaned PDA uploads are parked on their
+    // user with a one-week TTL (handlers::files); whatever is still unclaimed
+    // gets removed here (disk bytes + tombstone).
+    {
+        let db = db.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
+            loop {
+                interval.tick().await;
+                crate::handlers::files::sweep_expired_temp(&db).await;
+            }
+        });
+    }
+}
+
+/// Byte-safe truncation for log/detail strings: cuts at a char boundary so a
+/// multi-byte (umlaut/HTML) error body can never panic a sync task. Two full
+/// re-imports died silently mid-run on 2026-07-22/23; `&s[..n]` on scraper
+/// error text is exactly the summarization-panic class.
+fn safe_trunc(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// Run one provider-sync future as its own task and convert a panic into a
+/// loud log line + a `status='died'` sync_history row instead of a silent
+/// task death. Callers hand in an owned future (clone db/client/iid into it).
+pub async fn run_guarded<F>(db: &SurrealDb, instance_id: &str, provider: &str, fut: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    let started = Utc::now();
+    match tokio::spawn(fut).await {
+        Ok(()) => {}
+        Err(e) => {
+            let msg = if e.is_panic() {
+                match e.into_panic().downcast::<String>() {
+                    Ok(s) => *s,
+                    Err(p) => p
+                        .downcast::<&str>()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|_| "non-string panic payload".to_string()),
+                }
+            } else {
+                "task cancelled".to_string()
+            };
+            error!("[scheduler] {} sync task DIED: {}", provider, msg);
+            log_sync(db, instance_id, provider, "died", started, 0, 0, 0, 1, safe_trunc(&msg, 400)).await;
+        }
+    }
 }
 
 // ── Hourly providers ──────────────────────────────────────────────
 
 pub async fn sync_opal(db: &SurrealDb, client: &reqwest::Client, instance_id: &str) {
     let started = Utc::now();
+
+    // Rust-native OCU API path (services::ocu) — env-gated alternative to the
+    // node scraper. When explicitly configured, a failure here must be
+    // visible (log + sync_history "error"), NOT silently masked by falling
+    // through to the scraper.
+    if super::ocu::configured() {
+        match super::ocu::fetch_shipments(client, 50).await {
+            Ok(shipments) => {
+                let mut updated: i64 = 0;
+                for order in &shipments {
+                    let tracking = order.get("ocu_number")
+                        .or(order.get("tracking_number"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    if tracking.is_empty() { continue; }
+
+                    super::delivery::persist(db, "opal", tracking, order).await;
+                    updated += 1;
+                }
+
+                info!("[scheduler] OPAL sync via OCU API: {} upserted from {} shipments", updated, shipments.len());
+                log_sync(db, instance_id, "opal", "ok", started, 0, updated, 0, 0, "").await;
+            }
+            Err(e) => {
+                warn!("[scheduler] OPAL sync via OCU API failed: {}", e);
+                log_sync(db, instance_id, "opal", "error", started, 0, 0, 0, 1, safe_trunc(&e, 500)).await;
+            }
+        }
+        return;
+    }
+
     let res = client
         .post(format!("{}/api/opal/fetch", scraper_base()))
         .json(&json!({"_from_env": true}))
@@ -84,14 +186,7 @@ pub async fn sync_opal(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
                     .unwrap_or_default();
                 if tracking.is_empty() { continue; }
 
-                let _: Result<Option<Value>, _> = db.upsert(("shipment", tracking))
-                    .merge(json!({
-                        "tracking_number": tracking,
-                        "status": order.get("status").unwrap_or(&json!("processing")),
-                        "raw_response": serde_json::to_string(order).unwrap_or_default(),
-                        "provider": "opal",
-                        "updated_at": Utc::now().to_rfc3339()
-                    })).await;
+                super::delivery::persist(db, "opal", tracking, order).await;
                 updated += 1;
             }
 
@@ -101,8 +196,8 @@ pub async fn sync_opal(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
         Ok(resp) => {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            warn!("[scheduler] OPAL sync failed ({}): {}", status, &text[..text.len().min(200)]);
-            log_sync(db, instance_id, "opal", "error", started, 0, 0, 0, 1, &text[..text.len().min(500)]).await;
+            warn!("[scheduler] OPAL sync failed ({}): {}", status, safe_trunc(&text, 200));
+            log_sync(db, instance_id, "opal", "error", started, 0, 0, 0, 1, safe_trunc(&text, 500)).await;
         }
         Err(e) => {
             warn!("[scheduler] OPAL sync: scraper unreachable: {}", e);
@@ -133,14 +228,7 @@ pub async fn sync_dhl(db: &SurrealDb, client: &reqwest::Client, instance_id: &st
                     .unwrap_or_default();
                 if tracking.is_empty() { continue; }
 
-                let _: Result<Option<Value>, _> = db.upsert(("shipment", tracking))
-                    .merge(json!({
-                        "tracking_number": tracking,
-                        "status": shipment.get("status").unwrap_or(&json!("processing")),
-                        "raw_response": serde_json::to_string(shipment).unwrap_or_default(),
-                        "provider": "dhl",
-                        "updated_at": Utc::now().to_rfc3339()
-                    })).await;
+                super::delivery::persist(db, "dhl", tracking, shipment).await;
                 updated += 1;
             }
 
@@ -150,8 +238,8 @@ pub async fn sync_dhl(db: &SurrealDb, client: &reqwest::Client, instance_id: &st
         Ok(resp) => {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            warn!("[scheduler] DHL sync failed ({}): {}", status, &text[..text.len().min(200)]);
-            log_sync(db, instance_id, "dhl", "error", started, 0, 0, 0, 1, &text[..text.len().min(500)]).await;
+            warn!("[scheduler] DHL sync failed ({}): {}", status, safe_trunc(&text, 200));
+            log_sync(db, instance_id, "dhl", "error", started, 0, 0, 0, 1, safe_trunc(&text, 500)).await;
         }
         Err(e) => {
             warn!("[scheduler] DHL sync: scraper unreachable: {}", e);
@@ -175,7 +263,7 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
         .send()
         .await;
 
-    let tickets: Vec<Value> = match tickets_res {
+    let mut tickets: Vec<Value> = match tickets_res {
         Ok(resp) if resp.status().is_success() => {
             let body: Value = resp.json().await.unwrap_or(json!({}));
             body.get("tickets").and_then(|v| v.as_array()).cloned()
@@ -184,8 +272,8 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
         }
         Ok(resp) => {
             let text = resp.text().await.unwrap_or_default();
-            warn!("[scheduler] Zoho tickets fetch failed: {}", &text[..text.len().min(200)]);
-            log_sync(db, instance_id, "zoho_desk", "error", started, 0, 0, 0, 1, &text[..text.len().min(500)]).await;
+            warn!("[scheduler] Zoho tickets fetch failed: {}", safe_trunc(&text, 200));
+            log_sync(db, instance_id, "zoho_desk", "error", started, 0, 0, 0, 1, safe_trunc(&text, 500)).await;
             return;
         }
         Err(e) => {
@@ -194,6 +282,15 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
             return;
         }
     };
+
+    // Optional catch-up mode: walk the list oldest-first so a re-run after a
+    // mid-walk death banks the uncovered tail (attachments of OLD tickets)
+    // first instead of spending hours re-fetching already-imported ground.
+    // Steady-state daily fulls keep newest-first (fresh tickets matter most).
+    if full_sync && std::env::var("ECK_ZOHO_FULL_REVERSE").map(|v| v == "1").unwrap_or(false) {
+        tickets.reverse();
+        info!("[scheduler] Zoho full: ECK_ZOHO_FULL_REVERSE=1 — walking oldest-first");
+    }
 
     info!("[scheduler] Zoho {}: fetched {} tickets", if full_sync { "full" } else { "incremental" }, tickets.len());
 
@@ -206,46 +303,108 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
         };
         let ticket_id = ticket_id_owned.as_str();
 
-        match support::import_ticket(db, ticket_id, ticket, instance_id).await {
-            Ok(r) if r.changed => { updated += 1; }
-            Ok(_) => { skipped += 1; }
-            Err(e) => {
-                errors += 1;
-                if error_detail.len() < 500 {
-                    error_detail.push_str(&format!("ticket {}: {}; ", ticket_id, e));
-                }
-            }
-        }
-
-        // 3. Always fetch the ticket detail + threads via ticket-threads.
-        // The list endpoint (/tickets) does NOT return customFields; only the
-        // detail endpoint (/tickets/{id}) does. We need customFields to promote
-        // address/city/zip into meta for the map. Running this for every ticket
-        // is fine on incremental syncs (few modified per run) and necessary on
-        // full syncs / backfills.
-        // On full syncs pull attachment binaries too — incremental runs every
-        // hour would be too noisy to re-download everything each time.
+        // 3. Fetch the ticket detail + threads FIRST and import only the
+        // enriched payload. The list endpoint (/tickets) does NOT return
+        // customFields; only the detail endpoint (/tickets/{id}) does — so
+        // importing the list shape AND the detail shape made the meta hash
+        // flip H(list)↔H(detail) on every single run, wiping AI state and
+        // buying a fresh Gemini summary per ticket per run for unchanged
+        // tickets (the 2026-07-17 token burn). The list payload is now only
+        // the fallback when the detail fetch fails, so ticket data still
+        // always lands.
+        // First pass is ALWAYS metadata-only: the thread payloads carry the
+        // attachment arrays (id/name/href/size) either way, binaries are the
+        // only difference — and re-downloading ~2.6k already-imported
+        // binaries under Zoho's rate limit is what made every full sync a
+        // 10-hour marathon (2026-07-22/23). On full syncs we compare the
+        // declared attachment count against the ticket's existing
+        // has_attachment edges and re-fetch WITH content only when the graph
+        // is actually missing something — steady-state daily fulls download
+        // nothing.
         let threads_res = client
             .post(format!("{}/api/zoho/ticket-threads", scraper_base()))
             .json(&json!({
                 "ticketId": ticket_id,
                 "_from_env": true,
-                "includeAttachmentContent": full_sync,
+                "includeAttachmentContent": false,
             }))
             .send()
             .await;
 
+        let mut detail_imported = false;
         if let Ok(resp) = threads_res {
             if resp.status().is_success() {
-                let body: Value = resp.json().await.unwrap_or(json!({}));
+                let mut body: Value = resp.json().await.unwrap_or(json!({}));
 
-                // Re-import ticket with enriched payload (includes cf.* custom fields like InBody Model, Serial Number, Address, City, Zip)
+                // Metered-connection kill switch: with ECK_ZOHO_SKIP_BINARIES=1
+                // full syncs never re-request attachment content (text-only,
+                // same traffic as an incremental). For tethered/mobile uplinks.
+                let skip_binaries = std::env::var("ECK_ZOHO_SKIP_BINARIES")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                if full_sync && !skip_binaries {
+                    let declared: usize = body
+                        .get("threads")
+                        .and_then(|v| v.as_array())
+                        .map(|ts| {
+                            ts.iter()
+                                .map(|t| {
+                                    t.get("attachments")
+                                        .and_then(|a| a.as_array())
+                                        .map(|a| a.len())
+                                        .unwrap_or(0)
+                                })
+                                .sum()
+                        })
+                        .unwrap_or(0);
+                    if declared > 0 {
+                        let edges: usize = db
+                            .query("SELECT count() AS c FROM has_attachment WHERE in = type::record($doc) GROUP ALL")
+                            .bind(("doc", format!("document:`{}`", ticket_id)))
+                            .await
+                            .ok()
+                            .and_then(|mut r| r.take::<Option<Value>>(0).ok().flatten())
+                            .and_then(|v| v.get("c").and_then(|c| c.as_u64()))
+                            .unwrap_or(0) as usize;
+                        if edges < declared {
+                            info!(
+                                "[scheduler] Zoho full: ticket {} has {}/{} attachments — re-fetching with binaries",
+                                ticket_id, edges, declared
+                            );
+                            if let Ok(r2) = client
+                                .post(format!("{}/api/zoho/ticket-threads", scraper_base()))
+                                .json(&json!({
+                                    "ticketId": ticket_id,
+                                    "_from_env": true,
+                                    "includeAttachmentContent": true,
+                                }))
+                                .send()
+                                .await
+                            {
+                                if r2.status().is_success() {
+                                    if let Ok(b2) = r2.json::<Value>().await {
+                                        body = b2;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Import ticket with enriched payload (includes cf.* custom fields like device model, serial number, Address, City, Zip)
                 if let Some(enriched_ticket) = body.get("ticket") {
                     if enriched_ticket.get("cf").is_some() || enriched_ticket.get("customFields").is_some() {
                         match support::import_ticket(db, ticket_id, enriched_ticket, instance_id).await {
-                            Ok(r) if r.changed => { debug!("[scheduler] Zoho ticket {} re-imported with cf fields", ticket_id); }
-                            _ => {}
+                            Ok(r) if r.changed => { updated += 1; }
+                            Ok(_) => { skipped += 1; }
+                            Err(e) => {
+                                errors += 1;
+                                if error_detail.len() < 500 {
+                                    error_detail.push_str(&format!("ticket {}: {}; ", ticket_id, e));
+                                }
+                            }
                         }
+                        detail_imported = true;
                     }
                 }
 
@@ -278,6 +437,29 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
                     }
                 }
             }
+        }
+
+        // Fallback: detail fetch failed or came back cf-less — land the list
+        // payload so ticket data is never lost. May cost one re-summary when
+        // the detail shape returns on a later run; that's the rare-failure
+        // price, not the every-run price.
+        if !detail_imported {
+            match support::import_ticket(db, ticket_id, ticket, instance_id).await {
+                Ok(r) if r.changed => { updated += 1; }
+                Ok(_) => { skipped += 1; }
+                Err(e) => {
+                    errors += 1;
+                    if error_detail.len() < 500 {
+                        error_detail.push_str(&format!("ticket {}: {}; ", ticket_id, e));
+                    }
+                }
+            }
+        }
+
+        // This ticket's writes are done for this run — release it to the
+        // summarization worker (enriching → pending, no-op if unchanged).
+        if let Err(e) = support::finalize_ticket_ingest(db, ticket_id).await {
+            debug!("[scheduler] finalize failed for ticket {}: {}", ticket_id, e);
         }
     }
 
@@ -317,7 +499,7 @@ async fn fetch_exact_rows(
 
     if !res.status().is_success() {
         let text = res.text().await.unwrap_or_default();
-        return Err(format!("HTTP {}", &text[..text.len().min(200)]));
+        return Err(format!("HTTP {}", safe_trunc(&text, 200)));
     }
 
     let body: Value = res.json().await.unwrap_or(json!({}));
@@ -564,6 +746,9 @@ pub async fn sync_excel(db: &SurrealDb, client: &reqwest::Client, instance_id: &
                     }
                     if !patch.is_empty() {
                         patch.insert("updated_at".to_string(), json!(Utc::now().to_rfc3339()));
+                        // `order` is synced — advance _vclock so the change propagates
+                        // instead of being dropped as "local wins/equal" on peers.
+                        patch.insert("_vclock".to_string(), eck_core::sync::conflict::next_local_vclock(existing.get("_vclock"), instance_id));
                         let id = existing.get("id").and_then(|v| v.as_str())
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| order_number.clone());
@@ -583,6 +768,9 @@ pub async fn sync_excel(db: &SurrealDb, client: &reqwest::Client, instance_id: &
                         obj.insert("source_system".to_string(), json!("excel"));
                         obj.insert("created_at".to_string(), json!(Utc::now().to_rfc3339()));
                         obj.insert("updated_at".to_string(), json!(Utc::now().to_rfc3339()));
+                        // synced table → fresh advancing _vclock (content() would
+                        // otherwise leave it null and the row can't converge on peers).
+                        obj.insert("_vclock".to_string(), eck_core::sync::conflict::next_local_vclock(None, instance_id));
                     }
                     let _: Result<Option<Value>, _> = db
                         .upsert(("order", order_number.as_str()))
@@ -650,9 +838,9 @@ pub async fn sync_excel(db: &SurrealDb, client: &reqwest::Client, instance_id: &
         }
         Ok(resp) => {
             let text = resp.text().await.unwrap_or_default();
-            warn!("[scheduler] Excel sync failed: {}", &text[..text.len().min(200)]);
+            warn!("[scheduler] Excel sync failed: {}", safe_trunc(&text, 200));
             errors += 1;
-            error_detail = text[..text.len().min(500)].to_string();
+            error_detail = safe_trunc(&text, 500).to_string();
         }
         Err(e) => {
             warn!("[scheduler] Excel: scraper unreachable: {}", e);
@@ -708,9 +896,245 @@ async fn log_sync(
 }
 
 async fn run_daily_sync(db: &SurrealDb, client: &reqwest::Client, instance_id: &str) {
-    sync_zoho(db, client, instance_id, true).await;
+    let (db2, c2, i2) = (db.clone(), client.clone(), instance_id.to_string());
+    run_guarded(db, instance_id, "zoho_desk", async move {
+        sync_zoho(&db2, &c2, &i2, true).await;
+    })
+    .await;
     sync_exact_online(db, client, instance_id).await;
     sync_excel(db, client, instance_id).await;
+}
+
+// ── Attachment-extraction sweep ───────────────────────────────────
+//
+// Persist the local OCR/text-layer ladder onto every byte-owning `file_resource`
+// row so the extract mesh-syncs (the blob does NOT) — remote nodes then gain
+// attachment text without pulling bytes. Modeled on the geo self-heal sweep:
+// OPT-IN per node via `ECK_EXTRACT_SWEEP_SECS` (unset/0 = DISABLED, the default),
+// self-limiting (a persisted row leaves the candidate set until EXTRACTOR_VER is
+// bumped). `file_resource` is mesh-replicated, so an unconditional sweep on every
+// fleet node would re-run the same OCR N times — enable it on ONE blob-holding
+// (home/authoring) node only, and only AFTER the fleet carries this code.
+
+/// Background attachment-extraction sweep. Returns immediately (never loops)
+/// unless `ECK_EXTRACT_SWEEP_SECS` > 0. Each tick takes up to
+/// `ECK_EXTRACT_SWEEP_BATCH` (default 8) rows whose stored extract is missing or
+/// below `EXTRACTOR_VER`, checks the blob is present locally (cache nodes hold
+/// none — skip silently, no hydrate), and runs `ocr_one`, which persists the
+/// result on the row.
+pub async fn start_extract_sweep(db: SurrealDb) {
+    let secs: u64 = std::env::var("ECK_EXTRACT_SWEEP_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if secs == 0 {
+        debug!("[ExtractSweep] disabled (ECK_EXTRACT_SWEEP_SECS unset/0)");
+        return;
+    }
+    let secs = secs.max(60); // floor: never tighter than 1 min
+    let batch: i64 = std::env::var("ECK_EXTRACT_SWEEP_BATCH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(8);
+
+    // Let boot (summarizer, index builds) settle before the first pass.
+    tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+    info!(
+        "[ExtractSweep] enabled, every {secs}s (batch {batch}, extractor_ver {})",
+        crate::ai::attachments::EXTRACTOR_VER
+    );
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(secs));
+    loop {
+        interval.tick().await;
+        if let Err(e) = extract_sweep_tick(&db, batch).await {
+            warn!("[ExtractSweep] tick error: {e}");
+        }
+    }
+}
+
+async fn extract_sweep_tick(db: &SurrealDb, batch: i64) -> Result<(), anyhow::Error> {
+    let ver = crate::ai::attachments::EXTRACTOR_VER;
+    // Byte-owning rows only (storage_path present) whose extract is missing/stale.
+    // Plain SELECT — no greedy-SET/WHERE gotcha; `NONE < $ver` is false, not an error.
+    // Over-select ×4: blob-less rows (blob never landed on this node) stay in the
+    // candidate set forever and would otherwise starve a LIMIT-sized window.
+    let rows: Vec<Value> = db
+        .query(
+            "SELECT cas_uuid, storage_path FROM file_resource \
+             WHERE storage_path IS NOT NONE \
+             AND (extractor_ver IS NONE OR extractor_ver < $ver) \
+             LIMIT $limit",
+        )
+        .bind(("ver", ver))
+        .bind(("limit", batch.saturating_mul(4)))
+        .await?
+        .take(0)?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let mut done = 0u32;
+    for row in &rows {
+        if i64::from(done) >= batch {
+            break;
+        }
+        let cas = match row.get("cas_uuid").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+        let sp = row.get("storage_path").and_then(|v| v.as_str()).unwrap_or("");
+        if sp.is_empty() {
+            continue;
+        }
+        // Blob must be present locally — cache nodes hold none. Skip silently
+        // without hydrating (the whole point is text-without-bytes on peers).
+        if !std::path::Path::new(".").join(sp).exists() {
+            continue;
+        }
+        // ocr_one runs the ladder and persists the extract on the row.
+        let _ = crate::ai::attachments::ocr_one(db, cas).await;
+        done += 1;
+    }
+    if done > 0 {
+        debug!("[ExtractSweep] extracted {done}/{} candidate(s)", rows.len());
+    }
+    Ok(())
+}
+
+// ── Attachment-classification sweep (proposal 51, layer 2) ────────────────
+//
+// ONE cheap-model (flash-lite) classification per PDF attachment blob, over the
+// ALREADY-STORED extracted text (no blob read — a node that synced the extract
+// can classify without the bytes), producing a persisted `doc_class` card. Same
+// opt-in shape as the extract sweep: OFF by default (`ECK_CLASSIFY_SWEEP_SECS`
+// unset/0), self-limiting (a classified row leaves the candidate set until
+// CLASSIFY_VER is bumped). METERED — small batch, budget-halt gated, slow on
+// purpose. `file_resource` + `doc_class` mesh-replicate, so run it on ONE node
+// only (like the extract sweep) to avoid classifying the same corpus N times.
+
+/// Background attachment-classification sweep. Returns immediately (never loops)
+/// unless `ECK_CLASSIFY_SWEEP_SECS` > 0. Each tick classifies up to
+/// `ECK_CLASSIFY_SWEEP_BATCH` (default 4) high-quality PDF extracts and stamps
+/// any below-threshold ones (no AI call). Budget-HALT skips the whole tick.
+pub async fn start_classify_sweep(db: SurrealDb) {
+    let secs: u64 = std::env::var("ECK_CLASSIFY_SWEEP_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if secs == 0 {
+        debug!("[ClassifySweep] disabled (ECK_CLASSIFY_SWEEP_SECS unset/0)");
+        return;
+    }
+    let secs = secs.max(60); // floor: never tighter than 1 min
+    let batch: i64 = std::env::var("ECK_CLASSIFY_SWEEP_BATCH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(4);
+
+    // Metered egress → its own HTTP client (mirrors the summarization worker).
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .expect("failed to build classify-sweep HTTP client");
+
+    // Let boot (summarizer, extract sweep, index builds) settle first.
+    tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+    info!(
+        "[ClassifySweep] enabled, every {secs}s (batch {batch}, classify_ver {})",
+        crate::ai::doc_classify::CLASSIFY_VER
+    );
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(secs));
+    loop {
+        interval.tick().await;
+        if let Err(e) = classify_sweep_tick(&db, &http, batch).await {
+            warn!("[ClassifySweep] tick error: {e}");
+        }
+    }
+}
+
+async fn classify_sweep_tick(db: &SurrealDb, http: &reqwest::Client, batch: i64) -> Result<(), anyhow::Error> {
+    // Budget circuit breaker: a metered call is billed like any generate hop —
+    // skip the whole tick when halted (same gate as the vision path).
+    if crate::ai::telemetry::current_budget_level() == crate::ai::telemetry::BudgetLevel::Halt {
+        return Ok(());
+    }
+    // Resolve auth each tick (managed mode re-mints the Vertex bearer before
+    // expiry; studio returns the static key). Unconfigured → skip this tick.
+    let auth = match eck_core::ai::AiAuth::resolve(http).await {
+        Ok(a) if a.is_configured() => a,
+        _ => return Ok(()),
+    };
+
+    let ver = crate::ai::doc_classify::CLASSIFY_VER;
+    let ext_ver = crate::ai::attachments::EXTRACTOR_VER;
+
+    // Candidates: PDF-scoped rows with a CURRENT-version, non-empty extract that
+    // is unclassified (or classified by an older CLASSIFY_VER). The
+    // dictionary_ratio gate is applied per-row in Rust — a below-threshold row is
+    // STAMPED (leaves the set) rather than silently excluded here. Over-select ×4
+    // like the extract sweep: low-quality rows are drained without AI cost, so a
+    // window heavy with them must not starve the AI batch. Plain SELECT — no
+    // greedy-SET/WHERE gotcha; `NONE < $ver` is false, not an error.
+    let rows: Vec<Value> = db
+        .query(
+            "SELECT cas_uuid, extracted_text, extracted_quality FROM file_resource \
+             WHERE extractor_ver = $ext_ver \
+             AND extracted_text IS NOT NONE AND extracted_text != '' \
+             AND (classify_ver IS NONE OR classify_ver < $ver) \
+             AND (string::contains(mime_type ?? '', 'pdf') \
+                  OR string::ends_with(string::lowercase(original_name ?? ''), '.pdf')) \
+             LIMIT $limit",
+        )
+        .bind(("ext_ver", ext_ver))
+        .bind(("ver", ver))
+        .bind(("limit", batch.saturating_mul(4)))
+        .await?
+        .take(0)?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let mut ai_done = 0u32; // AI classifications this tick (batch-limited)
+    let mut low = 0u32; // low-quality stamps this tick (free)
+    for row in &rows {
+        let cas = match row.get("cas_uuid").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+        let text = row.get("extracted_text").and_then(|v| v.as_str()).unwrap_or("");
+        if text.is_empty() {
+            continue;
+        }
+        let dict = row
+            .get("extracted_quality")
+            .and_then(|q| q.get("dictionary_ratio"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        if dict < crate::ai::doc_classify::MIN_DICTIONARY_RATIO {
+            // Too garbled to be worth a model call — stamp so it leaves the set.
+            crate::ai::doc_classify::stamp_low_quality(db, cas).await;
+            low += 1;
+            continue;
+        }
+
+        // AI budget for this tick spent → leave the remaining high-quality rows
+        // for the next tick (low-quality ones above are still drained).
+        if i64::from(ai_done) >= batch {
+            continue;
+        }
+        let _ = crate::ai::doc_classify::classify_one(db, http, &auth, cas, text).await;
+        ai_done += 1; // count the paid attempt regardless of outcome
+    }
+    if ai_done > 0 || low > 0 {
+        debug!(
+            "[ClassifySweep] classified {ai_done}, low-quality-stamped {low} (of {} candidate rows)",
+            rows.len()
+        );
+    }
+    Ok(())
 }
 
 async fn should_run_daily_catchup(db: &SurrealDb) -> bool {

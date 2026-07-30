@@ -99,26 +99,24 @@ pub async fn create(
 pub async fn update(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(mut payload): Json<Value>,
+    Json(payload): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    if let Some(obj) = payload.as_object_mut() {
-        obj.insert(
-            "updated_at".to_string(),
-            serde_json::json!(chrono::Utc::now().to_rfc3339()),
-        );
-    }
-
-    let updated: Option<Value> = state
-        .db
-        .update(("product", &*id))
-        .content(payload)
+    // Synced-table update routes through put_synced_entity so it advances `_vclock`
+    // (else the edit resolves as local-wins on peers and doesn't propagate). Keep
+    // the update-only 404 by checking existence first (put_synced_entity upserts).
+    if state
+        .get_synced_entity("product", &id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match updated {
-        Some(v) => Ok(Json(v)),
-        None => Err((StatusCode::NOT_FOUND, format!("Product '{id}' not found"))),
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .is_none()
+    {
+        return Err((StatusCode::NOT_FOUND, format!("Product '{id}' not found")));
     }
+    let updated = state
+        .put_synced_entity("product", &id, payload)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(updated))
 }
 
 /// DELETE /api/products/:id

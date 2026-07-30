@@ -30,6 +30,14 @@ pub struct User {
     pub failed_login_attempts: i64,
     #[serde(rename = "preferredLanguage")]
     pub preferred_language: String,
+    /// Additional languages this user speaks (BCP-47-ish codes, e.g. ["de","ko"]).
+    /// Optional so existing rows without the field still deserialize.
+    #[serde(rename = "languages", default, skip_serializing_if = "Option::is_none")]
+    pub languages: Option<Vec<String>>,
+    /// Force a password change on next login (set for bulk-seeded accounts that
+    /// share a generated password). Optional so existing rows deserialize.
+    #[serde(rename = "mustChangePassword", default, skip_serializing_if = "Option::is_none")]
+    pub must_change_password: Option<bool>,
     #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,
     #[serde(rename = "updatedAt")]

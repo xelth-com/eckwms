@@ -14,17 +14,68 @@ pub async fn odoo_pickings() -> Json<Vec<Value>> {
     Json(vec![])
 }
 
-/// GET /api/delivery/shipments — Real implementation (fetches from shipment table)
+/// GET /api/delivery/shipments — reads the meshed `stock_picking_delivery` model
+/// (works on every node, not just the scraper node). The dashboard map parses a
+/// few keys out of `raw_response`, so we reconstruct that object from the
+/// distilled fields — the SPA can't tell it from the original scraper blob.
 pub async fn list_shipments(
     State(state): State<Arc<AppState>>,
 ) -> ApiResult<Json<Vec<Value>>> {
-    let shipments: Vec<Value> = state.db
-        .query("SELECT record::id(id) AS id, tracking_number, status, raw_response, provider, updated_at FROM shipment ORDER BY updated_at DESC LIMIT 100")
+    let rows: Vec<Value> = state.db
+        .query(
+            "SELECT record::id(id) AS id, tracking_number, status, provider, \
+                    recipient_name, recipient_street, recipient_city, recipient_zip, \
+                    recipient_country, pickup_name, pickup_street, pickup_city, \
+                    pickup_zip, pickup_country, description, reference, weight, \
+                    dimensions, status_date, created_ext, delivery_date, updated_at \
+             FROM stock_picking_delivery ORDER BY updated_at DESC LIMIT 200",
+        )
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .take(0)
         .unwrap_or_default();
-    Ok(Json(shipments))
+
+    let get = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let out: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let city = get(r, "recipient_city");
+            // The PDA receiving flow reads recipient_*/delivery_* (with fallbacks),
+            // plus product/description for what the parcel is. This is the operator
+            // surface — recipient PII is intentionally in clear here, unlike the
+            // ops/brain plane where stock_picking_delivery is Zone-1-denied.
+            let raw = json!({
+                "recipient_name": get(r, "recipient_name"),
+                "recipient_street": get(r, "recipient_street"),
+                "recipient_zip": get(r, "recipient_zip"),
+                "recipient_country": get(r, "recipient_country"),
+                "recipient_city": city,
+                "delivery_city": city,
+                "pickup_name": get(r, "pickup_name"),
+                "pickup_street": get(r, "pickup_street"),
+                "pickup_zip": get(r, "pickup_zip"),
+                "pickup_city": get(r, "pickup_city"),
+                "pickup_country": get(r, "pickup_country"),
+                "product": get(r, "description"),
+                "description": get(r, "description"),
+                "reference": get(r, "reference"),
+                "weight": get(r, "weight"),
+                "dimensions": get(r, "dimensions"),
+                "status_date": get(r, "status_date"),
+                "created_at": get(r, "created_ext"),
+                "delivery_date": get(r, "delivery_date"),
+            });
+            json!({
+                "id": r.get("id").cloned().unwrap_or(Value::Null),
+                "tracking_number": r.get("tracking_number").cloned().unwrap_or(Value::Null),
+                "status": r.get("status").cloned().unwrap_or(Value::Null),
+                "provider": r.get("provider").cloned().unwrap_or(Value::Null),
+                "updated_at": r.get("updated_at").cloned().unwrap_or(Value::Null),
+                "raw_response": serde_json::to_string(&raw).unwrap_or_default(),
+            })
+        })
+        .collect();
+    Ok(Json(out))
 }
 
 /// GET /api/delivery/config — stub

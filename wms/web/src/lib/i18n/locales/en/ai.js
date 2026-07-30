@@ -1,0 +1,22 @@
+// AI Operator Inbox.
+export default {
+    new_task_notify: "New AI task requires your attention",
+    load_failed: "Failed to load AI tasks",
+    enter_reply: "Please enter a reply",
+    reply_sent: "Reply sent to AI",
+    reply_failed: "Failed to send reply: {error}",
+    no_question: "The AI paused but provided no specific question.",
+    page_title: "AI Operator Inbox",
+    refreshing: "Refreshing…",
+    refresh: "Refresh",
+    page_desc: "Tasks requiring human intervention. The AI Brain has paused execution and is waiting for your input to proceed.",
+    loading_tasks: "Loading pending tasks…",
+    error_generic: "Error: {error}",
+    empty_state: "All clear. No tasks are waiting for human input.",
+    task_label: "Task: {id}",
+    context_label: "Context",
+    ai_question_label: "AI Question",
+    reply_placeholder: "Type your reply to the AI here…",
+    sending: "Sending…",
+    send_reply: "Send Reply",
+};

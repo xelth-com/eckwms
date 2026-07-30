@@ -1,0 +1,62 @@
+export default {
+    // DashboardMap — toasts
+    pin_moved_hq: 'Pin zur Zentrale verschoben',
+    reset_failed: 'Zurücksetzen fehlgeschlagen: {error}',
+    visit_planned: 'Besuch geplant: {ref}',
+    plan_failed: 'Planen fehlgeschlagen: {error}',
+    ship_delivered: 'Sendung als zugestellt markiert',
+    resolve_failed: 'Auflösen fehlgeschlagen: {error}',
+    speech_unavailable: 'Spracherkennung im Browser nicht verfügbar',
+
+    // DashboardMap — popups
+    open_repair: 'Reparatur öffnen',
+    open_ticket: 'Ticket öffnen',
+    type_repair: 'Reparatur (physisch)',
+    type_ticket: 'Ticket (online)',
+    status_label: 'Status:',
+    reset_hq: '📍 Zur Zentrale zurücksetzen',
+    plan_visit: '📅 Besuch planen',
+    stuck_days: '⚠️ Seit {days} Tagen hängend',
+    carrier_status: 'Versandstatus:',
+    carrier_glitch: 'Möglicher Fehler im Carrier-Feed — Zustellung manuell bestätigen.',
+    mark_delivered: 'Als zugestellt markieren',
+    km_actual: '{km} km (Tacho)',
+    km_estimated: '{km} km (geschätzt)',
+    gobd_sealed: '🔒 GoBD-versiegelt',
+    trip: 'Fahrt',
+    start: 'Start',
+    finish: 'Ziel',
+    in_progress: 'Unterwegs',
+    stop: 'Halt',
+    more: '+{count} weitere…',
+    tasks_here: '{count} Aufgaben hier',
+
+    // DashboardMap — markup
+    loading_map: 'Karte wird geladen…',
+    filter_assignee: 'Nach Zuständigem filtern',
+    search_placeholder: 'Suche Nr. / Kunde…',
+    clear_tip: 'Löschen',
+    dictate_tip: 'Diktieren',
+    assignee_repairs: 'Reparaturen',
+    assignee_unassigned: 'Nicht zugewiesen',
+
+    // GeoRouteWidget
+    searching: 'Suche...',
+    find_nearby: 'Aufgaben in der Nähe der Route finden',
+    no_coords: 'Keine Koordinaten verfügbar',
+    fetch_failed: 'Aufgaben in der Nähe konnten nicht geladen werden',
+    badge_bingo: 'Bingo',
+    badge_normal: 'Normal',
+    badge_far: 'Weit',
+    km_to_target: '{km} km zum Ziel',
+    cost: 'Kosten: {cost}',
+    route_empty: 'Klicken Sie auf die Schaltfläche, um Aufgaben entlang der Route zu finden.',
+
+    // GeoRouteMap
+    load_nearby_failed: 'Aufgaben in der Nähe konnten nicht geladen werden',
+    office_popup: 'Büro (Eschborn)',
+    cost_label: 'Kosten:',
+    loading_map_leaflet: 'Karte wird geladen...',
+    nearby_tasks: 'Aufgaben in der Nähe ({count})',
+    no_geocoded: 'Keine geokodierten Aufgaben gefunden.',
+};

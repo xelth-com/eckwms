@@ -205,17 +205,23 @@ pub async fn update_order(
     Path(id): Path<String>,
     Json(payload): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    let updated: Option<Value> = state
-        .db
-        .update(("order", &*id))
-        .content(payload)
+    // `order` is a synced table — route through put_synced_entity so the edit
+    // advances `_vclock` (a raw .content() write left the clock null → peers
+    // dropped the edit as local-wins/equal; same class as the importer churn).
+    // Existence check keeps the update-only 404 (put_synced_entity upserts).
+    if state
+        .get_synced_entity("order", &id)
         .await
-        .map_err(db_err)?;
-
-    match updated {
-        Some(v) => Ok(Json(v)),
-        None => Err((StatusCode::NOT_FOUND, format!("Order '{id}' not found"))),
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .is_none()
+    {
+        return Err((StatusCode::NOT_FOUND, format!("Order '{id}' not found")));
     }
+    let updated = state
+        .put_synced_entity("order", &id, payload)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(updated))
 }
 
 /// DELETE /api/rma/:id — delete an order
@@ -358,7 +364,7 @@ pub async fn search_orders(
     Ok(Json(results))
 }
 
-// ─── Clickwrap Agreement (InBody / Repairs) ─────────────────────────────────
+// ─── Clickwrap Agreement (repairs) ─────────────────────────────────
 
 /// POST /api/rma/:id/generate-link
 pub async fn generate_agreement_link(

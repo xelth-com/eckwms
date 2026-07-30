@@ -1,0 +1,16 @@
+export default {
+    title: 'Инвентарь',
+    load_failed: 'Не удалось загрузить: {error}',
+    discrepancies_only: 'Только расхождения',
+    refresh: 'Обновить',
+    loading: 'Загрузка…',
+    empty: 'Пока ничего не подсчитано. Ведите подсчёт на экране Склад → Инвентаризация.',
+    summary: 'строк: {rows} · всего подсчитано {pcs} шт.',
+    th_time: 'Время',
+    th_location: 'Расположение',
+    th_warehouse: 'Склад',
+    th_code: 'Код',
+    th_name: 'Название',
+    th_ist: 'Факт',
+    th_soll: 'Учёт',
+};

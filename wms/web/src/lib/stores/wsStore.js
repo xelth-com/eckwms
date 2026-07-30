@@ -23,7 +23,11 @@ function createWsStore() {
         const host = window.location.host;
         // Use /E/ws path (HTTP_PATH_PREFIX=/E from backend config)
         // CaseInsensitiveMiddleware on backend handles both /E/ws and /e/ws
-        const url = `${protocol}//${host}/E/ws`;
+        // JWT goes as a query param — the browser WebSocket API can't set an
+        // Authorization header, and the server only streams broadcast events
+        // (TRIP_LIVE etc.) to authenticated sockets.
+        const token = localStorage.getItem('auth_token');
+        const url = `${protocol}//${host}/E/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`;
 
         console.log(`[WS] Connecting to ${url}...`);
         socket = new WebSocket(url);

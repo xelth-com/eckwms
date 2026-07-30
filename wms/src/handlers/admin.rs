@@ -73,7 +73,13 @@ pub async fn force_sync(
                 .build()
                 .expect("client build");
             info!("[admin] force-sync: Zoho Desk FULL re-import (background) started");
-            scheduler::sync_zoho(&db, &client, &iid, true).await;
+            // Guarded: two of these died silently mid-run on Zoho session
+            // flaps (2026-07-22/23) — a panic now lands as a 'died' row.
+            let (db2, c2, i2) = (db.clone(), client.clone(), iid.clone());
+            scheduler::run_guarded(&db, &iid, "zoho_desk", async move {
+                scheduler::sync_zoho(&db2, &c2, &i2, true).await;
+            })
+            .await;
             info!("[admin] force-sync: Zoho Desk FULL re-import done");
         });
         return Ok(Json(json!({

@@ -327,14 +327,39 @@ fn generate_labels_pdf(cfg: &LabelRequest, items: &[LabelItem]) -> Result<Vec<u8
                 let _ = add_qr_to_layer(&current_layer, &qr_data, pos_x, pos_y, size);
             };
 
+            // QR host prefixes for the up-to-3 label QR codes. Deployment
+            // default is the three cluster hosts; override via ECK_QR_HOSTS
+            // (comma-separated).
+            let qr_hosts: Vec<String> = std::env::var("ECK_QR_HOSTS")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| {
+                    s.split(',')
+                        .map(|p| p.trim().to_string())
+                        .filter(|p| !p.is_empty())
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    vec![
+                        "ECK1.COM".to_string(),
+                        "ECK2.COM".to_string(),
+                        "ECK3.COM".to_string(),
+                    ]
+                });
             if let Some(ref qr1) = cc.qr1 {
-                draw_qr("ECK1.COM", qr1);
+                if let Some(h) = qr_hosts.first() {
+                    draw_qr(h.as_str(), qr1);
+                }
             }
             if let Some(ref qr2) = cc.qr2 {
-                draw_qr("ECK2.COM", qr2);
+                if let Some(h) = qr_hosts.get(1) {
+                    draw_qr(h.as_str(), qr2);
+                }
             }
             if let Some(ref qr3) = cc.qr3 {
-                draw_qr("ECK3.COM", qr3);
+                if let Some(h) = qr_hosts.get(2) {
+                    draw_qr(h.as_str(), qr3);
+                }
             }
         }
     }

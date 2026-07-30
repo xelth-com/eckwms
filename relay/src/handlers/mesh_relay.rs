@@ -208,18 +208,32 @@ pub async fn ack(
             "UPDATE type::record('mesh_task', $tid) SET \
                 acked = true, \
                 result = $r, \
-                acked_at = $now",
+                acked_at = $now \
+             RETURN AFTER",
         )
         .bind(("tid", task_id.clone()))
         .bind(("r", result))
         .bind(("now", now))
         .await;
 
-    if let Err(e) = res {
-        tracing::error!("Mesh ack update failed: {e}");
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    match res {
+        Err(e) => {
+            tracing::error!("Mesh ack update failed: {e}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+        Ok(mut r) => {
+            // Zero rows matched = this relay never held the task. It MUST be a
+            // 404, not ok:true: senders walk payload_order across all relays,
+            // and an UPDATE on a missing record is still "success" to SurrealDB
+            // — so the old unconditional ok let acks "land" on the wrong relay
+            // while the right one redelivered the task forever (poison loop).
+            let rows: Vec<Value> = r.take(0).unwrap_or_default();
+            if rows.is_empty() {
+                return Err(StatusCode::NOT_FOUND);
+            }
+            Ok(Json(json!({ "ok": true, "task_id": task_id })))
+        }
     }
-    Ok(Json(json!({ "ok": true, "task_id": task_id })))
 }
 
 // ─── GET /E/m/result/:task_id ──────────────────────────────────────────────

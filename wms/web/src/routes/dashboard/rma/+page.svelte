@@ -4,6 +4,7 @@
     import { goto } from '$app/navigation';
     import { base } from '$app/paths';
     import { toastStore } from '$lib/stores/toastStore';
+    import { t, tr } from '$lib/i18n';
 
     let rmas = [];
     let loading = true;
@@ -20,7 +21,7 @@
         } catch (e) {
             console.error(e);
             error = e.message;
-            toastStore.add('Failed to load RMAs', 'error');
+            toastStore.add(tr('rma.load_failed'), 'error');
         } finally {
             loading = false;
         }
@@ -42,30 +43,30 @@
 
 <div class="rma-page">
     <header>
-        <h1>RMA Requests</h1>
+        <h1>{$t('rma.page_title')}</h1>
         <div class="actions">
-            <button class="action-btn primary" on:click={createNew}>+ New Request</button>
+            <button class="action-btn primary" on:click={createNew}>{$t('rma.new_request')}</button>
         </div>
     </header>
 
     {#if loading}
-        <div class="loading">Loading requests...</div>
+        <div class="loading">{$t('rma.loading_requests')}</div>
     {:else if error}
         <div class="error">{error}</div>
     {:else}
         <div class="table-container">
             {#if rmas.length === 0}
-                <div class="empty-state">No RMA requests found.</div>
+                <div class="empty-state">{$t('rma.empty')}</div>
             {/if}
 
             <table class="rma-table">
                 <thead>
                     <tr>
-                        <th>RMA #</th>
-                        <th>Customer</th>
-                        <th>Product SKU</th>
-                        <th>Date</th>
-                        <th>Status</th>
+                        <th>{$t('rma.th_rma_number')}</th>
+                        <th>{$t('rma.th_customer')}</th>
+                        <th>{$t('rma.th_product_sku')}</th>
+                        <th>{$t('rma.th_date')}</th>
+                        <th>{$t('rma.th_status')}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -78,7 +79,7 @@
                             <td>{formatDate(rma.created_at)}</td>
                             <td>
                                 <span class="status-badge {rma.status.toLowerCase()}">
-                                    {rma.status}
+                                    {$t('rma.status_' + rma.status.toLowerCase())}
                                 </span>
                             </td>
                         </tr>

@@ -77,6 +77,27 @@ pub struct TripUpload {
     ///          mcc?, mnc?, tac?, cid?, signal_dbm?}
     #[serde(default)]
     pub points: Vec<Value>,
+    /// Derived layer computed ON DEVICE (least-action smoother, see
+    /// eckwms-movFast/.eck/TRACK_ESTIMATION.md): decimated [[lng,lat],…]
+    /// polyline + its length. Raw points above stay the GoBD evidence; this
+    /// is display/km material, recomputable, never sealed.
+    #[serde(default)]
+    pub smoothed_path: Option<Value>,
+    #[serde(default)]
+    pub smoothed_km: Option<f64>,
+    #[serde(default)]
+    pub estimation_version: Option<String>,
+    /// Road-snapped layer (Viterbi over corridor vector tiles, final upload
+    /// only): the ROAD distance and geometry. matched_share < 1 means part of
+    /// the corridor had no road coverage.
+    #[serde(default)]
+    pub matched_path: Option<Value>,
+    #[serde(default)]
+    pub matched_km: Option<f64>,
+    #[serde(default)]
+    pub matched_share: Option<f64>,
+    #[serde(default)]
+    pub matcher_version: Option<String>,
 }
 
 /// POST /api/trips — upsert a trip from the PDA (idempotent by trip_uuid).
@@ -89,11 +110,25 @@ pub async fn upload_trip(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TripUpload>,
 ) -> ApiResult<Json<Value>> {
+    upload_trip_core(&state, body).await.map(Json)
+}
+
+/// Core of `POST /api/trips`, callable off the HTTP path. The relay-forwarded
+/// `trip_upload` mesh-task (`mesh_relay_poller`) uses it so a phone on mobile
+/// data reaches a NAT'd master through the relay polygon. Idempotent by
+/// `trip_uuid`; on an OPEN checkpoint carrying a located point it also
+/// broadcasts a `TRIP_LIVE` event, so the dashboard's moving marker advances
+/// even when the position arrived over the relay (at the client's checkpoint
+/// cadence, not per-fix).
+pub async fn upload_trip_core(
+    state: &Arc<AppState>,
+    body: TripUpload,
+) -> ApiResult<Value> {
     if body.trip_uuid.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "trip_uuid is required".into()));
     }
 
-    super::pda::require_active_device(&state, &body.device_id).await?;
+    super::pda::require_active_device(state, &body.device_id).await?;
 
     // Privatfahrt (DSGVO): private trips must never carry coordinates —
     // only the odometer delta is stored. The client already omits points;
@@ -120,11 +155,72 @@ pub async fn upload_trip(
             && p.get("cid").and_then(|v| v.as_i64()).is_some()
     });
 
+    // Expense receipts (Tankbeleg / Parkschein / Maut / plain receipt) are TAX
+    // documents → promote those points into a durable `fuel_events` array on the
+    // trip so they survive the 14-day raw-point pruning (unlike the track). The
+    // array keeps its historical name for dashboard compat; `kind` says what each
+    // event is. Re-derived from the full points array on every checkpoint (client
+    // always re-sends all points) → idempotent.
+    const EXPENSE_KINDS: [&str; 4] = ["fuel", "parking", "toll", "receipt"];
+    let get = |p: &Value, k: &str| p.get(k).cloned().unwrap_or(Value::Null);
+    let fuel_events: Vec<Value> = points
+        .iter()
+        .filter(|p| {
+            p.get("kind")
+                .and_then(|v| v.as_str())
+                .is_some_and(|k| EXPENSE_KINDS.contains(&k))
+        })
+        .map(|p| {
+            json!({
+                "kind": get(p, "kind"),
+                "ts": get(p, "ts"),
+                "lat": get(p, "lat"),
+                "lng": get(p, "lng"),
+                "odometer_km": get(p, "odometer_km"),
+                "photo_id": get(p, "photo_id"),
+                "label": get(p, "label"),
+            })
+        })
+        .collect();
+
     let ended = body.ended_at.is_some();
     let now = Utc::now().to_rfc3339();
 
+    // Latest located point drives the dashboard's moving marker on OPEN
+    // checkpoints (captured before `points` is moved into `content`).
+    let live_marker: Option<(f64, f64)> = if !ended && !is_private {
+        points.iter().rev().find_map(|p| {
+            let lat = p.get("lat").and_then(|v| v.as_f64())?;
+            let lng = p.get("lng").and_then(|v| v.as_f64())?;
+            Some((lat, lng))
+        })
+    } else {
+        None
+    };
+    let live_plate = vehicle_plate.clone();
+
+    // Advance the vector clock so each checkpoint causally DOMINATES the prior
+    // version. Without this the re-uploaded trip carries no clock advance, so a
+    // peer resolves it as Concurrent → LWW every cycle and never records the
+    // merkle checksum → the "trip: pulled N wrote 0" never-converges churn. With
+    // an advancing clock the peer applies it on the remote-wins path (which does
+    // record the checksum) and the trace/fuel_events converge cleanly.
+    // (tech-debt: synced-table writers must stamp _vclock.)
+    let cur_vclock: Vec<Value> = state
+        .db
+        .query("SELECT VALUE _vclock FROM type::record('trip', $id) LIMIT 1")
+        .bind(("id", body.trip_uuid.clone()))
+        .await
+        .and_then(|mut r| r.take(0))
+        .map_err(db_err)?;
+    let next_vclock = eck_core::sync::conflict::next_local_vclock(
+        cur_vclock.into_iter().next().as_ref(),
+        &state.instance_id,
+    );
+
     let content = json!({
         "trip_uuid": body.trip_uuid,
+        "_vclock": next_vclock,
         "device_id": body.device_id,
         "started_at": body.started_at,
         "ended_at": body.ended_at,
@@ -145,6 +241,14 @@ pub async fn upload_trip(
         "note": body.note,
         "point_count": points.len(),
         "points": points,
+        "fuel_events": fuel_events,
+        "smoothed_path": if is_private { Value::Null } else { body.smoothed_path.unwrap_or(Value::Null) },
+        "smoothed_km": body.smoothed_km,
+        "estimation_version": body.estimation_version,
+        "matched_path": if is_private { Value::Null } else { body.matched_path.unwrap_or(Value::Null) },
+        "matched_km": body.matched_km,
+        "matched_share": body.matched_share,
+        "matcher_version": body.matcher_version,
         // worker control flags
         "needs_resolution": has_unresolved_cells || ended,
         "computed_distance_km": Value::Null,
@@ -183,12 +287,29 @@ pub async fn upload_trip(
         .take(0)
         .unwrap_or_default();
 
+    // Advance the dashboard's live marker for open checkpoints (mirrors the
+    // per-fix POST /api/trips/live path, but also fires when the checkpoint
+    // arrived over the relay). Ephemeral: broadcast only, never persisted.
+    if let Some((lat, lng)) = live_marker {
+        let event = json!({
+            "type": "TRIP_LIVE",
+            "trip_uuid": body.trip_uuid,
+            "vehicle_plate": live_plate,
+            "lat": lat,
+            "lng": lng,
+            "heading": Value::Null,
+            "speed_kmh": Value::Null,
+            "ts": Utc::now().to_rfc3339(),
+        });
+        let _ = state.ws_tx.send(event.to_string());
+    }
+
     info!("Trip upsert: {} (ended={})", body.trip_uuid, ended);
 
-    Ok(Json(json!({
+    Ok(json!({
         "success": true,
         "trip": upserted.first().cloned().unwrap_or(Value::Null),
-    })))
+    }))
 }
 
 #[derive(Deserialize)]
@@ -1215,9 +1336,17 @@ fn z3_index_xml(month: &str) -> String {
     s.push_str("<!DOCTYPE DataSet SYSTEM \"gdpdu-01-09-2004.dtd\">\n");
     s.push_str("<DataSet>\n");
     s.push_str("  <Version>1.0</Version>\n");
+    // GoBD DataSupplier identity. Neutral defaults for a generic build; the
+    // fleet sets ECK_COMPANY_NAME / ECK_COMPANY_LOCATION to its own supplier
+    // name and location. Location stays present as a (possibly empty) element
+    // so the gdpdu DTD's required DataSupplier(Name, Location, Comment) order
+    // holds. Only the SOURCING of these two strings changed — nothing structural.
+    let company_name =
+        std::env::var("ECK_COMPANY_NAME").unwrap_or_else(|_| "eckWMS".to_string());
+    let company_location = std::env::var("ECK_COMPANY_LOCATION").unwrap_or_default();
     s.push_str("  <DataSupplier>\n");
-    s.push_str("    <Name>9eck.com WMS - Elektronisches Fahrtenbuch</Name>\n");
-    s.push_str("    <Location>9eck.com</Location>\n");
+    s.push_str(&format!("    <Name>{company_name}</Name>\n"));
+    s.push_str(&format!("    <Location>{company_location}</Location>\n"));
     s.push_str("    <Comment>GoBD-konformer Z3-Export (Datentraegerueberlassung) zur maschinellen Auswertung (z. B. IDEA).</Comment>\n");
     s.push_str("  </DataSupplier>\n");
     s.push_str("  <Media>\n");

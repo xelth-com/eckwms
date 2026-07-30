@@ -5,6 +5,7 @@
     import { goto } from '$app/navigation';
     import { base } from '$app/paths';
     import { toastStore } from '$lib/stores/toastStore';
+    import { t, tr } from '$lib/i18n';
 
     let rmaId = $page.params.id;
     let isNew = rmaId === 'new';
@@ -51,7 +52,7 @@
             const data = await api.get(`/api/rma/${rmaId}`);
             formData = { ...data };
         } catch (e) {
-            toastStore.add('Error loading RMA', 'error');
+            toastStore.add(tr('rma.error_loading'), 'error');
             goto(`${base}/dashboard/rma`);
         } finally {
             loading = false;
@@ -64,7 +65,7 @@
                 // Auto-gen handled by backend if empty, or we pass specific format
                 // Simple validation
                 if (!formData.customerName || !formData.productSku) {
-                    toastStore.add('Customer Name and Product SKU are required', 'warning');
+                    toastStore.add(tr('rma.customer_sku_required'), 'warning');
                     return;
                 }
 
@@ -72,23 +73,23 @@
                 if(formData.rmaNumber === 'AUTO-GEN') delete formData.rmaNumber;
 
                 await api.post('/api/rma', formData);
-                toastStore.add('RMA Created Successfully', 'success');
+                toastStore.add(tr('rma.created_success'), 'success');
             } else {
                 await api.put(`/api/rma/${rmaId}`, formData);
-                toastStore.add('RMA Updated', 'success');
+                toastStore.add(tr('rma.updated_success'), 'success');
             }
             goto(`${base}/dashboard/rma`);
         } catch (e) {
-            toastStore.add(`Error: ${e.message}`, 'error');
+            toastStore.add(tr('rma.error_generic', { error: e.message }), 'error');
         }
     }
 
     async function deleteRMA() {
-        if(!confirm('Are you sure you want to delete this RMA?')) return;
+        if(!confirm(tr('rma.delete_confirm'))) return;
 
         try {
             await api.delete(`/api/rma/${rmaId}`);
-            toastStore.add('RMA Deleted', 'success');
+            toastStore.add(tr('rma.deleted_success'), 'success');
             goto(`${base}/dashboard/rma`);
         } catch (e) {
             toastStore.add(e.message, 'error');
@@ -102,29 +103,29 @@
 
 <div class="detail-page">
     <div class="header">
-        <button class="back-btn" on:click={goBack}>← Back</button>
+        <button class="back-btn" on:click={goBack}>{$t('rma.back')}</button>
         <div class="title-row">
-            <h1>{isNew ? 'New RMA Request' : `RMA ${formData.rmaNumber}`}</h1>
+            <h1>{isNew ? $t('rma.new_title') : $t('rma.edit_title', { number: formData.rmaNumber })}</h1>
             {#if !isNew}
-                <button class="delete-btn" on:click={deleteRMA}>Delete</button>
+                <button class="delete-btn" on:click={deleteRMA}>{$t('rma.delete')}</button>
             {/if}
         </div>
     </div>
 
     {#if loading}
-        <div class="loading">Loading...</div>
+        <div class="loading">{$t('rma.loading')}</div>
     {:else}
         <form class="form-grid" on:submit|preventDefault={handleSubmit}>
             <!-- Linked Support Ticket banner -->
             {#if formData.metadata?.ticketId}
                 <div class="section full linked-banner">
                     <div class="linked-row">
-                        <span class="linked-label">🔗 Linked Support Ticket</span>
+                        <span class="linked-label">{$t('rma.linked_support_ticket')}</span>
                         <a
                             class="linked-link"
                             href="{base}/dashboard/support/{formData.metadata.ticketId}"
                         >
-                            #{formData.metadata.ticketId} → View Ticket
+                            {$t('rma.view_ticket_link', { id: formData.metadata.ticketId })}
                         </a>
                     </div>
                 </div>
@@ -132,65 +133,65 @@
 
             <!-- Customer Info -->
             <div class="section">
-                <h2>Customer Information</h2>
+                <h2>{$t('rma.customer_information')}</h2>
                 <div class="field">
-                    <label>Customer Name *</label>
+                    <label>{$t('rma.customer_name_label')}</label>
                     <input type="text" bind:value={formData.customerName} required />
                 </div>
                 <div class="field">
-                    <label>Email</label>
+                    <label>{$t('rma.email_label')}</label>
                     <input type="email" bind:value={formData.customerEmail} />
                 </div>
             </div>
 
             <!-- Product Info -->
             <div class="section">
-                <h2>Product Details</h2>
+                <h2>{$t('rma.product_details')}</h2>
                 <div class="field">
-                    <label>Product SKU *</label>
+                    <label>{$t('rma.product_sku_label')}</label>
                     <input type="text" bind:value={formData.productSku} required class="code-input" />
                 </div>
                 <div class="field">
-                    <label>Product Name</label>
+                    <label>{$t('rma.product_name_label')}</label>
                     <input type="text" bind:value={formData.productName} />
                 </div>
             </div>
 
             <!-- Issue -->
             <div class="section full">
-                <h2>Issue Description</h2>
+                <h2>{$t('rma.issue_description')}</h2>
                 <textarea bind:value={formData.issueDescription} rows="4"></textarea>
             </div>
 
             <!-- Status (Only for edit) -->
             {#if !isNew}
                 <div class="section">
-                    <h2>Status</h2>
+                    <h2>{$t('rma.status_heading')}</h2>
                     <div class="field">
-                        <label>Current Status</label>
+                        <label>{$t('rma.current_status_label')}</label>
                         <select bind:value={formData.status}>
-                            <option value="pending">Pending</option>
-                            <option value="received">Received</option>
-                            <option value="processing">Processing</option>
-                            <option value="completed">Completed</option>
-                            <option value="cancelled">Cancelled</option>
+                            <option value="pending">{$t('rma.status_pending')}</option>
+                            <option value="received">{$t('rma.status_received')}</option>
+                            <option value="processing">{$t('rma.status_processing')}</option>
+                            <option value="completed">{$t('rma.status_completed')}</option>
+                            <option value="cancelled">{$t('rma.status_cancelled')}</option>
                         </select>
                     </div>
                     <div class="field">
-                        <label>Priority</label>
+                        <label>{$t('rma.priority_label')}</label>
                         <select bind:value={formData.priority}>
-                            <option value="low">Low</option>
-                            <option value="normal">Normal</option>
-                            <option value="high">High</option>
-                            <option value="urgent">Urgent</option>
+                            <option value="low">{$t('rma.priority_low')}</option>
+                            <option value="normal">{$t('rma.priority_normal')}</option>
+                            <option value="high">{$t('rma.priority_high')}</option>
+                            <option value="urgent">{$t('rma.priority_urgent')}</option>
                         </select>
                     </div>
                 </div>
             {/if}
 
             <div class="actions full">
-                <button type="button" class="cancel-btn" on:click={goBack}>Cancel</button>
-                <button type="submit" class="save-btn">{isNew ? 'Create Request' : 'Save Changes'}</button>
+                <button type="button" class="cancel-btn" on:click={goBack}>{$t('rma.cancel')}</button>
+                <button type="submit" class="save-btn">{isNew ? $t('rma.create_request') : $t('rma.save_changes')}</button>
             </div>
         </form>
     {/if}

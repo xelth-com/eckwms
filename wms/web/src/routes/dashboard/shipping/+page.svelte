@@ -4,6 +4,7 @@
     import { toastStore } from "$lib/stores/toastStore.js";
     import { goto } from "$app/navigation";
     import { base } from "$app/paths";
+    import { t, tr } from "$lib/i18n";
 
     export let data;
 
@@ -51,7 +52,7 @@
             await loadData();
             activeTab = "shipments";
         } catch (e) {
-            alert("Failed to create shipment: " + e.message);
+            alert(tr("shipping.create_failed", { error: e.message }));
         } finally {
             processingPickings.delete(pickingId);
             processingPickings = processingPickings;
@@ -59,37 +60,37 @@
     }
 
     async function cancelShipment(pickingId) {
-        if (!confirm("Are you sure you want to cancel this shipment?")) return;
+        if (!confirm(tr("shipping.confirm_cancel"))) return;
         try {
             await api.post(`/api/delivery/shipments/${pickingId}/cancel`);
             await loadData();
         } catch (e) {
-            alert("Failed to cancel shipment: " + e.message);
+            alert(tr("shipping.cancel_failed", { error: e.message }));
         }
     }
 
     async function syncOpal() {
         isSyncingOpal = true;
-        toastStore.add("Syncing with OPAL...", "info");
+        toastStore.add(tr("shipping.syncing_opal"), "info");
         try {
             await api.post("/api/delivery/import/opal", {});
-            toastStore.add("OPAL sync started. Check Scrapers page for details.", "success");
+            toastStore.add(tr("shipping.opal_sync_started"), "success");
             setTimeout(async () => { await loadData(); isSyncingOpal = false; }, 4000);
         } catch (e) {
-            toastStore.add("OPAL sync failed: " + e.message, "error");
+            toastStore.add(tr("shipping.opal_sync_failed", { error: e.message }), "error");
             isSyncingOpal = false;
         }
     }
 
     async function syncDhl() {
         isSyncingDhl = true;
-        toastStore.add("Syncing with DHL...", "info");
+        toastStore.add(tr("shipping.syncing_dhl"), "info");
         try {
             await api.post("/api/delivery/import/dhl", {});
-            toastStore.add("DHL sync started. Check Scrapers page for details.", "success");
+            toastStore.add(tr("shipping.dhl_sync_started"), "success");
             setTimeout(async () => { await loadData(); isSyncingDhl = false; }, 4000);
         } catch (e) {
-            toastStore.add("DHL sync failed: " + e.message, "error");
+            toastStore.add(tr("shipping.dhl_sync_failed", { error: e.message }), "error");
             isSyncingDhl = false;
         }
     }
@@ -165,7 +166,7 @@
             const matches = await api.get(`/api/delivery/shipments/${shipmentId}/ai-match`);
             aiMatchResults[shipmentId] = matches || [];
         } catch (e) {
-            toastStore.add('AI match failed: ' + e.message, 'error');
+            toastStore.add(tr('shipping.ai_match_failed', { error: e.message }), 'error');
             aiMatchResults[shipmentId] = [];
         } finally {
             aiMatchLoading[shipmentId] = false;
@@ -201,54 +202,54 @@
 
 <div class="shipping-page">
     <header>
-        <h1>📦 Shipping & Delivery</h1>
+        <h1>📦 {$t('shipping.title')}</h1>
         <div class="header-actions">
             {#if providersConfig?.opal === true}
                 <button class="action-btn opal-btn" on:click={syncOpal} disabled={isSyncingOpal || loading}>
-                    {isSyncingOpal ? "⏳ Syncing..." : "🟢 Sync OPAL"}
+                    {isSyncingOpal ? $t('shipping.syncing') : $t('shipping.sync_opal')}
                 </button>
             {/if}
             {#if providersConfig?.dhl === true}
                 <button class="action-btn dhl-btn" on:click={syncDhl} disabled={isSyncingDhl || loading}>
-                    {isSyncingDhl ? "⏳ Syncing..." : "🟡 Sync DHL"}
+                    {isSyncingDhl ? $t('shipping.syncing') : $t('shipping.sync_dhl')}
                 </button>
             {/if}
             <button class="refresh-btn" on:click={loadData} disabled={loading}>
-                {loading ? "↻ Loading..." : "↻ Refresh"}
+                {loading ? $t('shipping.loading_btn') : $t('shipping.refresh')}
             </button>
         </div>
     </header>
 
     <div class="tabs">
         <button class="tab" class:active={activeTab === "pickings"} on:click={() => (activeTab = "pickings")}>
-            📋 Ready to Ship ({pickings.length})
+            📋 {$t('shipping.tab_ready', { count: pickings.length })}
         </button>
         <button class="tab" class:active={activeTab === "shipments"} on:click={() => (activeTab = "shipments")}>
-            🚚 Shipments ({shipments.length})
+            🚚 {$t('shipping.tab_shipments', { count: shipments.length })}
         </button>
     </div>
 
     {#if loading && pickings.length === 0 && shipments.length === 0}
-        <div class="loading">Loading shipping data...</div>
+        <div class="loading">{$t('shipping.loading')}</div>
     {:else if error}
-        <div class="error">Failed to load data: {error}</div>
+        <div class="error">{$t('shipping.load_failed', { error })}</div>
     {:else if activeTab === "pickings"}
         <div class="pickings-section">
             <p class="section-desc">
-                These are Odoo Transfer Orders ready to be shipped. Click "Ship with OPAL" to create a delivery shipment.
+                {$t('shipping.pickings_desc')}
             </p>
             {#if pickings.length === 0}
                 <div class="empty-state">
-                    <p>✅ No pickings ready to ship</p>
-                    <small>Pickings with status "assigned" will appear here</small>
+                    <p>{$t('shipping.empty_pickings')}</p>
+                    <small>{$t('shipping.empty_pickings_hint')}</small>
                 </div>
             {:else}
                 <div class="table-container">
                     <table>
                         <thead>
                             <tr>
-                                <th>Picking #</th><th>Origin</th><th>Partner</th>
-                                <th>Location</th><th>State</th><th>Scheduled</th><th>Actions</th>
+                                <th>{$t('shipping.th_picking')}</th><th>{$t('shipping.th_origin')}</th><th>{$t('shipping.th_partner')}</th>
+                                <th>{$t('shipping.th_location')}</th><th>{$t('shipping.th_state')}</th><th>{$t('shipping.th_scheduled')}</th><th>{$t('shipping.th_actions')}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -272,7 +273,7 @@
                                     <td>{formatDate(picking.scheduled_date)}</td>
                                     <td>
                                         <button class="action-btn ship-btn" on:click={() => createShipment(picking.id)} disabled={processingPickings.has(picking.id)}>
-                                            {processingPickings.has(picking.id) ? "⏳ Processing..." : "🚚 Ship with OPAL"}
+                                            {processingPickings.has(picking.id) ? $t('shipping.processing') : $t('shipping.ship_opal')}
                                         </button>
                                     </td>
                                 </tr>
@@ -285,19 +286,19 @@
 
     {:else if activeTab === "shipments"}
         <div class="shipments-section">
-            <p class="section-desc">Active and past shipments created through the delivery system.</p>
+            <p class="section-desc">{$t('shipping.shipments_desc')}</p>
             {#if shipments.length === 0}
                 <div class="empty-state">
-                    <p>📭 No shipments yet</p>
-                    <small>Create your first shipment from the "Ready to Ship" tab</small>
+                    <p>{$t('shipping.empty_shipments')}</p>
+                    <small>{$t('shipping.empty_shipments_hint')}</small>
                 </div>
             {:else}
                 <div class="table-container">
                     <table>
                         <thead>
                             <tr>
-                                <th></th><th>Tracking</th><th>From → To</th>
-                                <th>Product</th><th>Status</th><th>Delivered</th><th>Actions</th>
+                                <th></th><th>{$t('shipping.th_tracking')}</th><th>{$t('shipping.th_from_to')}</th>
+                                <th>{$t('shipping.th_product')}</th><th>{$t('shipping.th_status')}</th><th>{$t('shipping.th_delivered')}</th><th>{$t('shipping.th_actions')}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -318,15 +319,15 @@
                                         </span>
                                         {#if shipment.tracking_number || details?.ocu_number || details?.tracking_number}
                                             <span class="tracking-number">{shipment.tracking_number || details?.ocu_number || details?.tracking_number}</span>
-                                            {#if details?.hwb_number}<span class="hwb-number">HWB: {details.hwb_number}</span>{/if}
+                                            {#if details?.hwb_number}<span class="hwb-number">{$t('shipping.hwb', { n: details.hwb_number })}</span>{/if}
                                         {:else}
-                                            <span class="muted">Pending...</span>
+                                            <span class="muted">{$t('shipping.pending')}</span>
                                         {/if}
                                     </td>
                                     <td>
                                         {#if details}
                                             <div class="route">
-                                                <span class="from">{details.pickup_name || details.pickup_city || "InBody"}</span>
+                                                <span class="from">{details.pickup_name || details.pickup_city || "HQ"}</span>
                                                 <span class="arrow">→</span>
                                                 <span class="to">{details.delivery_name || details.recipient_name || details.delivery_city || details.recipient_city || "-"}</span>
                                             </div>
@@ -355,15 +356,15 @@
                                     <td on:click|stopPropagation>
                                         <div class="actions-col">
                                             {#if shipment.status === "pending" || shipment.status === "processing"}
-                                                <button class="action-btn cancel-btn" on:click={() => cancelShipment(shipment.picking_id)}>Cancel</button>
+                                                <button class="action-btn cancel-btn" on:click={() => cancelShipment(shipment.picking_id)}>{$t('shipping.cancel')}</button>
                                             {/if}
-                                            <button class="action-btn repair-btn" on:click={() => createRepairFromShipment(shipment, details)}>Repair</button>
+                                            <button class="action-btn repair-btn" on:click={() => createRepairFromShipment(shipment, details)}>{$t('shipping.repair')}</button>
                                             <button
                                                 class="action-btn ai-match-btn"
                                                 on:click={() => { if (!expandedShipments.has(shipment.id)) toggleShipmentDetails(shipment.id); findTicketAI(shipment.id); }}
                                                 disabled={aiMatchLoading[shipment.id]}
                                             >
-                                                {aiMatchLoading[shipment.id] ? '...' : 'AI Match'}
+                                                {aiMatchLoading[shipment.id] ? '...' : $t('shipping.ai_match')}
                                             </button>
                                         </div>
                                     </td>
@@ -374,26 +375,26 @@
                                             <div class="shipment-details">
                                                 <div class="details-grid">
                                                     <div class="detail-section">
-                                                        <h4>📦 Pickup (Abholung)</h4>
-                                                        <div class="detail-item"><label>Company:</label><span>{details.pickup_name || "-"}</span></div>
-                                                        <div class="detail-item"><label>Address:</label><span>{details.pickup_street || "-"}, {details.pickup_zip} {details.pickup_city}</span></div>
+                                                        <h4>📦 {$t('shipping.detail_pickup')}</h4>
+                                                        <div class="detail-item"><label>{$t('shipping.detail_company')}</label><span>{details.pickup_name || "-"}</span></div>
+                                                        <div class="detail-item"><label>{$t('shipping.detail_address')}</label><span>{details.pickup_street || "-"}, {details.pickup_zip} {details.pickup_city}</span></div>
                                                     </div>
                                                     <div class="detail-section">
-                                                        <h4>🚚 Delivery (Zustellung)</h4>
-                                                        <div class="detail-item"><label>Company:</label><span>{details.delivery_name || "-"}</span></div>
-                                                        <div class="detail-item"><label>Address:</label><span>{details.delivery_street || "-"}, {details.delivery_zip} {details.delivery_city}</span></div>
+                                                        <h4>🚚 {$t('shipping.detail_delivery')}</h4>
+                                                        <div class="detail-item"><label>{$t('shipping.detail_company')}</label><span>{details.delivery_name || "-"}</span></div>
+                                                        <div class="detail-item"><label>{$t('shipping.detail_address')}</label><span>{details.delivery_street || "-"}, {details.delivery_zip} {details.delivery_city}</span></div>
                                                     </div>
                                                     <div class="detail-section">
-                                                        <h4>📋 Package Info</h4>
-                                                        {#if details.description}<div class="detail-item"><label>Contents:</label><span class="highlight">{details.description}</span></div>{/if}
-                                                        {#if details.weight}<div class="detail-item"><label>Weight:</label><span>{details.weight} kg</span></div>{/if}
+                                                        <h4>📋 {$t('shipping.detail_package')}</h4>
+                                                        {#if details.description}<div class="detail-item"><label>{$t('shipping.detail_contents')}</label><span class="highlight">{details.description}</span></div>{/if}
+                                                        {#if details.weight}<div class="detail-item"><label>{$t('shipping.detail_weight')}</label><span>{details.weight} kg</span></div>{/if}
                                                     </div>
                                                 </div>
                                                 {#if aiMatchLoading[shipment.id] || aiMatchResults[shipment.id]?.length > 0}
                                                     <div class="ai-match-panel">
-                                                        <h4>AI Ticket Matches</h4>
+                                                        <h4>{$t('shipping.ai_ticket_matches')}</h4>
                                                         {#if aiMatchLoading[shipment.id]}
-                                                            <div class="ai-match-loading">Searching for matching tickets...</div>
+                                                            <div class="ai-match-loading">{$t('shipping.searching_tickets')}</div>
                                                         {:else}
                                                             <div class="ai-match-list">
                                                                 {#each aiMatchResults[shipment.id] as match_}
@@ -405,7 +406,7 @@
                                                                             <span class="match-score">{Math.round(match_.similarity * 100)}%</span>
                                                                         </a>
                                                                         <button class="action-btn link-repair-btn" on:click|stopPropagation={() => linkAndCreateRepair(shipment, details, match_)}>
-                                                                            Link & Create Repair
+                                                                            {$t('shipping.link_create_repair')}
                                                                         </button>
                                                                     </div>
                                                                 {/each}

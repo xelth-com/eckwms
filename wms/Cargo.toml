@@ -3,8 +3,38 @@ name = "wms"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["local-embed", "ocr-local"]
+# POS module (ecKasse) â€” the /K/ paid register. Optional so the public
+# open-core build (which drops `pos/` from the workspace) still compiles; our
+# fleet ships it in via this default feature. Every `pos::` use in wms is
+# gated behind `#[cfg(feature = "pos-module")]`; with the feature off the /K
+# routes simply don't exist (unknown paths 404 through the SPA fallback).
+# Pure-Rust on-device OCR (ocrs + rten) for the on-demand attachment vision
+# ladder (see ai::attachments). Default-on so the fleet ships one binary; the
+# model files (data/models/ocrs/*.rten) are fetched lazily on first tool use.
+# Building `--no-default-features` (or dropping just this feature) yields a
+# binary whose OCR path degrades to the external `ECK_OCR_CMD` engine or a
+# structured `ocr_unavailable` status â€” never a compile-time requirement.
+ocr-local = ["dep:ocrs", "dep:rten"]
+# On-device text-embedding backend (jinaai/jina-embeddings-v2-base-de via Candle,
+# CPU-only, 768-dim). Compiled IN by default so the fleet ships a single binary;
+# the runtime env `ECK_EMBED_MODE=local` decides whether it is actually used
+# (default `cloud` = the existing Gemini/Vertex path). Building
+# `--no-default-features` drops the Candle/tokenizers/hf-hub weight and yields a
+# cloud-only binary.
+local-embed = [
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:tokenizers",
+    "dep:hf-hub",
+]
+
 [dependencies]
 eck_core = { path = "../core" }
+# POS module (ecKasse) â€” mounted at /K/ behind the POS_ENABLED paid-tier gate.
+# Optional: enabled by the default `pos-module` feature (see [features] above).
 surrealdb = { version = "3", features = ["kv-mem", "kv-surrealkv"] }
 axum = { version = "0.7", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["full"] }
@@ -41,3 +71,47 @@ rig-core = "0.33"
 schemars = "1"
 regex = "1"
 urlencoding = "2"
+# On-demand attachment OCR / vision ladder (ai::attachments). pdf-extract pulls
+# the embedded text layer; scan PDFs fall back to image-stream OCR. ocrs/rten
+# (pure-Rust OCR) are gated behind the `ocr-local` feature below.
+pdf-extract = "0.8"
+# Owner-password PDF decryption before the OCR ladder. 0.44 (a separate copy
+# from pdf-extract's internal 0.34 â€” acceptable) is the first release whose
+# Standard security handler covers V4/V5 crypt filters: our real CAS files are
+# `/V 4 /R 4` AES-128 (AESV2), which lopdf â‰¤0.34 rejected as UnsupportedEncryption.
+# default-features off drops the chrono/jiff/time datetime helpers we never touch.
+lopdf = { version = "0.44", default-features = false }
+# Office-scanner PDFs store each page as a CCITT Group 3/4 (fax) image XObject â€”
+# the raw stream is NOT a JPEG, so the byte-grep for FF D8 FF finds nothing. This
+# pure-Rust decoder (the one the `pdf` ecosystem uses â€” pulled by `tiff` <- `image`
+# already, so no new compile) turns a G4/G3 stream back into a bitmap for OCR. 0.2
+# stays on the tree-locked 0.2.6 (0.3 is a separate copy we don't need).
+fax = "0.2"
+# FlateDecode pre-pass when an image XObject stacks /Filter [FlateDecode <codec>];
+# already in the tree, added directly for the attachment XObject decoder.
+flate2 = "1"
+ocrs = { version = "0.12", optional = true }
+rten = { version = "0.24", optional = true }
+# Pure-Rust AVIF decode for the OCR/vision ladder (`image`'s avif feature is
+# encode-only here â€” no C dav1d). avif-parse strips the ISOBMFF container to the
+# AV1 OBU; rav1d-safe (safe Rust, no asm/c-ffi by default) decodes it. See
+# ai/avif.rs. No C toolchain needed (nasm-rs is pulled but not invoked).
+avif-parse = "2.1.0"
+rav1d-safe = "0.5"
+# In-memory zip assembly for the admin MCP-connector download bundle. Same
+# version pos/ already uses (Cargo dedups to one build).
+zip = "0.6"
+
+# On-device embedding (feature `local-embed`). Versions pinned to the xelth.rs
+# reference stack (Candle 0.10 / tokenizers 0.15 / hf-hub 0.5). CPU-only â€” no
+# cuda/metal features. Optional so a cloud-only build carries none of this.
+candle-core = { version = "0.10", optional = true }
+candle-nn = { version = "0.10", optional = true }
+candle-transformers = { version = "0.10", optional = true }
+tokenizers = { version = "0.15", optional = true }
+hf-hub = { version = "0.5", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+# Process-group SIGKILL on the ops timeout path (kill -pgid) + fd plumbing for
+# the agent's systemd-cat journal identity. Unix-only; WMS runs on Linux kiosks.
+libc = "0.2"

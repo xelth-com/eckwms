@@ -204,6 +204,22 @@ async fn optimize_batch(state: &Arc<AppState>, target: &OptimizationTarget) -> a
         let now = chrono::Utc::now().to_rfc3339();
         let level = target.level;
 
+        // file_resource is synced, so both the new row and the `replaced_by` edit
+        // on the old row must carry an advancing `_vclock` — else the change can't
+        // dominate on a peer and the mesh churns re-pushing it (the null-clock
+        // non-convergence class). `optimized_at`/`storage_path` are IGNORED in the
+        // hash but `replaced_by` is NOT, so this edit genuinely needs to propagate.
+        let iid = state.instance_id.clone();
+        let old_vc_existing: Option<Value> = db
+            .query("SELECT VALUE _vclock FROM file_resource WHERE cas_uuid = $cid LIMIT 1")
+            .bind(("cid", old_id.clone()))
+            .await
+            .ok()
+            .and_then(|mut r| r.take(0).ok())
+            .flatten();
+        let old_vclock = eck_core::sync::conflict::next_local_vclock(old_vc_existing.as_ref(), &iid);
+        let new_vclock = eck_core::sync::conflict::next_local_vclock(None, &iid);
+
         // Resolve real record ids by the cas_uuid FIELD inside the tx. The
         // `file_resource` table mixes id conventions: migrated rows have
         // id == cas_uuid, but app-inserted rows (uploads, support, optimizer
@@ -226,6 +242,8 @@ async fn optimize_batch(state: &Arc<AppState>, target: &OptimizationTarget) -> a
                 context: 'optimization',\
                 optimization_level: $level,\
                 original_cas_uuid: $old_id,\
+                home_instance_id: $iid,\
+                _vclock: $new_vclock,\
                 created_at: $now,\
                 updated_at: $now\
             });\
@@ -242,6 +260,7 @@ async fn optimize_batch(state: &Arc<AppState>, target: &OptimizationTarget) -> a
                 replaced_by: $new_id,\
                 optimization_level: $level,\
                 optimized_at: $now,\
+                _vclock: $old_vclock,\
                 updated_at: $now\
             };\
             COMMIT TRANSACTION;\
@@ -256,6 +275,9 @@ async fn optimize_batch(state: &Arc<AppState>, target: &OptimizationTarget) -> a
             .bind(("new_path", saved.storage_path))
             .bind(("now", now))
             .bind(("level", level))
+            .bind(("iid", iid))
+            .bind(("old_vclock", old_vclock))
+            .bind(("new_vclock", new_vclock))
             .await
         {
             Ok(resp) => {

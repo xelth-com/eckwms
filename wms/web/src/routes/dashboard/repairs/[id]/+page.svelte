@@ -2,9 +2,10 @@
     import { page } from '$app/stores';
     import { onMount } from 'svelte';
     import { api } from '$lib/api';
-    import { goto } from '$app/navigation';
+    import { goto, afterNavigate } from '$app/navigation';
     import { base } from '$app/paths';
     import { toastStore } from '$lib/stores/toastStore';
+    import { t, tr } from '$lib/i18n';
     // [MODULE: GEO_ROUTING START]
     import GeoRouteMap from '$lib/components/GeoRouteMap.svelte';
     // [MODULE: GEO_ROUTING END]
@@ -46,7 +47,7 @@
 
     async function findSimilar() {
         if (!formData.issueDescription || formData.issueDescription.trim().length < 3) {
-            toastStore.add('Issue description is too short to search', 'warning');
+            toastStore.add(tr('repairs.issue_too_short'), 'warning');
             return;
         }
         isSearchingSimilar = true;
@@ -56,7 +57,7 @@
             const results = await api.post('/api/rma/search', { query: formData.issueDescription });
             similarRepairs = results.filter(r => r.order_number !== formData.orderNumber);
         } catch (e) {
-            toastStore.add('Search failed: ' + e.message, 'error');
+            toastStore.add(tr('repairs.search_failed', { error: e.message }), 'error');
         } finally {
             isSearchingSimilar = false;
         }
@@ -68,9 +69,9 @@
             formData.agreement_status = 'sent';
             formData.agreement_token = res.token;
             formData.agreement_url = res.url;
-            toastStore.add('Link generated!', 'success');
+            toastStore.add(tr('repairs.link_generated'), 'success');
         } catch (e) {
-            toastStore.add('Failed to generate link: ' + e.message, 'error');
+            toastStore.add(tr('repairs.link_generate_failed', { error: e.message }), 'error');
         }
     }
 
@@ -78,9 +79,9 @@
         const url = formData.agreement_url || `${window.location.origin}${base}/sign/${formData.agreement_token}`;
         try {
             await navigator.clipboard.writeText(url);
-            toastStore.add('Link copied to clipboard', 'success');
+            toastStore.add(tr('repairs.link_copied'), 'success');
         } catch(e) {
-            toastStore.add('Copy failed', 'error');
+            toastStore.add(tr('repairs.copy_failed'), 'error');
         }
     }
 
@@ -95,7 +96,7 @@
                 const geo = await api.post(`/api/geo/geocode/${orderId}`);
                 formData.metadata = { ...formData.metadata, geo: { lat: geo.lat, lng: geo.lng } };
             } catch (e) {
-                toastStore.add('Geocoding failed: ' + (e.message || 'unknown error'), 'error');
+                toastStore.add(tr('repairs.geocoding_failed', { error: e.message || tr('repairs.unknown_error') }), 'error');
                 geocoding = false;
                 return;
             }
@@ -142,7 +143,7 @@
                 formData.partsUsed =[];
             }
         } catch (e) {
-            toastStore.add('Error loading Repair', 'error');
+            toastStore.add(tr('repairs.error_loading'), 'error');
             goto(`${base}/dashboard/repairs`);
         } finally {
             loading = false;
@@ -153,37 +154,47 @@
         try {
             if (isNew) {
                 if (!formData.customerName || !formData.productSku) {
-                    toastStore.add('Customer Name and Product SKU are required', 'warning');
+                    toastStore.add(tr('repairs.customer_sku_required'), 'warning');
                     return;
                 }
                 if (formData.orderNumber === 'AUTO-GEN') delete formData.orderNumber;
                 formData.orderType = 'repair';
                 formData.laborHours = parseFloat(formData.laborHours) || 0;
                 await api.post('/api/rma', formData);
-                toastStore.add('Repair Created Successfully', 'success');
+                toastStore.add(tr('repairs.created_success'), 'success');
             } else {
                 formData.laborHours = parseFloat(formData.laborHours) || 0;
                 await api.put(`/api/rma/${orderId}`, formData);
-                toastStore.add('Repair Updated', 'success');
+                toastStore.add(tr('repairs.updated_success'), 'success');
             }
             goto(`${base}/dashboard/repairs`);
         } catch (e) {
-            toastStore.add(`Error: ${e.message}`, 'error');
+            toastStore.add(tr('repairs.error_generic', { error: e.message }), 'error');
         }
     }
 
     async function deleteRepair() {
-        if (!confirm('Are you sure you want to delete this Repair Order?')) return;
+        if (!confirm(tr('repairs.delete_confirm'))) return;
         try {
             await api.delete(`/api/rma/${orderId}`);
-            toastStore.add('Repair Deleted', 'success');
+            toastStore.add(tr('repairs.deleted_success'), 'success');
             goto(`${base}/dashboard/repairs`);
         } catch (e) {
             toastStore.add(e.message, 'error');
         }
     }
 
+    // Remember where we came from (map / repairs list / related) so "← Back"
+    // returns there, not always to the list root.
+    let backTo = null;
+    afterNavigate((nav) => {
+        if (nav.from?.url) backTo = nav.from.url.pathname + nav.from.url.search;
+    });
     function goBack() {
+        if (backTo) goto(backTo);
+        else goto(`${base}/dashboard/repairs`);
+    }
+    function goUp() {
         goto(`${base}/dashboard/repairs`);
     }
 
@@ -236,35 +247,36 @@
 
 <div class="detail-page">
     <div class="header">
-        <button class="back-btn" on:click={goBack}>← Back</button>
+        <button class="back-btn" on:click={goBack} title={$t('repairs.back_title')}>{$t('repairs.back')}</button>
+        <button class="back-btn back-btn-up" on:click={goUp} title={$t('repairs.all_repairs_title')}>{$t('repairs.all_repairs')}</button>
         <div class="title-row">
-            <h1>{isNew ? 'New Repair Order' : `Repair ${formData.orderNumber}`}</h1>
+            <h1>{isNew ? $t('repairs.new_order_title') : $t('repairs.order_title', { number: formData.orderNumber })}</h1>
             {#if !isNew}
                 <!-- [MODULE: GEO_ROUTING START] -->
                 <button class="route-btn" on:click={openRouteMap} disabled={geocoding}>
-                    {geocoding ? 'Geocoding...' : 'View Route & Nearby'}
+                    {geocoding ? $t('repairs.geocoding_btn') : $t('repairs.view_route_btn')}
                 </button>
                 <!-- [MODULE: GEO_ROUTING END] -->
-                <button class="delete-btn" on:click={deleteRepair}>Delete</button>
+                <button class="delete-btn" on:click={deleteRepair}>{$t('repairs.delete')}</button>
             {/if}
         </div>
     </div>
 
     {#if loading}
-        <div class="loading">Loading...</div>
+        <div class="loading">{$t('repairs.loading')}</div>
     {:else}
         <form class="form-grid" on:submit|preventDefault={handleSubmit}>
             {#if formData.metadata?.ticketId || formData.metadata?.trackingNumber}
                 <div class="section full linked-banner">
                     <div class="linked-row">
                         {#if formData.metadata?.ticketId}
-                            <span class="linked-label">Linked Support Ticket</span>
+                            <span class="linked-label">{$t('repairs.linked_support_ticket')}</span>
                             <a class="linked-link" href="{base}/dashboard/support/{formData.metadata.ticketId}">
-                                #{formData.metadata.ticketId} -> View Ticket
+                                {$t('repairs.view_ticket_link', { id: formData.metadata.ticketId })}
                             </a>
                         {/if}
                         {#if formData.metadata?.trackingNumber}
-                            <span class="linked-label" style="margin-left: 1rem;">Linked Shipment</span>
+                            <span class="linked-label" style="margin-left: 1rem;">{$t('repairs.linked_shipment')}</span>
                             <span class="linked-link" style="border-bottom: none; color: #fff; cursor: default;">
                                 {formData.metadata.trackingNumber}
                             </span>
@@ -274,37 +286,37 @@
             {/if}
 
             <div class="section">
-                <h2>Customer Information</h2>
+                <h2>{$t('repairs.customer_information')}</h2>
                 <div class="field">
-                    <label>Customer Name *</label>
+                    <label>{$t('repairs.customer_name_label')}</label>
                     <input type="text" bind:value={formData.customerName} required />
                 </div>
                 <div class="field">
-                    <label>Email</label>
+                    <label>{$t('repairs.email_label')}</label>
                     <input type="email" bind:value={formData.customerEmail} />
                 </div>
             </div>
 
             <div class="section">
-                <h2>Device Details</h2>
+                <h2>{$t('repairs.device_details')}</h2>
                 <div class="field">
-                    <label>Device Model / SKU *</label>
+                    <label>{$t('repairs.device_model_sku_label')}</label>
                     <input type="text" bind:value={formData.productSku} required class="code-input" />
                 </div>
                 <div class="field">
-                    <label>Serial Number</label>
+                    <label>{$t('repairs.serial_number_label')}</label>
                     <input type="text" bind:value={formData.serialNumber} class="code-input" />
                 </div>
             </div>
 
             <div class="section full">
                 <div class="section-header">
-                    <h2>Issue Description</h2>
+                    <h2>{$t('repairs.issue_description')}</h2>
                     <button type="button" class="btn secondary btn-sm" on:click={findSimilar} disabled={isSearchingSimilar || isNew}>
                         {#if isSearchingSimilar}
-                            <span class="spinner">&#8635;</span> Searching...
+                            <span class="spinner">&#8635;</span> {$t('repairs.searching')}
                         {:else}
-                            Find Similar Past Issues
+                            {$t('repairs.find_similar')}
                         {/if}
                     </button>
                 </div>
@@ -312,20 +324,20 @@
 
                 {#if hasSearched}
                     <div class="similar-results">
-                        <h3>Similar Historical Repairs</h3>
+                        <h3>{$t('repairs.similar_historical')}</h3>
                         {#if similarRepairs.length === 0}
-                            <p class="muted">No similar issues found in the database.</p>
+                            <p class="muted">{$t('repairs.no_similar')}</p>
                         {:else}
                             <div class="similar-grid">
                                 {#each similarRepairs as rep}
                                     <a class="similar-card" href="{base}/dashboard/repairs/{rep.id}" target="_blank">
                                         <div class="sim-header">
                                             <span class="sim-id">{rep.order_number}</span>
-                                            <span class="sim-score">{(rep.score * 100).toFixed(0)}% match</span>
+                                            <span class="sim-score">{$t('repairs.percent_match', { percent: (rep.score * 100).toFixed(0) })}</span>
                                         </div>
                                         <div class="sim-body">
-                                            <div class="sim-issue"><strong>Issue:</strong> {rep.issue_description || 'N/A'}</div>
-                                            <div class="sim-reso"><strong>Resolution:</strong> {rep.resolution || 'Pending'}</div>
+                                            <div class="sim-issue"><strong>{$t('repairs.issue_label')}</strong> {rep.issue_description || $t('repairs.na')}</div>
+                                            <div class="sim-reso"><strong>{$t('repairs.resolution_label')}</strong> {rep.resolution || $t('repairs.pending_value')}</div>
                                         </div>
                                     </a>
                                 {/each}
@@ -336,60 +348,60 @@
             </div>
 
             <div class="section">
-                <h2>Repair Details</h2>
+                <h2>{$t('repairs.repair_details')}</h2>
                 <div class="field">
-                    <label>Labor Hours</label>
+                    <label>{$t('repairs.labor_hours_label')}</label>
                     <input type="number" step="0.1" min="0" bind:value={formData.laborHours} />
                 </div>
                 <div class="field">
-                    <label>Repair Notes (Internal)</label>
+                    <label>{$t('repairs.repair_notes_label')}</label>
                     <textarea bind:value={formData.repairNotes} rows="4"></textarea>
                 </div>
             </div>
 
             <div class="section">
-                <h2>Status &amp; Priority</h2>
+                <h2>{$t('repairs.status_priority')}</h2>
                 <div class="field">
-                    <label>Status</label>
+                    <label>{$t('repairs.status_label')}</label>
                     <select bind:value={formData.status}>
-                        <option value="pending">Pending</option>
-                        <option value="received">Received</option>
-                        <option value="processing">Processing (In Repair)</option>
-                        <option value="completed">Completed</option>
-                        <option value="cancelled">Cancelled</option>
+                        <option value="pending">{$t('repairs.status_pending')}</option>
+                        <option value="received">{$t('repairs.status_received')}</option>
+                        <option value="processing">{$t('repairs.status_processing')}</option>
+                        <option value="completed">{$t('repairs.status_completed')}</option>
+                        <option value="cancelled">{$t('repairs.status_cancelled')}</option>
                     </select>
                 </div>
                 <div class="field">
-                    <label>Priority</label>
+                    <label>{$t('repairs.priority_label')}</label>
                     <select bind:value={formData.priority}>
-                        <option value="low">Low</option>
-                        <option value="normal">Normal</option>
-                        <option value="high">High</option>
-                        <option value="urgent">Urgent</option>
+                        <option value="low">{$t('repairs.priority_low')}</option>
+                        <option value="normal">{$t('repairs.priority_normal')}</option>
+                        <option value="high">{$t('repairs.priority_high')}</option>
+                        <option value="urgent">{$t('repairs.priority_urgent')}</option>
                     </select>
                 </div>
             </div>
 
             {#if !isNew}
                 <div class="section">
-                    <h2>Legal &amp; Agreements</h2>
+                    <h2>{$t('repairs.legal_agreements')}</h2>
                     <div class="field">
-                        <label>Clickwrap Contract</label>
+                        <label>{$t('repairs.clickwrap_contract')}</label>
                         <div class="agreement-status-box">
                             {#if formData.agreement_status === 'signed'}
-                                <span class="badge-success">Legally Signed</span>
+                                <span class="badge-success">{$t('repairs.legally_signed')}</span>
                                 <div class="audit-info">
-                                    <div><small><strong>IP:</strong> {formData.agreement_log?.audit_log?.ip_address || 'N/A'}</small></div>
-                                    <div><small><strong>Time:</strong> {formData.agreement_log?.audit_log?.timestamp ? new Date(formData.agreement_log.audit_log.timestamp).toLocaleString() : 'N/A'}</small></div>
+                                    <div><small><strong>{$t('repairs.ip_label')}</strong> {formData.agreement_log?.audit_log?.ip_address || $t('repairs.na')}</small></div>
+                                    <div><small><strong>{$t('repairs.time_label')}</strong> {formData.agreement_log?.audit_log?.timestamp ? new Date(formData.agreement_log.audit_log.timestamp).toLocaleString() : $t('repairs.na')}</small></div>
                                     {#if formData.agreement_log?.content_hash}
-                                        <div><small><strong>Hash:</strong> <span class="mono">{formData.agreement_log.content_hash.substring(0, 16)}...</span></small></div>
+                                        <div><small><strong>{$t('repairs.hash_label')}</strong> <span class="mono">{formData.agreement_log.content_hash.substring(0, 16)}...</span></small></div>
                                     {/if}
                                 </div>
                             {:else if formData.agreement_status === 'sent'}
-                                <span class="badge-warning">Pending Signature</span>
-                                <button type="button" class="btn secondary btn-sm" on:click={copyAgreementLink} style="margin-top: 0.5rem;">Copy Magic Link</button>
+                                <span class="badge-warning">{$t('repairs.pending_signature')}</span>
+                                <button type="button" class="btn secondary btn-sm" on:click={copyAgreementLink} style="margin-top: 0.5rem;">{$t('repairs.copy_magic_link')}</button>
                             {:else}
-                                <button type="button" class="btn primary btn-sm" on:click={generateAgreementLink}>Generate Clickwrap Link</button>
+                                <button type="button" class="btn primary btn-sm" on:click={generateAgreementLink}>{$t('repairs.generate_clickwrap_link')}</button>
                             {/if}
                         </div>
                     </div>
@@ -399,7 +411,7 @@
             <!-- Replaced Parts Section -->
             <div class="section full">
                 <div class="section-header">
-                    <h2>Replaced Parts</h2>
+                    <h2>{$t('repairs.replaced_parts')}</h2>
                 </div>
                 <div class="tags-container">
                     {#each formData.partsUsed as part, i}
@@ -410,18 +422,18 @@
                     {/each}
                 </div>
                 <div class="add-tag-row">
-                    <input type="text" bind:value={newPart} placeholder="Scan or type part name..." on:keydown={(e) => e.key === 'Enter' && (e.preventDefault(), addPart())} />
-                    <button type="button" class="btn secondary" on:click={addPart}>Add Part</button>
+                    <input type="text" bind:value={newPart} placeholder={$t('repairs.part_placeholder')} on:keydown={(e) => e.key === 'Enter' && (e.preventDefault(), addPart())} />
+                    <button type="button" class="btn secondary" on:click={addPart}>{$t('repairs.add_part')}</button>
                 </div>
             </div>
 
             <!-- Dynamic Attributes (Metadata) -->
             <div class="section full dynamic-section">
                 <div class="section-header">
-                    <h2>Dynamic Attributes</h2>
-                    <span class="badge metadata-badge">Metadata</span>
+                    <h2>{$t('repairs.dynamic_attributes')}</h2>
+                    <span class="badge metadata-badge">{$t('repairs.metadata_badge')}</span>
                 </div>
-                <p class="section-hint">Device-specific parameters imported from Excel or generated by AI schemas.</p>
+                <p class="section-hint">{$t('repairs.dynamic_hint')}</p>
 
                 <div class="dynamic-grid">
                     {#each Object.entries(formData.metadata || {}).filter(([k]) => !hiddenMetaKeys.includes(k)) as [key, value]}
@@ -455,15 +467,15 @@
 
                 <!-- Add custom field -->
                 <div class="add-custom-field">
-                    <input type="text" bind:value={newFieldKey} placeholder="New Field Key (e.g. batteryCycles)" />
-                    <input type="text" bind:value={newFieldValue} placeholder="Value" on:keydown={(e) => e.key === 'Enter' && (e.preventDefault(), addCustomField())} />
-                    <button type="button" class="btn secondary" on:click={addCustomField}>+ Add</button>
+                    <input type="text" bind:value={newFieldKey} placeholder={$t('repairs.new_field_key_placeholder')} />
+                    <input type="text" bind:value={newFieldValue} placeholder={$t('repairs.value_placeholder')} on:keydown={(e) => e.key === 'Enter' && (e.preventDefault(), addCustomField())} />
+                    <button type="button" class="btn secondary" on:click={addCustomField}>{$t('repairs.add_field')}</button>
                 </div>
             </div>
 
             <div class="actions full">
-                <button type="button" class="cancel-btn" on:click={goBack}>Cancel</button>
-                <button type="submit" class="save-btn">{isNew ? 'Create Order' : 'Save Changes'}</button>
+                <button type="button" class="cancel-btn" on:click={goBack}>{$t('repairs.cancel')}</button>
+                <button type="submit" class="save-btn">{isNew ? $t('repairs.create_order') : $t('repairs.save_changes')}</button>
             </div>
         </form>
     {/if}
@@ -473,13 +485,13 @@
         <div class="map-overlay" on:click|self={() => showMap = false}>
             <div class="map-modal">
                 <div class="map-modal-header">
-                    <h2>Route & Nearby Tasks</h2>
+                    <h2>{$t('repairs.route_nearby_tasks')}</h2>
                     <button class="close-btn" on:click={() => showMap = false}>&times;</button>
                 </div>
                 <GeoRouteMap
                     targetLat={formData.metadata.geo.lat}
                     targetLng={formData.metadata.geo.lng}
-                    targetTitle={formData.orderNumber || 'This Order'}
+                    targetTitle={formData.orderNumber || $t('repairs.this_order')}
                 />
             </div>
         </div>
@@ -492,6 +504,8 @@
     .header { margin-bottom: 2rem; }
     .back-btn { background: none; border: none; color: #888; cursor: pointer; font-size: 1rem; padding: 0; margin-bottom: 1rem; }
     .back-btn:hover { color: #fff; }
+    .back-btn-up { margin-left: 1.25rem; color: #888; }
+    .back-btn-up:hover { color: #ccc; }
     .title-row { display: flex; justify-content: space-between; align-items: center; }
     h1 { color: #fff; font-size: 2rem; margin: 0; }
     h2 { color: #ccc; font-size: 1.1rem; margin-bottom: 1rem; border-bottom: 1px solid #333; padding-bottom: 0.5rem; }

@@ -3,6 +3,7 @@
     import { api } from '$lib/api';
     import { toastStore } from '$lib/stores/toastStore';
     import { wsStore } from '$lib/stores/wsStore';
+    import { t, tr } from '$lib/i18n';
 
     let tasks = [];
     let loading = true;
@@ -27,7 +28,7 @@
             Date.now() - msg._receivedAt < 2000
         ) {
             lastHandledWsAt = msg._receivedAt;
-            toastStore.add('New AI task requires your attention', 'info', 5000);
+            toastStore.add(tr('ai.new_task_notify'), 'info', 5000);
             loadTasks();
         }
     }
@@ -45,7 +46,7 @@
         } catch (e) {
             console.error(e);
             error = e.message;
-            toastStore.add('Failed to load AI tasks', 'error');
+            toastStore.add(tr('ai.load_failed'), 'error');
         } finally {
             loading = false;
         }
@@ -54,19 +55,19 @@
     async function submitReply(taskId) {
         const message = replies[taskId]?.trim();
         if (!message) {
-            toastStore.add('Please enter a reply', 'warning');
+            toastStore.add(tr('ai.enter_reply'), 'warning');
             return;
         }
 
         submitting[taskId] = true;
         try {
             await api.post(`/api/ai/tasks/${taskId}/reply`, { message });
-            toastStore.add('Reply sent to AI', 'success');
+            toastStore.add(tr('ai.reply_sent'), 'success');
             tasks = tasks.filter(t => t.id !== taskId);
             delete replies[taskId];
             delete submitting[taskId];
         } catch (e) {
-            toastStore.add(`Failed to send reply: ${e.message}`, 'error');
+            toastStore.add(tr('ai.reply_failed', { error: e.message }), 'error');
             submitting[taskId] = false;
         }
     }
@@ -89,32 +90,31 @@
     function questionFor(task) {
         return (
             task.awaiting_input_schema?.question ||
-            'The AI paused but provided no specific question.'
+            tr('ai.no_question')
         );
     }
 </script>
 
 <div class="ai-inbox-page">
     <header>
-        <h1>AI Operator Inbox</h1>
+        <h1>{$t('ai.page_title')}</h1>
         <button class="action-btn" on:click={loadTasks} disabled={loading}>
-            {loading ? 'Refreshing…' : 'Refresh'}
+            {loading ? $t('ai.refreshing') : $t('ai.refresh')}
         </button>
     </header>
 
     <div class="page-desc">
-        Tasks requiring human intervention. The AI Brain has paused execution
-        and is waiting for your input to proceed.
+        {$t('ai.page_desc')}
     </div>
 
     {#if loading && tasks.length === 0}
-        <div class="loading-state">Loading pending tasks…</div>
+        <div class="loading-state">{$t('ai.loading_tasks')}</div>
     {:else if error}
-        <div class="error-state">Error: {error}</div>
+        <div class="error-state">{$t('ai.error_generic', { error })}</div>
     {:else if tasks.length === 0}
         <div class="empty-state">
             <span class="icon">✨</span>
-            <p>All clear. No tasks are waiting for human input.</p>
+            <p>{$t('ai.empty_state')}</p>
         </div>
     {:else}
         <div class="task-grid">
@@ -122,25 +122,25 @@
                 <div class="task-card">
                     <div class="card-header">
                         <span class="task-id" title={task.id}>
-                            Task: {shortId(task.id)}
+                            {$t('ai.task_label', { id: shortId(task.id) })}
                         </span>
                         <span class="time">{formatTime(task.updated_at)}</span>
                     </div>
 
                     <div class="context-box">
-                        <div class="box-label">Context</div>
+                        <div class="box-label">{$t('ai.context_label')}</div>
                         <pre>{JSON.stringify(task.context ?? {}, null, 2)}</pre>
                     </div>
 
                     <div class="question-box">
-                        <div class="box-label highlight">AI Question</div>
+                        <div class="box-label highlight">{$t('ai.ai_question_label')}</div>
                         <p>{questionFor(task)}</p>
                     </div>
 
                     <div class="reply-section">
                         <textarea
                             bind:value={replies[task.id]}
-                            placeholder="Type your reply to the AI here…"
+                            placeholder={$t('ai.reply_placeholder')}
                             rows="3"
                             disabled={submitting[task.id]}
                         ></textarea>
@@ -149,7 +149,7 @@
                             on:click={() => submitReply(task.id)}
                             disabled={submitting[task.id] || !replies[task.id]?.trim()}
                         >
-                            {submitting[task.id] ? 'Sending…' : 'Send Reply'}
+                            {submitting[task.id] ? $t('ai.sending') : $t('ai.send_reply')}
                         </button>
                     </div>
                 </div>

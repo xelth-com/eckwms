@@ -46,11 +46,16 @@ const ALLOWED_SERVICES: &[&str] = &[
     "kiosk",
 ];
 
-/// Static path prefixes a caller may read from. Each entry is checked against
-/// the canonicalized path of the request. Symlinks are not followed during
-/// read. The dynamic per-node project root (env `WMS_PROJECT_ROOT`) is added
-/// at startup via [`allowed_file_prefixes`].
-const STATIC_ALLOWED_FILE_PREFIXES: &[&str] = &[
+/// deployment default; override via ECK_OPS_FILE_PREFIXES
+///
+/// Path prefixes a caller may read from when `ECK_OPS_FILE_PREFIXES` is unset.
+/// Each entry is checked against the canonicalized path of the request.
+/// Symlinks are not followed during read. The dynamic per-node project root
+/// (env `WMS_PROJECT_ROOT`) is added at startup via [`allowed_file_prefixes`].
+/// This literal keeps the current fleet working out of the box; a different
+/// deployment overrides it via the env below (comma-separated absolute
+/// prefixes) rather than editing code.
+const DEFAULT_ALLOWED_FILE_PREFIXES: &[&str] = &[
     "/var/www/9eck.com/",
     "/var/www/xelixir/",
     "/etc/systemd/system/9eck-",
@@ -60,15 +65,25 @@ const STATIC_ALLOWED_FILE_PREFIXES: &[&str] = &[
     "/etc/nginx/sites-enabled/9eck",
 ];
 
-/// Compose the full allow-list at call time: static prefixes plus the
-/// dynamic `WMS_PROJECT_ROOT` (if set). On kiosk the project lives under
-/// `/home/dimi/9eck.com/`, not `/var/www/9eck.com/`; without this hook
-/// cross-mesh `ops.file_read` against the kiosk's source tree would 403.
+/// Compose the full allow-list at call time: the configured base prefixes —
+/// env `ECK_OPS_FILE_PREFIXES` (comma-separated absolute prefixes) when set,
+/// else [`DEFAULT_ALLOWED_FILE_PREFIXES`] — UNION the dynamic `WMS_PROJECT_ROOT`
+/// (if set). On some nodes the project lives under the deploy user's home
+/// (e.g. `/home/<deploy-user>/9eck.com/`), not `/var/www/9eck.com/`; without
+/// this hook cross-mesh `ops.file_read` against that source tree would 403.
 fn allowed_file_prefixes() -> Vec<String> {
-    let mut v: Vec<String> = STATIC_ALLOWED_FILE_PREFIXES
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let mut v: Vec<String> = match std::env::var("ECK_OPS_FILE_PREFIXES") {
+        Ok(s) if !s.trim().is_empty() => s
+            .split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => DEFAULT_ALLOWED_FILE_PREFIXES
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+    };
     if let Ok(root) = std::env::var("WMS_PROJECT_ROOT") {
         let mut p = root;
         if !p.ends_with('/') {
@@ -219,6 +234,7 @@ pub async fn system_health() -> (StatusCode, Json<Value>) {
             "df": df,
             "free": free,
             "top_cpu": top_cpu,
+            "loop_metrics": crate::services::health_monitor::report_compact(),
         })),
     )
 }
@@ -237,7 +253,7 @@ pub async fn system_health() -> (StatusCode, Json<Value>) {
 // Every field is best-effort — a missing field reports `"unavailable"`
 // rather than failing the whole verb. Operators read the JSON and
 // decide what to fix (typically by running scripts/kiosk-bootstrap.sh
-// again, or via the dimi-bootstrap helper for runtime drift).
+// again, or via the deploy user's bootstrap helper for runtime drift).
 
 pub async fn health_check(State(state): State<Arc<AppState>>) -> (StatusCode, Json<Value>) {
     use serde_json::Map;
@@ -268,11 +284,17 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> (StatusCode, Js
 
     // Expected sudoers fragments — best-effort via ls (cannot read the
     // file contents under non-root, but presence-only is enough for drift).
-    let expected_fragments = [
-        "9eckwms-agent-mock",
-        "dimi-bootstrap",
-        "9eckwms-nginx",
-    ];
+    // The deploy user's passwordless-restart bootstrap fragment is named after
+    // that user (env `ECK_DEPLOY_USER` → `<user>-bootstrap`); the fixed service
+    // fragments are always checked.
+    let mut expected_fragments: Vec<String> =
+        vec!["9eckwms-agent-mock".to_string(), "9eckwms-nginx".to_string()];
+    if let Ok(u) = std::env::var("ECK_DEPLOY_USER") {
+        let u = u.trim();
+        if !u.is_empty() {
+            expected_fragments.push(format!("{u}-bootstrap"));
+        }
+    }
     let mut fragments = Map::new();
     for name in &expected_fragments {
         let path = format!("/etc/sudoers.d/{}", name);
@@ -542,10 +564,11 @@ pub struct SurrealqlReadRequest {
     pub query: String,
 }
 
-/// Tables whose contents are Zone 1 (PII / credentials). Until the
-/// physical DB split lands, this denylist is the enforcement. After
-/// the split, these tables literally won't exist on `state.db`, so the
-/// denylist becomes a belt-and-braces check.
+/// Tables whose contents are Zone 1 (PII / credentials). This denylist is
+/// LOAD-BEARING for `user`: since 2026-07-09 real accounts live in `state.db`
+/// again (mesh-synced so one password works fleet-wide), and this check is
+/// what keeps the xelixir ops plane from reading credential hashes. The other
+/// names stay listed for when their sidecar tables land.
 const ZONE_1_TABLES: &[&str] = &[
     "user",
     "auth_token",
@@ -554,7 +577,40 @@ const ZONE_1_TABLES: &[&str] = &[
     "partner_pii",
     "picking_pii",
     "document_pii",
+    // Shipping carries recipient PII (name/street/zip). The distilled shipment
+    // record meshes but the ops plane must not read it; the raw scraper payload
+    // (shipment_raw, local-only) is likewise off-limits, as is the legacy blob.
+    "stock_picking_delivery",
+    "shipment_raw",
+    "shipment",
 ];
+
+/// Whether the query mentions a Zone 1 table as a standalone word; returns the
+/// first offending table name. Shared by the ops handler and the MCP
+/// `surrealql_read` tool so both surfaces enforce the identical denylist.
+/// False positives ("... where note = 'user'") are acceptable: rephrase.
+pub(crate) fn query_references_zone1(q: &str) -> Option<&'static str> {
+    let q_lower = q.to_ascii_lowercase();
+    for forbidden in ZONE_1_TABLES {
+        let needle = forbidden.to_ascii_lowercase();
+        let mut idx = 0;
+        while let Some(pos) = q_lower[idx..].find(&needle) {
+            let abs = idx + pos;
+            let before_ok = abs == 0
+                || !q_lower.as_bytes()[abs - 1].is_ascii_alphanumeric()
+                    && q_lower.as_bytes()[abs - 1] != b'_';
+            let after = abs + needle.len();
+            let after_ok = after == q_lower.len()
+                || (!q_lower.as_bytes()[after].is_ascii_alphanumeric()
+                    && q_lower.as_bytes()[after] != b'_');
+            if before_ok && after_ok {
+                return Some(forbidden);
+            }
+            idx = abs + needle.len();
+        }
+    }
+    None
+}
 
 pub async fn surrealql_read(
     State(state): State<Arc<AppState>>,
@@ -585,34 +641,15 @@ pub async fn surrealql_read(
         );
     }
     // Cheap denylist scan — any whitespace-delimited token matching a
-    // Zone 1 table name (case-insensitive) is enough to reject. False
-    // positives ("select count() from picking where note = 'user'")
-    // are acceptable: caller can rephrase.
-    let q_lower = q.to_ascii_lowercase();
-    for forbidden in ZONE_1_TABLES {
-        let needle = forbidden.to_ascii_lowercase();
-        // word-boundary-ish check: surrounded by non-word chars
-        let mut idx = 0;
-        while let Some(pos) = q_lower[idx..].find(&needle) {
-            let abs = idx + pos;
-            let before_ok = abs == 0
-                || !q_lower.as_bytes()[abs - 1].is_ascii_alphanumeric()
-                    && q_lower.as_bytes()[abs - 1] != b'_';
-            let after = abs + needle.len();
-            let after_ok = after == q_lower.len()
-                || (!q_lower.as_bytes()[after].is_ascii_alphanumeric()
-                    && q_lower.as_bytes()[after] != b'_');
-            if before_ok && after_ok {
-                return (
-                    StatusCode::FORBIDDEN,
-                    Json(json!({
-                        "success": false,
-                        "error": format!("query references Zone 1 table '{}'", forbidden),
-                    })),
-                );
-            }
-            idx = abs + needle.len();
-        }
+    // Zone 1 table name (case-insensitive) is enough to reject.
+    if let Some(forbidden) = query_references_zone1(q) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "success": false,
+                "error": format!("query references Zone 1 table '{}'", forbidden),
+            })),
+        );
     }
 
     let started = Instant::now();
@@ -788,8 +825,8 @@ pub async fn restart_service(Json(body): Json<RestartServiceRequest>) -> (Status
     }
     let started = Instant::now();
     // Try same-uid kill first (works when WMS owns the unit's main process —
-    // e.g. WMS restarting itself). On EPERM (cross-uid, like 9eckwms ↦ dimi
-    // for kiosk.service), fall back to `sudo systemctl restart`, which is
+    // e.g. WMS restarting itself). On EPERM (cross-uid, like 9eckwms ↦ the
+    // deploy user for kiosk.service), fall back to `sudo systemctl restart`, which is
     // gated by /etc/sudoers.d/9eckwms-systemctl (narrow allowlist of
     // exactly these services — installed by scripts/kiosk-bootstrap.sh).
     let result = match restart_via_kill_main_pid(&body.service).await {
@@ -829,7 +866,7 @@ pub async fn restart_service(Json(body): Json<RestartServiceRequest>) -> (Status
 /// within RestartSec. Works for any user that owns the unit's main
 /// process — which is the case for our deployments:
 ///   - antigravity: WMS runs as root, all kills succeed.
-///   - kiosk:       WMS runs as dimi, dimi owns the process → kill works.
+///   - kiosk:       WMS runs as the deploy user, which owns the process → kill works.
 async fn restart_via_kill_main_pid(service: &str) -> Result<(), String> {
     let mut show = Command::new("systemctl");
     show.arg("show").arg(service).arg("-p").arg("MainPID").arg("--value");
@@ -855,7 +892,7 @@ async fn restart_via_kill_main_pid(service: &str) -> Result<(), String> {
 }
 
 /// Fallback for restarting a unit whose MainPID is owned by a different
-/// uid than WMS (e.g. kiosk.service on the kiosk runs as `dimi`, WMS as
+/// uid than WMS (e.g. kiosk.service on the kiosk runs as the deploy user, WMS as
 /// `9eckwms`). Uses `sudo systemctl restart` — gated by
 /// /etc/sudoers.d/9eckwms-systemctl which lists exactly the allowed
 /// services. WMS itself enforces ALLOWED_SERVICES first, so the call
@@ -891,6 +928,87 @@ fn path_is_allowed(req_path: &str) -> bool {
         .any(|p| req_path.starts_with(p))
 }
 
+/// Run `cmd` to completion under a wall-clock cap, capturing stdout+stderr.
+///
+/// Unix: the child is spawned as the **leader of a fresh process group**
+/// (`process_group(0)` → pgid == child pid). On timeout we SIGKILL the whole
+/// group by its negative pgid — not just the immediate child — then the leader,
+/// then reap. This is what stops a timed-out `cargo_build` (30 min cap) from
+/// leaving orphaned `cargo`/`rustc` grandchildren swap-thrashing the kiosk under
+/// PID 1 (see xelixir `.eck/TECH_DEBT.md` "Remote-ops tooling friction"; mirrors
+/// the fat agent's proven run_command pattern). The error string carries a
+/// `[TIMEOUT after Ns]` marker so callers surface a clear killed-on-timeout
+/// result instead of a bare "timed out".
+#[cfg(unix)]
+async fn run_with_timeout(
+    mut cmd: Command,
+    timeout_secs: u64,
+) -> Result<std::process::Output, String> {
+    use tokio::io::AsyncReadExt;
+
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null())
+        // Fresh process group so the SIGKILL below reaps the whole subtree.
+        .process_group(0)
+        // Backstop: if the wait future is dropped for any other reason, the
+        // immediate child is still SIGKILLed.
+        .kill_on_drop(true);
+
+    let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {}", e))?;
+    // On unix the child's pid doubles as its pgid (process_group(0) above).
+    let pid = child.id().map(|p| p as i32).unwrap_or(0);
+
+    // Drain both pipes concurrently: a chatty child (cargo/rustc emit MBs of
+    // output) would otherwise fill the ~64 KB pipe buffer and block on write,
+    // masquerading as a hang and tripping the timeout for the wrong reason.
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let out_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        if let Some(ref mut p) = stdout_pipe {
+            let _ = p.read_to_end(&mut buf).await;
+        }
+        buf
+    });
+    let err_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        if let Some(ref mut p) = stderr_pipe {
+            let _ = p.read_to_end(&mut buf).await;
+        }
+        buf
+    });
+
+    match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await {
+        Ok(Ok(status)) => {
+            let stdout = out_task.await.unwrap_or_default();
+            let stderr = err_task.await.unwrap_or_default();
+            Ok(std::process::Output { status, stdout, stderr })
+        }
+        Ok(Err(e)) => Err(format!("wait failed: {}", e)),
+        Err(_) => {
+            // Window elapsed. SIGKILL the whole process group (grandchildren
+            // included), then the leader, then reap so nothing lingers.
+            if pid > 0 {
+                unsafe { libc::kill(-pid, libc::SIGKILL); }
+                unsafe { libc::kill(pid, libc::SIGKILL); }
+            }
+            let _ = child.wait().await;
+            // Reader tasks get EOF once the killed pipes close.
+            let _ = out_task.await;
+            let _ = err_task.await;
+            Err(format!(
+                "[TIMEOUT after {}s] subprocess killed (whole process group SIGKILLed)",
+                timeout_secs
+            ))
+        }
+    }
+}
+
+/// Non-unix fallback: no process-group semantics (`kill -pgid` is POSIX-only),
+/// so this keeps the original single-child `output()` behaviour. WMS ships on
+/// Linux kiosks; this arm exists only to keep Windows dev builds compiling.
+#[cfg(not(unix))]
 async fn run_with_timeout(
     mut cmd: Command,
     timeout_secs: u64,
@@ -898,7 +1016,7 @@ async fn run_with_timeout(
     let fut = cmd.output();
     tokio::time::timeout(Duration::from_secs(timeout_secs), fut)
         .await
-        .map_err(|_| format!("subprocess timed out after {}s", timeout_secs))?
+        .map_err(|_| format!("[TIMEOUT after {}s] subprocess killed", timeout_secs))?
         .map_err(|e| format!("spawn failed: {}", e))
 }
 
@@ -1295,7 +1413,7 @@ pub async fn deploy(Json(body): Json<DeployRequest>) -> (StatusCode, Json<Value>
         }
 
         // Phase 3: restart. Use kill-MainPID so we don't need sudo / polkit
-        // on the kiosk where WMS runs as `dimi`. Restart=always respawns.
+        // on the kiosk where WMS runs as the deploy user. Restart=always respawns.
         //
         // CRITICAL: when the target service IS our own WMS, killing it
         // mid-task means the OUTER cross-mesh poller (waiting on
@@ -1383,15 +1501,26 @@ async fn finish_with_failure(id: &str, o: &std::process::Output, reason: &str) {
 /// cargo is typically installed via rustup under `$HOME/.cargo/bin`, which
 /// is NOT in the systemd-launched WMS process's `PATH` by default. We also
 /// can't trust `$HOME` to point at the right place — on the kiosk, WMS runs
-/// as `dimi` but inherits `HOME=/root` from systemd. Prepend every plausible
+/// as the deploy user but inherits `HOME=/root` from systemd. Prepend every plausible
 /// .cargo/bin candidate so the binary resolves regardless of OS user setup.
 fn augment_path_for_cargo(cmd: &mut Command) {
     let mut candidates: Vec<String> = Vec::new();
     if let Ok(home) = std::env::var("HOME") {
         candidates.push(format!("{}/.cargo/bin", home));
     }
+    // The deploy user's rustup home (env `ECK_DEPLOY_USER`) — needed when the
+    // systemd unit runs as that user but inherits a different `HOME`.
+    if let Ok(user) = std::env::var("ECK_DEPLOY_USER") {
+        let user = user.trim();
+        if !user.is_empty() {
+            let s = format!("/home/{user}/.cargo/bin");
+            if !candidates.contains(&s) {
+                candidates.push(s);
+            }
+        }
+    }
     // Common fallbacks across our hosts.
-    for p in &["/home/dimi/.cargo/bin", "/root/.cargo/bin", "/usr/local/bin"] {
+    for p in &["/root/.cargo/bin", "/usr/local/bin"] {
         let s = p.to_string();
         if !candidates.contains(&s) {
             candidates.push(s);

@@ -89,23 +89,22 @@ pub async fn create(
 pub async fn update(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(mut payload): Json<Value>,
+    Json(payload): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    if let Some(obj) = payload.as_object_mut() {
-        obj.insert("updated_at".to_string(), serde_json::json!(chrono::Utc::now().to_rfc3339()));
-    }
-
-    let updated: Option<Value> = state
-        .db
-        .update(("picking", &*id))
-        .content(payload)
+    // put_synced_entity advances `_vclock`; existence check keeps the 404.
+    if state
+        .get_synced_entity("picking", &id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match updated {
-        Some(v) => Ok(Json(v)),
-        None => Err((StatusCode::NOT_FOUND, format!("Picking '{id}' not found"))),
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .is_none()
+    {
+        return Err((StatusCode::NOT_FOUND, format!("Picking '{id}' not found")));
     }
+    let updated = state
+        .put_synced_entity("picking", &id, payload)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(updated))
 }
 
 /// DELETE /api/pickings/:id
@@ -188,21 +187,19 @@ pub async fn create_line(
 pub async fn update_line(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(mut payload): Json<Value>,
+    Json(payload): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    if let Some(obj) = payload.as_object_mut() {
-        obj.insert("updated_at".to_string(), serde_json::json!(chrono::Utc::now().to_rfc3339()));
-    }
-
-    let updated: Option<Value> = state
-        .db
-        .update(("move_line", &*id))
-        .content(payload)
+    if state
+        .get_synced_entity("move_line", &id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match updated {
-        Some(v) => Ok(Json(v)),
-        None => Err((StatusCode::NOT_FOUND, format!("Move line '{id}' not found"))),
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .is_none()
+    {
+        return Err((StatusCode::NOT_FOUND, format!("Move line '{id}' not found")));
     }
+    let updated = state
+        .put_synced_entity("move_line", &id, payload)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(updated))
 }

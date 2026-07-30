@@ -4,6 +4,7 @@
     import { goto } from '$app/navigation';
     import { base } from '$app/paths';
     import { toastStore } from '$lib/stores/toastStore';
+    import { t, tr } from '$lib/i18n';
 
     let warehouses = [];
     let loading = true;
@@ -18,19 +19,19 @@
             warehouses = await api.get('/api/warehouse');
         } catch (e) {
             error = e.message;
-            toastStore.add('Failed to load warehouses', 'error');
+            toastStore.add(tr('warehouse.load_failed'), 'error');
         } finally {
             loading = false;
         }
     }
 
     async function createWarehouse() {
-        const name = prompt("Enter warehouse name:");
+        const name = prompt(tr('warehouse.prompt_name'));
         if (!name) return;
 
         try {
             const newWh = await api.post('/api/warehouse', { name });
-            toastStore.add('Warehouse created', 'success');
+            toastStore.add(tr('warehouse.created'), 'success');
             warehouses = [...warehouses, newWh];
         } catch (e) {
             toastStore.add(e.message, 'error');
@@ -44,21 +45,22 @@
 
 <div class="warehouse-page">
     <header>
-        <h1>Warehouses</h1>
+        <h1>{$t('warehouse.title')}</h1>
         <div class="actions">
-            <a href="{base}/dashboard/warehouse/blueprint" class="action-btn secondary">Blueprint Editor</a>
-            <button class="action-btn primary" on:click={createWarehouse}>+ New Warehouse</button>
+            <a href="{base}/dashboard/warehouse/stocktake" class="action-btn secondary">{$t('warehouse.stocktake')}</a>
+            <a href="{base}/dashboard/warehouse/blueprint" class="action-btn secondary">{$t('warehouse.blueprint_editor')}</a>
+            <button class="action-btn primary" on:click={createWarehouse}>{$t('warehouse.new_warehouse')}</button>
         </div>
     </header>
 
     {#if loading}
-        <div class="loading">Loading...</div>
+        <div class="loading">{$t('warehouse.loading')}</div>
     {:else if error}
         <div class="error">{error}</div>
     {:else}
         <div class="grid-container">
             {#if warehouses.length === 0}
-                <div class="empty-state">No warehouses found. Create one to start.</div>
+                <div class="empty-state">{$t('warehouse.empty')}</div>
             {/if}
 
             {#each warehouses as wh}
@@ -67,17 +69,17 @@
                 <div class="card wh-card" on:click={() => openWarehouse(wh.id)}>
                     <div class="card-body">
                         <h3>{wh.name}</h3>
-                        <p class="desc">{wh.description || 'No description'}</p>
+                        <p class="desc">{wh.description || $t('warehouse.no_description')}</p>
                     </div>
                     <div class="card-footer">
                         <div class="stat">
-                            <span class="label">Racks</span>
+                            <span class="label">{$t('warehouse.racks')}</span>
                             <span class="value">{wh.racks ? wh.racks.length : 0}</span>
                         </div>
                         <div class="stat">
-                            <span class="label">Status</span>
+                            <span class="label">{$t('warehouse.status')}</span>
                             <span class="value status {wh.is_active ? 'active' : 'inactive'}">
-                                {wh.is_active ? 'Active' : 'Inactive'}
+                                {wh.is_active ? $t('warehouse.status_active') : $t('warehouse.status_inactive')}
                             </span>
                         </div>
                     </div>

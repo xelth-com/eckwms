@@ -1,0 +1,62 @@
+export default {
+    // DashboardMap — toasts
+    pin_moved_hq: '핀을 본사로 이동했습니다',
+    reset_failed: '재설정 실패: {error}',
+    visit_planned: '방문이 예약되었습니다: {ref}',
+    plan_failed: '예약 실패: {error}',
+    ship_delivered: '배송을 완료로 표시했습니다',
+    resolve_failed: '해결 실패: {error}',
+    speech_unavailable: '브라우저에서 음성 인식을 사용할 수 없습니다',
+
+    // DashboardMap — popups
+    open_repair: '수리 열기',
+    open_ticket: '티켓 열기',
+    type_repair: '수리 (실물)',
+    type_ticket: '티켓 (온라인)',
+    status_label: '상태:',
+    reset_hq: '📍 본사로 재설정',
+    plan_visit: '📅 방문 예약',
+    stuck_days: '⚠️ {days}일째 지연',
+    carrier_status: '배송사 상태:',
+    carrier_glitch: '배송사 피드 오류 가능성 — 배송을 수동으로 확인하세요.',
+    mark_delivered: '배송 완료로 표시',
+    km_actual: '{km} km (주행계)',
+    km_estimated: '{km} km (추정)',
+    gobd_sealed: '🔒 GoBD 봉인됨',
+    trip: '운행',
+    start: '출발',
+    finish: '도착',
+    in_progress: '운행 중',
+    stop: '정차',
+    more: '+{count}개 더…',
+    tasks_here: '여기 작업 {count}개',
+
+    // DashboardMap — markup
+    loading_map: '지도를 불러오는 중…',
+    filter_assignee: '담당자별 필터',
+    search_placeholder: '번호 / 고객 검색…',
+    clear_tip: '지우기',
+    dictate_tip: '받아쓰기',
+    assignee_repairs: '수리',
+    assignee_unassigned: '미배정',
+
+    // GeoRouteWidget
+    searching: '검색 중...',
+    find_nearby: '경로상의 주변 작업 찾기',
+    no_coords: '사용 가능한 좌표가 없습니다',
+    fetch_failed: '주변 작업을 불러오지 못했습니다',
+    badge_bingo: 'Bingo',
+    badge_normal: 'Normal',
+    badge_far: 'Far',
+    km_to_target: '목표까지 {km} km',
+    cost: '비용: {cost}',
+    route_empty: '버튼을 클릭하여 경로상의 작업을 찾으세요.',
+
+    // GeoRouteMap
+    load_nearby_failed: '주변 작업을 불러오지 못했습니다',
+    office_popup: '사무실 (Eschborn)',
+    cost_label: '비용:',
+    loading_map_leaflet: '지도를 불러오는 중...',
+    nearby_tasks: '주변 작업 ({count})',
+    no_geocoded: '지오코딩된 작업이 없습니다.',
+};

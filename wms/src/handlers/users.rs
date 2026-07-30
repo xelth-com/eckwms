@@ -21,6 +21,16 @@ pub struct CreateUserRequest {
     pub pin: Option<String>,
     #[serde(rename = "isActive", default = "default_true")]
     pub is_active: bool,
+    /// Primary UI language; defaults to "en" to mirror prior hardcoded behavior.
+    #[serde(rename = "preferredLanguage", default = "default_language")]
+    pub preferred_language: String,
+    /// Full set of languages the user speaks (e.g. ["de","ko"]).
+    #[serde(rename = "languages", default)]
+    pub languages: Option<Vec<String>>,
+    /// Force the user to set their own password on first login (bulk-seeded
+    /// accounts get a shared generated password).
+    #[serde(rename = "mustChangePassword", default)]
+    pub must_change_password: bool,
 }
 
 #[derive(Deserialize)]
@@ -32,21 +42,28 @@ pub struct UpdateUserRequest {
     pub pin: Option<String>,
     #[serde(rename = "isActive")]
     pub is_active: Option<bool>,
+    #[serde(rename = "preferredLanguage")]
+    pub preferred_language: Option<String>,
+    #[serde(rename = "languages")]
+    pub languages: Option<Vec<String>>,
+    #[serde(rename = "mustChangePassword")]
+    pub must_change_password: Option<bool>,
 }
 
 fn default_role() -> String { "user".into() }
 fn default_true() -> bool { true }
+fn default_language() -> String { "en".into() }
 
 /// GET /api/admin/users — list all active users (no password/pin hashes)
 pub async fn list(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<Value>>, (StatusCode, String)> {
     let mut result = state
-        .users_db
+        .db
         .query(
-            "SELECT record::id(id) AS id, username, email, name, role, isActive, \
-             pin != '' AND pin IS NOT NONE AS hasPin, \
-             preferredLanguage, lastLogin, createdAt, updatedAt \
+            "SELECT record::id(id) AS id, username, email, name, role, userType, isActive, \
+             pin != '' AND pin IS NOT NONE AS hasPin, mustChangePassword, \
+             preferredLanguage, languages, lastLogin, createdAt, updatedAt \
              FROM user WHERE deleted_at IS NONE ORDER BY createdAt DESC",
         )
         .await
@@ -84,12 +101,17 @@ pub async fn create(
 
     let username = payload.username.clone();
 
-    // CREATE + SELECT in one query to avoid Thing serialization and timing issues
+    // CREATE + SELECT in one query to avoid Thing serialization and timing issues.
+    // Record id = the USERNAME (type::thing binds it injection-safe): the user
+    // table is mesh-synced, and a deterministic id makes the same account created
+    // on two nodes converge via LWW instead of duplicating. `_vclock` starts at
+    // this node's component so the row propagates as a causal event.
     let mut result = state
-        .users_db
+        .db
         .query(
-            "CREATE user SET
+            "CREATE type::thing('user', $username) SET
                 username = $username,
+                _vclock = $vclock,
                 password = $password,
                 email = $email,
                 name = $name,
@@ -97,26 +119,34 @@ pub async fn create(
                 pin = $pin,
                 userType = 'individual',
                 isActive = $is_active,
+                mustChangePassword = $must_change_password,
                 failed_login_attempts = 0,
-                preferredLanguage = 'en',
+                preferredLanguage = $preferred_language,
+                languages = $languages,
                 createdAt = time::now(),
                 updatedAt = time::now();
             SELECT record::id(id) AS id, username, email, name, role, isActive, \
-                preferredLanguage, createdAt, updatedAt \
+                preferredLanguage, languages, createdAt, updatedAt \
                 FROM user WHERE username = $username AND deleted_at IS NONE \
                 ORDER BY createdAt DESC LIMIT 1;",
         )
         .bind(("username", payload.username))
+        .bind(("vclock", eck_core::sync::conflict::next_local_vclock(None, &state.instance_id)))
         .bind(("password", hashed_password))
         .bind(("email", payload.email))
         .bind(("name", payload.name))
         .bind(("role", payload.role))
         .bind(("pin", pin))
         .bind(("is_active", payload.is_active))
+        .bind(("must_change_password", payload.must_change_password))
+        .bind(("preferred_language", payload.preferred_language))
+        .bind(("languages", payload.languages))
         .await
         .map_err(|e| {
             let msg = e.to_string();
-            if msg.contains("duplicate") || msg.contains("unique") {
+            // "already exists" = CREATE on the deterministic user:⟨username⟩ id;
+            // "unique"/"duplicate" = the username unique index.
+            if msg.contains("duplicate") || msg.contains("unique") || msg.contains("already exists") {
                 (StatusCode::CONFLICT, "User already exists (check username/email)".into())
             } else {
                 (StatusCode::INTERNAL_SERVER_ERROR, msg)
@@ -132,9 +162,10 @@ pub async fn create(
     super::auth::cleanup_setup_account(&state).await;
     info!("New user '{}' created, setup account cleanup triggered", username);
 
-    // Users do NOT sync across the mesh. The `user` table lives in
-    // `users_db` (Zone 1, PII) and is local to each node by design.
-    // Each kiosk holds its own local operator accounts; no relay-push.
+    // Real users DO sync across the mesh since 2026-07-09 (`user` is in
+    // SYNC_ENTITY_TYPES; record id = username; the engine's merkle sweep
+    // picks this row up — no explicit push needed here). Only the
+    // install-time setup-admin stays node-local in `users_db`.
 
     Ok((
         StatusCode::CREATED,
@@ -154,7 +185,7 @@ pub async fn update(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     // Verify user exists
     let exists: Option<Value> = state
-        .users_db
+        .db
         .query("SELECT record::id(id) AS id FROM user WHERE record::id(id) = $id AND deleted_at IS NONE LIMIT 1")
         .bind(("id", id.clone()))
         .await
@@ -185,6 +216,17 @@ pub async fn update(
     if let Some(is_active) = payload.is_active {
         map.insert("isActive".into(), json!(is_active));
     }
+    if let Some(must_change) = payload.must_change_password {
+        map.insert("mustChangePassword".into(), json!(must_change));
+    }
+    if let Some(ref preferred_language) = payload.preferred_language {
+        if !preferred_language.is_empty() {
+            map.insert("preferredLanguage".into(), json!(preferred_language));
+        }
+    }
+    if let Some(ref languages) = payload.languages {
+        map.insert("languages".into(), json!(languages));
+    }
     if let Some(ref pin) = payload.pin {
         let hashed_pin = if pin.is_empty() {
             String::new()
@@ -203,12 +245,19 @@ pub async fn update(
     }
 
     state
-        .users_db
+        .db
         .query("UPDATE user MERGE $data WHERE record::id(id) = $id AND deleted_at IS NONE")
         .bind(("id", id.clone()))
         .bind(("data", update_obj))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Advance causality so the edit propagates across the mesh.
+    if let Err(e) = eck_core::sync::conflict::bump_local_vclock_by_leaf(
+        &state.db, "user", &id, &state.instance_id,
+    ).await {
+        tracing::warn!("user update: vclock bump failed for {}: {}", id, e);
+    }
 
     Ok(Json(json!({
         "id": id,
@@ -222,12 +271,12 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let mut result = state
-        .users_db
+        .db
         .query(
             "UPDATE user SET deleted_at = time::now(), updatedAt = time::now() \
              WHERE record::id(id) = $id AND deleted_at IS NONE",
         )
-        .bind(("id", id))
+        .bind(("id", id.clone()))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -236,7 +285,15 @@ pub async fn delete(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     match updated {
-        Some(_) => Ok(Json(json!({ "message": "User deleted" }))),
+        Some(_) => {
+            // Soft delete is a content change — bump causality so peers adopt it.
+            if let Err(e) = eck_core::sync::conflict::bump_local_vclock_by_leaf(
+                &state.db, "user", &id, &state.instance_id,
+            ).await {
+                tracing::warn!("user delete: vclock bump failed for {}: {}", id, e);
+            }
+            Ok(Json(json!({ "message": "User deleted" })))
+        }
         None => Err((StatusCode::NOT_FOUND, "User not found".into())),
     }
 }

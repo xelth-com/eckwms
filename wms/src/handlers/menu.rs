@@ -49,17 +49,19 @@ pub async fn update_category(
     Path(id): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let updated: Option<Value> = state
-        .db
-        .update(("category", &*id))
-        .content(payload)
+    if state
+        .get_synced_entity("category", &id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match updated {
-        Some(v) => Ok(Json(v)),
-        None => Err((StatusCode::NOT_FOUND, format!("Category '{id}' not found"))),
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .is_none()
+    {
+        return Err((StatusCode::NOT_FOUND, format!("Category '{id}' not found")));
     }
+    let updated = state
+        .put_synced_entity("category", &id, payload)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(updated))
 }
 
 /// DELETE /api/menu/categories/:id
@@ -120,17 +122,19 @@ pub async fn update_item(
     Path(id): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let updated: Option<Value> = state
-        .db
-        .update(("item", &*id))
-        .content(payload)
+    if state
+        .get_synced_entity("item", &id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match updated {
-        Some(v) => Ok(Json(v)),
-        None => Err((StatusCode::NOT_FOUND, format!("Item '{id}' not found"))),
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .is_none()
+    {
+        return Err((StatusCode::NOT_FOUND, format!("Item '{id}' not found")));
     }
+    let updated = state
+        .put_synced_entity("item", &id, payload)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(updated))
 }
 
 /// DELETE /api/menu/items/:id

@@ -132,9 +132,21 @@ impl AgentController {
             cfg.auto_start, cfg.auto_accept
         );
 
+        // LICENSE_TOKEN comes from the process env, fixed at boot — without it
+        // spawn_agent can NEVER succeed, so neither the boot auto-start nor the
+        // 5 s supervisor loop should run (they'd warn twice every 5 s forever —
+        // pure churn + log spam on unlicensed dev boxes). On-demand "Request
+        // Access" still surfaces the proper error if someone tries.
+        let has_license = std::env::var("LICENSE_TOKEN").map(|t| !t.is_empty()).unwrap_or(false);
+        if !has_license {
+            warn!(
+                "[AgentController] LICENSE_TOKEN not set — xelixir agent disabled, supervisor not started (set it in .env and restart)"
+            );
+        }
+
         // "Auto-start at boot" spawns the agent in STANDBY (DNO poll/dormant) —
         // never a live connection. Live happens only on an on-demand wake.
-        if cfg.auto_start {
+        if cfg.auto_start && has_license {
             match self.spawn_agent(true).await {
                 Ok(token) => {
                     info!("[AgentController] auto-started xelixir agent in STANDBY (poll) mode");
@@ -151,7 +163,7 @@ impl AgentController {
         // that would make its future recursively contain spawn_agent). Mirrors
         // the old standalone systemd unit's Restart=always. Always respawned in
         // standby (the only flag-driven spawn mode).
-        {
+        if has_license {
             let sup = Arc::clone(&self);
             tokio::spawn(async move {
                 loop {
@@ -291,8 +303,8 @@ impl AgentController {
         Ok(token)
     }
 
-    /// Claim a license token at xelth.com, then spawn `agent_mock` with the
-    /// returned WS access token. Replaces any currently-running child.
+    /// Claim a license token at the licensing authority, then spawn `agent_mock`
+    /// with the returned WS access token. Replaces any currently-running child.
     ///
     /// `standby=true` forwards `XELTH_START_MODE=standby` so the agent polls
     /// xelixir until woken instead of holding a live socket — the only mode the
@@ -315,10 +327,10 @@ impl AgentController {
             .unwrap_or_else(|_| reqwest::Client::new());
 
         // Default to the DIRECT rustls port :3221 — the xelixir authority is
-        // reached on :3221, not via nginx :443. nginx `location /api/` on
-        // xelth.com does `return 301 …:3221`, and a 301 makes HTTP clients
-        // downgrade POST→GET → the claim (a POST) comes back 405. So the :443
-        // form silently breaks license claims; mirror XELTH_WS_URL (:3221).
+        // reached on :3221, not via the reverse proxy on :443. The proxy's
+        // `location /api/` does `return 301 …:3221`, and a 301 makes HTTP
+        // clients downgrade POST→GET → the claim (a POST) comes back 405. So
+        // the :443 form silently breaks license claims; mirror XELTH_WS_URL (:3221).
         let claim_url = std::env::var("XELTH_CLAIM_URL")
             .unwrap_or_else(|_| "".to_string());
 
@@ -386,6 +398,8 @@ impl AgentController {
 
         // Prefer the session user's own ~/bin/agent_mock (user-writable → OTA
         // self-update can swap it w/o root); else the resolved system path.
+        // NOTE: path also referenced by rename plan (xelixir TECH_DEBT) — the
+        // on-kiosk basename `agent_mock` stays for now even as the crate renames.
         let agent_path = agent_user
             .as_ref()
             .map(|(_, _, home)| std::path::PathBuf::from(home).join("bin").join("agent_mock"))
@@ -444,8 +458,14 @@ impl AgentController {
             }
             c
         };
-        agent_cmd.stdout(Stdio::inherit());
-        agent_cmd.stderr(Stdio::inherit());
+        // Give the fleet agent its OWN journal identity instead of drowning the
+        // 9eck-wms unit's journal (the 95%-noise problem — xelixir TECH_DEBT):
+        // route its stdout+stderr through `systemd-cat -t xelixir-agent`. The
+        // agent stays a DIRECT child handle (only its stdio fds are redirected),
+        // so the pid tracking, respawn-on-crash, and kill paths below are
+        // unchanged. Falls back to inheriting WMS's fds if systemd-cat is
+        // unavailable — never fails the spawn over logging.
+        let logcat: Option<Child> = spawn_agent_log_forwarder(&mut agent_cmd);
         agent_cmd.kill_on_drop(true);
 
         let mut child: Child = agent_cmd
@@ -480,6 +500,12 @@ impl AgentController {
                     let _ = child.wait().await;
                 }
             }
+            // Reap the systemd-cat side-car (if any): once the agent's fds close
+            // it sees EOF on stdin and exits on its own; wait() collects it so a
+            // flapping agent doesn't leak a zombie per respawn.
+            if let Some(mut cat) = logcat {
+                let _ = cat.wait().await;
+            }
         });
 
         *self.handle.lock().await = Some(AgentHandle { kill: kill_tx });
@@ -500,7 +526,9 @@ impl AgentController {
     // ─── DB helpers ───────────────────────────────────────────────────────
 
     async fn ensure_self_device_record(&self) -> Result<(), String> {
-        let now = chrono::Utc::now().to_rfc3339();
+        // Timestamps via time::now(), NOT a chrono string bind — registered_device
+        // is a SYNCED table, and a string `updated_at` is the a0c275d/133279d bug
+        // class (this writer used to re-poison the row right after the startup heal).
         let q = "
             UPSERT type::record('registered_device', $iid) MERGE {
                 device_id: $iid,
@@ -508,9 +536,9 @@ impl AgentController {
                 public_key: $pk,
                 status: 'active',
                 home_instance_id: $iid,
-                last_seen_at: $now,
-                updated_at: $now,
-                created_at: $now
+                last_seen_at: time::now(),
+                updated_at: time::now(),
+                created_at: time::now()
             };
         ";
         self.db
@@ -523,7 +551,6 @@ impl AgentController {
                 }),
             ))
             .bind(("pk", self.public_key.clone()))
-            .bind(("now", now))
             .await
             .map_err(|e| e.to_string())?;
         Ok(())
@@ -533,11 +560,9 @@ impl AgentController {
         if let Some(cfg) = self.read_config().await {
             return cfg;
         }
-        let now = chrono::Utc::now().to_rfc3339();
         let _ = self
             .db
-            .query("UPSERT system_config:xelixir MERGE { auto_start: false, auto_accept: true, updated_at: $now };")
-            .bind(("now", now))
+            .query("UPSERT system_config:xelixir MERGE { auto_start: false, auto_accept: true, updated_at: time::now() };")
             .await;
         XelixirConfig::default()
     }
@@ -568,16 +593,17 @@ impl AgentController {
         token: Option<String>,
         session_url: Option<String>,
     ) {
-        let now = chrono::Utc::now().to_rfc3339();
         // NOTE: `$token` is a reserved session variable in SurrealDB v3.
         // Bind it as `$xltoken` to avoid the "protected variable" error.
+        // Timestamps via time::now() — synced table, string stamps are the
+        // a0c275d/133279d bug class.
         let q = "
             UPDATE type::record('registered_device', $iid) MERGE {
                 xelixir_status: $status,
                 xelixir_token: $xltoken,
                 xelixir_session_url: $url,
-                xelixir_updated_at: $now,
-                updated_at: $now
+                xelixir_updated_at: time::now(),
+                updated_at: time::now()
             };
         ";
         if let Err(e) = self
@@ -587,7 +613,6 @@ impl AgentController {
             .bind(("status", status.to_string()))
             .bind(("xltoken", token.clone()))
             .bind(("url", session_url.clone()))
-            .bind(("now", now.clone()))
             .await
         {
             warn!("[AgentController] failed to set device state: {}", e);
@@ -597,14 +622,12 @@ impl AgentController {
     }
 
     async fn clear_device_command(&self) {
-        let now = chrono::Utc::now().to_rfc3339();
         let _ = self
             .db
             .query(
-                "UPDATE type::record('registered_device', $iid) MERGE { xelixir_command: NONE, updated_at: $now };",
+                "UPDATE type::record('registered_device', $iid) MERGE { xelixir_command: NONE, updated_at: time::now() };",
             )
             .bind(("iid", self.instance_id.clone()))
-            .bind(("now", now))
             .await;
         self.enqueue_self_outbox().await;
     }
@@ -806,19 +829,103 @@ fn resolve_agent_binary() -> Option<std::path::PathBuf> {
     }
 }
 
+/// Route the fleet agent's stdout+stderr through `systemd-cat -t xelixir-agent`
+/// so its log lines land in the journal under their OWN syslog identifier
+/// instead of the 9eck-wms unit's (the 95%-noise problem — see xelixir
+/// `.eck/TECH_DEBT.md`). We spawn systemd-cat with a piped stdin and hand a
+/// CLOEXEC dup of that pipe's write-end to the agent as both stdout and stderr;
+/// the agent itself stays a plain child handle, so the caller's pid tracking,
+/// respawn-on-crash, and kill paths are untouched.
+///
+/// On success returns the systemd-cat `Child` (the caller reaps it once the
+/// agent exits — it EOFs and dies on its own then). On ANY failure (systemd-cat
+/// not on PATH, dup failure) it wires the agent to inherit WMS's fds — the
+/// previous behaviour — and returns `None`, so the agent still spawns.
+#[cfg(unix)]
+fn spawn_agent_log_forwarder(agent_cmd: &mut Command) -> Option<Child> {
+    use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
+
+    fn inherit(c: &mut Command) {
+        c.stdout(Stdio::inherit());
+        c.stderr(Stdio::inherit());
+    }
+
+    let mut cat = match Command::new("systemd-cat")
+        .arg("-t")
+        .arg("xelixir-agent")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(
+                "[AgentController] systemd-cat unavailable ({}); agent logs inherit the WMS journal",
+                e
+            );
+            inherit(agent_cmd);
+            return None;
+        }
+    };
+
+    let stdin = match cat.stdin.take() {
+        Some(s) => s,
+        None => {
+            warn!("[AgentController] systemd-cat stdin missing; agent logs inherit the WMS journal");
+            inherit(agent_cmd); // `cat` drops here → kill_on_drop reaps it
+            return None;
+        }
+    };
+
+    // Duplicate the pipe write-end (CLOEXEC) so BOTH agent streams can target
+    // it, then drop the WMS-held copy so systemd-cat sees EOF exactly when the
+    // agent exits — not while WMS still holds a write end open.
+    let raw = stdin.as_raw_fd();
+    let out_fd = unsafe { libc::fcntl(raw, libc::F_DUPFD_CLOEXEC, 0) };
+    let err_fd = unsafe { libc::fcntl(raw, libc::F_DUPFD_CLOEXEC, 0) };
+    if out_fd < 0 || err_fd < 0 {
+        if out_fd >= 0 {
+            unsafe { libc::close(out_fd); }
+        }
+        if err_fd >= 0 {
+            unsafe { libc::close(err_fd); }
+        }
+        warn!("[AgentController] dup of systemd-cat pipe failed; agent logs inherit the WMS journal");
+        inherit(agent_cmd); // `cat` drops → kill_on_drop reaps it
+        return None;
+    }
+    // SAFETY: fresh fds from F_DUPFD_CLOEXEC that nothing else owns.
+    let out_owned = unsafe { OwnedFd::from_raw_fd(out_fd) };
+    let err_owned = unsafe { OwnedFd::from_raw_fd(err_fd) };
+    drop(stdin);
+
+    agent_cmd.stdout(Stdio::from(out_owned));
+    agent_cmd.stderr(Stdio::from(err_owned));
+    Some(cat)
+}
+
+/// Non-unix fallback: `systemd-cat` is Linux-only. Keep the historical
+/// inherited-journal behaviour so Windows dev builds still compile.
+#[cfg(not(unix))]
+fn spawn_agent_log_forwarder(agent_cmd: &mut Command) -> Option<Child> {
+    agent_cmd.stdout(Stdio::inherit());
+    agent_cmd.stderr(Stdio::inherit());
+    None
+}
+
 async fn mark_stopped_in_db(db: &SurrealDb, iid: &str) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
     db.query(
         "UPDATE type::record('registered_device', $iid) MERGE { \
             xelixir_status: 'stopped', \
             xelixir_token: NONE, \
             xelixir_session_url: NONE, \
-            xelixir_updated_at: $now, \
-            updated_at: $now \
+            xelixir_updated_at: time::now(), \
+            updated_at: time::now() \
         };",
     )
     .bind(("iid", iid.to_string()))
-    .bind(("now", now))
     .await
     .map_err(|e| e.to_string())?;
     Ok(())

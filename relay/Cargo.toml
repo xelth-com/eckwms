@@ -7,7 +7,7 @@ edition = "2021"
 eck_core = { path = "../core" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
-tower = "0.5"
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -17,4 +17,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 governor = "0.8"
 base64 = "0.22"
-surrealdb = { version = "3", features = ["kv-surrealkv"] }
+surrealdb = { version = "3", features = ["kv-surrealkv", "protocol-ws"] }
+
+[dev-dependencies]
+ed25519-dalek = { version = "2", features = ["rand_core"] }

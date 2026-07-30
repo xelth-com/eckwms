@@ -4,6 +4,7 @@
     import { authStore } from '$lib/stores/authStore';
     import { toastStore } from '$lib/stores/toastStore';
     import { base } from '$app/paths';
+    import { t, tr } from '$lib/i18n';
 
     // Tabs
     let activeTab = 'scanners'; // 'scanners' | 'servers'
@@ -23,8 +24,14 @@
     $: isAdmin = $authStore.currentUser?.role === 'admin';
 
     // Dashboard SLA scale (mesh-synced via system_config:dashboard_sla)
-    let slaConfig = { aging_scale_days: 7, repair_aging_scale_days: 7 };
+    let slaConfig = { aging_scale_days: 7, repair_aging_scale_days: 7, trip_fade_days: 3 };
     let slaBusy = false;
+
+    // AI address lookup (Lever 2A: Gemini + Google grounding for office-pinned
+    // tickets) — backed by system_config:geo.grounding_enabled. Off by default
+    // (no cloud spend / egress); see wms/src/handlers/geo.rs.
+    let groundingConfig = { enabled: false };
+    let groundingBusy = false;
 
     // Server Pairing Data
     // NOTE: The interactive pairing UI (host/join via 6-digit code) was
@@ -56,18 +63,41 @@
                 auto_start: res.auto_start !== false,
                 auto_accept: res.auto_accept !== false,
             };
-            toastStore.add('Xelixir settings saved', 'success');
+            toastStore.add(tr('devices.xelixir_saved'), 'success');
         } catch (e) {
-            toastStore.add('Failed to save: ' + e.message, 'error');
+            toastStore.add(tr('devices.save_failed', { error: e.message }), 'error');
         } finally {
             xelixirBusy = false;
+        }
+    }
+
+    async function loadGroundingConfig() {
+        try {
+            const cfg = await api.get('/api/geo/grounding-config');
+            groundingConfig = { enabled: cfg.grounding_enabled === true };
+        } catch (e) {
+            console.warn('Grounding config load failed:', e.message);
+        }
+    }
+
+    async function saveGroundingConfig(enabled) {
+        if (!isAdmin || groundingBusy) return;
+        groundingBusy = true;
+        try {
+            const res = await api.post('/api/geo/grounding-config', { enabled });
+            groundingConfig = { enabled: res.grounding_enabled === true };
+            toastStore.add(tr('devices.grounding_saved'), 'success');
+        } catch (e) {
+            toastStore.add(tr('devices.save_failed', { error: e.message }), 'error');
+        } finally {
+            groundingBusy = false;
         }
     }
 
     async function requestXelixir(deviceId) {
         try {
             await api.post(`/X/devices/${deviceId}/start`, {});
-            toastStore.add('Access requested — propagating via mesh…', 'info');
+            toastStore.add(tr('devices.access_requested'), 'info');
             // Allow time for mesh sync + ack from edge before reloading.
             setTimeout(loadScannersData, 5000);
         } catch (e) {
@@ -78,7 +108,7 @@
     async function stopXelixir(deviceId) {
         try {
             await api.post(`/X/devices/${deviceId}/stop`, {});
-            toastStore.add('Stop dispatched', 'success');
+            toastStore.add(tr('devices.stop_dispatched'), 'success');
             setTimeout(loadScannersData, 5000);
         } catch (e) {
             toastStore.add(e.message, 'error');
@@ -110,7 +140,7 @@
             }
             meshNodes = nodes;
         } catch (e) {
-            toastStore.add('Failed to load devices: ' + e.message, 'error');
+            toastStore.add(tr('devices.load_devices_failed', { error: e.message }), 'error');
         } finally {
             loading = false;
         }
@@ -119,7 +149,7 @@
     async function updateStatus(deviceId, status) {
         try {
             await api.put(`/api/admin/devices/${deviceId}/status`, { status });
-            toastStore.add(`Device ${status}`, 'success');
+            toastStore.add(tr('devices.device_status_updated', { status: tr('devices.status_' + status) }), 'success');
             devices = devices.map(d => d.device_id === deviceId ? { ...d, status } : d);
         } catch (e) {
             toastStore.add(e.message, 'error');
@@ -129,17 +159,17 @@
     async function updateHomeNode(deviceId, homeInstanceId) {
         try {
             await api.put(`/api/admin/devices/${deviceId}/home`, { homeInstanceId });
-            toastStore.add('Home Node updated', 'success');
+            toastStore.add(tr('devices.home_node_updated'), 'success');
         } catch (e) {
             toastStore.add(e.message, 'error');
         }
     }
 
     async function deleteDevice(deviceId) {
-        if (!confirm('Delete this device?')) return;
+        if (!confirm(tr('devices.delete_device_confirm'))) return;
         try {
             await api.delete(`/api/admin/devices/${deviceId}`);
-            toastStore.add('Device deleted', 'success');
+            toastStore.add(tr('devices.device_deleted'), 'success');
             await loadScannersData();
         } catch (e) {
             toastStore.add(e.message, 'error');
@@ -149,7 +179,7 @@
     async function restoreDevice(deviceId) {
         try {
             await api.post(`/api/admin/devices/${deviceId}/restore`);
-            toastStore.add('Device restored', 'success');
+            toastStore.add(tr('devices.device_restored'), 'success');
             await loadScannersData();
         } catch (e) {
             toastStore.add(e.message, 'error');
@@ -165,16 +195,24 @@
                 ? '/api/internal/pairing-qr?type=vip'
                 : '/api/internal/pairing-qr';
             const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+            // Without this check a 401/403/500 body gets turned into an <img> blob
+            // and renders as a broken image ("no QR appears") instead of an error.
+            if (!res.ok) {
+                const msg = await res.text().catch(() => '');
+                toastStore.add(tr('devices.qr_failed', { status: res.status }) + (msg ? ': ' + msg.slice(0, 120) : ''), 'error');
+                showQr = false;
+                return;
+            }
             const blob = await res.blob();
             qrUrl = URL.createObjectURL(blob);
             showQr = true;
         } catch (e) {
-            toastStore.add('Failed to load QR', 'error');
+            toastStore.add(tr('devices.qr_load_failed', { error: e.message }), 'error');
         }
     }
 
     function getNodeName(instanceId) {
-        if (!instanceId) return 'Unknown';
+        if (!instanceId) return tr('devices.node_unknown');
         const node = meshNodes.find(n => n.instance_id === instanceId);
         let role = node ? node.role.toUpperCase() : 'PEER';
         let identifier = instanceId;
@@ -189,6 +227,7 @@
 
     let serverNodes = [];
     let selfInfo = null;
+    let meshMaster = null; // instance_id of the designated mesh master, or null
 
     async function loadServersData() {
         loading = true;
@@ -201,18 +240,33 @@
                 ? nodesBody
                 : (nodesBody && nodesBody.nodes) || [];
             selfInfo = status || null;
+            meshMaster = (nodesBody && nodesBody.mesh_master) || status?.mesh_master || null;
         } catch (e) {
-            toastStore.add('Failed to load nodes', 'error');
+            toastStore.add(tr('devices.load_nodes_failed'), 'error');
         } finally {
             loading = false;
         }
     }
 
+    // Designate (or transfer) the mesh master/home to a given node. Mesh-synced
+    // + vclock-bumped server-side so every node converges on the same master.
+    async function setMaster(instanceId) {
+        if (!isAdmin) return;
+        if (!confirm(tr('devices.make_master_confirm'))) return;
+        try {
+            await api.post('/api/admin/mesh/master', { instanceId });
+            toastStore.add(tr('devices.master_updated'), 'success');
+            await loadServersData();
+        } catch (e) {
+            toastStore.add(tr('devices.set_master_failed', { error: e.message }), 'error');
+        }
+    }
+
     async function deleteServer(id) {
-        if (!confirm('Unpair this server?')) return;
+        if (!confirm(tr('devices.unpair_confirm'))) return;
         try {
             await api.delete(`/api/admin/mesh/${id}`);
-            toastStore.add('Server unpaired', 'success');
+            toastStore.add(tr('devices.server_unpaired'), 'success');
             await loadServersData();
         } catch (e) {
             toastStore.add(e.message, 'error');
@@ -234,6 +288,7 @@
             slaConfig = {
                 aging_scale_days: typeof cfg.aging_scale_days === 'number' ? cfg.aging_scale_days : 7,
                 repair_aging_scale_days: typeof cfg.repair_aging_scale_days === 'number' ? cfg.repair_aging_scale_days : 7,
+                trip_fade_days: typeof cfg.trip_fade_days === 'number' ? cfg.trip_fade_days : 3,
             };
         } catch (e) {
             console.warn('SLA config load failed:', e.message);
@@ -247,14 +302,16 @@
             const res = await api.post('/api/admin/config/dashboard_sla', {
                 aging_scale_days: Number(slaConfig.aging_scale_days),
                 repair_aging_scale_days: Number(slaConfig.repair_aging_scale_days),
+                trip_fade_days: Number(slaConfig.trip_fade_days),
             });
             slaConfig = {
                 aging_scale_days: res.aging_scale_days,
                 repair_aging_scale_days: res.repair_aging_scale_days,
+                trip_fade_days: res.trip_fade_days,
             };
-            toastStore.add('Dashboard SLA settings saved (refresh map to apply)', 'success');
+            toastStore.add(tr('devices.sla_saved'), 'success');
         } catch (e) {
-            toastStore.add('Failed to save SLA: ' + e.message, 'error');
+            toastStore.add(tr('devices.sla_save_failed', { error: e.message }), 'error');
         } finally {
             slaBusy = false;
         }
@@ -264,18 +321,19 @@
         loadScannersData();
         loadXelixirConfig();
         loadSlaConfig();
+        loadGroundingConfig();
     });
 </script>
 
 <div class="page">
     <header>
-        <h1>Connectivity & Devices</h1>
+        <h1>{$t('devices.page_title')}</h1>
         <div class="tabs">
             <button class="tab" class:active={activeTab === 'scanners'} on:click={() => switchTab('scanners')}>
-                Scanners (PDAs)
+                {$t('devices.tab_scanners')}
             </button>
             <button class="tab" class:active={activeTab === 'servers'} on:click={() => switchTab('servers')}>
-                Mesh Servers
+                {$t('devices.tab_servers')}
             </button>
         </div>
     </header>
@@ -287,8 +345,8 @@
             <!-- Xelixir Remote Support settings (manages local system_config:xelixir) -->
             <div class="xelixir-settings">
                 <div class="xelixir-header">
-                    <h3>Remote Support (Xelixir C2)</h3>
-                    <span class="xelixir-hint">Controls how this node handles xelth.com remote sessions.</span>
+                    <h3>{$t('devices.xelixir_assist_title')}</h3>
+                    <span class="xelixir-hint">{$t('devices.xelixir_hint')}</span>
                 </div>
                 <label class="xelixir-toggle">
                     <input
@@ -297,8 +355,8 @@
                         disabled={xelixirBusy}
                         on:change={(e) => saveXelixirConfig({ auto_start: e.target.checked })}
                     />
-                    <span>Auto-start agent at boot</span>
-                    <span class="xelixir-toggle-hint">When off, the agent only starts on a remote "Request Access".</span>
+                    <span>{$t('devices.auto_start_label')}</span>
+                    <span class="xelixir-toggle-hint">{$t('devices.auto_start_hint')}</span>
                 </label>
                 <label class="xelixir-toggle">
                     <input
@@ -307,19 +365,40 @@
                         disabled={xelixirBusy}
                         on:change={(e) => saveXelixirConfig({ auto_accept: e.target.checked })}
                     />
-                    <span>Auto-accept remote start requests</span>
-                    <span class="xelixir-toggle-hint">When off, a local operator must approve each incoming session.</span>
+                    <span>{$t('devices.auto_accept_label')}</span>
+                    <span class="xelixir-toggle-hint">{$t('devices.auto_accept_hint')}</span>
+                </label>
+            </div>
+
+            <!-- AI address lookup (Lever 2A): Gemini + Google grounding for support
+                 tickets that couldn't be geocoded from zip/city and fell back to the
+                 office pin. Backed by system_config:geo.grounding_enabled; off by
+                 default (no cloud spend / egress). -->
+            <div class="xelixir-settings">
+                <div class="xelixir-header">
+                    <h3>{$t('devices.grounding_title')}</h3>
+                    <span class="xelixir-hint">{$t('devices.grounding_hint')}</span>
+                </div>
+                <label class="xelixir-toggle">
+                    <input
+                        type="checkbox"
+                        checked={groundingConfig.enabled}
+                        disabled={groundingBusy}
+                        on:change={(e) => saveGroundingConfig(e.target.checked)}
+                    />
+                    <span>{$t('devices.grounding_label')}</span>
+                    <span class="xelixir-toggle-hint">{$t('devices.grounding_off_hint')}</span>
                 </label>
             </div>
 
             <!-- Dashboard SLA aging scale (mesh-synced) -->
             <div class="xelixir-settings">
                 <div class="xelixir-header">
-                    <h3>Dashboard SLA Scale</h3>
-                    <span class="xelixir-hint">How many days a task ages from blue (fresh) to yellow (overdue). Red is reserved for escalations.</span>
+                    <h3>{$t('devices.sla_title')}</h3>
+                    <span class="xelixir-hint">{$t('devices.sla_hint')}</span>
                 </div>
                 <label class="xelixir-toggle">
-                    <span style="min-width:180px">Tickets — full-scale (days)</span>
+                    <span style="min-width:180px">{$t('devices.sla_tickets_label')}</span>
                     <input
                         type="number"
                         min="0.5"
@@ -329,10 +408,10 @@
                         disabled={slaBusy}
                         style="width:80px;padding:2px 6px;background:#222;color:#ddd;border:1px solid #444;border-radius:3px"
                     />
-                    <span class="xelixir-toggle-hint">Ticket marker hits full yellow at this age.</span>
+                    <span class="xelixir-toggle-hint">{$t('devices.sla_tickets_hint')}</span>
                 </label>
                 <label class="xelixir-toggle">
-                    <span style="min-width:180px">Repairs — full-scale (days)</span>
+                    <span style="min-width:180px">{$t('devices.sla_repairs_label')}</span>
                     <input
                         type="number"
                         min="0.5"
@@ -342,11 +421,24 @@
                         disabled={slaBusy}
                         style="width:80px;padding:2px 6px;background:#222;color:#ddd;border:1px solid #444;border-radius:3px"
                     />
-                    <span class="xelixir-toggle-hint">Repair marker hits full yellow at this age.</span>
+                    <span class="xelixir-toggle-hint">{$t('devices.sla_repairs_hint')}</span>
+                </label>
+                <label class="xelixir-toggle">
+                    <span style="min-width:180px">{$t('devices.sla_trip_label')}</span>
+                    <input
+                        type="number"
+                        min="0.5"
+                        max="60"
+                        step="0.5"
+                        bind:value={slaConfig.trip_fade_days}
+                        disabled={slaBusy}
+                        style="width:80px;padding:2px 6px;background:#222;color:#ddd;border:1px solid #444;border-radius:3px"
+                    />
+                    <span class="xelixir-toggle-hint">{$t('devices.sla_trip_hint')}</span>
                 </label>
                 <div style="margin-top:0.5rem">
                     <button class="btn primary" on:click={saveSlaConfig} disabled={slaBusy}>
-                        {slaBusy ? 'Saving…' : 'Save'}
+                        {slaBusy ? $t('devices.saving') : $t('devices.save')}
                     </button>
                 </div>
             </div>
@@ -355,46 +447,46 @@
         <div class="toolbar">
             <div class="action-group">
                 <button class="btn secondary" class:active={showQr && qrType === 'standard'} on:click={() => loadQr('standard')}>
-                    Standard QR
+                    {$t('devices.standard_qr')}
                 </button>
                 <button class="btn primary" class:active={showQr && qrType === 'vip'} on:click={() => loadQr('vip')}>
-                    Auto-Approve QR
+                    {$t('devices.auto_approve_qr')}
                 </button>
             </div>
-            <button class="btn secondary" on:click={loadScannersData}>Refresh</button>
+            <button class="btn secondary" on:click={loadScannersData}>{$t('devices.refresh')}</button>
         </div>
 
         {#if showQr && qrUrl}
             <div class="qr-panel" class:vip={qrType === 'vip'}>
-                <h3>{qrType === 'vip' ? 'Auto-Approve Pairing' : 'Standard Pairing'}</h3>
-                <img src={qrUrl} alt="Pairing QR" />
+                <h3>{qrType === 'vip' ? $t('devices.auto_approve_pairing') : $t('devices.standard_pairing')}</h3>
+                <img src={qrUrl} alt={$t('devices.pairing_qr_alt')} />
                 <p class="hint">
                     {#if qrType === 'vip'}
-                        <strong>Warning:</strong> Devices scanning this code will be <u>immediately authorized</u>.
+                        <strong>{$t('devices.vip_warning_label')}</strong> {$t('devices.vip_warning_text')} <u>{$t('devices.vip_warning_emph')}</u>.
                     {:else}
-                        Devices scanning this code will appear as <strong>Pending</strong> below.
+                        {$t('devices.std_qr_pre')} <strong>{$t('devices.std_qr_pending')}</strong> {$t('devices.std_qr_post')}
                     {/if}
                 </p>
-                <button class="btn-text" on:click={() => showQr = false}>Close</button>
+                <button class="btn-text" on:click={() => showQr = false}>{$t('devices.close')}</button>
             </div>
         {/if}
 
         <div class="list-container">
             {#if loading}
-                <div class="loading">Loading devices...</div>
+                <div class="loading">{$t('devices.loading_devices')}</div>
             {:else if devices.length === 0}
-                <div class="empty">No devices registered. Scan a QR code to add one.</div>
+                <div class="empty">{$t('devices.no_devices')}</div>
             {:else}
                 <table>
                     <thead>
                         <tr>
-                            <th>Status</th>
-                            <th>Device Name</th>
-                            <th>ID / Key</th>
-                            <th>Home Node</th>
-                            <th>Xelixir</th>
-                            <th>Last Seen</th>
-                            <th>Actions</th>
+                            <th>{$t('devices.th_status')}</th>
+                            <th>{$t('devices.th_device_name')}</th>
+                            <th>{$t('devices.th_id_key')}</th>
+                            <th>{$t('devices.th_master_node')}</th>
+                            <th>{$t('devices.th_xelixir')}</th>
+                            <th>{$t('devices.th_last_seen')}</th>
+                            <th>{$t('devices.th_actions')}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -402,12 +494,12 @@
                             <tr class:deleted={device.deletedAt}>
                                 <td>
                                     {#if device.deletedAt}
-                                        <span class="badge deleted">Deleted</span>
+                                        <span class="badge deleted">{$t('devices.badge_deleted')}</span>
                                     {:else}
-                                        <span class="badge {device.status}">{device.status}</span>
+                                        <span class="badge {device.status}">{$t('devices.status_' + device.status)}</span>
                                     {/if}
                                 </td>
-                                <td>{device.device_name || 'Unknown'}</td>
+                                <td>{device.device_name || $t('devices.device_unknown')}</td>
                                 <td>
                                     <div class="mono-id" title={device.device_id}>{(device.device_id || '').substring(0, 8)}...</div>
                                     <div class="mono-key">{device.public_key ? device.public_key.substring(0, 8) + '...' : '-'}</div>
@@ -419,7 +511,7 @@
                                         disabled={!!device.deleted_at}
                                         class="node-select"
                                     >
-                                        <option value={device.home_instance_id}>{getNodeName(device.home_instance_id)} (Current)</option>
+                                        <option value={device.home_instance_id}>{getNodeName(device.home_instance_id)} {$t('devices.current_suffix')}</option>
                                         {#each meshNodes as node}
                                             {#if node.instance_id !== device.home_instance_id}
                                                 <option value={node.instance_id}>{getNodeName(node.instance_id)}</option>
@@ -429,20 +521,20 @@
                                 </td>
                                 <td class="xelixir-cell">
                                     {#if device.xelixir_status === 'running'}
-                                        <span class="badge active">running</span>
+                                        <span class="badge active">{$t('devices.xelixir_running')}</span>
                                         {#if device.xelixir_session_url}
-                                            <a class="btn-text-link" href={device.xelixir_session_url} target="_blank" rel="noopener">Open session →</a>
+                                            <a class="btn-text-link" href={device.xelixir_session_url} target="_blank" rel="noopener">{$t('devices.open_session')}</a>
                                         {/if}
                                         {#if isAdmin}
-                                            <button class="btn-text-link danger" on:click={() => stopXelixir(device.device_id)}>Stop</button>
+                                            <button class="btn-text-link danger" on:click={() => stopXelixir(device.device_id)}>{$t('devices.stop')}</button>
                                         {/if}
                                     {:else if device.xelixir_status === 'pending_approval'}
-                                        <span class="badge pending">awaiting operator</span>
+                                        <span class="badge pending">{$t('devices.xelixir_awaiting')}</span>
                                     {:else if device.xelixir_status === 'starting'}
-                                        <span class="badge pending">starting…</span>
+                                        <span class="badge pending">{$t('devices.xelixir_starting')}</span>
                                     {:else}
                                         {#if isAdmin && !device.deleted_at}
-                                            <button class="btn-text-link" on:click={() => requestXelixir(device.device_id)}>Request access</button>
+                                            <button class="btn-text-link" on:click={() => requestXelixir(device.device_id)}>{$t('devices.request_access')}</button>
                                         {:else}
                                             <span class="mono-key">—</span>
                                         {/if}
@@ -451,15 +543,15 @@
                                 <td>{device.last_seen_at ? new Date(device.last_seen_at).toLocaleString() : '—'}</td>
                                 <td class="actions">
                                     {#if device.deleted_at}
-                                        <button class="btn-icon" title="Restore" on:click={() => restoreDevice(device.device_id)}>&#9851;</button>
+                                        <button class="btn-icon" title={$t('devices.restore_title')} on:click={() => restoreDevice(device.device_id)}>&#9851;</button>
                                     {:else}
                                         {#if device.status === 'pending' || device.status === 'blocked'}
-                                            <button class="btn-icon approve" title="Approve" on:click={() => updateStatus(device.device_id, 'active')}>&#10003;</button>
+                                            <button class="btn-icon approve" title={$t('devices.approve_title')} on:click={() => updateStatus(device.device_id, 'active')}>&#10003;</button>
                                         {/if}
                                         {#if device.status === 'active' || device.status === 'pending'}
-                                            <button class="btn-icon block" title="Block" on:click={() => updateStatus(device.device_id, 'blocked')}>&#10007;</button>
+                                            <button class="btn-icon block" title={$t('devices.block_title')} on:click={() => updateStatus(device.device_id, 'blocked')}>&#10007;</button>
                                         {/if}
-                                        <button class="btn-icon delete" title="Delete" on:click={() => deleteDevice(device.device_id)}>&#128465;</button>
+                                        <button class="btn-icon delete" title={$t('devices.delete_title')} on:click={() => deleteDevice(device.device_id)}>&#128465;</button>
                                     {/if}
                                 </td>
                             </tr>
@@ -472,45 +564,57 @@
     {:else}
         <!-- SERVERS VIEW -->
         <div class="peering-note">
-            <strong>Manual peering</strong> — set <code>SYNC_SECRET</code> and <code>BASE_URL</code> in each peer's <code>.env</code> (see <code>.eck/PEERING.md</code>). Self-service pairing UI is not yet implemented.
+            <strong>{$t('devices.manual_peering')}</strong> {$t('devices.peering_set')} <code>SYNC_SECRET</code> {$t('devices.peering_and')} <code>BASE_URL</code> {$t('devices.peering_in_env')} <code>.env</code> ({$t('devices.peering_see_word')} <code>.eck/PEERING.md</code>). {$t('devices.peering_not_impl')}
         </div>
 
         {#if selfInfo}
             <div class="identity-card">
-                <h3>This Server</h3>
+                <h3>{$t('devices.this_server')}</h3>
                 <div class="identity-row">
-                    <span class="identity-label">Name</span>
+                    <span class="identity-label">{$t('devices.label_name')}</span>
                     <span class="identity-value">{selfInfo.instance_name || '—'}</span>
                 </div>
                 <div class="identity-row">
-                    <span class="identity-label">Instance ID</span>
+                    <span class="identity-label">{$t('devices.label_instance_id')}</span>
                     <span class="identity-value mono">{selfInfo.instance_id}</span>
                 </div>
                 <div class="identity-row">
-                    <span class="identity-label">Mesh ID</span>
+                    <span class="identity-label">{$t('devices.label_mesh_id')}</span>
                     <span class="identity-value mono">{selfInfo.mesh_id}</span>
                 </div>
                 <div class="identity-row">
-                    <span class="identity-label">Base URL</span>
-                    <span class="identity-value mono">{selfInfo.base_url || 'not set'}</span>
+                    <span class="identity-label">{$t('devices.label_base_url')}</span>
+                    <span class="identity-value mono">{selfInfo.base_url || $t('devices.not_set')}</span>
+                </div>
+                <div class="identity-row">
+                    <span class="identity-label">{$t('devices.label_role')}</span>
+                    <span class="identity-value">
+                        <span class="role-badge {selfInfo.role}">{$t('devices.role_' + (selfInfo.role || 'peer'))}</span>
+                        {#if isAdmin && selfInfo.role !== 'master'}
+                            <button class="btn-text-link" on:click={() => setMaster(selfInfo.instance_id)} style="margin-left:8px">{$t('devices.make_this_master')}</button>
+                        {/if}
+                        {#if !meshMaster}
+                            <span class="xelixir-toggle-hint" style="margin-left:8px">{$t('devices.no_master')}</span>
+                        {/if}
+                    </span>
                 </div>
             </div>
         {/if}
 
         <div class="list-container">
             {#if loading}
-                <div class="loading">Loading nodes...</div>
+                <div class="loading">{$t('devices.loading_nodes')}</div>
             {:else if serverNodes.length === 0}
-                <div class="empty">No paired servers. Use "Invite Server" or enter a code to join a network.</div>
+                <div class="empty">{$t('devices.no_servers')}</div>
             {:else}
                 <table>
                     <thead>
                         <tr>
-                            <th>Status</th>
-                            <th>Name</th>
-                            <th>Role</th>
-                            <th>Address</th>
-                            <th>Actions</th>
+                            <th>{$t('devices.th_status')}</th>
+                            <th>{$t('devices.th_name')}</th>
+                            <th>{$t('devices.th_role')}</th>
+                            <th>{$t('devices.th_address')}</th>
+                            <th>{$t('devices.th_actions')}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -518,13 +622,16 @@
                             <tr>
                                 <td>
                                     <span class="dot" class:online={node.status === 'online'} class:degraded={node.status === 'degraded'}></span>
-                                    {node.status === 'online' ? 'Online' : node.status === 'degraded' ? 'Unstable' : 'Offline'}
+                                    {node.status === 'online' ? $t('devices.status_online') : node.status === 'degraded' ? $t('devices.status_unstable') : $t('devices.status_offline')}
                                 </td>
                                 <td>{node.name}</td>
-                                <td><span class="role-badge {node.role}">{node.role}</span></td>
-                                <td class="mono">{node.base_url || 'Relay Only'}</td>
+                                <td><span class="role-badge {node.role}">{$t('devices.role_' + node.role)}</span></td>
+                                <td class="mono">{node.base_url || $t('devices.relay_only')}</td>
                                 <td>
-                                    <button class="btn-icon delete" title="Unpair" on:click={() => deleteServer(node.instance_id)}>&#128465;</button>
+                                    {#if isAdmin && node.role !== 'master'}
+                                        <button class="btn-text-link" title={$t('devices.designate_master_title')} on:click={() => setMaster(node.instance_id)}>{$t('devices.make_master')}</button>
+                                    {/if}
+                                    <button class="btn-icon delete" title={$t('devices.unpair_title')} on:click={() => deleteServer(node.instance_id)}>&#128465;</button>
                                 </td>
                             </tr>
                         {/each}

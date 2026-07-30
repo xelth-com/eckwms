@@ -193,6 +193,19 @@ pub async fn update_vehicle(
         patch.insert("active".into(), json!(a));
     }
     patch.insert("updated_at".into(), json!(Utc::now().to_rfc3339()));
+    // Advance `_vclock` so this edit causally dominates peers (else it resolves as
+    // local-wins on the mesh and doesn't propagate). Same inline pattern as trips.
+    let cur_vc: Vec<Value> = state
+        .db
+        .query("SELECT VALUE _vclock FROM type::record('vehicle', $id) LIMIT 1")
+        .bind(("id", id.clone()))
+        .await
+        .and_then(|mut r| r.take(0))
+        .unwrap_or_default();
+    patch.insert(
+        "_vclock".into(),
+        eck_core::sync::conflict::next_local_vclock(cur_vc.into_iter().next().as_ref(), &state.instance_id),
+    );
 
     let updated: Vec<Value> = state
         .db

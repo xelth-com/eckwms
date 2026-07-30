@@ -25,10 +25,19 @@ pub fn content_hash_uuid(data: &[u8]) -> Uuid {
 }
 
 /// Compute SHA-256 hex string of raw bytes (used for disk path and backward compat).
-fn sha256_hex(data: &[u8]) -> String {
+pub fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hex::encode(hasher.finalize())
+}
+
+/// CAS integrity gate: does `data` hash to `expected_hex`? Case-insensitive on
+/// the hex. An empty `expected_hex` passes (no claim to check) — mirrors the
+/// tolerance in [`FileStore::write_verified`]. Used by the relay `file_fetch`
+/// path to reject a blob a blind relay / untrusted peer returned under the
+/// wrong content-address before it's trusted.
+pub fn verify_sha256(data: &[u8], expected_hex: &str) -> bool {
+    expected_hex.is_empty() || sha256_hex(data).eq_ignore_ascii_case(expected_hex)
 }
 
 /// Result of a successful file save.
@@ -144,6 +153,48 @@ impl FileStore {
         PathBuf::from(&self.base_dir).join(storage_path).exists()
     }
 
+    /// Land bytes fetched FROM A MESH PEER at the storage path the synced
+    /// `file_resource` row already names, after verifying they hash to
+    /// `expected_sha`. The path is a pure function of the content sha (see
+    /// `save`), so the origin node's `storage_path` reproduces byte-for-byte
+    /// here — no rewrite of the row is needed.
+    ///
+    /// The sha check is the point: a peer is a remote party, and silently
+    /// caching whatever it returned under a content-addressed name would let
+    /// one bad node poison every other node's CAS. On mismatch nothing is
+    /// written and the caller falls through to its 404.
+    pub async fn write_verified(
+        &self,
+        storage_path: &str,
+        content: &[u8],
+        expected_sha: &str,
+    ) -> Result<(), String> {
+        let actual = sha256_hex(content);
+        if !expected_sha.is_empty() && actual != expected_sha {
+            return Err(format!(
+                "hash mismatch: expected {}, got {} ({} bytes)",
+                expected_sha,
+                actual,
+                content.len()
+            ));
+        }
+        let abs_path = PathBuf::from(&self.base_dir).join(storage_path);
+        if let Some(parent) = abs_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+        fs::write(&abs_path, content)
+            .await
+            .map_err(|e| format!("Failed to write file: {}", e))?;
+        info!(
+            "FileStore: hydrated {} ({} bytes) from mesh peer",
+            storage_path,
+            content.len()
+        );
+        Ok(())
+    }
+
     /// Read file bytes from disk given a relative storage path.
     pub async fn read(&self, storage_path: &str) -> Result<Vec<u8>, String> {
         let abs_path = PathBuf::from(&self.base_dir).join(storage_path);
@@ -174,5 +225,19 @@ mod tests {
         );
         // Determinism
         assert_eq!(content_hash_uuid(b"test"), content_hash_uuid(b"test"));
+    }
+
+    #[test]
+    fn verify_sha256_rejects_wrong_bytes() {
+        let data = b"the quick brown fox";
+        let good = sha256_hex(data);
+        // Correct content passes.
+        assert!(verify_sha256(data, &good));
+        // Case-insensitive on the hex claim.
+        assert!(verify_sha256(data, &good.to_uppercase()));
+        // Wrong bytes under the same claimed hash are rejected (CAS poison guard).
+        assert!(!verify_sha256(b"a different payload", &good));
+        // Empty claim = no check (tolerant, matches write_verified).
+        assert!(verify_sha256(data, ""));
     }
 }

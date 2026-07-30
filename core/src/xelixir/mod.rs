@@ -8,3 +8,4 @@
 
 pub mod admin_cert;
 pub mod envelope;
+pub mod subscription;
