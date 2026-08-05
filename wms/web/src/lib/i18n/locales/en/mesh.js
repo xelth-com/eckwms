@@ -18,6 +18,8 @@ export default {
     self_live_tip: 'this node (live)',
     relay_offline_tip: 'Central tracker (relay) unreachable — peer discovery paused',
     relay_offline: 'Relay offline',
+    relay_node_online_tip: 'Paid relay node — this server relays this mesh’s traffic and heartbeats',
+    relay_node_offline_tip: 'Paid relay node unreachable',
     board_online_tip: 'Bulletin board (9eck.com relay) is reachable',
     board_offline_tip: 'Bulletin board (9eck.com relay) unreachable — public dispatch and OTA may be degraded',
     no_peers: 'No peers',

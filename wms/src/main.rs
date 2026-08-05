@@ -15,6 +15,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn, error};
 
 use eck_core::db::SurrealDb;
+use eck_core::plugin::{HostIdentity, PluginEngine, PluginRegistry};
 use eck_core::sync::engine::SyncEngine;
 use eck_core::sync::hedera::HederaClient;
 use eck_core::sync::relay_client::RelayClient;
@@ -61,6 +62,17 @@ pub struct AppState {
     /// back by the master-only `reveal_tokens` method. RAM only, bounded FIFO —
     /// deliberately NO persistent plaintext vault (see `mcp::reveal`).
     pub pii_reveal: Arc<crate::mcp::reveal::PiiRevealStore>,
+    /// WASM plugin engine + registry (`.eck/WASM_ARCHITECTURE.md`). `None`
+    /// unless `ECK_PLUGIN_RUNTIME=1` — off by default, zero behavior change.
+    pub plugins: Option<PluginRuntime>,
+}
+
+/// The WASM plugin subsystem, held together so admin handlers get one `Option`
+/// to check instead of two. Constructed once at boot when
+/// `ECK_PLUGIN_RUNTIME=1`; inert (never referenced) otherwise.
+pub struct PluginRuntime {
+    pub engine: PluginEngine,
+    pub registry: PluginRegistry,
 }
 
 impl AppState {
@@ -189,7 +201,16 @@ fn main() {
 }
 
 async fn async_main() {
-    let _ = dotenvy::dotenv();
+    // dotenvy stops at the FIRST malformed line and every var below it
+    // silently vanishes (2026-07-31: an unquoted space in ECK_TENANT_VERTICAL
+    // disarmed the whole tenant block below it — model extraction regressed
+    // mesh-wide with a byte-clean-looking .env). Values with spaces or quotes
+    // must be quoted. A missing .env is fine (fleet units use systemd env).
+    let dotenv_err = match dotenvy::dotenv() {
+        Ok(_) => None,
+        Err(dotenvy::Error::Io(ref io)) if io.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => Some(e),
+    };
 
     // Dual sink: pretty ANSI in the terminal (for the human), plain rolling
     // file in `data/logs/wms.log.YYYY-MM-DD` (for the AI / postmortems).
@@ -217,6 +238,13 @@ async fn async_main() {
 
     info!("Starting eckWMS (9eck.com monorepo edition)");
     info!("File logs: {}/wms.log.<date>", log_dir);
+    if let Some(e) = &dotenv_err {
+        error!(
+            ".env only PARTIALLY loaded: {e} — every line after the failure \
+             point is MISSING from the environment; quote values containing \
+             spaces or quotes"
+        );
+    }
 
     // SurrealDB — Zone 2 (business / operational data).
     let db_path = std::env::var("SURREAL_DB_PATH")
@@ -283,6 +311,7 @@ async fn async_main() {
              DEFINE TABLE IF NOT EXISTS mesh_task SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS system_config SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS ops_audit_log SCHEMALESS;
+             DEFINE TABLE IF NOT EXISTS wasm_plugin SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS xelixir_nonce SCHEMALESS;
              -- The replay guard's ONLY arbiter: the nonce column is unique, so two
              -- concurrent `/mcp/signed` (or ops-envelope) requests bearing the same
@@ -642,24 +671,35 @@ async fn async_main() {
         });
     }
 
-    // Spawn nightly backup worker (3:00 AM)
+    // Spawn nightly backup worker (3:00 AM). The SDK export/backup API does not
+    // support the remote-WS engine (see core::db::connect_with_db) — only
+    // embedded SurrealKv nodes can back up this way, so remote nodes (paid
+    // eck1/eck2/eck3 sharing one server) skip scheduling the loop entirely and
+    // back up server-side instead.
     {
-        let bg_db = db.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
-            loop {
-                interval.tick().await;
-                let now = chrono::Local::now();
-                if now.hour() == 3 {
-                    match services::backup::create_backup(&bg_db).await {
-                        Ok(_) => info!("Nightly backup completed successfully"),
-                        Err(e) => error!("Nightly backup failed: {}", e),
+        let remote_engine = std::env::var("SURREAL_REMOTE_URL")
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        if remote_engine {
+            info!("Nightly backup disabled: remote SurrealDB engine does not support SDK backups (back up the server side instead)");
+        } else {
+            let bg_db = db.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+                loop {
+                    interval.tick().await;
+                    let now = chrono::Local::now();
+                    if now.hour() == 3 {
+                        match services::backup::create_backup(&bg_db).await {
+                            Ok(_) => info!("Nightly backup completed successfully"),
+                            Err(e) => error!("Nightly backup failed: {}", e),
+                        }
+                        // Sleep 23 hours to prevent multiple triggers in the same hour
+                        tokio::time::sleep(std::time::Duration::from_secs(23 * 3600)).await;
                     }
-                    // Sleep 23 hours to prevent multiple triggers in the same hour
-                    tokio::time::sleep(std::time::Duration::from_secs(23 * 3600)).await;
                 }
-            }
-        });
+            });
+        }
     }
 
     // Spawn Gemini embedding worker (processes pending documents & orders).
@@ -818,6 +858,67 @@ async fn async_main() {
         );
     }
 
+    // Product-license gates (owner decision 2026-08-04): POS and the WASM
+    // plugin runtime are PAID features. The env flags below only OPT IN; the
+    // feature unlocks solely against an offline-verified Ed25519 license
+    // (eck_core::licensing) bound to this node's mesh_id. The issuer pubkey is
+    // baked into release binaries — an env var cannot retarget the trust
+    // anchor. Expiry gets a 30-day grace with warnings; a RUNNING process is
+    // never killed by expiry (fiscal continuity) — gates apply at boot only.
+    let license_token = std::env::var("ECK_LICENSE_TOKEN").ok();
+    let license_now = chrono::Utc::now().timestamp();
+    let pos_license = eck_core::licensing::node_license_for_scope(
+        license_token.as_deref(),
+        &mesh_id,
+        eck_core::licensing::SCOPE_POS_REGISTER,
+        license_now,
+    );
+    let plugin_license = eck_core::licensing::node_license_for_scope(
+        license_token.as_deref(),
+        &mesh_id,
+        eck_core::licensing::SCOPE_PLUGIN_RUNTIME,
+        license_now,
+    );
+
+    // WASM plugin runtime gate (.eck/WASM_ARCHITECTURE.md §2/§5). Default off;
+    // ECK_PLUGIN_RUNTIME=1 turns on the admin install/enable/disable/list API
+    // (hook execution is wired at its own call sites in a later phase). Off
+    // means the engine/registry are never constructed — zero behavior change.
+    let plugin_runtime_enabled = std::env::var("ECK_PLUGIN_RUNTIME")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    if plugin_runtime_enabled && !plugin_license.allows() {
+        if let eck_core::licensing::NodeLicense::Unlicensed { reason } = &plugin_license {
+            warn!(
+                "ECK_PLUGIN_RUNTIME=1 but the plugin runtime is not licensed ({}) — runtime stays OFF",
+                reason
+            );
+        }
+    }
+    let plugins = if plugin_runtime_enabled && plugin_license.allows() {
+        let host_identity = HostIdentity::new(instance_id.clone(), node_role.clone());
+        let engine = PluginEngine::with_default_limits(host_identity);
+        // Registry gets this node's instance_id (author `_vclock` component on
+        // enable/disable) and the shared SyncEngine handle — the SAME handle
+        // `ai::attachments` hydrates blobs through — so `resolve` can lazily
+        // pull a missing `.wasm` by sha256 from a peer on a hook-time CAS miss
+        // (never at startup). Reuses the existing mesh transport, no parallel
+        // client.
+        let registry = PluginRegistry::new(Arc::new(eck_core::utils::filestore::FileStore::new(".")))
+            .with_instance_id(&instance_id)
+            .with_mesh(Arc::clone(&sync_engine));
+        if let eck_core::licensing::NodeLicense::Grace { days_left, .. } = &plugin_license {
+            warn!(
+                "plugin-runtime license EXPIRED — {} days of grace left, renew now",
+                days_left
+            );
+        }
+        info!("ECK_PLUGIN_RUNTIME=1 — WASM plugin engine + registry initialized (licensed)");
+        Some(PluginRuntime { engine, registry })
+    } else {
+        None
+    };
+
     let app_state = Arc::new(AppState {
         db,
         users_db,
@@ -835,6 +936,7 @@ async fn async_main() {
         node_role,
         i18n_lang_jobs: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         pii_reveal: Arc::new(crate::mcp::reveal::PiiRevealStore::new()),
+        plugins,
     });
 
     // On-demand content-translation queue (support-ticket summaries → the
@@ -1144,12 +1246,85 @@ async fn async_main() {
         });
     }
 
-    // POS module gate (ecKasse — the paid tier). Interim env flag; will move
-    // to an eck_core::licensing scope check once product licenses are minted
-    // per-tenant.
-    let pos_enabled = std::env::var("POS_ENABLED")
+    // POS module gate (ecKasse — the paid tier). POS_ENABLED opts in; the
+    // module mounts ONLY with a valid `pos:register` license scope (evaluated
+    // above, bound to this mesh). Absence/invalid = no /K/, period; expiry =
+    // 30-day grace with warnings, then no mount on the NEXT boot (a running
+    // register is never killed mid-shift — fiscal continuity).
+    let pos_configured = std::env::var("POS_ENABLED")
         .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
         .unwrap_or(false);
+    let pos_enabled = pos_configured && pos_license.allows();
+    let (pos_license_state, pos_license_reason) = match &pos_license {
+        eck_core::licensing::NodeLicense::Licensed(c) => {
+            if pos_configured {
+                info!(
+                    "POS license OK: tenant '{}', expires in {} days",
+                    c.tenant,
+                    (c.exp - license_now) / 86400
+                );
+            }
+            ("licensed", None)
+        }
+        eck_core::licensing::NodeLicense::Grace { claims, days_left } => {
+            warn!(
+                "POS license for tenant '{}' EXPIRED — {} days of grace left; the register will NOT mount after that",
+                claims.tenant, days_left
+            );
+            ("grace", None)
+        }
+        eck_core::licensing::NodeLicense::Unlicensed { reason } => {
+            if pos_configured {
+                warn!("POS_ENABLED is set but POS is not licensed ({}) — /K/ NOT mounted", reason);
+            }
+            ("unlicensed", Some(reason.clone()))
+        }
+    };
+
+    // Daily license re-check: a long-running node whose license slides into
+    // grace logs a loud daily warning. Nothing is torn down at runtime —
+    // enforcement stays boot-time-only (fiscal continuity). Free nodes without
+    // a token stay silent (Unlicensed is their normal state).
+    {
+        let mesh_id = app_state.mesh_id.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+            tick.tick().await; // immediate first tick — boot already logged
+            loop {
+                tick.tick().await;
+                let token = std::env::var("ECK_LICENSE_TOKEN").ok();
+                let now = chrono::Utc::now().timestamp();
+                for scope in [
+                    eck_core::licensing::SCOPE_POS_REGISTER,
+                    eck_core::licensing::SCOPE_PLUGIN_RUNTIME,
+                ] {
+                    if let eck_core::licensing::NodeLicense::Grace { claims, days_left } =
+                        eck_core::licensing::node_license_for_scope(token.as_deref(), &mesh_id, scope, now)
+                    {
+                        warn!(
+                            "license scope '{}' (tenant '{}') EXPIRED — {} days of grace left; the feature will not unlock at the next boot past grace",
+                            scope, claims.tenant, days_left
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    // Extra left-nav entry pointing at an external site (demo/exhibition nodes
+    // tuck the marketing site into the WMS menu). Presence of the env var IS
+    // the gate — nodes without it render the stock menu.
+    let nav_site_url = std::env::var("ECK_NAV_SITE_URL")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.starts_with("http"));
+
+    // Exhibition nodes advertise a shared demo login (e.g. "admin / password")
+    // so visitors browsing as the auto-observer can find the writable account.
+    let demo_login_hint = std::env::var("ECK_DEMO_LOGIN_HINT")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     // Protected API routes
     let protected_routes = Router::new()
@@ -1343,6 +1518,11 @@ async fn async_main() {
         .route("/admin/devices/:id", delete(handlers::device::delete_device))
         // Mesh master/home designation (transferable, mesh-synced)
         .route("/admin/mesh/master", post(handlers::mesh::set_master))
+        // WASM plugin runtime (.eck/WASM_ARCHITECTURE.md §5). Inert (JSON 404)
+        // when ECK_PLUGIN_RUNTIME is off — see handlers::plugins.
+        .route("/admin/plugins", get(handlers::plugins::list).post(handlers::plugins::install))
+        .route("/admin/plugins/:name/enable", post(handlers::plugins::enable))
+        .route("/admin/plugins/:name/disable", post(handlers::plugins::disable))
         // Arbitrary-SurrealQL diagnostics. This MUST stay behind auth: it
         // previously sat in `public_routes`, i.e. UNAUTHENTICATED read/write
         // SQL reachable on every public node. Handler double-checks admin.
@@ -1399,7 +1579,18 @@ async fn async_main() {
         // POS module availability — public so the login/dashboard shells can
         // decide whether to show the register entry point.
         .route("/pos/status", get(move || async move {
-            axum::Json(serde_json::json!({ "enabled": pos_enabled }))
+            axum::Json(serde_json::json!({
+                // `enabled` keeps its historical meaning for the UI shells:
+                // "the register is actually mounted". The split below lets the
+                // dashboard distinguish "not licensed" from "switched off" for
+                // the upsell copy (ROADMAP: POS button as upsell funnel).
+                "enabled": pos_enabled,
+                "configured": pos_configured,
+                "license": pos_license_state,
+                "license_reason": pos_license_reason,
+                "nav_site_url": nav_site_url,
+                "demo_login_hint": demo_login_hint,
+            }))
         }));
 
     // P2P mesh routes (SYNC_SECRET auth, NOT JWT)
@@ -1428,11 +1619,15 @@ async fn async_main() {
         .route("/approve", post(handlers::xelixir::approve))
         .route("/devices/:id/start", post(handlers::xelixir::start_device))
         .route("/devices/:id/stop", post(handlers::xelixir::stop_device))
+        .route("/devices/:id/restart", post(handlers::xelixir::restart_device))
         .route_layer(axum_mw::from_fn_with_state(app_state.clone(), middleware::auth::auth_middleware));
 
     let xelixir_self_routes = Router::new()
         .route("/self/start", post(handlers::xelixir::self_start))
-        .route("/self/stop", post(handlers::xelixir::self_stop));
+        .route("/self/stop", post(handlers::xelixir::self_stop))
+        // The agent lives in its own transient systemd unit and no longer dies
+        // with the WMS — an agent-binary upgrade needs this explicit restart.
+        .route("/self/restart", post(handlers::xelixir::self_restart));
 
     // Server-initiated activation. Sibling services (xelixir.service) hit
     // this with a shared service token to dispatch start/stop commands

@@ -37,9 +37,58 @@
 //! it is the client's consent to let us start the agent over the relay.
 //! Live/active is only ever an on-demand wake on top of standby (or the future
 //! paid self-heal mode), never these two flags.
+//!
+//! ## The WMS is a MANAGER, not a parent (2026-07-31)
+//!
+//! The agent used to be a **direct child** of the WMS, i.e. a member of the
+//! `9eck-wms.service` cgroup. `systemctl restart 9eck-wms` kills the whole
+//! cgroup (systemd's default `KillMode=control-group`), so the ONLY off-site
+//! observability channel died at exactly the moment it mattered most — during
+//! an OTA restart (see xelixir `.eck/TECH_DEBT.md`, the 2026-07-19 kiosk
+//! incident: 101 rollbacks, undiagnosable through the agent).
+//!
+//! So on a systemd Linux host the agent is now started as a **transient
+//! systemd user unit** — `systemd-run --user --unit=xelixir-agent.service` —
+//! which puts it in its OWN cgroup under the session user's user manager
+//! (the kiosk user has `loginctl enable-linger`). A WMS restart no longer
+//! touches it; the new WMS process **re-attaches** to the still-running unit
+//! (see [`AgentController::try_adopt_running_agent`]) instead of spawning a
+//! second one. `setsid`/double-fork would NOT have been enough — cgroup
+//! membership survives `setsid`; the process has to actually change cgroups.
+//!
+//! * lifecycle: `systemctl --user start/stop/restart/is-active <unit>`, never
+//!   a child-process kill. Every old kill path (the `stop` command, license
+//!   revocation / re-claim, WMS shutdown) goes through [`AgentController::stop_agent`],
+//!   which stops the unit.
+//! * token handover: the WS access token is no longer inherited through a
+//!   child's environment. It is written to a `0600` env file owned by the run
+//!   user under `/run/user/<uid>/` and handed to the unit via
+//!   `-p EnvironmentFile=`; the token never appears on any argv (`/proc/*/cmdline`
+//!   is world-readable). `stop` deletes the file.
+//! * self-healing without the WMS: the unit carries `Restart=on-failure` +
+//!   `RestartSec`, so the agent recovers from a crash even while the WMS is
+//!   down or wedged. The WMS-side supervisor loop is only a backstop now.
+//! * fallback: on Windows dev boxes, non-systemd hosts, or when `systemd-run`
+//!   fails for any reason, the historical direct-child spawn is used verbatim
+//!   ([`RunMode::DirectChild`]). `XELIXIR_AGENT_RUN_MODE=child|systemd` forces
+//!   a mode; the default is `auto`.
+//!
+//! ### ⚠ Behavioural change: an agent upgrade no longer rides the WMS restart
+//!
+//! Because the agent is no longer a child, dropping a new `agent_mock` binary
+//! in place and restarting the WMS leaves the OLD binary running. The new
+//! binary is only picked up by an explicit
+//! `systemctl --user restart xelixir-agent.service` — exposed here as
+//! [`AgentController::restart_agent`] and reachable remotely as the
+//! `restart` command (`POST /X/self/restart`, `xelixir_command = 'restart'`).
+//! An OTA self-update the agent performs on itself is unaffected: it re-execs
+//! inside its own unit.
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use surrealdb::types::SurrealValue;
@@ -50,12 +99,64 @@ use futures_util::StreamExt;
 
 use eck_core::db::SurrealDb;
 
-/// Handle to a running `agent_mock` child. Dropping the controller's
-/// `Option<AgentHandle>` triggers the kill signal; the spawned wait task
-/// terminates the child and clears the DB token.
+/// Handle to a running `agent_mock` **child** — the [`RunMode::DirectChild`]
+/// fallback only. Dropping the controller's `Option<AgentHandle>` triggers the
+/// kill signal; the spawned wait task terminates the child and clears the DB
+/// token. In [`RunMode::SystemdUser`] (the fleet default) there is no child and
+/// no handle: the agent lives in its own transient unit and is stopped with
+/// `systemctl --user stop`.
 struct AgentHandle {
     kill: oneshot::Sender<()>,
 }
+
+/// How the WMS runs the agent process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunMode {
+    /// Default on a systemd Linux host: a **transient systemd user unit**, in
+    /// its own cgroup — so `systemctl restart 9eck-wms` leaves it running.
+    SystemdUser,
+    /// Historical behaviour: a plain child process of the WMS, which dies with
+    /// the WMS cgroup. Used on Windows dev boxes, non-systemd hosts, and as the
+    /// runtime fallback when `systemd-run` fails.
+    DirectChild,
+}
+
+/// The OS user the agent must run as: on a Wayland kiosk it needs the
+/// graphical-session user's 0700 runtime dir (screenshots + uinput), so the
+/// WMS drops to that user via `sudo -u`.
+#[derive(Clone, Debug)]
+struct AgentUser {
+    name: String,
+    uid: u32,
+    home: String,
+}
+
+/// Outcome of the unit-name idempotency check performed before every spawn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Adopt {
+    /// No unit running — the caller must start one.
+    NotRunning,
+    /// A unit is already running and its session is reusable: re-attach to it
+    /// instead of spawning a second agent (this is what makes the agent
+    /// survive a WMS restart).
+    Reattach { token: String, standby: bool },
+    /// A unit is running but its session cannot be reused (token
+    /// unrecoverable, or a different start mode was requested) — the caller
+    /// must stop it and start a fresh one. Still never two live agents.
+    Replace,
+}
+
+/// Fixed transient-unit name. FIXED on purpose: it is the idempotency key that
+/// stops a WMS crash-restart from producing a second live agent.
+const AGENT_UNIT_DEFAULT: &str = "xelixir-agent.service";
+
+/// Hard timeout on every `systemd-run` / `systemctl` / `sudo sh` helper call —
+/// the supervisor loop must never wedge on a hung subprocess.
+const SYSTEMD_CMD_TIMEOUT_SECS: u64 = 10;
+
+/// `RestartSec` of the transient unit — the agent self-heals on crash even
+/// while the WMS is down. Same 5 s the WMS-side respawn used.
+const UNIT_RESTART_SEC: u64 = 5;
 
 #[derive(Clone, Debug, serde::Deserialize, SurrealValue)]
 struct XelixirConfig {
@@ -84,7 +185,14 @@ fn default_false() -> bool {
 
 /// Backoff before respawning a crashed agent when `auto_start` is on —
 /// mirrors the systemd `RestartSec` the standalone unit used to provide.
+/// [`RunMode::DirectChild`] only: there the WMS *is* the supervisor.
 const RESPAWN_BACKOFF_SECS: u64 = 5;
+
+/// Supervisor poll interval in [`RunMode::SystemdUser`]. Slower than the child
+/// backoff on purpose: the unit's own `Restart=on-failure` already handles
+/// crashes, so this loop is only a backstop for "the unit stopped entirely"
+/// (and it costs a `systemctl is-active` subprocess per tick).
+const UNIT_SUPERVISOR_POLL_SECS: u64 = 30;
 
 impl Default for XelixirConfig {
     fn default() -> Self {
@@ -100,7 +208,17 @@ pub struct AgentController {
     ws_tx: broadcast::Sender<String>,
     instance_id: String,
     public_key: String,
+    /// Only ever `Some` in [`RunMode::DirectChild`] (or after a systemd-run
+    /// failure fell back to a child). In systemd mode the agent's liveness
+    /// lives in systemd, not in this process — that is the whole point.
     handle: Mutex<Option<AgentHandle>>,
+    run_mode: RunMode,
+    /// Transient unit name (`XELIXIR_AGENT_UNIT`, default `xelixir-agent.service`).
+    unit: String,
+    /// Cached graphical-session user. The /proc scan that finds it is too
+    /// expensive for the supervisor tick; a *successful* lookup is cached
+    /// (a failed one is not — the compositor may simply not be up yet).
+    agent_user: Mutex<Option<AgentUser>>,
 }
 
 impl AgentController {
@@ -110,12 +228,21 @@ impl AgentController {
         instance_id: String,
         public_key: String,
     ) -> Arc<Self> {
+        let run_mode = detect_run_mode();
+        let unit = normalize_unit_name(std::env::var("XELIXIR_AGENT_UNIT").ok().as_deref());
+        info!(
+            "[AgentController] run mode: {:?} (unit `{}`)",
+            run_mode, unit
+        );
         Arc::new(Self {
             db,
             ws_tx,
             instance_id,
             public_key,
             handle: Mutex::new(None),
+            run_mode,
+            unit,
+            agent_user: Mutex::new(None),
         })
     }
 
@@ -144,9 +271,37 @@ impl AgentController {
             );
         }
 
+        // RE-ATTACH FIRST. In systemd mode the agent outlives the WMS, so a
+        // fresh WMS process may well find its agent already running (that IS
+        // the fix — the observer no longer dies with the patient). Adopt it and
+        // republish its state instead of spawning a second one, regardless of
+        // `auto_start`: the running unit may have been started on-demand by a
+        // relay `start` before the restart.
+        let adopted = match self.try_adopt_running_agent(None).await {
+            Adopt::Reattach { token, standby } => {
+                info!(
+                    "[AgentController] re-attached to already-running unit `{}` (mode={}) — the agent survived the WMS restart",
+                    self.unit,
+                    if standby { "standby" } else { "live" }
+                );
+                let url = session_url_for_token(&token);
+                let status = if standby { "standby" } else { "running" };
+                self.set_device_state(status, Some(token), Some(url)).await;
+                true
+            }
+            Adopt::Replace => {
+                warn!(
+                    "[AgentController] unit `{}` is running but its access token could not be recovered — it will be replaced on the next start",
+                    self.unit
+                );
+                false
+            }
+            Adopt::NotRunning => false,
+        };
+
         // "Auto-start at boot" spawns the agent in STANDBY (DNO poll/dormant) —
         // never a live connection. Live happens only on an on-demand wake.
-        if cfg.auto_start && has_license {
+        if cfg.auto_start && has_license && !adopted {
             match self.spawn_agent(true).await {
                 Ok(token) => {
                     info!("[AgentController] auto-started xelixir agent in STANDBY (poll) mode");
@@ -158,27 +313,43 @@ impl AgentController {
         }
 
         // Supervisor: when auto_start is on, keep the (standby) agent alive —
-        // respawn it if it died (crash / OOM / OTA self-exec). The agent's wait
-        // task clears the handle on exit; we respawn HERE (not in the wait task —
-        // that would make its future recursively contain spawn_agent). Mirrors
-        // the old standalone systemd unit's Restart=always. Always respawned in
-        // standby (the only flag-driven spawn mode).
+        // respawn it if it died (crash / OOM / OTA self-exec). Liveness is asked
+        // of systemd (`is-active`) in unit mode and of the child handle in
+        // fallback mode; we respawn HERE (not in the child's wait task — that
+        // would make its future recursively contain spawn_agent). In unit mode
+        // the unit's own Restart=on-failure is the first line of defence and
+        // this loop only catches "the unit is gone entirely". Always respawned
+        // in standby (the only flag-driven spawn mode).
         if has_license {
             let sup = Arc::clone(&self);
+            let poll = if self.run_mode == RunMode::SystemdUser {
+                UNIT_SUPERVISOR_POLL_SECS
+            } else {
+                RESPAWN_BACKOFF_SECS
+            };
             tokio::spawn(async move {
+                let mut was_alive = sup.agent_alive().await;
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(RESPAWN_BACKOFF_SECS)).await;
+                    tokio::time::sleep(Duration::from_secs(poll)).await;
+                    let alive = sup.agent_alive().await;
                     let auto = sup.read_config().await.map(|c| c.auto_start).unwrap_or(false);
-                    if auto && sup.handle.lock().await.is_none() {
-                        warn!("[AgentController] supervisor: agent down + auto_start=on — respawning (standby)");
-                        match sup.spawn_agent(true).await {
-                            Ok(token) => {
-                                let url = session_url_for_token(&token);
-                                sup.set_device_state("standby", Some(token), Some(url)).await;
+                    if !alive {
+                        if auto {
+                            warn!("[AgentController] supervisor: agent down + auto_start=on — respawning (standby)");
+                            match sup.spawn_agent(true).await {
+                                Ok(token) => {
+                                    let url = session_url_for_token(&token);
+                                    sup.set_device_state("standby", Some(token), Some(url)).await;
+                                }
+                                Err(e) => warn!("[AgentController] supervisor respawn failed: {}", e),
                             }
-                            Err(e) => warn!("[AgentController] supervisor respawn failed: {}", e),
+                        } else if was_alive {
+                            // Unit mode has no child-exit callback, so the
+                            // alive→dead edge is where the DB row is corrected.
+                            let _ = mark_stopped_in_db(&sup.db, &sup.instance_id).await;
                         }
                     }
+                    was_alive = alive;
                 }
             });
         }
@@ -283,6 +454,16 @@ impl AgentController {
                 self.stop_agent().await;
                 self.set_device_state("stopped", None, None).await;
             }
+            // Pick up a freshly-dropped agent binary. Needed because the agent
+            // is no longer a WMS child: it does NOT ride the WMS restart any
+            // more (see the module header). Keeps the same access token — the
+            // unit re-reads its EnvironmentFile.
+            "restart" => {
+                match self.restart_agent().await {
+                    Ok(()) => info!("[AgentController] agent unit restarted on request"),
+                    Err(e) => warn!("[AgentController] restart failed: {}", e),
+                }
+            }
             other => {
                 debug!("[AgentController] ignoring unknown command '{}'", other);
             }
@@ -303,15 +484,31 @@ impl AgentController {
         Ok(token)
     }
 
-    /// Claim a license token at the licensing authority, then spawn `agent_mock`
-    /// with the returned WS access token. Replaces any currently-running child.
+    /// Claim a license token at the licensing authority, then start `agent_mock`
+    /// — as a transient systemd user unit when possible, else as a child.
+    ///
+    /// **Idempotent**: if the fixed-name unit is already running with a
+    /// recoverable session, this re-attaches to it and returns its existing
+    /// token instead of starting a second agent (a WMS crash-restart must never
+    /// produce two live agents). Anything not adoptable is stopped first.
     ///
     /// `standby=true` forwards `XELTH_START_MODE=standby` so the agent polls
     /// xelixir until woken instead of holding a live socket — the only mode the
     /// two UI flags spawn. `standby=false` (live/always-connected) is reserved
     /// for the future WMS self-heal mode (paid), not wired to the flags.
     pub async fn spawn_agent(self: &Arc<Self>, standby: bool) -> Result<String, String> {
-        // Replace any existing handle first.
+        // Unit-name idempotency: adopt an already-running agent in the same
+        // mode rather than starting a rival one (and skip a pointless license
+        // re-claim while we're at it).
+        if let Adopt::Reattach { token, .. } = self.try_adopt_running_agent(Some(standby)).await {
+            info!(
+                "[AgentController] unit `{}` already running in the requested mode — re-attaching instead of spawning",
+                self.unit
+            );
+            return Ok(token);
+        }
+
+        // Replace anything else that is running (stale unit, old child).
         self.stop_agent().await;
 
         let license_token = match std::env::var("LICENSE_TOKEN") {
@@ -394,7 +591,9 @@ impl AgentController {
         // display. `XELIXIR_AGENT_USER` overrides the auto-detected compositor
         // owner. `sudo -u <user>` re-resolves the user's groups from /etc/group
         // at spawn, so `input` (uinput access) is present without a reboot.
-        let agent_user = resolve_agent_user();
+        // It is also the user whose `systemd --user` manager owns the transient
+        // unit (that user needs `loginctl enable-linger`).
+        let agent_user = self.agent_user().await;
 
         // Prefer the session user's own ~/bin/agent_mock (user-writable → OTA
         // self-update can swap it w/o root); else the resolved system path.
@@ -402,7 +601,7 @@ impl AgentController {
         // on-kiosk basename `agent_mock` stays for now even as the crate renames.
         let agent_path = agent_user
             .as_ref()
-            .map(|(_, _, home)| std::path::PathBuf::from(home).join("bin").join("agent_mock"))
+            .map(|u| PathBuf::from(&u.home).join("bin").join("agent_mock"))
             .filter(|p| p.exists())
             .or_else(resolve_agent_binary)
             .ok_or_else(|| "xelixir agent binary not found".to_string())?;
@@ -416,51 +615,88 @@ impl AgentController {
         let wayland_display =
             std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".to_string());
 
-        let mut agent_cmd = if let Some((ref user, uid, _)) = agent_user {
+        // The agent's environment, built ONCE and used by both run modes: the
+        // transient unit receives it as a 0600 `EnvironmentFile`, the fallback
+        // child inherits it through `sudo --preserve-env`. WS_AUTH_TOKEN is the
+        // secret here — it must never end up on an argv (`/proc/*/cmdline` is
+        // world-readable), which is why the unit gets a file and not `--setenv`.
+        let mut agent_env: Vec<(&'static str, String)> = vec![
+            ("WS_AUTH_TOKEN", ws_auth_token.clone()),
+            ("E9_INSTANCE_ID", self.instance_id.clone()),
+            ("XELTH_WS_URL", xelth_ws_url.clone()),
+        ];
+        if let Some(ref u) = agent_user {
+            // Wayland session env — screenshots/uinput need the session user's
+            // 0700 runtime dir. Only added when we actually drop to a session
+            // user, so the headless/Windows path keeps its historical env.
+            agent_env.push(("XDG_RUNTIME_DIR", format!("/run/user/{}", u.uid)));
+            agent_env.push(("WAYLAND_DISPLAY", wayland_display.clone()));
+        }
+        if standby {
+            agent_env.push(("XELTH_START_MODE", "standby".to_string()));
+        }
+
+        // ── Preferred path: transient systemd user unit, i.e. its OWN cgroup ──
+        // This is what makes the agent outlive `systemctl restart 9eck-wms`.
+        if self.run_mode == RunMode::SystemdUser {
+            match self
+                .start_transient_unit(agent_user.as_ref(), &agent_path, &agent_env)
+                .await
+            {
+                Ok(()) => {
+                    info!(
+                        "[AgentController] xelixir started as transient unit `{}` (bin {}, user {}, E9_INSTANCE_ID={}) — outlives WMS restarts",
+                        self.unit,
+                        agent_path.display(),
+                        agent_user.as_ref().map(|u| u.name.as_str()).unwrap_or("<wms uid>"),
+                        self.instance_id
+                    );
+                    return Ok(ws_auth_token);
+                }
+                Err(e) => {
+                    // Never lose the agent over the new mechanism: degrade to
+                    // the historical child spawn (which dies with the WMS) and
+                    // say so loudly.
+                    warn!(
+                        "[AgentController] systemd-run failed ({}) — falling back to a DIRECT CHILD (it will die with the WMS)",
+                        e
+                    );
+                    self.clear_agent_env_file(agent_user.as_ref()).await;
+                }
+            }
+        }
+
+        // ── Fallback path: direct child of the WMS (historical behaviour) ────
+        let mut agent_cmd = if let Some(ref u) = agent_user {
             // Drop to the session user via sudo, forwarding the Wayland session
             // env so screenshots/input reach the kiosk display. WMS's uid
             // (9eckwms) needs `NOPASSWD: SETENV: (<user>) <agent_path>`.
-            let runtime_dir = format!("/run/user/{}", uid);
             info!(
                 "[AgentController] spawning agent as session user '{}' (uid {}), bin {}, display {}",
-                user, uid, agent_path.display(), wayland_display
+                u.name, u.uid, agent_path.display(), wayland_display
             );
             let mut c = Command::new("sudo");
-            // --preserve-env strips XELTH_START_MODE otherwise, so add it to the
-            // allow-list only in standby (keeps the live path's env unchanged).
-            let preserve = if standby {
-                "--preserve-env=WS_AUTH_TOKEN,E9_INSTANCE_ID,XELTH_WS_URL,XDG_RUNTIME_DIR,WAYLAND_DISPLAY,XELTH_START_MODE"
-            } else {
-                "--preserve-env=WS_AUTH_TOKEN,E9_INSTANCE_ID,XELTH_WS_URL,XDG_RUNTIME_DIR,WAYLAND_DISPLAY"
-            };
+            // sudo drops every variable that is not allow-listed, so build the
+            // list from `agent_env` — the two can no longer drift apart.
+            let keys: Vec<&str> = agent_env.iter().map(|(k, _)| *k).collect();
             c.arg("-n")
-                .arg("-u").arg(user)
-                .arg(preserve)
+                .arg("-u").arg(&u.name)
+                .arg(format!("--preserve-env={}", keys.join(",")))
                 .arg(&agent_path);
-            c.env("WS_AUTH_TOKEN", &ws_auth_token);
-            c.env("E9_INSTANCE_ID", &self.instance_id);
-            c.env("XELTH_WS_URL", &xelth_ws_url);
-            c.env("XDG_RUNTIME_DIR", &runtime_dir);
-            c.env("WAYLAND_DISPLAY", &wayland_display);
-            if standby {
-                c.env("XELTH_START_MODE", "standby");
-            }
             c
         } else {
             // No session user resolvable (headless host, or Windows): run
             // in-process as the WMS uid — historical behaviour.
-            let mut c = Command::new(&agent_path);
-            c.env("WS_AUTH_TOKEN", &ws_auth_token);
-            c.env("E9_INSTANCE_ID", &self.instance_id);
-            c.env("XELTH_WS_URL", &xelth_ws_url);
-            if standby {
-                c.env("XELTH_START_MODE", "standby");
-            }
-            c
+            Command::new(&agent_path)
         };
+        for (k, v) in &agent_env {
+            agent_cmd.env(k, v);
+        }
         // Give the fleet agent its OWN journal identity instead of drowning the
         // 9eck-wms unit's journal (the 95%-noise problem — xelixir TECH_DEBT):
-        // route its stdout+stderr through `systemd-cat -t xelixir-agent`. The
+        // route its stdout+stderr through `systemd-cat -t xelixir-agent`.
+        // (Unit mode gets the same identity for free via `SyslogIdentifier=`,
+        // so this side-car only exists on the child fallback path.) The
         // agent stays a DIRECT child handle (only its stdio fds are redirected),
         // so the pid tracking, respawn-on-crash, and kill paths below are
         // unchanged. Falls back to inheriting WMS's fds if systemd-cat is
@@ -512,15 +748,370 @@ impl AgentController {
         Ok(ws_auth_token)
     }
 
-    /// Send the kill signal to any running agent and clear the handle.
+    /// Stop the agent, whichever way it is running.
+    ///
+    /// This is the ONE kill path: the `stop` command, license revocation /
+    /// re-claim (`spawn_agent` calls it before claiming), and operator stops
+    /// all funnel through here. It is deliberately mode-agnostic and
+    /// idempotent — it kills a leftover child AND stops the transient unit, so
+    /// a WMS that fell back to a child once (or was restarted between the two)
+    /// can still reliably kill whatever is actually alive.
     pub async fn stop_agent(&self) {
+        // 1. Direct-child fallback: the historical oneshot kill.
         if let Some(handle) = self.handle.lock().await.take() {
             let _ = handle.kill.send(());
         }
+        // 2. Transient unit: `systemctl --user stop` tears down the unit's whole
+        //    cgroup (default KillMode=control-group), so nothing of the agent
+        //    tree survives. A stop on an already-dead unit is a no-op.
+        if self.run_mode == RunMode::SystemdUser {
+            let user = self.agent_user().await;
+            match self.systemctl(user.as_ref(), &["stop"]).await {
+                Ok(out) if out.status.success() => {
+                    info!("[AgentController] stopped transient unit `{}`", self.unit)
+                }
+                Ok(out) => debug!(
+                    "[AgentController] `systemctl --user stop {}` exit {:?}: {}",
+                    self.unit,
+                    out.status.code(),
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ),
+                Err(e) => warn!("[AgentController] could not stop unit `{}`: {}", self.unit, e),
+            }
+            // Clear a `failed` residue so the next `systemd-run --unit=<same>`
+            // is not refused (`--collect` normally handles this; belt + braces).
+            let _ = self.systemctl(user.as_ref(), &["reset-failed"]).await;
+            // Token hygiene: the access token must not outlive the session.
+            self.clear_agent_env_file(user.as_ref()).await;
+        }
+    }
+
+    /// Restart the agent **in place**, keeping its access token (the unit
+    /// re-reads the same `EnvironmentFile`).
+    ///
+    /// This exists because of the one behavioural change that came with
+    /// demoting the WMS from parent to manager: the agent no longer dies with
+    /// the WMS, so dropping a NEW `agent_mock` binary and restarting the WMS
+    /// does NOT pick it up — an agent-binary upgrade needs this explicit
+    /// restart (`systemctl --user restart xelixir-agent.service`).
+    pub async fn restart_agent(&self) -> Result<(), String> {
+        if self.run_mode != RunMode::SystemdUser {
+            // Child mode: the agent already dies with the WMS, so "restart" is
+            // just stop — the auto_start supervisor brings it back within
+            // RESPAWN_BACKOFF_SECS (and a WMS restart picks up a new binary).
+            self.stop_agent().await;
+            return Ok(());
+        }
+        let user = self.agent_user().await;
+        let out = self.systemctl(user.as_ref(), &["restart"]).await?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "systemctl --user restart {} exit {:?}: {}",
+                self.unit,
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        }
+    }
+
+    /// Is an agent running right now? Liveness lives in systemd in unit mode
+    /// (so it is still knowable after a WMS restart) and in the child handle
+    /// in fallback mode.
+    pub async fn agent_alive(&self) -> bool {
+        if self.handle.lock().await.is_some() {
+            return true;
+        }
+        self.unit_active().await
     }
 
     pub fn instance_id(&self) -> &str {
         &self.instance_id
+    }
+
+    // ─── transient-unit management ────────────────────────────────────────
+
+    /// Cached `(username, uid, home)` of the user the agent runs as. The /proc
+    /// compositor scan behind it is too heavy for the supervisor tick, so a
+    /// successful lookup is cached; a failed one is not (the compositor may
+    /// just not be up yet at boot).
+    async fn agent_user(&self) -> Option<AgentUser> {
+        if let Some(u) = self.agent_user.lock().await.clone() {
+            return Some(u);
+        }
+        let resolved = resolve_agent_user();
+        if let Some(ref u) = resolved {
+            *self.agent_user.lock().await = Some(u.clone());
+        }
+        resolved
+    }
+
+    /// `systemctl --user <args…> <unit>`, run as the agent user.
+    async fn systemctl(
+        &self,
+        user: Option<&AgentUser>,
+        args: &[&str],
+    ) -> Result<std::process::Output, String> {
+        let bin = systemd_tool("systemctl").ok_or_else(|| "systemctl not found".to_string())?;
+        let mut argv: Vec<String> = vec!["--user".to_string()];
+        argv.extend(args.iter().map(|s| s.to_string()));
+        argv.push(self.unit.clone());
+        let cmd = as_agent_user(user, &bin, &argv, &bus_env(user));
+        run_capture(cmd, "systemctl").await
+    }
+
+    /// Is the transient unit up? `is-active` exits 0 only for `active`; treat
+    /// `activating`/`reloading` as up too so a restart window isn't read as
+    /// "the agent is gone" by the supervisor.
+    async fn unit_active(&self) -> bool {
+        if self.run_mode != RunMode::SystemdUser {
+            return false;
+        }
+        let user = self.agent_user().await;
+        match self.systemctl(user.as_ref(), &["is-active"]).await {
+            Ok(out) => {
+                let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                matches!(state.as_str(), "active" | "activating" | "reloading")
+            }
+            Err(e) => {
+                warn!("[AgentController] is-active check failed: {}", e);
+                false
+            }
+        }
+    }
+
+    /// Unit-name idempotency check. `want_standby = None` means "adopt whatever
+    /// mode is running" (used on WMS boot, where we just re-attach to the agent
+    /// that survived); `Some(mode)` additionally requires the running unit to be
+    /// in that mode.
+    async fn try_adopt_running_agent(&self, want_standby: Option<bool>) -> Adopt {
+        if self.run_mode != RunMode::SystemdUser {
+            return Adopt::NotRunning;
+        }
+        if !self.unit_active().await {
+            return Adopt::NotRunning;
+        }
+        let env = self.running_agent_env().await;
+        adopt_decision(true, env.as_ref(), want_standby)
+    }
+
+    /// Recover the running agent's session: its `EnvironmentFile` first (the
+    /// authoritative copy — it is exactly what the unit was started with),
+    /// falling back to the token persisted on our own device row (which also
+    /// survives a WMS restart, since SurrealDB is on disk).
+    async fn running_agent_env(&self) -> Option<BTreeMap<String, String>> {
+        let user = self.agent_user().await;
+        if let Some(map) = self.read_agent_env_file(user.as_ref()).await {
+            if map.contains_key("WS_AUTH_TOKEN") {
+                return Some(map);
+            }
+        }
+        let token = self.read_token_from_db().await?;
+        let mut map = BTreeMap::new();
+        map.insert("WS_AUTH_TOKEN".to_string(), token);
+        // XELTH_START_MODE deliberately absent = "mode unknown" → the caller
+        // does not enforce a mode match against a guess.
+        Some(map)
+    }
+
+    async fn read_token_from_db(&self) -> Option<String> {
+        let v: Option<Value> = self
+            .db
+            .query("SELECT xelixir_token FROM type::record('registered_device', $iid)")
+            .bind(("iid", self.instance_id.clone()))
+            .await
+            .ok()
+            .and_then(|mut r| r.take(0).ok())
+            .flatten();
+        v.and_then(|val| {
+            val.get("xelixir_token")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string())
+        })
+        .filter(|s| !s.is_empty())
+    }
+
+    /// Start the agent as a transient `systemd --user` unit.
+    ///
+    /// Properties worth knowing:
+    /// * `--collect` — a failed/stopped transient unit is garbage-collected, so
+    ///   the FIXED unit name is free for the next start.
+    /// * `Restart=on-failure` + `RestartSec` — the agent self-heals on crash
+    ///   even while the WMS is down; the WMS supervisor is only a backstop.
+    /// * `StartLimitIntervalSec=0` — no start-rate limiting, matching the old
+    ///   "respawn forever every 5 s" behaviour (a rate limit would silently
+    ///   retire the only off-site channel).
+    /// * `EnvironmentFile=` — the access token, never an argv.
+    /// * `SyslogIdentifier=` — the agent keeps its own journal identity (the
+    ///   job `systemd-cat` does on the child path).
+    async fn start_transient_unit(
+        &self,
+        user: Option<&AgentUser>,
+        agent_path: &Path,
+        agent_env: &[(&'static str, String)],
+    ) -> Result<(), String> {
+        let bin = systemd_tool("systemd-run").ok_or_else(|| "systemd-run not found".to_string())?;
+        let env_path = agent_env_path(user);
+        self.write_agent_env_file(user, &env_path, agent_env).await?;
+
+        let mut hardened: Vec<String> = vec![
+            "-p".into(),
+            "Restart=on-failure".into(),
+            "-p".into(),
+            format!("RestartSec={}", UNIT_RESTART_SEC),
+            "-p".into(),
+            "StartLimitIntervalSec=0".into(),
+            "-p".into(),
+            "SyslogIdentifier=xelixir-agent".into(),
+            "-p".into(),
+            format!("EnvironmentFile={}", env_path),
+        ];
+        if let Some(u) = user {
+            // Deterministic, writable cwd. Without this the unit would inherit
+            // the user manager's default (also $HOME) rather than the WMS's cwd
+            // — spelling it out keeps the agent's relative paths predictable.
+            hardened.push("-p".into());
+            hardened.push(format!("WorkingDirectory={}", u.home));
+        }
+        // Minimal set for older systemd that may reject one of the extras —
+        // never lose the agent over a nice-to-have property.
+        let minimal: Vec<String> = vec![
+            "-p".into(),
+            "Restart=on-failure".into(),
+            "-p".into(),
+            format!("RestartSec={}", UNIT_RESTART_SEC),
+            "-p".into(),
+            format!("EnvironmentFile={}", env_path),
+        ];
+
+        let mut last_err = String::from("systemd-run: no attempt ran");
+        for (attempt, props) in [hardened, minimal].into_iter().enumerate() {
+            let mut argv: Vec<String> = vec![
+                "--user".into(),
+                "--quiet".into(),
+                "--collect".into(),
+                format!("--unit={}", self.unit),
+                "--description=xelixir fleet agent (managed by 9eck WMS, own cgroup)".into(),
+            ];
+            argv.extend(props);
+            argv.push("--".into());
+            argv.push(agent_path.display().to_string());
+
+            let cmd = as_agent_user(user, &bin, &argv, &bus_env(user));
+            match run_capture(cmd, "systemd-run").await {
+                Ok(out) if out.status.success() => return Ok(()),
+                Ok(out) => {
+                    last_err = format!(
+                        "systemd-run exit {:?}: {}",
+                        out.status.code(),
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    );
+                }
+                Err(e) => last_err = e,
+            }
+            if attempt == 0 {
+                warn!(
+                    "[AgentController] {} — retrying with the minimal property set",
+                    last_err
+                );
+                // A refused start can leave a half-created/failed unit behind.
+                let _ = self.systemctl(user, &["reset-failed"]).await;
+            }
+        }
+        Err(last_err)
+    }
+
+    /// Write the agent's environment to a `0600` file owned by the run user.
+    ///
+    /// When the agent runs as a DIFFERENT user (the kiosk case) the WMS cannot
+    /// write into that user's `/run/user/<uid>` at all, so the blob is handed to
+    /// a `sudo -u <user> sh` through a **preserved environment variable** — not
+    /// an argument — and written under `umask 077`. The token therefore never
+    /// appears in `/proc/*/cmdline`, mirroring the hygiene of the old
+    /// child-inherits-env approach.
+    async fn write_agent_env_file(
+        &self,
+        user: Option<&AgentUser>,
+        path: &str,
+        agent_env: &[(&'static str, String)],
+    ) -> Result<(), String> {
+        let blob = render_env_file(agent_env)?;
+        if let Some(u) = user.filter(|u| !is_self_uid(u.uid)) {
+            let script = r#"umask 077; printf '%s' "$XLT_AGENT_ENV_BLOB" > "$XLT_AGENT_ENV_PATH""#;
+            let mut c = Command::new("sudo");
+            c.arg("-n")
+                .arg("-u")
+                .arg(&u.name)
+                .arg("--preserve-env=XLT_AGENT_ENV_BLOB,XLT_AGENT_ENV_PATH")
+                .arg("/bin/sh")
+                .arg("-c")
+                .arg(script);
+            c.env("XLT_AGENT_ENV_BLOB", &blob);
+            c.env("XLT_AGENT_ENV_PATH", path);
+            let out = run_capture(c, "write agent env file").await?;
+            if !out.status.success() {
+                return Err(format!(
+                    "writing {} as {} failed (exit {:?}): {}",
+                    path,
+                    u.name,
+                    out.status.code(),
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ));
+            }
+            return Ok(());
+        }
+        write_private_file(path, &blob)
+    }
+
+    async fn read_agent_env_file(
+        &self,
+        user: Option<&AgentUser>,
+    ) -> Option<BTreeMap<String, String>> {
+        let path = agent_env_path(user);
+        let raw = if let Some(u) = user.filter(|u| !is_self_uid(u.uid)) {
+            let mut c = Command::new("sudo");
+            c.arg("-n")
+                .arg("-u")
+                .arg(&u.name)
+                .arg("--preserve-env=XLT_AGENT_ENV_PATH")
+                .arg("/bin/sh")
+                .arg("-c")
+                .arg(r#"cat "$XLT_AGENT_ENV_PATH" 2>/dev/null"#);
+            c.env("XLT_AGENT_ENV_PATH", &path);
+            let out = run_capture(c, "read agent env file").await.ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        } else {
+            std::fs::read_to_string(&path).ok()?
+        };
+        let map = parse_env_file(&raw);
+        if map.is_empty() {
+            None
+        } else {
+            Some(map)
+        }
+    }
+
+    /// Token hygiene: drop the env file once the session is over.
+    async fn clear_agent_env_file(&self, user: Option<&AgentUser>) {
+        let path = agent_env_path(user);
+        if let Some(u) = user.filter(|u| !is_self_uid(u.uid)) {
+            let mut c = Command::new("sudo");
+            c.arg("-n")
+                .arg("-u")
+                .arg(&u.name)
+                .arg("--preserve-env=XLT_AGENT_ENV_PATH")
+                .arg("/bin/sh")
+                .arg("-c")
+                .arg(r#"rm -f "$XLT_AGENT_ENV_PATH""#);
+            c.env("XLT_AGENT_ENV_PATH", &path);
+            let _ = run_capture(c, "remove agent env file").await;
+        } else {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 
     // ─── DB helpers ───────────────────────────────────────────────────────
@@ -696,16 +1287,276 @@ fn session_url_for_token(token: &str) -> String {
     format!("{}?token={}", base, token)
 }
 
+// ─── run-mode / transient-unit helpers ────────────────────────────────────
+
+/// Absolute path of a systemd tool, if this host has one. Absolute on purpose:
+/// these end up in the kiosk's sudoers rules, which match on the full path.
+fn systemd_tool(name: &str) -> Option<PathBuf> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    ["/usr/bin", "/bin", "/usr/local/bin"]
+        .iter()
+        .map(|d| Path::new(d).join(name))
+        .find(|p| p.exists())
+}
+
+/// Can we run the agent as a transient user unit here? Needs systemd as PID 1
+/// (`/run/systemd/system`) plus both tools. Says nothing about whether the run
+/// user actually has a user manager — that failure is caught at spawn time and
+/// degrades to the direct-child fallback.
+fn systemd_available() -> bool {
+    cfg!(target_os = "linux")
+        && Path::new("/run/systemd/system").exists()
+        && systemd_tool("systemd-run").is_some()
+        && systemd_tool("systemctl").is_some()
+}
+
+/// `XELIXIR_AGENT_RUN_MODE`: `child`/`direct` forces the historical child
+/// spawn, `systemd`/`unit` forces the transient unit, anything else (incl.
+/// unset and `auto`) picks systemd when the host supports it.
+fn run_mode_from_flag(flag: Option<&str>, systemd_available: bool) -> RunMode {
+    match flag.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("child") | Some("direct") | Some("process") => RunMode::DirectChild,
+        Some("systemd") | Some("systemd-run") | Some("unit") => RunMode::SystemdUser,
+        _ => {
+            if systemd_available {
+                RunMode::SystemdUser
+            } else {
+                RunMode::DirectChild
+            }
+        }
+    }
+}
+
+fn detect_run_mode() -> RunMode {
+    let flag = std::env::var("XELIXIR_AGENT_RUN_MODE").ok();
+    run_mode_from_flag(flag.as_deref(), systemd_available())
+}
+
+/// FIXED unit name (`XELIXIR_AGENT_UNIT` overrides). The fixed name is the
+/// idempotency key: `systemd-run --unit=<name>` refuses to create a second unit
+/// with the same name, so even a racing WMS cannot end up with two agents.
+fn normalize_unit_name(raw: Option<&str>) -> String {
+    let name = raw.unwrap_or("").trim();
+    if name.is_empty() {
+        return AGENT_UNIT_DEFAULT.to_string();
+    }
+    if name.ends_with(".service") {
+        name.to_string()
+    } else {
+        format!("{}.service", name)
+    }
+}
+
+/// uid of this process (Unix only).
+#[cfg(unix)]
+fn self_uid() -> Option<u32> {
+    Some(unsafe { libc::getuid() })
+}
+#[cfg(not(unix))]
+fn self_uid() -> Option<u32> {
+    None
+}
+
+/// Is `uid` this process's own uid? Then no `sudo` hop is needed.
+#[cfg(unix)]
+fn is_self_uid(uid: u32) -> bool {
+    self_uid() == Some(uid)
+}
+#[cfg(not(unix))]
+fn is_self_uid(_uid: u32) -> bool {
+    false
+}
+
+/// Environment every `systemd-run`/`systemctl --user` call needs to find the
+/// target user's session bus (`sudo` hands us a clean env).
+fn bus_env(user: Option<&AgentUser>) -> Vec<(&'static str, String)> {
+    match user.map(|u| u.uid).or_else(self_uid) {
+        Some(uid) => vec![
+            ("XDG_RUNTIME_DIR", format!("/run/user/{}", uid)),
+            (
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path=/run/user/{}/bus", uid),
+            ),
+        ],
+        None => Vec::new(),
+    }
+}
+
+/// Where the unit's `EnvironmentFile` lives. `/run/user/<uid>` is a per-user
+/// 0700 tmpfs — the token dies with the session and never touches disk.
+fn agent_env_path(user: Option<&AgentUser>) -> String {
+    if let Some(uid) = user.map(|u| u.uid).or_else(self_uid) {
+        let dir = format!("/run/user/{}", uid);
+        if Path::new(&dir).exists() {
+            return format!("{}/xelixir-agent.env", dir);
+        }
+    }
+    std::env::temp_dir()
+        .join("xelixir-agent.env")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Build a `Command` running `program` as the agent user (via `sudo -n -u`),
+/// or directly when no separate user applies. `envs` is both the forwarded
+/// environment and the sudo allow-list — sudo drops everything else.
+fn as_agent_user(
+    user: Option<&AgentUser>,
+    program: &Path,
+    args: &[String],
+    envs: &[(&'static str, String)],
+) -> Command {
+    let mut cmd = match user.filter(|u| !is_self_uid(u.uid)) {
+        Some(u) => {
+            let mut c = Command::new("sudo");
+            c.arg("-n").arg("-u").arg(&u.name);
+            if !envs.is_empty() {
+                let keys: Vec<&str> = envs.iter().map(|(k, _)| *k).collect();
+                c.arg(format!("--preserve-env={}", keys.join(",")));
+            }
+            c.arg(program);
+            c.args(args);
+            c
+        }
+        None => {
+            let mut c = Command::new(program);
+            c.args(args);
+            c
+        }
+    };
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    cmd
+}
+
+/// Run a helper command to completion with a hard timeout. The supervisor loop
+/// calls into here on every tick, so a hung `sudo`/dbus must never wedge it —
+/// `kill_on_drop` reaps whatever the timeout abandons.
+async fn run_capture(mut cmd: Command, what: &str) -> Result<std::process::Output, String> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    match tokio::time::timeout(Duration::from_secs(SYSTEMD_CMD_TIMEOUT_SECS), cmd.output()).await {
+        Ok(Ok(out)) => Ok(out),
+        Ok(Err(e)) => Err(format!("{}: {}", what, e)),
+        Err(_) => Err(format!(
+            "{}: timed out after {}s",
+            what, SYSTEMD_CMD_TIMEOUT_SECS
+        )),
+    }
+}
+
+/// Serialize the agent env as a systemd `EnvironmentFile`. Values containing a
+/// newline are refused rather than silently truncated/injected.
+fn render_env_file(kv: &[(&'static str, String)]) -> Result<String, String> {
+    let mut out = String::new();
+    for (k, v) in kv {
+        if v.contains('\n') || v.contains('\r') || v.contains('\0') {
+            return Err(format!("refusing to write env {}: embedded newline/NUL", k));
+        }
+        out.push_str(k);
+        out.push('=');
+        out.push_str(v);
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// Parse back what `render_env_file` wrote (plus tolerate `export`-less
+/// quoted values, which systemd also accepts).
+fn parse_env_file(raw: &str) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let v = v.trim();
+        let v = v
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .unwrap_or(v);
+        map.insert(k.trim().to_string(), v.to_string());
+    }
+    map
+}
+
+/// Create/replace a file readable only by its owner (0600 on Unix).
+#[cfg(unix)]
+fn write_private_file(path: &str, content: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| format!("open {}: {}", path, e))?;
+    f.write_all(content.as_bytes())
+        .map_err(|e| format!("write {}: {}", path, e))
+}
+
+/// Windows dev fallback — only ever reached in the (unused there) unit path.
+#[cfg(not(unix))]
+fn write_private_file(path: &str, content: &str) -> Result<(), String> {
+    std::fs::write(path, content).map_err(|e| format!("write {}: {}", path, e))
+}
+
+/// Pure decision behind [`AgentController::try_adopt_running_agent`] — kept
+/// free of I/O so the idempotency rules are unit-testable without systemd.
+///
+/// `want_standby = None` accepts whatever mode is running; `Some(mode)` demands
+/// a match. A running unit whose start mode is UNKNOWN (token recovered from
+/// the DB rather than the env file) is adopted as standby — the only mode the
+/// UI flags ever spawn — instead of being needlessly restarted.
+fn adopt_decision(
+    active: bool,
+    env: Option<&BTreeMap<String, String>>,
+    want_standby: Option<bool>,
+) -> Adopt {
+    if !active {
+        return Adopt::NotRunning;
+    }
+    let Some(env) = env else {
+        return Adopt::Replace;
+    };
+    let token = match env.get("WS_AUTH_TOKEN").map(|t| t.trim()) {
+        Some(t) if !t.is_empty() => t.to_string(),
+        _ => return Adopt::Replace,
+    };
+    match env.get("XELTH_START_MODE") {
+        Some(mode) => {
+            let standby = mode == "standby";
+            if want_standby.is_some_and(|want| want != standby) {
+                return Adopt::Replace;
+            }
+            Adopt::Reattach { token, standby }
+        }
+        None => Adopt::Reattach {
+            token,
+            standby: true,
+        },
+    }
+}
+
 /// Resolve the user the xelixir agent should run as. `XELIXIR_AGENT_USER`
 /// (a username) overrides; otherwise auto-detect the graphical-session user
-/// from the running Wayland compositor's owner. Returns `(username, uid, home)`.
+/// from the running Wayland compositor's owner.
 /// `None` on non-Linux or when no session user is found → caller runs the agent
-/// in-process as the WMS uid (historical/headless behaviour).
-fn resolve_agent_user() -> Option<(String, u32, String)> {
+/// as the WMS uid (historical/headless behaviour).
+fn resolve_agent_user() -> Option<AgentUser> {
     if let Ok(name) = std::env::var("XELIXIR_AGENT_USER") {
         let name = name.trim().to_string();
         if !name.is_empty() {
-            return passwd_lookup(&name).map(|(uid, home)| (name, uid, home));
+            return passwd_lookup(&name).map(|(uid, home)| AgentUser { name, uid, home });
         }
     }
     detect_session_user()
@@ -746,9 +1597,9 @@ fn passwd_by_uid(uid: u32) -> Option<(String, String)> {
 }
 
 /// Find the graphical-session user by scanning /proc for a known Wayland
-/// compositor and returning its `(username, uid, home)`. Mirrors the agent's
-/// own `linux_capture::find_session_user`.
-fn detect_session_user() -> Option<(String, u32, String)> {
+/// compositor and returning its identity. Mirrors the agent's own
+/// `linux_capture::find_session_user`.
+fn detect_session_user() -> Option<AgentUser> {
     const COMPOSITORS: &[&str] = &[
         "cage", "sway", "weston", "labwc", "kwin_wayland",
         "gnome-shell", "mutter", "river", "hyprland",
@@ -778,7 +1629,7 @@ fn detect_session_user() -> Option<(String, u32, String)> {
             if let Some(rest) = line.strip_prefix("Uid:") {
                 if let Some(uid) = rest.split_whitespace().next().and_then(|s| s.parse::<u32>().ok()) {
                     if let Some((name, home)) = passwd_by_uid(uid) {
-                        return Some((name, uid, home));
+                        return Some(AgentUser { name, uid, home });
                     }
                 }
                 break;
@@ -929,4 +1780,144 @@ async fn mark_stopped_in_db(db: &SurrealDb, iid: &str) -> Result<(), String> {
     .await
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env_of(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    // ── run-mode selection ────────────────────────────────────────────────
+
+    #[test]
+    fn auto_picks_systemd_only_when_available() {
+        assert_eq!(run_mode_from_flag(None, true), RunMode::SystemdUser);
+        assert_eq!(run_mode_from_flag(None, false), RunMode::DirectChild);
+        assert_eq!(run_mode_from_flag(Some("auto"), true), RunMode::SystemdUser);
+        assert_eq!(run_mode_from_flag(Some("auto"), false), RunMode::DirectChild);
+    }
+
+    #[test]
+    fn flag_overrides_detection_both_ways() {
+        // Forced child even on a systemd host (dev boxes / tests).
+        assert_eq!(run_mode_from_flag(Some("child"), true), RunMode::DirectChild);
+        assert_eq!(run_mode_from_flag(Some(" Direct "), true), RunMode::DirectChild);
+        // Forced unit even when detection says no (operator knows better;
+        // a genuine failure still degrades to a child at spawn time).
+        assert_eq!(run_mode_from_flag(Some("systemd"), false), RunMode::SystemdUser);
+        assert_eq!(run_mode_from_flag(Some("unit"), false), RunMode::SystemdUser);
+    }
+
+    // ── unit-name idempotency ─────────────────────────────────────────────
+
+    #[test]
+    fn unit_name_is_fixed_and_normalized() {
+        assert_eq!(normalize_unit_name(None), AGENT_UNIT_DEFAULT);
+        assert_eq!(normalize_unit_name(Some("   ")), AGENT_UNIT_DEFAULT);
+        assert_eq!(normalize_unit_name(Some("kiosk-agent")), "kiosk-agent.service");
+        assert_eq!(
+            normalize_unit_name(Some(" kiosk-agent.service ")),
+            "kiosk-agent.service"
+        );
+    }
+
+    #[test]
+    fn no_unit_running_means_spawn() {
+        assert_eq!(adopt_decision(false, None, Some(true)), Adopt::NotRunning);
+        // Even a leftover env file must not fake a running agent.
+        let env = env_of(&[("WS_AUTH_TOKEN", "tok")]);
+        assert_eq!(adopt_decision(false, Some(&env), Some(true)), Adopt::NotRunning);
+    }
+
+    #[test]
+    fn running_unit_in_same_mode_is_reattached_not_duplicated() {
+        let env = env_of(&[("WS_AUTH_TOKEN", "tok-1"), ("XELTH_START_MODE", "standby")]);
+        assert_eq!(
+            adopt_decision(true, Some(&env), Some(true)),
+            Adopt::Reattach {
+                token: "tok-1".into(),
+                standby: true
+            }
+        );
+        // WMS boot (mode-agnostic re-attach) adopts whatever is running.
+        assert_eq!(
+            adopt_decision(true, Some(&env), None),
+            Adopt::Reattach {
+                token: "tok-1".into(),
+                standby: true
+            }
+        );
+    }
+
+    #[test]
+    fn mode_mismatch_or_lost_token_replaces_never_duplicates() {
+        let standby = env_of(&[("WS_AUTH_TOKEN", "tok"), ("XELTH_START_MODE", "standby")]);
+        // A live (non-standby) start requested while a standby unit runs.
+        assert_eq!(adopt_decision(true, Some(&standby), Some(false)), Adopt::Replace);
+        // Session unrecoverable: env file gone, and no token on the device row.
+        assert_eq!(adopt_decision(true, None, Some(true)), Adopt::Replace);
+        // Env file present but tokenless / blank.
+        let blank = env_of(&[("WS_AUTH_TOKEN", "   "), ("E9_INSTANCE_ID", "iid")]);
+        assert_eq!(adopt_decision(true, Some(&blank), Some(true)), Adopt::Replace);
+        let no_tok = env_of(&[("E9_INSTANCE_ID", "iid")]);
+        assert_eq!(adopt_decision(true, Some(&no_tok), Some(true)), Adopt::Replace);
+    }
+
+    #[test]
+    fn unknown_start_mode_adopts_as_standby() {
+        // Token recovered from the DB row → mode unknown. Adopt rather than
+        // restart the one channel we have.
+        let env = env_of(&[("WS_AUTH_TOKEN", "tok")]);
+        assert_eq!(
+            adopt_decision(true, Some(&env), Some(true)),
+            Adopt::Reattach {
+                token: "tok".into(),
+                standby: true
+            }
+        );
+    }
+
+    // ── env-file handover ─────────────────────────────────────────────────
+
+    #[test]
+    fn env_file_round_trips() {
+        let kv: Vec<(&'static str, String)> = vec![
+            ("WS_AUTH_TOKEN", "abc.DEF-123_/+=".to_string()),
+            ("E9_INSTANCE_ID", "0e1e5ca0-dead-beef".to_string()),
+            ("XELTH_WS_URL", "".to_string()),
+            ("XELTH_START_MODE", "standby".to_string()),
+        ];
+        let rendered = render_env_file(&kv).expect("renders");
+        let parsed = parse_env_file(&rendered);
+        for (k, v) in &kv {
+            assert_eq!(parsed.get(*k), Some(v), "key {}", k);
+        }
+        assert_eq!(
+            adopt_decision(true, Some(&parsed), Some(true)),
+            Adopt::Reattach {
+                token: "abc.DEF-123_/+=".into(),
+                standby: true
+            }
+        );
+    }
+
+    #[test]
+    fn env_file_refuses_injection() {
+        let kv: Vec<(&'static str, String)> =
+            vec![("WS_AUTH_TOKEN", "tok\nExecStart=/bin/evil".to_string())];
+        assert!(render_env_file(&kv).is_err());
+    }
+
+    #[test]
+    fn env_file_parser_skips_noise() {
+        let parsed = parse_env_file("# comment\n\nWS_AUTH_TOKEN=\"quoted\"\ngarbage-line\n");
+        assert_eq!(parsed.get("WS_AUTH_TOKEN").map(String::as_str), Some("quoted"));
+        assert_eq!(parsed.len(), 1);
+    }
 }

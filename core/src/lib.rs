@@ -7,6 +7,7 @@ pub mod i18n;
 pub mod licensing;
 pub mod metrics;
 pub mod models;
+pub mod plugin;
 pub mod ratelimit;
 pub mod sync;
 pub mod utils;

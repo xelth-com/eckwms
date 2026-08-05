@@ -20,4 +20,13 @@ export default {
   cta_demo: 'See the live demo',
   cta_activate: 'Activate via the AI assistant',
   activate_note: 'Need it now? Ask the AI assistant to start activation, or contact us for the online version.',
+
+  // POS_ENABLED is set but no valid license is bound to this mesh.
+  configured_unlicensed_headline: 'POS is configured but not licensed',
+  configured_unlicensed_subhead: 'This node has POS_ENABLED set, but no valid license is bound to this mesh — the register cannot mount.',
+  license_reason_label: 'License check failed:',
+  cta_contact: 'Contact 9eck to activate your license',
+
+  // Licensed but POS_ENABLED is not set on this node yet.
+  licensed_not_configured_note: 'Your license includes the POS — enable POS_ENABLED on this node to mount the register.',
 };

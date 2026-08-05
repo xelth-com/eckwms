@@ -115,3 +115,9 @@ hf-hub = { version = "0.5", optional = true }
 # Process-group SIGKILL on the ops timeout path (kill -pgid) + fd plumbing for
 # the agent's systemd-cat journal identity. Unix-only; WMS runs on Linux kiosks.
 libc = "0.2"
+
+[dev-dependencies]
+# Compile hand-written WAT fixtures to wasm at test time (core/Cargo.toml uses
+# the same crate for the plugin-engine tests) so the ingest_transform seam
+# test stays hermetic â€” no network, no checked-in binary.
+wat = "1"

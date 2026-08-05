@@ -526,6 +526,34 @@ pub async fn kiosk_token(
         .get("User-Agent")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
+
+    // Public-exhibition mode (ECK_PUBLIC_OBSERVER=1, demo nodes only): EVERY
+    // anonymous visitor gets an observer session — the env var alone is the
+    // gate, deliberately independent of system_config:kiosk (that row may be
+    // mesh-synced; an env line in the unit cannot leak to other nodes). Mode
+    // is forced to "wms" so a stray kiosk mode="pos" can't bounce visitors
+    // into the register, which rejects observer tokens anyway.
+    let public_observer = std::env::var("ECK_PUBLIC_OBSERVER")
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    if public_observer {
+        tracing::info!(
+            target: "diag::kiosk_token",
+            ip = %client_ip,
+            ua_short = ua.chars().take(40).collect::<String>(),
+            "ISSUED observer JWT (public exhibition mode)"
+        );
+        return match eck_core::auth::create_token("gast", "observer", "localhost", &state.jwt_secret) {
+            Ok(token) => (StatusCode::OK, Json(json!({
+                "success": true,
+                "token": token,
+                "mode": "wms",
+                "user": { "id": "gast", "username": "Gast", "name": "Gast", "role": "observer", "preferredLanguage": "en", "languages": [] }
+            }))),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "success": false, "error": e.to_string() }))),
+        };
+    }
+
     if !is_local_ip(&client_ip) {
         tracing::info!(
             target: "diag::kiosk_token",

@@ -394,7 +394,15 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
                 // Import ticket with enriched payload (includes cf.* custom fields like device model, serial number, Address, City, Zip)
                 if let Some(enriched_ticket) = body.get("ticket") {
                     if enriched_ticket.get("cf").is_some() || enriched_ticket.get("customFields").is_some() {
-                        match support::import_ticket(db, ticket_id, enriched_ticket, instance_id).await {
+                        // Plugin runtime (`INGEST_TRANSFORM`, .eck/WASM_ARCHITECTURE.md
+                        // §3) is threaded in from `AppState` at the handlers/support.rs
+                        // call sites; this cron worker only ever receives `db` +
+                        // `instance_id` (spawned in main.rs before `AppState` exists,
+                        // and shared across tasks that never see it). Wiring plugin
+                        // hooks into the scheduled Zoho pull is a follow-up (would need
+                        // `PluginRuntime` behind an `Arc` threaded through
+                        // `start_cron_jobs`/`sync_zoho`) — left as `None` for phase 4.
+                        match support::import_ticket(db, ticket_id, enriched_ticket, instance_id, None).await {
                             Ok(r) if r.changed => { updated += 1; }
                             Ok(_) => { skipped += 1; }
                             Err(e) => {
@@ -444,7 +452,8 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
         // the detail shape returns on a later run; that's the rare-failure
         // price, not the every-run price.
         if !detail_imported {
-            match support::import_ticket(db, ticket_id, ticket, instance_id).await {
+            // See the plugin-runtime note above the detail-path import call.
+            match support::import_ticket(db, ticket_id, ticket, instance_id, None).await {
                 Ok(r) if r.changed => { updated += 1; }
                 Ok(_) => { skipped += 1; }
                 Err(e) => {

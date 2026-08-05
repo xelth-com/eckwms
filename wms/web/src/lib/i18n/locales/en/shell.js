@@ -19,6 +19,10 @@ export default {
   nav_analysis: 'Analysis',
   nav_pos: 'POS Register',
   nav_pos_promo: 'Add POS (ecKasse)',
+  nav_site: 'About 9eck',
+  site_features: 'eckWMS — every feature',
+  site_developers: 'For developers',
+  demo_login: 'Demo login',
 
   // User panel / chrome
   user_fallback: 'User',
@@ -27,6 +31,7 @@ export default {
   logout: 'Logout',
   language: 'Language',
   change_language: 'Change language',
+  lang_other: 'Other',
   add_language: 'Add language',
   add_language_hint: 'e.g. fr',
   add_language_button: 'Add',
@@ -52,6 +57,10 @@ export default {
   kiosk_mode_pos: 'POS register',
   kiosk_config_saved: 'Kiosk settings saved',
   kiosk_config_failed: 'Saving kiosk settings failed: {error}',
+
+  // POS license grace-period warning banner (top of dashboard, admin/operator)
+  pos_grace_banner: 'POS license expired — running on grace. Renew now or the register will not start after the grace period.',
+  pos_grace_dismiss: 'Dismiss',
   save: 'Save',
   saving: 'Saving...',
   loading: 'Loading...',

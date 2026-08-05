@@ -202,6 +202,23 @@ pub async fn stop_device(
     dispatch_response(&state, &id, "stop").await
 }
 
+/// Cloud admin: restart the target's agent unit in place — the way an
+/// agent-binary upgrade is applied now that the agent no longer dies with the
+/// target's WMS.
+pub async fn restart_device(
+    Extension(claims): Extension<Claims>,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    if claims.role != "admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "success": false, "error": "Admin required" })),
+        );
+    }
+    dispatch_response(&state, &id, "restart").await
+}
+
 async fn dispatch_response(
     state: &Arc<AppState>,
     target_uuid: &str,
@@ -236,6 +253,16 @@ pub async fn self_stop(
     Json(signed): Json<SignedEnvelope>,
 ) -> (StatusCode, Json<Value>) {
     handle_self_envelope(&state, signed, "stop").await
+}
+
+/// Restart the agent in place (same access token). Exists because the agent
+/// now runs in its own transient systemd unit and no longer dies with the WMS:
+/// a new agent binary is only picked up by an explicit restart.
+pub async fn self_restart(
+    State(state): State<Arc<AppState>>,
+    Json(signed): Json<SignedEnvelope>,
+) -> (StatusCode, Json<Value>) {
+    handle_self_envelope(&state, signed, "restart").await
 }
 
 async fn handle_self_envelope(
@@ -314,7 +341,7 @@ pub async fn internal_dispatch(
 ) -> (StatusCode, Json<Value>) {
     match (body.command.as_deref(), body.verb.as_deref()) {
         (Some(cmd), None) => {
-            if cmd != "start" && cmd != "stop" {
+            if cmd != "start" && cmd != "stop" && cmd != "restart" {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(json!({

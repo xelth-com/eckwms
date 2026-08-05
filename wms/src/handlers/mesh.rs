@@ -165,8 +165,27 @@ pub async fn nodes(State(state): State<Arc<AppState>>) -> Json<Value> {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "https://9eck.com".to_string());
     let relay = state.sync_engine.relay();
-    let (nodes_res, board_ok) = tokio::join!(relay.get_mesh_status(), relay.health_check(&board_url));
+    // The relay polygon this node heartbeats to (same precedence as
+    // relay_client: RELAY_URLS > RELAY_URL > public board). Surfaced so the
+    // dashboard can render the paid relay cluster as connected servers.
+    let relay_urls: Vec<String> = std::env::var("RELAY_URLS")
+        .or_else(|_| std::env::var("RELAY_URL"))
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let relay_checks = futures_util::future::join_all(
+        relay_urls.iter().map(|u| relay.health_check(u)),
+    );
+    let (nodes_res, board_ok, relay_ok) =
+        tokio::join!(relay.get_mesh_status(), relay.health_check(&board_url), relay_checks);
     let board = if board_ok { "online" } else { "offline" };
+    let relays: Vec<Value> = relay_urls
+        .iter()
+        .zip(relay_ok)
+        .map(|(url, ok)| json!({ "url": url, "status": if ok { "online" } else { "offline" } }))
+        .collect();
 
     let nodes = match nodes_res {
         Ok(n) => n,
@@ -177,6 +196,7 @@ pub async fn nodes(State(state): State<Arc<AppState>>) -> Json<Value> {
                 "nodes": [],
                 "board": board,
                 "board_url": board_url,
+                "relays": relays,
             }));
         }
     };
@@ -208,6 +228,7 @@ pub async fn nodes(State(state): State<Arc<AppState>>) -> Json<Value> {
         "nodes": mapped,
         "board": board,
         "board_url": board_url,
+        "relays": relays,
     }))
 }
 
@@ -644,16 +665,22 @@ pub async fn serve_mesh_file(
     let rows: Vec<Value> = state
         .db
         .query("SELECT * FROM file_resource WHERE hash = $hash LIMIT 1")
-        .bind(("hash", hash))
+        .bind(("hash", hash.clone()))
         .await
         .map_err(db_err)?
         .take(0)
         .map_err(db_err)?;
 
-    let record = rows
-        .into_iter()
-        .next()
-        .ok_or((StatusCode::NOT_FOUND, "File not found".into()))?;
+    let record = match rows.into_iter().next() {
+        Some(r) => r,
+        // No `file_resource` row: a WASM plugin binary lives in the CAS by
+        // sha256 with NO metadata row — the registry stores it CAS-only so the
+        // blob never merkle-syncs (design .eck/WASM_ARCHITECTURE.md §5/§6). §6
+        // names THIS endpoint (`GET /api/mesh/file/:hash`) as the transport a
+        // peer uses to lazily hydrate a plugin it received the record for, so
+        // fall back to serving the content-addressed `.wasm` blob directly.
+        None => return serve_plugin_cas_blob(&hash).await,
+    };
 
     let storage_path = record["storage_path"]
         .as_str()
@@ -671,6 +698,43 @@ pub async fn serve_mesh_file(
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime)
+        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+        .body(Body::from(bytes))
+        .unwrap())
+}
+
+/// Serve a WASM plugin binary straight from the content-addressed CAS path.
+///
+/// Plugin blobs (`{sha}.wasm`) are written by `PluginRegistry::install` with NO
+/// `file_resource` row (design §5: the blob is CAS-only and does NOT
+/// merkle-sync), so `serve_mesh_file`'s `file_resource`-by-hash lookup misses
+/// them. This is the §6-named fallback that lets a peer lazily hydrate a plugin
+/// it received the record for. Reached only from `serve_mesh_file`, i.e. AFTER
+/// its blind-cache guard, so caches never serve plugin content either.
+///
+/// Security: the sha is validated as 64 lowercase-hex before it touches a path
+/// (no traversal — the path is a pure function of the content address), and the
+/// bytes are re-verified against it before serving (CAS integrity). Only files
+/// the registry itself wrote (`.wasm`, at the content-addressed path) are
+/// reachable; the requester must already know the exact sha, the same trust
+/// model as every CAS-by-sha serve.
+async fn serve_plugin_cas_blob(hash: &str) -> Result<Response, (StatusCode, String)> {
+    let is_sha256 = hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit());
+    if !is_sha256 {
+        return Err((StatusCode::NOT_FOUND, "File not found".into()));
+    }
+    let path = format!("data/filestore/{}/{}/{}.wasm", &hash[0..2], &hash[2..4], hash);
+    let store = FileStore::new(".");
+    let bytes = store
+        .read(&path)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, "File not found".to_string()))?;
+    if !eck_core::utils::filestore::verify_sha256(&bytes, hash) {
+        return Err((StatusCode::NOT_FOUND, "File not found".into()));
+    }
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/wasm")
         .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
         .body(Body::from(bytes))
         .unwrap())

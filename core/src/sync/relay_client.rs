@@ -5,9 +5,11 @@ use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use thiserror::Error;
-use tracing::{info, warn};
+use tokio::sync::Mutex;
+use tracing::{debug, info, warn};
 
 #[derive(Error, Debug)]
 pub enum RelayError {
@@ -80,6 +82,65 @@ pub struct RelayNodeInfo {
     pub lan_url: Option<String>,
 }
 
+// ─── Per-relay discovery backoff ─────────────────────────────────────────────
+//
+// `get_mesh_status()`'s per-relay dial is the entry point for `discover_peers`
+// (mesh_client.rs), which is in turn called independently from many unrelated
+// paths with NO shared rate limiting: the periodic sync_cycle/process_outbox
+// loop (60s each), per-request cache-miss pull-through (`get_synced_entity`,
+// `fetch_file_from_peers`), per-write task nudges (`spawn_task_nudge`), the
+// task-queue poller (`process_tasks`), and the hourly parity audit. During a
+// relay DNS outage every one of those independently re-dialed the same dead
+// relay on every call, amplifying into a retry storm (~167 req/s observed
+// against one dead relay host over a 3.5h outage — 0 of those callers back off
+// on their own). This is a SEPARATE, per-relay-URL backoff from `SyncEngine`'s
+// per-PEER `FutilityState`/`peer_health`: those gate mesh-peer traffic AFTER
+// discovery already succeeded; this gates discovery itself, shared by every
+// caller because they all go through the one `RelayClient` a node constructs
+// at boot (see `SyncEngine::relay()`).
+//
+// Exponential, in-memory only, keyed by relay base URL: 30s -> 2min -> 10min
+// (cap). Any successful dial to a relay clears its entry. A process restart
+// resets it — acceptable, same posture as the sync engine's own backoff state.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct RelayBackoffState {
+    consecutive_failures: u32,
+    skip_until: Option<Instant>,
+}
+
+/// Escalating skip window once a relay dial fails: 1 -> 30s, 2 -> 2min, 3+ ->
+/// 10min (cap). Unlike the mesh tree-repair `FutilityState` (which tolerates a
+/// few futile passes before parking), discovery backs off on the FIRST
+/// failure — a DNS-dead relay won't self-heal within the next tick, and every
+/// tick here is a caller invocation, not a fixed cycle.
+fn relay_backoff_delay(consecutive_failures: u32) -> Duration {
+    match consecutive_failures {
+        0 => Duration::ZERO,
+        1 => Duration::from_secs(30),
+        2 => Duration::from_secs(120),
+        _ => Duration::from_secs(600),
+    }
+}
+
+/// Pure transition of the per-relay backoff state machine. Any success resets
+/// to the default (no skip). Any failure escalates `consecutive_failures` and
+/// arms `skip_until` for the corresponding delay.
+fn relay_backoff_next(prev: &RelayBackoffState, success: bool, now: Instant) -> RelayBackoffState {
+    if success {
+        return RelayBackoffState::default();
+    }
+    let consecutive_failures = prev.consecutive_failures + 1;
+    RelayBackoffState {
+        consecutive_failures,
+        skip_until: Some(now + relay_backoff_delay(consecutive_failures)),
+    }
+}
+
+/// Whether a relay currently parked in `state` should be skipped this dial.
+fn relay_should_skip(state: Option<&RelayBackoffState>, now: Instant) -> bool {
+    state.and_then(|s| s.skip_until).is_some_and(|until| now < until)
+}
+
 /// Client for one or more relay "bulletin boards".
 ///
 /// Discovery (heartbeat + `get_mesh_status` + `resolve_node`) **fans out across
@@ -98,6 +159,10 @@ pub struct RelayClient {
     relay_urls: Vec<String>,
     instance_id: String,
     mesh_id: String,
+    /// Per-relay-URL discovery failure backoff, shared across every clone
+    /// (`Arc`) so every `discover_peers` caller sees the same state. See
+    /// [`RelayBackoffState`].
+    relay_backoff: Arc<Mutex<HashMap<String, RelayBackoffState>>>,
 }
 
 impl RelayClient {
@@ -131,6 +196,7 @@ impl RelayClient {
             relay_urls: urls,
             instance_id: instance_id.to_string(),
             mesh_id: mesh_id.to_string(),
+            relay_backoff: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -304,8 +370,36 @@ impl RelayClient {
     /// Gets the union of nodes registered in our mesh across **all** relays.
     /// Deduped by `instance_id`, keeping the freshest sighting (and preferring an
     /// `online` status). Succeeds if at least one relay responds.
+    ///
+    /// A relay currently parked in backoff (see `RelayBackoffState`) is
+    /// skipped entirely — no HTTP dial — so a dead relay stops accumulating
+    /// failed connections no matter how often callers invoke this.
     pub async fn get_mesh_status(&self) -> Result<Vec<RelayNodeInfo>, RelayError> {
-        let futs = self.relay_urls.iter().map(|base| {
+        let now = Instant::now();
+
+        let dial: Vec<String> = {
+            let backoff = self.relay_backoff.lock().await;
+            let mut dial = Vec::with_capacity(self.relay_urls.len());
+            for url in &self.relay_urls {
+                if relay_should_skip(backoff.get(url), now) {
+                    let remaining = backoff
+                        .get(url)
+                        .and_then(|s| s.skip_until)
+                        .map(|u| (u - now).as_secs())
+                        .unwrap_or(0);
+                    debug!("Discovery: skipping relay {} ({}s left in backoff)", url, remaining);
+                } else {
+                    dial.push(url.clone());
+                }
+            }
+            dial
+        };
+
+        if dial.is_empty() {
+            return Err(RelayError::AllRelaysDown);
+        }
+
+        let futs = dial.iter().map(|base| {
             let url = format!("{}/E/mesh/{}/status", base, self.mesh_id);
             async move {
                 let resp = self.client.get(&url).send().await?;
@@ -321,27 +415,51 @@ impl RelayClient {
         let mut merged: HashMap<String, RelayNodeInfo> = HashMap::new();
         let mut any_ok = false;
         let mut last_err: Option<RelayError> = None;
-        for res in results {
-            match res {
-                Ok(nodes) => {
-                    any_ok = true;
-                    for n in nodes {
-                        match merged.entry(n.instance_id.clone()) {
-                            Entry::Occupied(mut e) => {
-                                let cur = e.get();
-                                let newer = n.last_seen > cur.last_seen;
-                                let upgrade = cur.status != "online" && n.status == "online";
-                                if newer || upgrade {
+        {
+            let mut backoff = self.relay_backoff.lock().await;
+            for (base, res) in dial.iter().zip(results.into_iter()) {
+                match res {
+                    Ok(nodes) => {
+                        any_ok = true;
+                        if backoff.remove(base).is_some() {
+                            debug!("Discovery: relay {} recovered, backoff cleared", base);
+                        }
+                        for n in nodes {
+                            match merged.entry(n.instance_id.clone()) {
+                                Entry::Occupied(mut e) => {
+                                    let cur = e.get();
+                                    let newer = n.last_seen > cur.last_seen;
+                                    let upgrade = cur.status != "online" && n.status == "online";
+                                    if newer || upgrade {
+                                        e.insert(n);
+                                    }
+                                }
+                                Entry::Vacant(e) => {
                                     e.insert(n);
                                 }
                             }
-                            Entry::Vacant(e) => {
-                                e.insert(n);
-                            }
                         }
                     }
+                    Err(e) => {
+                        // Only a real dial failure lands here — a skipped relay
+                        // never entered `dial`, so this fires once per actual
+                        // transition into (or escalation of) backoff, not once
+                        // per caller invocation.
+                        let prev = backoff.get(base).copied().unwrap_or_default();
+                        let next = relay_backoff_next(&prev, false, now);
+                        if let Some(until) = next.skip_until {
+                            warn!(
+                                "Discovery: relay {} unreachable ({}) — backing off {}s (failure {})",
+                                base,
+                                e,
+                                (until - now).as_secs(),
+                                next.consecutive_failures
+                            );
+                        }
+                        backoff.insert(base.clone(), next);
+                        last_err = Some(e);
+                    }
                 }
-                Err(e) => last_err = Some(e),
             }
         }
 
@@ -920,5 +1038,80 @@ mod payload_order_tests {
         let c1 = RelayClient::new_multi(&relays, "n", "mesh-aaaa");
         let c1b = RelayClient::new_multi(&relays, "n", "mesh-aaaa");
         assert_eq!(c1.payload_order(), c1b.payload_order(), "stable per mesh");
+    }
+}
+
+// ── Per-relay discovery backoff state machine ────────────────────────────────
+
+#[cfg(test)]
+mod relay_backoff_tests {
+    use super::*;
+
+    #[test]
+    fn relay_backoff_failure_escalates_then_caps() {
+        let now = Instant::now();
+        let mut st = RelayBackoffState::default();
+
+        // First failure backs off immediately (unlike the futility 3-strike
+        // rule — a discovery caller can be invoked far more often than the
+        // 60s sync cycle, so waiting for 3 strikes would still storm).
+        st = relay_backoff_next(&st, false, now);
+        assert_eq!(st.consecutive_failures, 1);
+        assert_eq!(st.skip_until, Some(now + Duration::from_secs(30)));
+
+        st = relay_backoff_next(&st, false, now);
+        assert_eq!(st.consecutive_failures, 2);
+        assert_eq!(st.skip_until, Some(now + Duration::from_secs(120)));
+
+        st = relay_backoff_next(&st, false, now);
+        assert_eq!(st.consecutive_failures, 3);
+        assert_eq!(st.skip_until, Some(now + Duration::from_secs(600)));
+
+        // Capped — further failures stay at 10 minutes.
+        st = relay_backoff_next(&st, false, now);
+        assert_eq!(st.consecutive_failures, 4);
+        assert_eq!(
+            st.skip_until,
+            Some(now + Duration::from_secs(600)),
+            "capped at 10min"
+        );
+    }
+
+    #[test]
+    fn relay_backoff_success_resets() {
+        let now = Instant::now();
+        let mut st = RelayBackoffState::default();
+        st = relay_backoff_next(&st, false, now);
+        st = relay_backoff_next(&st, false, now);
+        assert_eq!(st.consecutive_failures, 2);
+
+        let after_success = relay_backoff_next(&st, true, now);
+        assert_eq!(after_success, RelayBackoffState::default());
+    }
+
+    #[test]
+    fn relay_backoff_skip_while_parked() {
+        let now = Instant::now();
+        let mut st = RelayBackoffState::default();
+
+        // No failures yet: never skipped.
+        assert!(!relay_should_skip(Some(&st), now));
+        assert!(!relay_should_skip(None, now));
+
+        st = relay_backoff_next(&st, false, now);
+        // Still inside the 30s window: skip.
+        assert!(relay_should_skip(Some(&st), now));
+        assert!(relay_should_skip(Some(&st), now + Duration::from_secs(29)));
+        // Window elapsed: dial again.
+        assert!(!relay_should_skip(Some(&st), now + Duration::from_secs(31)));
+    }
+
+    #[test]
+    fn relay_backoff_delay_schedule() {
+        assert_eq!(relay_backoff_delay(0), Duration::ZERO);
+        assert_eq!(relay_backoff_delay(1), Duration::from_secs(30));
+        assert_eq!(relay_backoff_delay(2), Duration::from_secs(120));
+        assert_eq!(relay_backoff_delay(3), Duration::from_secs(600));
+        assert_eq!(relay_backoff_delay(99), Duration::from_secs(600));
     }
 }

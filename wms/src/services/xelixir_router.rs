@@ -553,6 +553,14 @@ pub async fn execute_local(state: &Arc<AppState>, command: &str) -> Result<Value
             state.agent_controller.stop_agent().await;
             Ok(json!({ "xelixir_status": "stopped" }))
         }
+        // Restart the agent in place, keeping its access token. Needed since
+        // the agent runs in its own transient systemd unit and therefore does
+        // NOT ride a WMS restart any more — an agent-binary upgrade is picked
+        // up here (see services::agent_manager module docs).
+        "restart" => {
+            state.agent_controller.restart_agent().await?;
+            Ok(json!({ "xelixir_status": "running" }))
+        }
         other => Err(format!("unknown command '{}'", other)),
     }
 }

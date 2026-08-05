@@ -13,6 +13,8 @@
     let aiUsage = null; // { used_24h, calls_24h, promo_cap }
     let boardStatus = 'unknown'; // 'online' | 'offline' | 'unknown'
     let boardUrl = 'https://9eck.com';
+    // The paid relay polygon this node heartbeats to: [{url, status}].
+    let relayServers = [];
 
     async function fetchAiUsage() {
         try {
@@ -113,6 +115,7 @@
                 if (!Array.isArray(body)) {
                     boardStatus = body.board || 'unknown';
                     if (body.board_url) boardUrl = body.board_url;
+                    relayServers = Array.isArray(body.relays) ? body.relays : [];
                 }
                 // Filter out self from peers list (shown separately)
                 meshNodes = selfStatus
@@ -225,6 +228,48 @@
         kindRank(a) - kindRank(b) ||
         nodeName(a.base_url, a.instance_id).localeCompare(nodeName(b.base_url, b.instance_id)));
 
+    // Relay servers collapse into ONE compact row (locator icon + "eck1 ·
+    // eck2 · eck3" with status dots). Two sources merged by hostname so the
+    // same server never shows twice: mesh-roster RELAY nodes (registry
+    // heartbeats, carry last_seen) and the paid polygon from RELAY_URLS
+    // (live health-check — wins when both know the host).
+    $: relayLine = (() => {
+        const map = new Map();
+        for (const n of meshNodes) {
+            if (nodeKind(n.base_url, n.role) !== 'RELAY') continue;
+            const host = domainOf(n.base_url);
+            if (!host) continue;
+            const status = (n.status === 'online' || n.status === 'active') ? 'online'
+                : n.status === 'degraded' ? 'degraded' : 'offline';
+            map.set(host, { host, status, tip: `${host} — ${fmtAge(n.last_seen)}` });
+        }
+        for (const r of relayServers) {
+            const host = relayHost(r.url);
+            const tip = `${host} — ${r.status === 'online'
+                ? tr('mesh.relay_node_online_tip')
+                : tr('mesh.relay_node_offline_tip')}`;
+            map.set(host, { host, status: r.status, tip });
+        }
+        return [...map.values()].sort((a, b) => a.host.localeCompare(b.host));
+    })();
+
+    // One aggregate dot for the whole relay row: green = every server
+    // reachable, red = none, yellow = anything in between.
+    $: relayAgg = (() => {
+        if (!relayLine.length) return null;
+        const up = relayLine.filter((r) => r.status === 'online').length;
+        const status = up === relayLine.length ? 'online' : up === 0 ? 'offline' : 'degraded';
+        return { status, up, total: relayLine.length };
+    })();
+
+    // Roster rows minus the relays now living in the combined line.
+    $: displayNodes = sortedNodes.filter((n) => nodeKind(n.base_url, n.role) !== 'RELAY');
+
+    // "eck1.com" → "eck1" — the dot row is tight on space.
+    function shortHost(host) {
+        return host.split('.')[0] || host;
+    }
+
     // Display domain for the board chip: hostname of boardUrl, falling back
     // to the default board domain if the URL is unparseable.
     $: boardDomain = (() => {
@@ -249,6 +294,15 @@
         return Math.max(0, Date.now() - t);
     }
 
+    // Hostname of a relay URL for the chip label ("http://eck1.com:3201" → "eck1.com").
+    function relayHost(url) {
+        try {
+            return new URL(url).hostname || url;
+        } catch {
+            return url;
+        }
+    }
+
     // Human-readable "last seen" for the dot tooltip.
     function fmtAge(lastSeen) {
         const a = ageMs(lastSeen);
@@ -271,7 +325,9 @@
         </div>
     {:else}
         {#if budgetLine}
-            <div class="mesh-node ai-budget" title={budgetLine.tip}>
+            <!-- Row tint mirrors the other chips: green = healthy budget,
+                 yellow = won't last, dimmed red = running on credit. -->
+            <div class="mesh-node ai-budget" class:online={budgetLine.cls === 'ok'} class:degraded={budgetLine.cls === 'warn'} class:offline={budgetLine.cls === 'over'} title={budgetLine.tip}>
                 <span class="node-icon">🤖</span>
                 <span class="node-label">{budgetLine.label}</span>
                 <span class="ai-dot {budgetLine.cls}"></span>
@@ -292,19 +348,32 @@
                 <span class="node-icon">📡</span>
                 <span class="node-label">{$t('mesh.relay_offline')}</span>
             </div>
-        {:else if meshNodes.length === 0}
+        {:else if displayNodes.length === 0 && relayLine.length === 0}
+            <!-- Warn only when the mesh is truly alone — visible relay
+                 servers are connectivity enough, no scary row next to them. -->
             <div class="mesh-node offline">
                 <span class="node-icon">⚠️</span>
                 <span class="node-label">{$t('mesh.no_peers')}</span>
             </div>
         {:else}
-            {#each sortedNodes as node}
+            {#each displayNodes as node}
                 <div class="mesh-node" class:online={node.status === 'online' || node.status === 'active'} class:degraded={node.status === 'degraded'} class:offline={node.status === 'offline'}>
                     <span class="node-icon">{iconFor(node)}</span>
                     <span class="node-label">{getNodeLabel(node)}</span>
                     <span class="node-status" class:online={node.status === 'online' || node.status === 'active'} class:degraded={node.status === 'degraded'} class:offline={node.status === 'offline'} title={fmtAge(node.last_seen)}></span>
                 </div>
             {/each}
+        {/if}
+        {#if relayLine.length}
+            <!-- Names carry per-server state (green/red each); the single dot
+                 on the right is the aggregate: all up / some up / none up. -->
+            <div class="mesh-node relay-line" class:online={relayAgg.status === 'online'} class:degraded={relayAgg.status === 'degraded'} class:offline={relayAgg.status === 'offline'}>
+                <span class="node-icon">📡</span>
+                {#each relayLine as r (r.host)}
+                    <span class="relay-name" title={r.tip} class:online={r.status === 'online'} class:degraded={r.status === 'degraded'} class:offline={r.status === 'offline'}>{shortHost(r.host)}</span>
+                {/each}
+                <span class="node-status agg" class:online={relayAgg.status === 'online'} class:degraded={relayAgg.status === 'degraded'} class:offline={relayAgg.status === 'offline'} title={`${relayAgg.up}/${relayAgg.total}`}></span>
+            </div>
         {/if}
         {#if boardStatus !== 'unknown'}
             <div class="mesh-node" class:online={boardStatus === 'online'} class:offline={boardStatus === 'offline'}
@@ -414,7 +483,13 @@
         box-shadow: 0 0 6px rgba(220, 53, 69, 0.6);
     }
 
-    .mesh-node.ai-budget .node-label { color: #9aa4b2; }
+    .relay-line { gap: 8px; }
+    .relay-line .node-status.agg { margin-left: auto; }
+    .relay-name { font-weight: 600; color: #ccc; }
+    .relay-name.online { color: #28a745; }
+    .relay-name.degraded { color: #ffc107; }
+    .relay-name.offline { color: #dc3545; }
+
     .ai-dot {
         width: 6px;
         height: 6px;

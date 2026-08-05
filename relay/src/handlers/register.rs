@@ -103,7 +103,23 @@ fn evaluate_license(token: Option<&str>, mesh_id: &str) -> (bool, String, i64) {
     let now = chrono::Utc::now().timestamp();
 
     match eck_core::licensing::verify(&pubkey, token, now, grace) {
-        Ok(c) if c.sub == mesh_id => (c.is_paid(), c.tier, c.exp),
+        Ok(c) if c.sub == mesh_id => {
+            // Mid-period kill switch: a CRL entry beats a valid signature. The
+            // `paid` flag decays at this node's next heartbeat, so revocation
+            // takes effect within the heartbeat cadence, no restart needed.
+            if let Some(crl) = eck_core::licensing::load_revocations(&pubkey) {
+                if crl.revokes_license_sub(&c.sub) {
+                    tracing::warn!(
+                        "License for mesh '{}' (tenant '{}') is REVOKED (crl updated {}) — treating as free",
+                        c.sub,
+                        c.tenant,
+                        crl.updated
+                    );
+                    return free();
+                }
+            }
+            (c.is_paid(), c.tier, c.exp)
+        }
         Ok(c) => {
             tracing::warn!(
                 "License sub mismatch: token bound to '{}', heartbeat mesh '{}'",

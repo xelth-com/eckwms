@@ -1,11 +1,14 @@
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use eck_core::db::SurrealDb;
+use eck_core::plugin::{decode_ingest_output, encode_ingest_input, HookKind, IngestTransformInput, PluginCallContext};
 use eck_core::utils::anonymizer::{mask_person_names_heuristic, obfuscate_pii, scrub_pii_regex};
 use eck_core::utils::filestore::FileStore;
 use serde_json::{json, Value};
 use std::io::Cursor;
-use tracing::debug;
+use tracing::{debug, warn};
+
+use crate::PluginRuntime;
 
 /// Compute a 128-bit MurmurHash3 of the given bytes, returned as 32-char hex string.
 pub fn murmur3_hex(data: &[u8]) -> String {
@@ -481,6 +484,172 @@ pub fn summary_seed_hash(meta: &Value) -> String {
     stable_seed_hash(&summary_seed)
 }
 
+/// Ingest source tag handed to the `INGEST_TRANSFORM` hook (design
+/// `.eck/WASM_ARCHITECTURE.md` §3). This module only ever imports Zoho Desk
+/// payloads, so the tag is a literal — a second source would get its own
+/// importer function with its own tag, not a parameter threaded through here.
+const INGEST_SOURCE: &str = "zoho";
+
+/// `INGEST_TRANSFORM` `meta_patch` allow-list (design §3: "Host validates the
+/// patch against an allow-list of writable meta fields"). Restricted to
+/// non-PII device/business attributes: the fields `extract_ticket_metadata_with_ner`
+/// itself already writes that carry no customer identity (`device_model`,
+/// `serial_number`, `status`, `ticket_number`, `manufacturing_date`), plus a
+/// small set of similarly-shaped business fields ("model" — an alias some
+/// integrators use instead of `device_model`; `category`, `priority`) the
+/// built-in extractor doesn't populate today but a plugin plausibly would.
+///
+/// Deliberately EXCLUDES every identity field the extractor writes —
+/// `customer`, `email`, `phone`, `company`, `address`, `city`, `zip`,
+/// `subject`, `description`, `assignee_id`, `assignee_name` — those stay
+/// host-authoritative; a patch touching them is dropped (see
+/// `apply_ingest_meta_patch`).
+const INGEST_TRANSFORM_ALLOWED_META_FIELDS: &[&str] = &[
+    "device_model",
+    "model",
+    "serial_number",
+    "status",
+    "ticket_number",
+    "manufacturing_date",
+    "category",
+    "priority",
+];
+
+/// Same masking pass `host_anonymize` runs (`core/src/plugin/host.rs`):
+/// person-name heuristic first, then the regex PII backstop. Defense in
+/// depth — a plugin's sandbox has no egress, so the only way it could smuggle
+/// clear PII into a meshed record is through its own output, which is
+/// re-masked here before it ever lands in `meta`.
+fn anonymize_plugin_string(text: &str) -> String {
+    let (names_masked, _) = mask_person_names_heuristic(text);
+    let (scrubbed, _) = scrub_pii_regex(&names_masked);
+    scrubbed
+}
+
+/// Apply a plugin's proposed `meta_patch` onto `meta`, keeping only
+/// allow-listed fields (design §3: "a proposal, not a write"). Every applied
+/// STRING value is re-masked first; non-string values (numbers/bools) pass
+/// through as-is — the allow-list is what keeps them out of identity fields.
+fn apply_ingest_meta_patch(meta: &mut Value, patch: &serde_json::Map<String, Value>, plugin_name: &str) {
+    let Some(obj) = meta.as_object_mut() else { return };
+    for (field, value) in patch {
+        if !INGEST_TRANSFORM_ALLOWED_META_FIELDS.contains(&field.as_str()) {
+            debug!(
+                "[plugin] ingest_transform: plugin '{}' proposed non-allow-listed meta field '{}' — dropped",
+                plugin_name, field
+            );
+            continue;
+        }
+        let safe_value = match value {
+            Value::String(s) => Value::String(anonymize_plugin_string(s)),
+            other => other.clone(),
+        };
+        obj.insert(field.clone(), safe_value);
+    }
+}
+
+/// Run every ENABLED, non-locally-disabled registry plugin declaring the
+/// `INGEST_TRANSFORM` hook (design §3) and fold its proposed `meta_patch`
+/// into `meta`. A plugin trap/timeout/bad-decode is logged (warn), counted
+/// into the registry's node-local failure latch, and treated as an empty
+/// patch — it must NEVER fail the ticket import (kiosk-OTA lesson: a bad
+/// plugin degrades one hook on one node, never the process).
+async fn apply_ingest_transform_hook(
+    runtime: &PluginRuntime,
+    db: &SurrealDb,
+    ticket_id: &str,
+    raw_payload: &Value,
+    meta: &mut Value,
+) {
+    let statuses = match runtime.registry.list(db).await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("[plugin] ingest_transform: registry list failed (ticket {ticket_id}): {e}");
+            return;
+        }
+    };
+
+    let hook_name = HookKind::IngestTransform.export_name();
+    let candidates: Vec<_> = statuses
+        .into_iter()
+        .filter(|s| s.plugin.enabled && !s.locally_disabled)
+        .filter(|s| s.plugin.hooks.iter().any(|h| h.name == hook_name))
+        .collect();
+    if candidates.is_empty() {
+        return;
+    }
+
+    let input = IngestTransformInput {
+        source: INGEST_SOURCE.to_string(),
+        raw_payload: raw_payload.clone(),
+        existing_meta: meta.clone(),
+    };
+    let input_bytes = match encode_ingest_input(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!("[plugin] ingest_transform: failed to encode input (ticket {ticket_id}): {e}");
+            return;
+        }
+    };
+
+    for status in candidates {
+        let plugin = status.plugin;
+        let sha = plugin.sha256.clone();
+
+        // Bridge async registry resolve -> sync byte provider: the engine's
+        // compiled-module cache is keyed on (sha, capability-set), so on a
+        // cache hit `run` never calls the provider at all — skip the async
+        // CAS fetch in that case (engine.is_cached is a cheap sync check).
+        let bytes_result: Result<Vec<u8>, String> =
+            if runtime.engine.is_cached(&sha, &plugin.capabilities) {
+                Ok(Vec::new())
+            } else {
+                runtime.registry.resolve(&sha).await.map_err(|e| e.to_string())
+            };
+
+        let ctx = PluginCallContext::new(hook_name, ticket_id.to_string(), Some(INGEST_SOURCE.to_string()));
+
+        let call_result = runtime.engine.run(
+            &sha,
+            &plugin.capabilities,
+            move || bytes_result,
+            hook_name,
+            &input_bytes,
+            ctx,
+        );
+
+        let output = match call_result {
+            Ok(out_bytes) => match decode_ingest_output(&out_bytes) {
+                Ok(out) => {
+                    runtime.registry.record_success(&sha);
+                    out
+                }
+                Err(e) => {
+                    warn!(
+                        "[plugin] ingest_transform: plugin '{}' returned undecodable output (ticket {}): {e}",
+                        plugin.name, ticket_id
+                    );
+                    runtime.registry.record_failure(&sha);
+                    continue;
+                }
+            },
+            Err(e) => {
+                warn!(
+                    "[plugin] ingest_transform: plugin '{}' failed (ticket {}): {e}",
+                    plugin.name, ticket_id
+                );
+                runtime.registry.record_failure(&sha);
+                continue;
+            }
+        };
+
+        for note in &output.notes {
+            debug!("[plugin] ingest_transform note from '{}' (ticket {}): {note}", plugin.name, ticket_id);
+        }
+        apply_ingest_meta_patch(meta, &output.meta_patch, &plugin.name);
+    }
+}
+
 /// Import or update a Zoho Desk ticket.
 /// - `document` table: lightweight metadata + AI summary (synced across mesh)
 /// - `document_raw` table: full Zoho payload (local only, not synced)
@@ -489,6 +658,7 @@ pub async fn import_ticket(
     ticket_id: &str,
     ticket: &Value,
     instance_id: &str,
+    plugins: Option<&PluginRuntime>,
 ) -> Result<ImportResult, surrealdb::Error> {
     let id_owned = ticket_id.to_string();
 
@@ -498,7 +668,16 @@ pub async fn import_ticket(
     // NER (when enabled) runs BEFORE hashing and is deterministic, so the
     // hash stays stable across incremental imports on the same node.
     let ner = subject_ner(ticket).await;
-    let meta = extract_ticket_metadata_with_ner(ticket, ner.as_ref());
+    let mut meta = extract_ticket_metadata_with_ner(ticket, ner.as_ref());
+
+    // `INGEST_TRANSFORM` (design §3): runs BEFORE hashing so a plugin-patched
+    // field participates in change detection the same as a built-in one, and
+    // BEFORE PII tokenization — everything a plugin proposes lands through
+    // the same re-masking pass built-in extraction gets. `None` (runtime off
+    // or no plugins enabled) is a pure no-op — zero behavior change.
+    if let Some(runtime) = plugins {
+        apply_ingest_transform_hook(runtime, db, ticket_id, ticket, &mut meta).await;
+    }
     // stable_seed_hash: meta.description may embed re-signed Zoho image URLs;
     // a raw hash rewrites meta + bumps the vclock on every re-fetch (pure
     // mesh churn even when the summary gate below holds).
@@ -521,6 +700,22 @@ pub async fn import_ticket(
 
     if old_hash == new_hash {
         debug!("Ticket {} unchanged (hash={})", ticket_id, &new_hash[..8]);
+        // Even when the extracted meta (and thus source_hash) is identical, a
+        // cf-carrying detail payload must still replace a degraded list-era
+        // shell in document_raw — tickets whose meta predates the shell
+        // overwrite otherwise stay backfill candidates forever, re-buying the
+        // same Zoho detail fetch every run. Conditional on the degraded state
+        // so steady-state unchanged imports write nothing.
+        let _: Option<Value> = db
+            .query(
+                "UPDATE type::record($raw_rid) SET payload = $payload, updated_at = $now \
+                 WHERE payload.customFields IS NONE OR payload.customFields = {}",
+            )
+            .bind(("raw_rid", format!("document_raw:`{}`", id_owned)))
+            .bind(("payload", ticket.clone()))
+            .bind(("now", chrono::Utc::now().to_rfc3339()))
+            .await?
+            .take(0)?;
         return Ok(ImportResult { changed: false, id: id_owned });
     }
 
@@ -1117,5 +1312,230 @@ mod tests {
             "plainText": "", "fromEmailAddress": "k@example.de", "to": "s@example-med.de", "summary": "Fehlerbild",
         });
         assert_ne!(stable_seed_hash(&fetch1), stable_seed_hash(&real_change));
+    }
+
+    // --- INGEST_TRANSFORM seam (design .eck/WASM_ARCHITECTURE.md §3) -------
+    //
+    // Hermetic: the plugin bytes are hand-written WAT compiled at test time
+    // (same pattern as core/src/plugin/engine.rs's fixtures — no network, no
+    // checked-in binary) and the DB is an in-memory `Any` engine carrying only
+    // the tables `import_ticket` and the registry touch. Raw payloads below
+    // are SYNTHETIC Zoho-shaped JSON, never real ticket content.
+
+    use eck_core::plugin::{HostIdentity, PluginEngine, PluginHookRef, PluginRegistry};
+    use eck_core::utils::filestore::{sha256_hex, FileStore};
+    use std::sync::Arc;
+
+    /// Fresh in-memory DB carrying only the tables the seam touches.
+    async fn mem_db_for_ingest() -> SurrealDb {
+        let db = surrealdb::engine::any::connect("mem://")
+            .await
+            .expect("in-memory Any DB");
+        db.use_ns("test").use_db("test").await.unwrap();
+        db.query(
+            "DEFINE TABLE IF NOT EXISTS document SCHEMALESS; \
+             DEFINE TABLE IF NOT EXISTS document_raw SCHEMALESS; \
+             DEFINE TABLE IF NOT EXISTS ai_task SCHEMALESS; \
+             DEFINE TABLE IF NOT EXISTS wasm_plugin SCHEMALESS;",
+        )
+        .await
+        .unwrap()
+        .check()
+        .unwrap();
+        db
+    }
+
+    /// Scratch CAS dir for one test's `PluginRegistry`; caller removes it.
+    fn temp_filestore() -> (Arc<FileStore>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("eck_wms_plugin_seam_{}", uuid::Uuid::new_v4()));
+        (Arc::new(FileStore::new(dir.to_str().unwrap())), dir)
+    }
+
+    /// Hand-written extism-ABI WAT: ignores its input and always emits the
+    /// same fixed byte string as its output (mirrors ECHO_WAT/LOG_SPAM_WAT in
+    /// `core/src/plugin/engine.rs`, generalized to an arbitrary payload).
+    fn fixed_output_wat(export_name: &str, payload: &[u8]) -> String {
+        let mut stores = String::new();
+        for (i, b) in payload.iter().enumerate() {
+            stores.push_str(&format!(
+                "(call $store_u8 (i64.add (local.get $out) (i64.const {i})) (i32.const {b}))\n"
+            ));
+        }
+        format!(
+            r#"(module
+  (import "extism:host/env" "alloc" (func $alloc (param i64) (result i64)))
+  (import "extism:host/env" "store_u8" (func $store_u8 (param i64 i32)))
+  (import "extism:host/env" "output_set" (func $output_set (param i64 i64)))
+  (func (export "{export_name}") (result i32)
+    (local $out i64)
+    (local.set $out (call $alloc (i64.const {len})))
+    {stores}
+    (call $output_set (local.get $out) (i64.const {len}))
+    (i32.const 0)))
+"#,
+            len = payload.len(),
+        )
+    }
+
+    /// Traps unconditionally on entry — used to prove a bad plugin cannot fail
+    /// ticket ingest.
+    const TRAP_WAT: &str = r#"
+        (module
+          (func (export "ingest_transform") (result i32)
+            unreachable))
+    "#;
+
+    fn synthetic_ticket(number: &str) -> Value {
+        json!({
+            "subject": "Ticket Betreff Testfall",
+            "ticketNumber": number,
+            "status": "Open",
+            "contact": {
+                "firstName": "Testina",
+                "lastName": "Kundenfall",
+                "email": "testina@example-fake.de",
+            },
+            "cf": {
+                "cf_acme_model": "770",
+                "Serial_Number": "SN-TEST-1",
+            },
+            "description": "Synthetic test ticket body for the ingest_transform seam test.",
+            "createdTime": "2026-01-01T00:00:00Z",
+        })
+    }
+
+    #[tokio::test]
+    async fn ingest_transform_applies_allowlisted_field_masks_pii_drops_forbidden_field() {
+        std::env::set_var("SYNC_SECRET", "test_secret");
+        let db = mem_db_for_ingest().await;
+        let (filestore, dir) = temp_filestore();
+
+        // Fixed plugin output: one allow-listed field ("device_model") whose
+        // value embeds a fake person name + email (must come out masked), and
+        // one non-allow-listed field ("customer_email") that must be dropped
+        // entirely regardless of its content.
+        let output_json = serde_json::to_vec(&json!({
+            "meta_patch": {
+                "device_model": "Acme 770 — Katharina Niedermayer meldet sich unter a.b@example.de",
+                "customer_email": "leak@example.de",
+            },
+            "notes": ["mapped from cf_acme_model"],
+        }))
+        .unwrap();
+        let wasm = wat::parse_str(fixed_output_wat("ingest_transform", &output_json))
+            .expect("fixture WAT should compile");
+
+        let registry = PluginRegistry::new(filestore);
+        registry
+            .install(
+                &db,
+                &wasm,
+                "demo-ingest",
+                "v1",
+                vec![PluginHookRef { name: "ingest_transform".to_string(), abi: 1 }],
+                vec![],
+                "test-node",
+            )
+            .await
+            .expect("install should succeed");
+        registry.enable(&db, "demo-ingest").await.expect("enable should succeed");
+
+        let engine = PluginEngine::with_default_limits(HostIdentity::new("test-node", "dev"));
+        let runtime = PluginRuntime { engine, registry };
+
+        let ticket = synthetic_ticket("90001");
+        let result = import_ticket(&db, "TICKET-SEAM-1", &ticket, "test-node", Some(&runtime))
+            .await
+            .expect("import_ticket must succeed even with a plugin installed");
+        assert!(result.changed);
+
+        let stored: Option<Value> = db.select(("document", "TICKET-SEAM-1")).await.unwrap();
+        let meta = stored.expect("document row must exist").get("meta").cloned().unwrap();
+        let device_model = meta["device_model"].as_str().unwrap();
+
+        // Allow-listed field applied...
+        assert!(device_model.contains("Acme 770"), "business content damaged: {device_model}");
+        // ...but re-masked before landing in meta (defense in depth: the same
+        // pass host_anonymize runs).
+        assert!(!device_model.contains("Katharina"), "person leaked: {device_model}");
+        assert!(!device_model.contains("a.b@example.de"), "email leaked: {device_model}");
+        assert!(device_model.contains("Name_"), "no Name token: {device_model}");
+        assert!(device_model.contains("Email_"), "no Email token: {device_model}");
+
+        // Non-allow-listed field dropped outright — never reaches meta, masked
+        // or not.
+        assert!(meta.get("customer_email").is_none(), "forbidden field leaked into meta: {meta}");
+
+        // Built-in extraction still ran normally for untouched fields.
+        assert_eq!(meta["status"].as_str(), Some("Open"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn trapping_ingest_transform_plugin_does_not_fail_ticket_import() {
+        std::env::set_var("SYNC_SECRET", "test_secret");
+        let db = mem_db_for_ingest().await;
+        let (filestore, dir) = temp_filestore();
+
+        let wasm = wat::parse_str(TRAP_WAT).expect("trap fixture WAT should compile");
+        let sha = sha256_hex(&wasm);
+
+        let registry = PluginRegistry::new(filestore);
+        registry
+            .install(
+                &db,
+                &wasm,
+                "trap-plugin",
+                "v1",
+                vec![PluginHookRef { name: "ingest_transform".to_string(), abi: 1 }],
+                vec![],
+                "test-node",
+            )
+            .await
+            .expect("install should succeed");
+        registry.enable(&db, "trap-plugin").await.expect("enable should succeed");
+
+        let engine = PluginEngine::with_default_limits(HostIdentity::new("test-node", "dev"));
+        let runtime = PluginRuntime { engine, registry };
+
+        // Three consecutive imports (three distinct tickets, so the built-in
+        // hash-unchanged short-circuit never skips the hook) trip the
+        // registry's node-local failure latch (default threshold 3) — and
+        // every single one must still land its ticket successfully.
+        for i in 1..=3 {
+            let ticket = synthetic_ticket(&format!("9000{i}"));
+            let result = import_ticket(
+                &db,
+                &format!("TICKET-SEAM-TRAP-{i}"),
+                &ticket,
+                "test-node",
+                Some(&runtime),
+            )
+            .await
+            .expect("a trapping plugin must never fail ticket import");
+            assert!(result.changed);
+
+            let stored: Option<Value> = db.select(("document", format!("TICKET-SEAM-TRAP-{i}"))).await.unwrap();
+            let meta = stored.expect("document row must exist").get("meta").cloned().unwrap();
+            // Built-in extraction landed untouched — the trap produced an
+            // empty (unusable) patch, not a crash.
+            assert_eq!(meta["status"].as_str(), Some("Open"));
+        }
+        assert!(
+            runtime.registry.is_locally_disabled(&sha),
+            "3 consecutive traps must trip the node-local failure latch"
+        );
+
+        // A 4th ticket: the plugin is now locally-disabled, so the seam must
+        // skip invoking it entirely (respecting the latch) — import still
+        // succeeds normally.
+        let ticket = synthetic_ticket("90009");
+        let result = import_ticket(&db, "TICKET-SEAM-TRAP-4", &ticket, "test-node", Some(&runtime))
+            .await
+            .expect("import must succeed while the plugin is locally-disabled");
+        assert!(result.changed);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

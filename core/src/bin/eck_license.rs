@@ -30,6 +30,9 @@ fn main() {
         "keygen" => keygen(),
         "issue" => issue_cmd(rest),
         "verify" => verify_cmd(rest),
+        "crl-sign" => crl_sign_cmd(rest),
+        "crl-verify" => crl_verify_cmd(rest),
+        "plugin-sign" => plugin_sign_cmd(rest),
         "fleet-root" => fleet_root_cmd(),
         "admin-cert" => admin_cert_cmd(rest),
         "cert-verify" => cert_verify_cmd(rest),
@@ -46,6 +49,11 @@ const USAGE: &str = "eck-license — 9eck license + fleet-admin minting\n\
   keygen\n\
   issue --priv <b64> --tenant <name> --mesh <mesh_id> [--tier paid] [--days 365] [--scope relay:payload ...]\n\
   verify --pub <b64> --token <token>\n\
+  # revocation list (mid-period kill switch; output goes to ECK_REVOCATION_FILE on relays)\n\
+  crl-sign --priv <b64> [--license-sub <mesh_id> ...] [--cert-subject <subject-or-pubkey> ...]\n\
+  crl-verify --pub <b64> --crl <token>\n\
+  # plugin artifact signing (marketplace layer 1)\n\
+  plugin-sign --priv <b64> --wasm <path>\n\
   # fleet-admin CA (who may run privileged ops) — SEPARATE root\n\
   fleet-root\n\
   admin-cert --root-priv <b64> [--admin-priv <b64>] [--label <s>] [--days 30] [--scope ops.<verb> ...]\n\
@@ -131,6 +139,102 @@ fn verify_cmd(args: &[String]) -> i32 {
         }
         Err(e) => {
             eprintln!("INVALID: {e}");
+            1
+        }
+    }
+}
+
+// ── revocation list + plugin signing ────────────────────────────────────────
+
+fn crl_sign_cmd(args: &[String]) -> i32 {
+    use eck_core::licensing::{issue_crl, RevocationList};
+    let priv_b64 = match flag(args, "--priv") {
+        Some(v) => v,
+        None => return missing("--priv"),
+    };
+    let license_subs = flags(args, "--license-sub");
+    let cert_subjects = flags(args, "--cert-subject");
+    if license_subs.is_empty() && cert_subjects.is_empty() {
+        eprintln!("note: signing an EMPTY CRL (revokes nothing) — valid, clears prior revocations");
+    }
+    let crl = RevocationList {
+        kind: String::new(), // forced by issue_crl
+        updated: chrono::Utc::now().timestamp(),
+        license_subs: license_subs.clone(),
+        cert_subjects: cert_subjects.clone(),
+    };
+    match issue_crl(&priv_b64, &crl) {
+        Ok(token) => {
+            eprintln!(
+                "# crl: {} license sub(s), {} cert subject(s), updated {}",
+                license_subs.len(),
+                cert_subjects.len(),
+                crl.updated
+            );
+            eprintln!("# write this single line to ECK_REVOCATION_FILE on every paid relay:");
+            println!("{token}");
+            0
+        }
+        Err(e) => {
+            eprintln!("crl-sign failed: {e}");
+            1
+        }
+    }
+}
+
+fn crl_verify_cmd(args: &[String]) -> i32 {
+    use eck_core::licensing::verify_crl;
+    let pub_b64 = match flag(args, "--pub") {
+        Some(v) => v,
+        None => return missing("--pub"),
+    };
+    let token = match flag(args, "--crl") {
+        Some(v) => v,
+        None => return missing("--crl"),
+    };
+    match verify_crl(&pub_b64, &token) {
+        Ok(crl) => {
+            println!("{}", serde_json::to_string_pretty(&crl).unwrap_or_default());
+            0
+        }
+        Err(e) => {
+            eprintln!("INVALID: {e}");
+            1
+        }
+    }
+}
+
+fn plugin_sign_cmd(args: &[String]) -> i32 {
+    use eck_core::licensing::sign_plugin_artifact;
+    let priv_b64 = match flag(args, "--priv") {
+        Some(v) => v,
+        None => return missing("--priv"),
+    };
+    let path = match flag(args, "--wasm") {
+        Some(v) => v,
+        None => return missing("--wasm"),
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("cannot read {path}: {e}");
+            return 1;
+        }
+    };
+    let sha = {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(&bytes))
+    };
+    match sign_plugin_artifact(&priv_b64, &sha) {
+        Ok(sig) => {
+            eprintln!("# artifact: {} ({} bytes)", path, bytes.len());
+            eprintln!("# pass BOTH to the install call (multipart fields wasm + signature):");
+            println!("sha256={sha}");
+            println!("signature={sig}");
+            0
+        }
+        Err(e) => {
+            eprintln!("plugin-sign failed: {e}");
             1
         }
     }

@@ -35,3 +35,24 @@ hedera-proto = "0.20"
 tonic = { version = "0.12", default-features = false, features = ["codegen", "prost", "transport", "tls", "tls-webpki-roots"] }
 prost = "0.13"
 prost-types = "0.14"
+# WASM plugin runtime (core/src/plugin). Extism host SDK on wasmtime/cranelift.
+# default-features = false is LOAD-BEARING: it drops http/register-http/register-filesystem
+# (URL+fs wasm loading and the plugin-side HTTP host fn) and with them the `ureq`/`url` TLS
+# HTTP client — so NO TLS/HTTP client is dragged in. `cargo tree -i openssl-sys` MUST stay
+# empty (invariant). We feed wasm bytes directly (Wasm::data) and expose zero I/O host
+# functions, so none of those features are needed.
+# `wasmtime-default-features` IS required though: it carries wasmtime's `std` feature, and
+# extism's own code assumes `wasmtime::Error: std::error::Error` — without it extism itself
+# will not compile (E0277 on every `?`). It pulls wasmtime's full default set (cranelift,
+# async, gc, threads, cache, …), none of which touch TLS/HTTP/openssl.
+extism = { version = "1.30", default-features = false, features = ["wasmtime-default-features"] }
+# Import-section reader for the plugin capability pre-check (host.rs): we enumerate a
+# module's imports BEFORE instantiation so a plugin importing a host fn it wasn't granted
+# is rejected as CapabilityDenied, not as an opaque "unknown import" link failure. Pure
+# Rust, already in the tree via wasmtime — no openssl. Pinned to the wasmtime-matching line.
+wasmparser = "0.245"
+
+[dev-dependencies]
+# Compile hand-written WAT fixtures to wasm at test time so `cargo test` stays hermetic
+# (no network, no checked-in binaries). Fixtures wrap the extism ABI kernel imports by hand.
+wat = "1"

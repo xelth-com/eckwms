@@ -2,10 +2,19 @@
     import { authStore } from '$lib/stores/authStore';
     import { onMount } from 'svelte';
     import { base } from '$app/paths';
+    import { goto } from '$app/navigation';
+    import { page } from '$app/stores';
     import { t } from '$lib/i18n';
 
     // Мы больше не делаем авто-редирект, чтобы пользователи могли прочитать о системе.
     // Состояние авторизации используется только для переключения кнопки Login/Dashboard.
+    // EXCEPTION — kiosk/public-observer sessions (exhibition nodes with
+    // ECK_PUBLIC_OBSERVER, or the local kiosk): those visitors should land in
+    // the dashboard, not on the landing page. `?stay=1` keeps the page readable.
+    $: if ($authStore.isKioskObserver && !$authStore.isLoading
+           && !$page.url.searchParams.has('stay')) {
+        goto(`${base || '/E'}/dashboard`);
+    }
 </script>
 
 <div class="landing-page">

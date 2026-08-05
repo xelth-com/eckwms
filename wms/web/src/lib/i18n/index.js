@@ -86,13 +86,36 @@ const NATIVE_NAMES = {
   en: 'English', de: 'Deutsch', ko: '한국어', ru: 'Русский',
   fr: 'Français', es: 'Español', it: 'Italiano', pl: 'Polski',
   tr: 'Türkçe', uk: 'Українська', nl: 'Nederlands', pt: 'Português',
-  zh: '中文', ja: '日本語',
+  zh: '中文', ja: '日本語', ar: 'العربية', ro: 'Română', hr: 'Hrvatski',
+  bg: 'Български', hi: 'हिन्दी', cs: 'Čeština', el: 'Ελληνικά',
+  he: 'עברית', hu: 'Magyar', sv: 'Svenska', da: 'Dansk', fi: 'Suomi',
+  sk: 'Slovenčina', lt: 'Lietuvių', lv: 'Latviešu', et: 'Eesti',
+  sl: 'Slovenščina', sr: 'Srpski', bs: 'Bosanski', no: 'Norsk',
 };
 export function localeName(code) {
   return NATIVE_NAMES[code] ?? code.toUpperCase();
 }
 
-export const locale = writable(FALLBACK);
+// Display default when nothing else decides (German-market product). FALLBACK
+// stays 'en' — it is the missing-KEY fallback, not the display default.
+const DEFAULT_LOCALE = 'de';
+
+/**
+ * Initial locale, pda.repair-style ladder: explicit device choice (the
+ * override survives before auth resolves) → browser's first language tag →
+ * German. applyUserLocale() refines this after login.
+ */
+function initialLocale() {
+  if (!browser) return FALLBACK;
+  try {
+    const saved = JSON.parse(localStorage.getItem(OVERRIDE_KEY) ?? 'null');
+    const c = normalize(saved?.locale);
+    if (c) return c;
+  } catch { /* fall through */ }
+  return normalize(navigator.language) ?? DEFAULT_LOCALE;
+}
+
+export const locale = writable(initialLocale());
 
 // Mirror the active locale onto <html lang> so CSS :lang() rules can pick
 // language-correct CJK font variants (see --font-family in app.css) and
@@ -185,7 +208,9 @@ export function setLocale(code, userId = null) {
 /**
  * Called on login / auth init with the authenticated user object.
  * Applies that user's saved override if it is THEIRS, else their
- * preferredLanguage, else keeps the fallback.
+ * preferredLanguage, else keeps the browser-derived initial locale.
+ * Shared observer accounts (public demo "Gast", kiosk walk-ups) skip the
+ * preference: one stored language must not override every visitor's browser.
  */
 export function applyUserLocale(user) {
   if (!browser || !user) return;
@@ -199,6 +224,7 @@ export function applyUserLocale(user) {
       }
     }
   } catch { /* fall through to preference */ }
+  if (user.role === 'observer') return;
   const pref = normalize(user.preferredLanguage);
   if (pref) locale.set(pref);
 }

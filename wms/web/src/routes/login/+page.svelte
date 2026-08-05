@@ -3,6 +3,7 @@
     import { authStore } from '$lib/stores/authStore';
     import { goto } from '$app/navigation';
     import { base } from '$app/paths';
+    import { page } from '$app/stores';
     import { t, tr } from '$lib/i18n';
 
     let email = '';
@@ -17,11 +18,17 @@
     let enableKiosk = false;
     let kioskMode = 'wms';
     let posEnabled = false;
+    // Exhibition nodes advertise the shared demo account (ECK_DEMO_LOGIN_HINT).
+    let demoLoginHint = '';
 
     async function checkPosStatus() {
         try {
             const res = await fetch('/api/pos/status');
-            if (res.ok) posEnabled = (await res.json()).enabled === true;
+            if (res.ok) {
+                const status = await res.json();
+                posEnabled = status.enabled === true;
+                demoLoginHint = typeof status.demo_login_hint === 'string' ? status.demo_login_hint : '';
+            }
         } catch (e) {
             // older server without the endpoint — keep the mode select hidden
         }
@@ -69,7 +76,11 @@
     // localhost), skip the password form and go straight to the dashboard.
     // Guarded on `isKioskObserver` so a real user who deliberately navigates
     // to /login to switch accounts isn't kicked back out.
-    $: if ($authStore.isKioskObserver && !$authStore.isLoading) {
+    // `?real=1` is the staff escape hatch on public-observer (exhibition)
+    // nodes, where EVERY anonymous load gets a kiosk-style session and the
+    // redirect would otherwise make the password form unreachable.
+    $: if ($authStore.isKioskObserver && !$authStore.isLoading
+           && !$page.url.searchParams.has('real')) {
         goto(`${base || '/E'}/dashboard`);
     }
 
@@ -159,6 +170,10 @@
                     </div>
                 {:else}
                     <div class="card-title">{$t('login.rust_edition')}</div>
+                {/if}
+
+                {#if demoLoginHint}
+                    <div class="demo-hint">{$t('shell.demo_login')}: <strong>{demoLoginHint}</strong></div>
                 {/if}
 
                 <form on:submit|preventDefault={handleLogin}>
@@ -444,6 +459,17 @@
     button:disabled {
         opacity: 0.7;
         cursor: not-allowed;
+    }
+
+    .demo-hint {
+        color: #8ab4f8;
+        background: rgba(138, 180, 248, 0.08);
+        border: 1px solid rgba(138, 180, 248, 0.25);
+        padding: 0.6rem;
+        border-radius: 4px;
+        margin-bottom: 1rem;
+        font-size: 0.88rem;
+        text-align: center;
     }
 
     .error-msg {

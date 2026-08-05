@@ -1,8 +1,8 @@
 use axum::{extract::Query, extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::Arc;
-use tracing::info;
+use std::sync::{Arc, OnceLock};
+use tracing::{debug, info};
 
 use crate::AppState;
 
@@ -12,12 +12,31 @@ fn db_err(e: impl std::fmt::Display) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }
 
-// Company HQ — mirrors `geocoder.rs` HOME_OFFICE_{LAT,LNG}. Kept as a local
-// const here (rather than re-exporting from `geocoder.rs`) because the
+// Company HQ — mirrors `geocoder.rs` `hq_fallback_coords()`. Kept as a local
+// function here (rather than re-exporting from `geocoder.rs`) because the
 // geocoder module is a long-running background worker and pulling it into
 // the request path for a single pair of floats isn't worth the coupling.
-const HOME_OFFICE_LAT: f64 = 50.1407;
-const HOME_OFFICE_LNG: f64 = 8.5721;
+//
+/// HQ fallback pin for the `reset_home` operator action, from
+/// `ECK_GEO_FALLBACK_LAT` / `ECK_GEO_FALLBACK_LNG` (parsed once). `None` when
+/// either var is unset or unparseable — a deployment without a configured HQ
+/// simply can't fulfil this request (see `fix_location`'s `reset_home` arm).
+fn hq_fallback_coords() -> Option<(f64, f64)> {
+    static V: OnceLock<Option<(f64, f64)>> = OnceLock::new();
+    *V.get_or_init(|| {
+        let lat = std::env::var("ECK_GEO_FALLBACK_LAT").ok();
+        let lng = std::env::var("ECK_GEO_FALLBACK_LNG").ok();
+        parse_hq_fallback(lat.as_deref(), lng.as_deref())
+    })
+}
+
+/// Pure parser for the HQ fallback pin — unit-testable without touching
+/// process env.
+fn parse_hq_fallback(lat: Option<&str>, lng: Option<&str>) -> Option<(f64, f64)> {
+    let lat: f64 = lat?.trim().parse().ok()?;
+    let lng: f64 = lng?.trim().parse().ok()?;
+    Some((lat, lng))
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -328,6 +347,18 @@ pub async fn fix_location(
 
     match req.mode.as_str() {
         "reset_home" => {
+            let Some((lat, lng)) = hq_fallback_coords() else {
+                debug!(
+                    "[geo/fix] reset_home requested for {}:{} but no HQ fallback configured \
+                     (ECK_GEO_FALLBACK_LAT/ECK_GEO_FALLBACK_LNG unset)",
+                    req.table, req.id
+                );
+                return Err((
+                    StatusCode::CONFLICT,
+                    "HQ fallback pin not configured: set ECK_GEO_FALLBACK_LAT and \
+                     ECK_GEO_FALLBACK_LNG first".to_string(),
+                ));
+            };
             let sql = format!(
                 "UPDATE {table} SET \
                  {m}.geo = {{ lat: $lat, lng: $lng }}, \
@@ -344,8 +375,8 @@ pub async fn fix_location(
                 .db
                 .query(&sql)
                 .bind(("id", req.id.clone()))
-                .bind(("lat", HOME_OFFICE_LAT))
-                .bind(("lng", HOME_OFFICE_LNG))
+                .bind(("lat", lat))
+                .bind(("lng", lng))
                 .await
                 .map_err(db_err)?
                 .take(0)
@@ -359,8 +390,8 @@ pub async fn fix_location(
             Ok(Json(json!({
                 "ok": true,
                 "mode": "reset_home",
-                "lat": HOME_OFFICE_LAT,
-                "lng": HOME_OFFICE_LNG,
+                "lat": lat,
+                "lng": lng,
             })))
         }
         "edit" => {
@@ -420,5 +451,28 @@ pub async fn fix_location(
             StatusCode::BAD_REQUEST,
             format!("unknown mode '{}': expected 'reset_home' or 'edit'", other),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_hq_fallback;
+
+    #[test]
+    fn parses_valid_pair() {
+        assert_eq!(parse_hq_fallback(Some("50.1407"), Some("8.5721")), Some((50.1407, 8.5721)));
+    }
+
+    #[test]
+    fn none_when_either_missing() {
+        assert_eq!(parse_hq_fallback(None, Some("8.5721")), None);
+        assert_eq!(parse_hq_fallback(Some("50.1407"), None), None);
+        assert_eq!(parse_hq_fallback(None, None), None);
+    }
+
+    #[test]
+    fn none_when_unparseable() {
+        assert_eq!(parse_hq_fallback(Some("not-a-number"), Some("8.5721")), None);
+        assert_eq!(parse_hq_fallback(Some("50.1407"), Some("")), None);
     }
 }

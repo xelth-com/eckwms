@@ -41,9 +41,15 @@ pub async fn import_ticket(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ImportTicketRequest>,
 ) -> ApiResult<Json<Value>> {
-    let result = svc::import_ticket(&state.db, &payload.ticket_id, &payload.ticket, &state.instance_id)
-        .await
-        .map_err(db_err)?;
+    let result = svc::import_ticket(
+        &state.db,
+        &payload.ticket_id,
+        &payload.ticket,
+        &state.instance_id,
+        state.plugins.as_ref(),
+    )
+    .await
+    .map_err(db_err)?;
     // Single-shot import — no enrichment follows in this call, release the
     // doc to the summarization worker right away.
     let _ = svc::finalize_ticket_ingest(&state.db, &payload.ticket_id).await;
@@ -76,7 +82,9 @@ pub async fn import_thread(
 
     // Optionally re-import the parent ticket if provided
     if let Some(ref ticket) = payload.ticket {
-        if let Err(e) = svc::import_ticket(&state.db, ticket_id, ticket, &state.instance_id).await {
+        if let Err(e) =
+            svc::import_ticket(&state.db, ticket_id, ticket, &state.instance_id, state.plugins.as_ref()).await
+        {
             errors.push(format!("ticket {}: {}", ticket_id, e));
         }
     }
@@ -144,7 +152,15 @@ pub async fn import_tickets(
             _ => { skipped += 1; continue; }
         };
 
-        match svc::import_ticket(&state.db, &ticket_id_owned, ticket, &state.instance_id).await {
+        match svc::import_ticket(
+            &state.db,
+            &ticket_id_owned,
+            ticket,
+            &state.instance_id,
+            state.plugins.as_ref(),
+        )
+        .await
+        {
             Ok(r) => {
                 // Bulk list import is single-shot per ticket — release to the
                 // summarization worker immediately.
@@ -373,7 +389,34 @@ pub async fn backfill_meta(
             };
 
             let ner = crate::services::support::subject_ner(payload).await;
-            let meta = crate::services::support::extract_ticket_metadata_with_ner(payload, ner.as_ref());
+            let mut meta = crate::services::support::extract_ticket_metadata_with_ner(payload, ner.as_ref());
+
+            let rid = format!("document:`{}`", ticket_id);
+
+            // Extraction owns exactly the keys it emits; every OTHER key on the
+            // stored meta is an ENRICHMENT written after import (meta.geo* from
+            // the geocoder/manual grounding, meta.last_outbound_at from the
+            // outbound-time pass, …) and must survive the rewrite. The
+            // 2026-07-31 run replaced meta wholesale and wiped geo on all 1814
+            // tickets — the sweep then re-bought hours of Nominatim lookups and
+            // manual geo_override pins were lost for good.
+            let old_meta: Option<Value> = db
+                .query("SELECT VALUE meta FROM ONLY type::record($rid)")
+                .bind(("rid", rid.clone()))
+                .await
+                .ok()
+                .and_then(|mut r| r.take(0).ok())
+                .flatten();
+            if let (Some(new_obj), Some(old_obj)) = (
+                meta.as_object_mut(),
+                old_meta.as_ref().and_then(|v| v.as_object()),
+            ) {
+                for (k, v) in old_obj {
+                    if !new_obj.contains_key(k) {
+                        new_obj.insert(k.clone(), v.clone());
+                    }
+                }
+            }
 
             // Restamp the summary-seed hash alongside the meta: extraction-rule
             // changes (e.g. subject PII masking) shift the seed for EVERY ticket,
@@ -383,7 +426,6 @@ pub async fn backfill_meta(
             // writing it here does not perturb sync.
             let shash = crate::services::support::summary_seed_hash(&meta);
 
-            let rid = format!("document:`{}`", ticket_id);
             // pii_fingerprints is DERIVED from meta.subject (among others) — a
             // rewritten meta invalidates it. NONE re-enters the row into the
             // fingerprint self-heal sweep, which re-derives from the new values.
@@ -690,17 +732,53 @@ pub async fn backfill_outbound_times(
 
     let mut updated = 0i64;
     for (ticket_id, t) in &latest {
+        let doc_rid = format!("document:`{}`", ticket_id);
+        // Pre-read so no-op tickets are skipped entirely: re-runs must not
+        // touch the record or its vclock.
+        let cur: Vec<Value> = state.db
+            .query(
+                "SELECT VALUE meta.last_outbound_at FROM type::record($doc_rid) \
+                 WHERE type = 'support_ticket'",
+            )
+            .bind(("doc_rid", doc_rid.clone()))
+            .await
+            .and_then(|mut r| r.take(0))
+            .unwrap_or_default();
+        match cur.first() {
+            None => continue, // thread without a ticket document
+            Some(v) => {
+                if let Some(existing) = v.as_str() {
+                    if !existing.is_empty() && existing >= t.as_str() { continue; }
+                }
+            }
+        }
+        // `WHERE record::id(id) = $tid` cannot use the primary key — it scans
+        // the whole `document` table once per ticket (hours at ~1.5k tickets).
+        // Target the record directly; the monotonic guard lives inside SET
+        // because v3 evaluates SET eagerly, before WHERE filtering.
         let res = state.db
             .query(
-                "UPDATE document SET meta.last_outbound_at = $t \
-                 WHERE record::id(id) = $tid \
-                 AND type = 'support_ticket' \
-                 AND (meta.last_outbound_at IS NONE OR meta.last_outbound_at = '' OR meta.last_outbound_at < $t);"
+                "UPDATE type::record($doc_rid) SET meta.last_outbound_at = \
+                 (IF meta.last_outbound_at IS NONE OR meta.last_outbound_at = '' \
+                  OR meta.last_outbound_at < $t THEN $t ELSE meta.last_outbound_at END) \
+                 WHERE type = 'support_ticket';"
             )
-            .bind(("tid", ticket_id.clone()))
+            .bind(("doc_rid", doc_rid.clone()))
             .bind(("t", t.clone()))
             .await;
-        if res.is_ok() { updated += 1; }
+        if res.is_ok() {
+            updated += 1;
+            // A direct UPDATE bypasses resolve_and_upsert, leaving the new
+            // content at an EQUAL clock — every peer sweep then re-fights it
+            // as an LWW tie (2026-08-02: nightly conflict churn, and ties
+            // that went remote wiped the backfill on ~200 tickets).
+            let _ = eck_core::sync::conflict::bump_local_vclock(
+                &state.db,
+                &doc_rid,
+                &state.instance_id,
+            )
+            .await;
+        }
     }
 
     Ok(Json(json!({
@@ -802,7 +880,15 @@ pub async fn backfill_customfields(
             }
         };
 
-        match svc::import_ticket(&state.db, &ticket_id, enriched_ticket, &state.instance_id).await {
+        match svc::import_ticket(
+            &state.db,
+            &ticket_id,
+            enriched_ticket,
+            &state.instance_id,
+            state.plugins.as_ref(),
+        )
+        .await
+        {
             Ok(_) => {
                 let _ = svc::finalize_ticket_ingest(&state.db, &ticket_id).await;
                 enriched += 1;

@@ -49,6 +49,21 @@ pub const SYNC_ENTITY_TYPES: &[&str] = &[
     "category",
     "menu_item",
     "ai_sop",
+    // WASM plugin registry (design .eck/WASM_ARCHITECTURE.md §6). The RECORD
+    // meshes — it is tiny (name, sha256, hooks, capabilities, enabled,
+    // home_instance_id, _vclock) — so an admin installs/enables a plugin once
+    // and the whole customer mesh converges on it. The `.wasm` BINARY does NOT
+    // merkle-sync: each node lazily pulls it by sha256 on the first hook fire
+    // (`PluginRegistry::resolve` → `MeshClient::fetch_file` → `GET
+    // /api/mesh/file/:hash`), NEVER at startup (kiosk-OTA lesson). No per-table
+    // sweep registration is needed beyond this entry: the record has no
+    // dedicated id column, so `bootstrap_checksums` keys it via the implicit
+    // `id` leaf (= plugin name) through `extract_entity_leaf_id`, exactly like
+    // `ai_sop`. `enabled` is a HASHED content field (not in
+    // `merkle::IGNORED_FIELDS`), so an enable/disable bumps the author `_vclock`
+    // and its version dominates peers' — registry writes stamp `_vclock` the
+    // house way (`conflict::next_local_vclock`).
+    "wasm_plugin",
     // Carries the Xelixir C2 control plane (xelixir_command/status/token fields).
     // The edge node's `LIVE SELECT` watcher reacts to remote `xelixir_command` writes.
     "registered_device",

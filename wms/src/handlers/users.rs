@@ -102,14 +102,14 @@ pub async fn create(
     let username = payload.username.clone();
 
     // CREATE + SELECT in one query to avoid Thing serialization and timing issues.
-    // Record id = the USERNAME (type::thing binds it injection-safe): the user
+    // Record id = the USERNAME (type::record binds it injection-safe): the user
     // table is mesh-synced, and a deterministic id makes the same account created
     // on two nodes converge via LWW instead of duplicating. `_vclock` starts at
     // this node's component so the row propagates as a causal event.
     let mut result = state
         .db
         .query(
-            "CREATE type::thing('user', $username) SET
+            "CREATE type::record($tb, $username) SET
                 username = $username,
                 _vclock = $vclock,
                 password = $password,
@@ -130,6 +130,7 @@ pub async fn create(
                 FROM user WHERE username = $username AND deleted_at IS NONE \
                 ORDER BY createdAt DESC LIMIT 1;",
         )
+        .bind(("tb", "user"))
         .bind(("username", payload.username))
         .bind(("vclock", eck_core::sync::conflict::next_local_vclock(None, &state.instance_id)))
         .bind(("password", hashed_password))

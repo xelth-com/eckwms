@@ -124,13 +124,33 @@
     let posEnabled = false;
     let kioskEnabled = false;
     let kioskMode = "wms";
+    // Demo/exhibition nodes expose an external site as an extra nav entry;
+    // stock nodes return no URL and the entry never renders.
+    let navSiteUrl = "";
+    // Shared demo account advertised to anonymous (kiosk-observer) visitors.
+    let demoLoginHint = "";
+    // License state ("licensed" | "grace" | "unlicensed") — drives the grace
+    // warning banner below. Grace = the register still runs on borrowed time.
+    let posLicense = "";
+    let graceBannerDismissed = false;
 
     async function loadPosStatus() {
         try {
             const res = await fetch("/api/pos/status");
-            if (res.ok) posEnabled = (await res.json()).enabled === true;
+            if (res.ok) {
+                const status = await res.json();
+                posEnabled = status.enabled === true;
+                navSiteUrl = typeof status.nav_site_url === "string" ? status.nav_site_url : "";
+                demoLoginHint = typeof status.demo_login_hint === "string" ? status.demo_login_hint : "";
+                posLicense = typeof status.license === "string" ? status.license : "";
+            }
         } catch { /* older server without the endpoint — keep hidden */ }
     }
+
+    $: showGraceBanner =
+        posLicense === "grace" &&
+        !graceBannerDismissed &&
+        ($authStore.currentUser?.role === "admin" || $authStore.currentUser?.role === "operator");
 
     async function loadKioskConfig() {
         try {
@@ -211,7 +231,8 @@
     })();
     $: currentEntry = keepAliveEntry(relPath);
     // The map view is full-bleed; everything else keeps the padded .content.
-    $: isFullbleed = !!(currentEntry && currentEntry.fullbleed);
+    // The embedded marketing site (/dashboard/site/*) fills the pane the same way.
+    $: isFullbleed = !!(currentEntry && currentEntry.fullbleed) || relPath.startsWith("/dashboard/site");
 
     // LRU of mounted views: [{ path, lastUsed }], most-recently-used first.
     let cached = [];
@@ -480,7 +501,19 @@
     }
 </script>
 
-<div class="dashboard-layout">
+<div class="dashboard-shell">
+    {#if showGraceBanner}
+        <!-- POS license slipped into its 30-day grace period: the register
+             still runs (fiscal continuity), but won't remount after grace
+             ends. Slim, dismissible, admin/operator only. -->
+        <div class="grace-banner">
+            <span class="grace-banner-text">⚠️ {$t('shell.pos_grace_banner')}</span>
+            <button class="grace-banner-dismiss" on:click={() => (graceBannerDismissed = true)}>
+                {$t('shell.pos_grace_dismiss')}
+            </button>
+        </div>
+    {/if}
+    <div class="dashboard-layout">
     <aside class="sidebar">
         <div class="brand">
             <span class="brand-text">eckWMS</span>
@@ -497,6 +530,26 @@
         {#if $authStore.isKioskObserver || $authStore.currentUser?.role === 'observer'}
             <div class="lang-cycle-section">
                 <LanguageCycleButton />
+            </div>
+        {/if}
+
+        <!-- Exhibition-node site links (env-gated via ECK_NAV_SITE_URL): the
+             demo doubles as the public site, so the marketing pages get
+             prominent buttons up top instead of a buried menu entry. -->
+        {#if navSiteUrl}
+            <div class="site-links">
+                <a class="site-link" href="{base}/dashboard/site/features"
+                   class:active={relPath.startsWith("/dashboard/site/features") && !$page.url.hash}>
+                    ✨ {$t('shell.site_features')}
+                </a>
+                <a class="site-link" href="{base}/dashboard/site/features#developers"
+                   class:active={relPath.startsWith("/dashboard/site/features") && $page.url.hash === "#developers"}>
+                    🧩 {$t('shell.site_developers')}
+                </a>
+                <a class="site-link" href="{base}/dashboard/site"
+                   class:active={relPath === "/dashboard/site"}>
+                    🌐 {$t('shell.nav_site')}
+                </a>
             </div>
         {/if}
 
@@ -594,6 +647,7 @@
                 {$t('shell.nav_analysis')}
             </a>
 
+
             {#if activeAlert}
                 <button class="nav-alert-btn" on:click={() => showAlertModal = true}>
                     {activeAlert.title}
@@ -622,6 +676,14 @@
                     >{$authStore.currentUser?.role || $t('shell.role_fallback')}{#if $authStore.isKioskObserver} {$t('shell.read_only')}{/if}</span
                 >
             </div>
+
+            {#if $authStore.isKioskObserver && demoLoginHint}
+                <!-- Exhibition affordance: tell the anonymous visitor how to get
+                     the writable demo account (?real=1 skips the auto-redirect). -->
+                <a class="demo-login-hint" href="{base}/login?real=1">
+                    {$t('shell.demo_login')}: <strong>{demoLoginHint}</strong>
+                </a>
+            {/if}
 
             <!-- Settings language switcher (all authenticated users). For the
                  admin the list carries one extra row — "Add language…" — which
@@ -821,13 +883,52 @@
             </div>
         </div>
     {/if}
+    </div>
 </div>
 
 <style>
+    .dashboard-shell {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden;
+    }
+
+    /* POS license grace-period banner — slim, dismissible, sits above the
+       sidebar/content grid so it never fights the full-bleed map view. */
+    .grace-banner {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.55rem 1.25rem;
+        background: rgba(245, 185, 66, 0.14);
+        border-bottom: 1px solid rgba(245, 185, 66, 0.4);
+        color: #f5b942;
+        font-size: 0.85rem;
+    }
+    .grace-banner-text { font-weight: 600; }
+    .grace-banner-dismiss {
+        flex: 0 0 auto;
+        background: transparent;
+        color: #f5b942;
+        border: 1px solid rgba(245, 185, 66, 0.5);
+        border-radius: 4px;
+        padding: 0.25rem 0.7rem;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .grace-banner-dismiss:hover {
+        background: rgba(245, 185, 66, 0.2);
+    }
+
     .dashboard-layout {
         display: grid;
         grid-template-columns: 250px 1fr;
-        height: 100vh;
+        flex: 1;
+        min-height: 0;
         overflow: hidden;
     }
 
@@ -878,23 +979,28 @@
         gap: 0.5rem;
     }
 
+    /* Nav entries share the bordered-chip frame of the language buttons and
+       site links; active = the same dark tone with a faint blue cast. */
     nav a {
-        padding: 0.8rem 1rem;
+        padding: 0.7rem 1rem;
+        background: #2a2a2a;
+        border: 1px solid #444;
         color: #aaa;
         text-decoration: none;
-        border-radius: 6px;
+        border-radius: 8px;
         transition: all 0.2s;
         font-weight: 500;
     }
 
     nav a:hover {
-        background: #2a2a2a;
+        background: #333;
         color: #fff;
     }
 
     nav a.active {
-        background: #4a69bd;
-        color: white;
+        background: #2c3140;
+        border-color: rgba(74, 105, 189, 0.55);
+        color: #e5eaf2;
     }
 
     .nav-alert-btn {
@@ -1004,6 +1110,22 @@
         text-transform: uppercase;
     }
 
+    .demo-login-hint {
+        display: block;
+        color: #8ab4f8;
+        background: rgba(138, 180, 248, 0.08);
+        border: 1px solid rgba(138, 180, 248, 0.25);
+        border-radius: 4px;
+        padding: 0.45rem 0.6rem;
+        margin-bottom: 1rem;
+        font-size: 0.78rem;
+        text-decoration: none;
+    }
+
+    .demo-login-hint:hover {
+        background: rgba(138, 180, 248, 0.16);
+    }
+
     .logout-btn {
         width: 100%;
         background: #2a2a2a;
@@ -1040,6 +1162,37 @@
     /* Kiosk observer language cycle placement */
     .lang-cycle-section {
         margin-bottom: 1rem;
+    }
+
+    /* Exhibition site buttons: compact bordered chips between the language
+       cycle and the nav — visible, but clearly "site", not app navigation. */
+    .site-links {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 1rem;
+    }
+    .site-link {
+        display: block;
+        padding: 0.55rem 0.9rem;
+        border: 1px solid #444;
+        border-radius: 6px;
+        background: #2a2a2a;
+        color: #b8bcc6;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-decoration: none;
+        transition: all 0.2s;
+    }
+    .site-link:hover {
+        background: #333;
+        color: #d5d9e2;
+    }
+    /* Active page: dark tone with a faint blue cast, matching the lang buttons */
+    .site-link.active {
+        background: #2c3140;
+        border-color: rgba(74, 105, 189, 0.55);
+        color: #e5eaf2;
     }
 
     /* Settings language switcher */

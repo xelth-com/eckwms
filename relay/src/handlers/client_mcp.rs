@@ -100,6 +100,24 @@ pub async fn dispatch(
             (StatusCode::FORBIDDEN, "subscription not authorized".into())
         })?;
 
+    // Mid-period revocation (ROADMAP "Revocation list distributed to relays"):
+    // the CRL is signed by the LICENSE issuer (ECK_LICENSE_PUBKEY — the
+    // relay's product-license trust anchor), deliberately not the sub root —
+    // one revocation authority for the whole fleet. Matched on the cert's
+    // `subject` label OR its `client_pubkey`. Same opaque 403 as a bad cert.
+    if let Ok(lic_pub) = std::env::var("ECK_LICENSE_PUBKEY") {
+        if let Some(crl) = eck_core::licensing::load_revocations(&lic_pub) {
+            if crl.revokes_cert(&cert.subject, &cert.client_pubkey) {
+                tracing::warn!(
+                    "client-mcp dispatch refused: cert subject='{}' REVOKED (crl updated {})",
+                    cert.subject,
+                    crl.updated
+                );
+                return Err((StatusCode::FORBIDDEN, "subscription not authorized".into()));
+            }
+        }
+    }
+
     // Store the whole signed request (cert included) so the NODE re-verifies
     // and derives its own tier — a compromised relay can't forge access or
     // escalate to master by lying about the tier.

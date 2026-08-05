@@ -377,6 +377,13 @@ pub async fn discover_peers(
     crate::metrics::tick(crate::metrics::M::DiscoverPeers);
     let nodes = match relay.get_mesh_status().await {
         Ok(n) => n,
+        Err(super::relay_client::RelayError::AllRelaysDown) => {
+            // Every relay is parked in discovery backoff — no dial was even
+            // attempted, and the transition into backoff already WARNed once
+            // inside RelayClient. Per-caller repeats stay at debug.
+            debug!("Peer discovery skipped: all relays in failure backoff");
+            return vec![];
+        }
         Err(e) => {
             warn!("Peer discovery failed (relay unreachable): {}", e);
             return vec![];

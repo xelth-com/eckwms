@@ -1,4 +1,5 @@
 <script>
+    import { onMount } from 'svelte';
     import { t } from '$lib/i18n';
 
     // The paid POS (ecKasse) isn't active on this node — this is the upsell
@@ -11,13 +12,50 @@
         { icon: '🔒', key: 'f_tse' },
         { icon: '📊', key: 'f_dsfinvk' },
     ];
+
+    // License state from GET /api/pos/status — adapts the hero copy. The
+    // pricing/feature cards below stay the same in every state.
+    let posLicense = 'unlicensed';
+    let posConfigured = false;
+    let posLicenseReason = '';
+
+    async function loadPosStatus() {
+        try {
+            const res = await fetch('/api/pos/status');
+            if (res.ok) {
+                const status = await res.json();
+                posLicense = typeof status.license === 'string' ? status.license : 'unlicensed';
+                posConfigured = status.configured === true;
+                posLicenseReason = typeof status.license_reason === 'string' ? status.license_reason : '';
+            }
+        } catch { /* older server without the endpoint — keep the default upsell copy */ }
+    }
+
+    onMount(loadPosStatus);
+
+    $: configuredUnlicensed = posLicense === 'unlicensed' && posConfigured;
+    $: licensedNotConfigured = posLicense === 'licensed' && !posConfigured;
 </script>
 
 <div class="promo">
     <header class="hero">
         <div class="badge">💶 ecKasse</div>
-        <h1>{$t('pos_promo.headline')}</h1>
-        <p class="sub">{$t('pos_promo.subhead')}</p>
+        {#if configuredUnlicensed}
+            <h1>{$t('pos_promo.configured_unlicensed_headline')}</h1>
+            <p class="sub">{$t('pos_promo.configured_unlicensed_subhead')}</p>
+            {#if posLicenseReason}
+                <p class="reason-line">{$t('pos_promo.license_reason_label')} <code>{posLicenseReason}</code></p>
+            {/if}
+            <a class="cta primary contact-cta" href="{`/E/dashboard/ai`}">
+                {$t('pos_promo.cta_contact')}
+            </a>
+        {:else}
+            <h1>{$t('pos_promo.headline')}</h1>
+            <p class="sub">{$t('pos_promo.subhead')}</p>
+            {#if licensedNotConfigured}
+                <p class="licensed-note">{$t('pos_promo.licensed_not_configured_note')}</p>
+            {/if}
+        {/if}
     </header>
 
     <section class="cards">
@@ -58,6 +96,10 @@
     }
     .hero h1 { font-size: 2.2rem; margin: 0 0 0.6rem; }
     .sub { color: #aaa; font-size: 1.05rem; max-width: 640px; margin: 0 auto; line-height: 1.5; }
+    .reason-line { color: #888; font-size: 0.85rem; margin: 0.6rem auto 0; max-width: 640px; }
+    .reason-line code { background: #1e1e1e; border: 1px solid #333; border-radius: 4px; padding: 0.1rem 0.4rem; color: #f5b942; }
+    .licensed-note { color: #a3bffa; font-size: 0.95rem; margin: 0.8rem auto 0; max-width: 640px; }
+    .contact-cta { display: inline-block; margin-top: 1.2rem; }
 
     .cards {
         display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

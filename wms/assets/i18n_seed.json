@@ -1220,6 +1220,96 @@
     "value": "Исходная строка"
   },
   {
+    "key": "connector.btn_download",
+    "lang": "en",
+    "value": "Download bundle"
+  },
+  {
+    "key": "connector.copied",
+    "lang": "en",
+    "value": "Copied!"
+  },
+  {
+    "key": "connector.copy",
+    "lang": "en",
+    "value": "Copy"
+  },
+  {
+    "key": "connector.description",
+    "lang": "en",
+    "value": "Connect an AI client (Claude Code, Antigravity, …) to this WMS. Download a pre-configured connector bundle, or point a client that supports remote MCP directly at this server."
+  },
+  {
+    "key": "connector.direct_desc",
+    "lang": "en",
+    "value": "If your MCP client supports remote HTTP transport, skip the download and connect straight to this server:"
+  },
+  {
+    "key": "connector.direct_title",
+    "lang": "en",
+    "value": "Direct connection (no shim)"
+  },
+  {
+    "key": "connector.direct_token_note",
+    "lang": "en",
+    "value": "the token is inside the downloaded bundle's shim.env"
+  },
+  {
+    "key": "connector.downloading",
+    "lang": "en",
+    "value": "Downloading…"
+  },
+  {
+    "key": "connector.f_config_only",
+    "lang": "en",
+    "value": "Config only (no binary)"
+  },
+  {
+    "key": "connector.f_platform",
+    "lang": "en",
+    "value": "Platform"
+  },
+  {
+    "key": "connector.f_tier",
+    "lang": "en",
+    "value": "Access tier"
+  },
+  {
+    "key": "connector.platform_linux",
+    "lang": "en",
+    "value": "Linux"
+  },
+  {
+    "key": "connector.platform_windows",
+    "lang": "en",
+    "value": "Windows"
+  },
+  {
+    "key": "connector.tier_agent",
+    "lang": "en",
+    "value": "Agent — PII stays pseudonymized"
+  },
+  {
+    "key": "connector.tier_master",
+    "lang": "en",
+    "value": "Master — can restore PII into files"
+  },
+  {
+    "key": "connector.title",
+    "lang": "en",
+    "value": "MCP Connector"
+  },
+  {
+    "key": "connector.toast_download_failed",
+    "lang": "en",
+    "value": "Download failed: {error}"
+  },
+  {
+    "key": "connector.toast_download_success",
+    "lang": "en",
+    "value": "Bundle downloaded"
+  },
+  {
     "key": "devices.access_requested",
     "lang": "de",
     "value": "Zugriff angefordert — Verteilung über Mesh…"
@@ -1598,6 +1688,31 @@
     "key": "devices.device_unknown",
     "lang": "ru",
     "value": "Неизвестно"
+  },
+  {
+    "key": "devices.grounding_hint",
+    "lang": "en",
+    "value": "Google-grounded Gemini lookup for support tickets that fell back to the office pin (no zip/city match on file). Off by default — no cloud spend or egress."
+  },
+  {
+    "key": "devices.grounding_label",
+    "lang": "en",
+    "value": "AI address lookup (Google-grounded)"
+  },
+  {
+    "key": "devices.grounding_off_hint",
+    "lang": "en",
+    "value": "Off: unrecognized tickets stay pinned to HQ, no cloud lookups."
+  },
+  {
+    "key": "devices.grounding_saved",
+    "lang": "en",
+    "value": "AI address lookup setting saved"
+  },
+  {
+    "key": "devices.grounding_title",
+    "lang": "en",
+    "value": "AI Address Lookup"
   },
   {
     "key": "devices.home_node_updated",
@@ -5720,6 +5835,26 @@
     "value": "Найти задачи рядом с маршрутом"
   },
   {
+    "key": "map.finish",
+    "lang": "de",
+    "value": "Ziel"
+  },
+  {
+    "key": "map.finish",
+    "lang": "en",
+    "value": "Finish"
+  },
+  {
+    "key": "map.finish",
+    "lang": "ko",
+    "value": "도착"
+  },
+  {
+    "key": "map.finish",
+    "lang": "ru",
+    "value": "Финиш"
+  },
+  {
     "key": "map.gobd_sealed",
     "lang": "de",
     "value": "🔒 GoBD-versiegelt"
@@ -5738,6 +5873,46 @@
     "key": "map.gobd_sealed",
     "lang": "ru",
     "value": "🔒 Опечатано по GoBD"
+  },
+  {
+    "key": "map.in_progress",
+    "lang": "de",
+    "value": "Unterwegs"
+  },
+  {
+    "key": "map.in_progress",
+    "lang": "en",
+    "value": "In progress"
+  },
+  {
+    "key": "map.in_progress",
+    "lang": "ko",
+    "value": "운행 중"
+  },
+  {
+    "key": "map.in_progress",
+    "lang": "ru",
+    "value": "В пути"
+  },
+  {
+    "key": "map.km_actual",
+    "lang": "de",
+    "value": "{km} km (Tacho)"
+  },
+  {
+    "key": "map.km_actual",
+    "lang": "en",
+    "value": "{km} km (odometer)"
+  },
+  {
+    "key": "map.km_actual",
+    "lang": "ko",
+    "value": "{km} km (주행계)"
+  },
+  {
+    "key": "map.km_actual",
+    "lang": "ru",
+    "value": "{km} км (одометр)"
   },
   {
     "key": "map.km_estimated",
@@ -6220,6 +6395,26 @@
     "value": "Распознавание речи недоступно в браузере"
   },
   {
+    "key": "map.start",
+    "lang": "de",
+    "value": "Start"
+  },
+  {
+    "key": "map.start",
+    "lang": "en",
+    "value": "Start"
+  },
+  {
+    "key": "map.start",
+    "lang": "ko",
+    "value": "출발"
+  },
+  {
+    "key": "map.start",
+    "lang": "ru",
+    "value": "Старт"
+  },
+  {
     "key": "map.status_label",
     "lang": "de",
     "value": "Status:"
@@ -6462,22 +6657,22 @@
   {
     "key": "mesh.ai_ok_label",
     "lang": "de",
-    "value": "AI {rem} / {grant} · reicht bis {reset} ✓"
+    "value": "AI {rem} / {grant}"
   },
   {
     "key": "mesh.ai_ok_label",
     "lang": "en",
-    "value": "AI {rem} / {grant} · lasts until {reset} ✓"
+    "value": "AI {rem} / {grant}"
   },
   {
     "key": "mesh.ai_ok_label",
     "lang": "ko",
-    "value": "AI {rem} / {grant} · {reset}까지 충분 ✓"
+    "value": "AI {rem} / {grant}"
   },
   {
     "key": "mesh.ai_ok_label",
     "lang": "ru",
-    "value": "AI {rem} / {grant} · хватит до {reset} ✓"
+    "value": "AI {rem} / {grant}"
   },
   {
     "key": "mesh.ai_ok_tip",
@@ -6502,42 +6697,82 @@
   {
     "key": "mesh.ai_warn_label",
     "lang": "de",
-    "value": "AI {rem} / {grant} · ⚠ endet {empty}"
+    "value": "AI {rem} / {grant}"
   },
   {
     "key": "mesh.ai_warn_label",
     "lang": "en",
-    "value": "AI {rem} / {grant} · ⚠ runs out {empty}"
+    "value": "AI {rem} / {grant}"
   },
   {
     "key": "mesh.ai_warn_label",
     "lang": "ko",
-    "value": "AI {rem} / {grant} · ⚠ {empty} 소진"
+    "value": "AI {rem} / {grant}"
   },
   {
     "key": "mesh.ai_warn_label",
     "lang": "ru",
-    "value": "AI {rem} / {grant} · ⚠ кончатся {empty}"
+    "value": "AI {rem} / {grant}"
   },
   {
     "key": "mesh.ai_warn_tip",
     "lang": "de",
-    "value": "Beim aktuellen Verbrauch ({rate}) reicht das Budget nicht bis zum Reset am {reset}{days}."
+    "value": "Endet {empty} — beim aktuellen Verbrauch ({rate}) reicht das Budget nicht bis zum Reset am {reset}{days}."
   },
   {
     "key": "mesh.ai_warn_tip",
     "lang": "en",
-    "value": "At the current burn rate ({rate}) the budget won't last until the reset on {reset}{days}."
+    "value": "Runs out {empty} — at the current burn rate ({rate}) the budget won't last until the reset on {reset}{days}."
   },
   {
     "key": "mesh.ai_warn_tip",
     "lang": "ko",
-    "value": "현재 소비 속도({rate})로는 {reset} 초기화까지 예산이 부족합니다{days}."
+    "value": "{empty} 소진 예상 — 현재 소비 속도({rate})로는 {reset} 초기화까지 예산이 부족합니다{days}."
   },
   {
     "key": "mesh.ai_warn_tip",
     "lang": "ru",
-    "value": "При текущем расходе ({rate}) бюджета не хватит до сброса {reset}{days}."
+    "value": "Кончатся {empty} — при текущем расходе ({rate}) бюджета не хватит до сброса {reset}{days}."
+  },
+  {
+    "key": "mesh.board_offline_tip",
+    "lang": "de",
+    "value": "Schwarzes Brett (Relay 9eck.com) nicht erreichbar — öffentlicher Dispatch und OTA ggf. beeinträchtigt"
+  },
+  {
+    "key": "mesh.board_offline_tip",
+    "lang": "en",
+    "value": "Bulletin board (9eck.com relay) unreachable — public dispatch and OTA may be degraded"
+  },
+  {
+    "key": "mesh.board_offline_tip",
+    "lang": "ko",
+    "value": "게시판(9eck.com 릴레이)에 연결할 수 없음 — 공개 디스패치 및 OTA가 저하될 수 있음"
+  },
+  {
+    "key": "mesh.board_offline_tip",
+    "lang": "ru",
+    "value": "Доска объявлений (реле 9eck.com) недоступна — публичный диспатч и OTA могут быть деградированы"
+  },
+  {
+    "key": "mesh.board_online_tip",
+    "lang": "de",
+    "value": "Schwarzes Brett (Relay 9eck.com) erreichbar"
+  },
+  {
+    "key": "mesh.board_online_tip",
+    "lang": "en",
+    "value": "Bulletin board (9eck.com relay) is reachable"
+  },
+  {
+    "key": "mesh.board_online_tip",
+    "lang": "ko",
+    "value": "게시판(9eck.com 릴레이) 연결됨"
+  },
+  {
+    "key": "mesh.board_online_tip",
+    "lang": "ru",
+    "value": "Доска объявлений (реле 9eck.com) доступна"
   },
   {
     "key": "mesh.credit_of_limit_tip",
@@ -6780,6 +7015,16 @@
     "value": "/день"
   },
   {
+    "key": "mesh.relay_node_offline_tip",
+    "lang": "en",
+    "value": "Paid relay node unreachable"
+  },
+  {
+    "key": "mesh.relay_node_online_tip",
+    "lang": "en",
+    "value": "Paid relay node — this server relays this mesh’s traffic and heartbeats"
+  },
+  {
     "key": "mesh.relay_offline",
     "lang": "de",
     "value": "Relay offline"
@@ -6885,9 +7130,24 @@
     "value": "Need it now? Ask the AI assistant to start activation, or contact us for the online version."
   },
   {
+    "key": "pos_promo.configured_unlicensed_headline",
+    "lang": "en",
+    "value": "POS is configured but not licensed"
+  },
+  {
+    "key": "pos_promo.configured_unlicensed_subhead",
+    "lang": "en",
+    "value": "This node has POS_ENABLED set, but no valid license is bound to this mesh — the register cannot mount."
+  },
+  {
     "key": "pos_promo.cta_activate",
     "lang": "en",
     "value": "Activate via the AI assistant"
+  },
+  {
+    "key": "pos_promo.cta_contact",
+    "lang": "en",
+    "value": "Contact 9eck to activate your license"
   },
   {
     "key": "pos_promo.cta_demo",
@@ -6958,6 +7218,16 @@
     "key": "pos_promo.headline",
     "lang": "en",
     "value": "Turn eckWMS into a full point of sale"
+  },
+  {
+    "key": "pos_promo.license_reason_label",
+    "lang": "en",
+    "value": "License check failed:"
+  },
+  {
+    "key": "pos_promo.licensed_not_configured_note",
+    "lang": "en",
+    "value": "Your license includes the POS — enable POS_ENABLED on this node to mount the register."
   },
   {
     "key": "pos_promo.price_hint",
@@ -15370,6 +15640,11 @@
     "value": "Текущий пароль"
   },
   {
+    "key": "shell.demo_login",
+    "lang": "en",
+    "value": "Demo login"
+  },
+  {
     "key": "shell.deny",
     "lang": "de",
     "value": "Ablehnen"
@@ -15760,6 +16035,26 @@
     "value": "Исходный код"
   },
   {
+    "key": "shell.lang_other",
+    "lang": "de",
+    "value": "Andere"
+  },
+  {
+    "key": "shell.lang_other",
+    "lang": "en",
+    "value": "Other"
+  },
+  {
+    "key": "shell.lang_other",
+    "lang": "ko",
+    "value": "기타"
+  },
+  {
+    "key": "shell.lang_other",
+    "lang": "ru",
+    "value": "Другие"
+  },
+  {
     "key": "shell.language",
     "lang": "de",
     "value": "Sprache"
@@ -15878,6 +16173,11 @@
     "key": "shell.nav_analysis",
     "lang": "ru",
     "value": "Анализ"
+  },
+  {
+    "key": "shell.nav_connector",
+    "lang": "en",
+    "value": "MCP Connector"
   },
   {
     "key": "shell.nav_dashboard",
@@ -16050,6 +16350,26 @@
     "value": "Отгрузка"
   },
   {
+    "key": "shell.nav_site",
+    "lang": "de",
+    "value": "Über 9eck"
+  },
+  {
+    "key": "shell.nav_site",
+    "lang": "en",
+    "value": "About 9eck"
+  },
+  {
+    "key": "shell.nav_site",
+    "lang": "ko",
+    "value": "9eck 소개"
+  },
+  {
+    "key": "shell.nav_site",
+    "lang": "ru",
+    "value": "О 9eck"
+  },
+  {
     "key": "shell.nav_support",
     "lang": "de",
     "value": "Support"
@@ -16148,6 +16468,16 @@
     "key": "shell.password",
     "lang": "ru",
     "value": "Пароль"
+  },
+  {
+    "key": "shell.pos_grace_banner",
+    "lang": "en",
+    "value": "POS license expired — running on grace. Renew now or the register will not start after the grace period."
+  },
+  {
+    "key": "shell.pos_grace_dismiss",
+    "lang": "en",
+    "value": "Dismiss"
   },
   {
     "key": "shell.pw_change_failed",
@@ -16368,6 +16698,46 @@
     "key": "shell.scan_failed",
     "lang": "ru",
     "value": "Сканирование не удалось"
+  },
+  {
+    "key": "shell.site_developers",
+    "lang": "de",
+    "value": "Für Entwickler"
+  },
+  {
+    "key": "shell.site_developers",
+    "lang": "en",
+    "value": "For developers"
+  },
+  {
+    "key": "shell.site_developers",
+    "lang": "ko",
+    "value": "개발자용"
+  },
+  {
+    "key": "shell.site_developers",
+    "lang": "ru",
+    "value": "Для разработчиков"
+  },
+  {
+    "key": "shell.site_features",
+    "lang": "de",
+    "value": "eckWMS — alle Funktionen"
+  },
+  {
+    "key": "shell.site_features",
+    "lang": "en",
+    "value": "eckWMS — every feature"
+  },
+  {
+    "key": "shell.site_features",
+    "lang": "ko",
+    "value": "eckWMS — 전체 기능"
+  },
+  {
+    "key": "shell.site_features",
+    "lang": "ru",
+    "value": "eckWMS — все возможности"
   },
   {
     "key": "shell.toast_approve_failed",

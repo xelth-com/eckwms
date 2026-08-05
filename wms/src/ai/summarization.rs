@@ -3,7 +3,7 @@ use eck_core::utils::anonymizer::{obfuscate_pii, scrub_pii_regex};
 use reqwest::Client as HttpClient;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use super::loop_guard::LoopGuard;
 use super::telemetry::{log_telemetry, current_budget_level, BudgetLevel, THROTTLE_DELAY_SECS};
 use tracing::{info, warn};
@@ -540,6 +540,64 @@ async fn process_pending(db: &SurrealDb, http: &HttpClient, auth: &eck_core::ai:
     Ok(())
 }
 
+/// Raw Zoho custom-field keys to read for each canonical summary display slot
+/// (serial/model/company/street/city/country), from `ECK_SUMMARY_CF_KEYS` — a
+/// JSON object mapping slot name to a list of raw CF keys to try in order
+/// (first present, non-empty, non-"null" value wins), e.g.
+/// `{"serial":["cf_serial_number"],"model":["cf_in_body_model"],...}`. The
+/// display label and PII category per slot stay hardcoded (product logic) —
+/// only which raw Zoho field feeds each slot is deployment data. Falls back to
+/// the current hardcoded Zoho field names when unset or unparseable (logs one
+/// warn) so summarization stays stable fleet-wide without a `.env` change.
+/// Cached per process.
+fn summary_cf_keys() -> &'static HashMap<String, Vec<String>> {
+    static V: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+    V.get_or_init(|| match std::env::var("ECK_SUMMARY_CF_KEYS") {
+        Ok(raw) if !raw.trim().is_empty() => parse_cf_key_map(&raw).unwrap_or_else(|| {
+            warn!(
+                "[Summarize] ECK_SUMMARY_CF_KEYS is set but not valid JSON \
+                 (expected an object of slot -> [raw CF keys]); using built-in Zoho field mapping"
+            );
+            default_cf_key_map()
+        }),
+        _ => default_cf_key_map(),
+    })
+}
+
+/// The mapping this deployment used before `ECK_SUMMARY_CF_KEYS` existed —
+/// also the fallback when the var is unset or fails to parse.
+fn default_cf_key_map() -> HashMap<String, Vec<String>> {
+    [
+        ("serial", "cf_serial_number"),
+        ("model", "cf_in_body_model"),
+        ("company", "cf_company"),
+        ("street", "cf_street"),
+        ("city", "cf_city"),
+        ("country", "cf_country_1"),
+    ]
+    .into_iter()
+    .map(|(slot, key)| (slot.to_string(), vec![key.to_string()]))
+    .collect()
+}
+
+/// Pure parser for `ECK_SUMMARY_CF_KEYS` — unit-testable without touching
+/// process env (same pattern as `parse_summary_address_with`). `None` when
+/// `raw` isn't a JSON object of `string -> [string, ...]`.
+fn parse_cf_key_map(raw: &str) -> Option<HashMap<String, Vec<String>>> {
+    let val: Value = serde_json::from_str(raw).ok()?;
+    let obj = val.as_object()?;
+    let mut out = HashMap::new();
+    for (slot, keys) in obj {
+        let arr = keys.as_array()?;
+        let keys: Vec<String> = arr
+            .iter()
+            .map(|k| k.as_str().map(String::from))
+            .collect::<Option<Vec<_>>>()?;
+        out.insert(slot.clone(), keys);
+    }
+    Some(out)
+}
+
 /// Build the raw text for summarization by combining ticket metadata and all thread contents.
 /// PII (names, emails, phones, addresses) is replaced with numbered placeholders.
 async fn build_ticket_text(
@@ -601,25 +659,31 @@ async fn build_ticket_text(
                 }
             }
         }
-        // Custom fields contain device/serial/address data
+        // Custom fields contain device/serial/address data. Which raw Zoho CF
+        // key feeds each canonical slot is deployment data (ECK_SUMMARY_CF_KEYS);
+        // the display label and PII category stay fixed product logic.
         if let Some(cf) = t.get("cf") {
-            for (key, label, category) in [
-                ("cf_serial_number", "Serial Number", None),
-                ("cf_in_body_model", "Model", None),
-                ("cf_company", "Company", Some("Company")),
-                ("cf_street", "Address", Some("Address")),
-                ("cf_city", "City", None),  // city/zip are OK to send
-                ("cf_country_1", "Country", None),
+            for (slot, label, category) in [
+                ("serial", "Serial Number", None),
+                ("model", "Model", None),
+                ("company", "Company", Some("Company")),
+                ("street", "Address", Some("Address")),
+                ("city", "City", None),  // city/zip are OK to send
+                ("country", "Country", None),
             ] {
-                if let Some(s) = cf.get(key).and_then(|v| v.as_str()) {
-                    if !s.is_empty() && s != "null" {
-                        match category {
-                            Some(cat) if !clear => {
-                                let token = pii.mask(cat, s);
-                                parts.push(format!("{label}: {token}"));
-                            }
-                            _ => parts.push(format!("{label}: {s}")),
+                let Some(raw_keys) = summary_cf_keys().get(slot) else { continue };
+                let value = raw_keys.iter().find_map(|key| {
+                    cf.get(key)
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty() && *s != "null")
+                });
+                if let Some(s) = value {
+                    match category {
+                        Some(cat) if !clear => {
+                            let token = pii.mask(cat, s);
+                            parts.push(format!("{label}: {token}"));
                         }
+                        _ => parts.push(format!("{label}: {s}")),
                     }
                 }
             }
@@ -871,4 +935,53 @@ pub(crate) fn strip_html(s: &str) -> String {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_cf_key_map, parse_cf_key_map};
+
+    #[test]
+    fn parses_full_mapping() {
+        let raw = r#"{"serial":["cf_serial_number"],"model":["cf_in_body_model"],
+            "company":["cf_company"],"street":["cf_street"],"city":["cf_city"],
+            "country":["cf_country_1"]}"#;
+        let got = parse_cf_key_map(raw).expect("valid JSON parses");
+        assert_eq!(got.get("serial"), Some(&vec!["cf_serial_number".to_string()]));
+        assert_eq!(got.get("model"), Some(&vec!["cf_in_body_model".to_string()]));
+    }
+
+    #[test]
+    fn parses_multiple_candidate_keys_per_slot() {
+        let raw = r#"{"serial":["cf_serial_number","cf_serialnr"]}"#;
+        let got = parse_cf_key_map(raw).expect("valid JSON parses");
+        assert_eq!(
+            got.get("serial"),
+            Some(&vec!["cf_serial_number".to_string(), "cf_serialnr".to_string()])
+        );
+    }
+
+    #[test]
+    fn none_on_invalid_json() {
+        assert_eq!(parse_cf_key_map("not json"), None);
+    }
+
+    #[test]
+    fn none_on_wrong_shape() {
+        // Values must be arrays of strings, not bare strings or numbers.
+        assert_eq!(parse_cf_key_map(r#"{"serial":"cf_serial_number"}"#), None);
+        assert_eq!(parse_cf_key_map(r#"{"serial":[1,2]}"#), None);
+        assert_eq!(parse_cf_key_map(r#"["not","an","object"]"#), None);
+    }
+
+    #[test]
+    fn default_map_reproduces_current_hardcoded_keys() {
+        let got = default_cf_key_map();
+        assert_eq!(got.get("serial"), Some(&vec!["cf_serial_number".to_string()]));
+        assert_eq!(got.get("model"), Some(&vec!["cf_in_body_model".to_string()]));
+        assert_eq!(got.get("company"), Some(&vec!["cf_company".to_string()]));
+        assert_eq!(got.get("street"), Some(&vec!["cf_street".to_string()]));
+        assert_eq!(got.get("city"), Some(&vec!["cf_city".to_string()]));
+        assert_eq!(got.get("country"), Some(&vec!["cf_country_1".to_string()]));
+    }
 }

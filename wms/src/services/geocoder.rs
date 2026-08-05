@@ -214,8 +214,27 @@ pub async fn start_geocoder_worker(db: SurrealDb) {
     }
 }
 
-const HOME_OFFICE_LAT: f64 = 50.1407;
-const HOME_OFFICE_LNG: f64 = 8.5721;
+/// HQ fallback pin for tickets/repairs no lookup could place, from
+/// `ECK_GEO_FALLBACK_LAT` / `ECK_GEO_FALLBACK_LNG` (parsed once). `None` when
+/// either var is unset or unparseable — a deployment without a configured HQ
+/// simply leaves those records unresolved instead of pinning them to a
+/// coordinate that isn't theirs.
+fn hq_fallback_coords() -> Option<(f64, f64)> {
+    static V: OnceLock<Option<(f64, f64)>> = OnceLock::new();
+    *V.get_or_init(|| {
+        let lat = std::env::var("ECK_GEO_FALLBACK_LAT").ok();
+        let lng = std::env::var("ECK_GEO_FALLBACK_LNG").ok();
+        parse_hq_fallback(lat.as_deref(), lng.as_deref())
+    })
+}
+
+/// Pure parser for the HQ fallback pin — unit-testable without touching
+/// process env (same pattern as `parse_summary_address_with`).
+fn parse_hq_fallback(lat: Option<&str>, lng: Option<&str>) -> Option<(f64, f64)> {
+    let lat: f64 = lat?.trim().parse().ok()?;
+    let lng: f64 = lng?.trim().parse().ok()?;
+    Some((lat, lng))
+}
 
 async fn process_record(db: &SurrealDb, client: &Client, table: &str, record: Value, meta_field: &str) {
     let id = record.get("id").and_then(|v| v.as_str()).unwrap_or_default();
@@ -250,11 +269,22 @@ async fn process_record(db: &SurrealDb, client: &Client, table: &str, record: Va
         }
     }
 
-    info!(
-        "[Geocoder] All lookups failed for {}, falling back to home office ({}, {})",
-        id, HOME_OFFICE_LAT, HOME_OFFICE_LNG
-    );
-    save_geo(db, table, id, meta_field, HOME_OFFICE_LAT, HOME_OFFICE_LNG, true).await;
+    match hq_fallback_coords() {
+        Some((lat, lng)) => {
+            info!(
+                "[Geocoder] All lookups failed for {}, falling back to home office ({}, {})",
+                id, lat, lng
+            );
+            save_geo(db, table, id, meta_field, lat, lng, true).await;
+        }
+        None => {
+            debug!(
+                "[Geocoder] All lookups failed for {id} and no HQ fallback configured \
+                 (ECK_GEO_FALLBACK_LAT/ECK_GEO_FALLBACK_LNG unset) — leaving unresolved"
+            );
+            mark_geo_failed(db, table, id, meta_field).await;
+        }
+    }
 }
 
 /// Default country scope for the DACH support market. We used to hard-pin
@@ -475,19 +505,41 @@ pub(crate) async fn save_geo_resolved(db: &SurrealDb, table: &str, id: &str, met
 /// office-pinned but never re-attempted. Used when address discovery has
 /// exhausted every option for a ticket.
 pub(crate) async fn pin_home_with_source(db: &SurrealDb, id: &str, source: &str) {
-    let q = "UPDATE document SET \
-        meta.geo = { lat: $lat, lng: $lng }, \
-        meta.geo_fallback = true, meta.geo_failed = NONE, \
-        meta.geo_source = $source, \
-        updated_at = time::now() \
-     WHERE record::id(id) = $id RETURN NONE";
-    match db.query(q)
-        .bind(("id", id.to_string()))
-        .bind(("lat", HOME_OFFICE_LAT))
-        .bind(("lng", HOME_OFFICE_LNG))
-        .bind(("source", source.to_string()))
-        .await
-    {
+    let result = match hq_fallback_coords() {
+        Some((lat, lng)) => {
+            let q = "UPDATE document SET \
+                meta.geo = { lat: $lat, lng: $lng }, \
+                meta.geo_fallback = true, meta.geo_failed = NONE, \
+                meta.geo_source = $source, \
+                updated_at = time::now() \
+             WHERE record::id(id) = $id RETURN NONE";
+            db.query(q)
+                .bind(("id", id.to_string()))
+                .bind(("lat", lat))
+                .bind(("lng", lng))
+                .bind(("source", source.to_string()))
+                .await
+        }
+        None => {
+            // No HQ pin configured — still mark it terminal (never re-attempted)
+            // via geo_source/geo_failed, just without a map pin.
+            debug!(
+                "[Geo] pin_home_with_source: no HQ fallback configured \
+                 (ECK_GEO_FALLBACK_LAT/ECK_GEO_FALLBACK_LNG unset) — marking {id} terminal \
+                 ({source}) without a map pin"
+            );
+            let q = "UPDATE document SET \
+                meta.geo_failed = true, \
+                meta.geo_source = $source, \
+                updated_at = time::now() \
+             WHERE record::id(id) = $id RETURN NONE";
+            db.query(q)
+                .bind(("id", id.to_string()))
+                .bind(("source", source.to_string()))
+                .await
+        }
+    };
+    match result {
         Ok(_) => bump_geo_vclock(db, "document", id).await,
         Err(e) => error!("[Geo] pin_home_with_source failed for {id}: {e}"),
     }
@@ -518,15 +570,24 @@ pub async fn regeocode_fallback_batch(db: SurrealDb, limit: usize) {
     // run that scattered tickets onto streets or country centroids): send them
     // back to the HQ-fallback pool so this pass re-evaluates them with the
     // current precise (zip+city only) parser. Operator pins are left alone.
-    let revert = format!(
-        "UPDATE document SET meta.geo = {{ lat: {lat}, lng: {lng} }}, \
-             meta.geo_fallback = true, meta.geo_coarse = NONE \
-         WHERE type = 'support_ticket' AND meta.geo_coarse = true \
-             AND meta.geo_override IS NOT true RETURN NONE",
-        lat = HOME_OFFICE_LAT, lng = HOME_OFFICE_LNG
-    );
-    if let Err(e) = db.query(&revert).await {
-        error!("[Regeocode] failed to revert coarse placements: {e}");
+    // Skipped entirely when no HQ fallback is configured — there's nowhere to
+    // park them meanwhile, so they're left as coarse placements.
+    match hq_fallback_coords() {
+        Some((lat, lng)) => {
+            let revert = format!(
+                "UPDATE document SET meta.geo = {{ lat: {lat}, lng: {lng} }}, \
+                     meta.geo_fallback = true, meta.geo_coarse = NONE \
+                 WHERE type = 'support_ticket' AND meta.geo_coarse = true \
+                     AND meta.geo_override IS NOT true RETURN NONE"
+            );
+            if let Err(e) = db.query(&revert).await {
+                error!("[Regeocode] failed to revert coarse placements: {e}");
+            }
+        }
+        None => debug!(
+            "[Regeocode] no HQ fallback configured (ECK_GEO_FALLBACK_LAT/ECK_GEO_FALLBACK_LNG \
+             unset) — leaving coarse placements as-is"
+        ),
     }
 
     // (table, meta_field) pairs — tickets are the bulk; repairs reuse the logic.
@@ -648,9 +709,29 @@ async fn save_geo(db: &SurrealDb, table: &str, id: &str, meta_field: &str, lat: 
     }
 }
 
+/// Tag a record `geo_failed = true` when no lookup placed it AND no HQ
+/// fallback is configured. Leaves `geo` unset (no map pin) but stops the
+/// worker's `geo_failed IS NONE` filter from re-attempting it every tick.
+async fn mark_geo_failed(db: &SurrealDb, table: &str, id: &str, meta_field: &str) {
+    let q = format!(
+        "UPDATE {table} SET {meta_field}.geo_failed = true, updated_at = time::now() \
+         WHERE record::id(id) = $id RETURN NONE"
+    );
+    match db.query(&q).bind(("id", id.to_string())).await {
+        Ok(res) => {
+            if let Err(e) = res.check() {
+                error!("[Geocoder] geo_failed update failed for {}:{}: {}", table, id, e);
+            } else {
+                bump_geo_vclock(db, table, id).await;
+            }
+        }
+        Err(e) => error!("[Geocoder] geo_failed query failed for {}:{}: {}", table, id, e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{find_plz_ort, parse_summary_address, parse_summary_address_with, strip_address_tokens};
+    use super::{find_plz_ort, parse_hq_fallback, parse_summary_address, parse_summary_address_with, strip_address_tokens};
 
     fn adr(body: &str) -> String {
         format!("=== LOGISTIK & KONTAKTE ===\n**Adressen:** {body}\n=== TECHNISCHE DETAILS ===\n")
@@ -730,5 +811,23 @@ mod tests {
     fn find_plz_ort_ignores_year_like_4digits_without_capital_city() {
         // "2024 wurde..." — 4 digits followed by a lowercase word is not a PLZ Ort.
         assert_eq!(find_plz_ort("Im Jahr 2024 wurde das Gerät gekauft"), None);
+    }
+
+    #[test]
+    fn hq_fallback_parses_valid_pair() {
+        assert_eq!(parse_hq_fallback(Some("50.1407"), Some("8.5721")), Some((50.1407, 8.5721)));
+    }
+
+    #[test]
+    fn hq_fallback_none_when_either_missing() {
+        assert_eq!(parse_hq_fallback(None, Some("8.5721")), None);
+        assert_eq!(parse_hq_fallback(Some("50.1407"), None), None);
+        assert_eq!(parse_hq_fallback(None, None), None);
+    }
+
+    #[test]
+    fn hq_fallback_none_when_unparseable() {
+        assert_eq!(parse_hq_fallback(Some("not-a-number"), Some("8.5721")), None);
+        assert_eq!(parse_hq_fallback(Some("50.1407"), Some("")), None);
     }
 }

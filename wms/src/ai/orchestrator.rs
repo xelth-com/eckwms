@@ -2,10 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use rig::agent::AgentBuilder;
-use rig::client::CompletionClient;
-use rig::completion::{CompletionModel, Prompt};
-use rig::providers::{gemini, openai};
+use rig::tool::Tool;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use surrealdb::Notification;
@@ -15,8 +12,9 @@ use uuid::Uuid;
 use crate::ai::embeddings::embed_query;
 use crate::ai::telemetry::{current_budget_level, log_telemetry, BudgetLevel};
 use crate::ai::tools::{
-    AnalyzeAttachmentVisualTool, AnalyzeQcReportTool, AskHumanTool, ListTicketAttachmentsTool,
-    OcrAttachmentTool,
+    AnalyzeAttachmentVisualArgs, AnalyzeAttachmentVisualTool, AnalyzeQcReportArgs,
+    AnalyzeQcReportTool, AskHumanArgs, AskHumanTool, ListTicketAttachmentsArgs,
+    ListTicketAttachmentsTool, OcrAttachmentArgs, OcrAttachmentTool,
 };
 use crate::AppState;
 use eck_core::sync::hedera::submit_hash_if_configured;
@@ -509,76 +507,306 @@ async fn run_agent(
     ws_tx: tokio::sync::broadcast::Sender<String>,
 ) -> anyhow::Result<String> {
     let filestore = Arc::new(FileStore::new("."));
+    let http = reqwest::Client::new();
 
-    // The agent (ReAct loop + tools) is identical across modes — only the
-    // provider client it's built from changes. `studio` uses rig's gemini
-    // provider (AI Studio `?key=`); `managed` uses rig's openai provider
-    // pointed at Vertex's OpenAI-compatible endpoint with a Bearer token.
-    // See .eck/AI_DUAL_PROVIDER_VERTEX.md §9 (Path A).
-    match auth {
-        eck_core::ai::AiAuth::Studio { api_key } => {
-            let client = gemini::Client::new(api_key)?;
-            drive_orchestrator(client.agent(model), system_prompt, user_prompt, db, task_rid, ws_tx, filestore).await
-        }
-        eck_core::ai::AiAuth::Vertex { bearer, project, location } => {
-            let host = if location == "global" {
-                "aiplatform.googleapis.com".to_string()
-            } else {
-                format!("{location}-aiplatform.googleapis.com")
-            };
-            let base = format!(
-                "https://{host}/v1/projects/{project}/locations/{location}/endpoints/openapi"
-            );
-            let client = openai::CompletionsClient::builder()
-                .api_key(bearer.as_str())
-                .base_url(&base)
-                .build()
-                .map_err(|e| anyhow::anyhow!("Vertex openai client build failed: {e}"))?;
-            // Vertex OpenAI-compat needs the publisher-qualified model id.
-            let vmodel = if model.starts_with("google/") {
-                model.to_string()
-            } else {
-                format!("google/{model}")
-            };
-            drive_orchestrator(client.agent(&vmodel), system_prompt, user_prompt, db, task_rid, ws_tx, filestore).await
-        }
-    }
+    // One native `generateContent` loop for BOTH auth modes —
+    // `generate_content_raw` handles Studio (`?key=`) vs Vertex (Bearer +
+    // publisher model id) internally, so the old per-provider rig-client split
+    // collapses. Written by hand because rig 0.33 drops the Gemini 3.x
+    // `thoughtSignature` on `functionCall` parts and every multi-turn tool task
+    // then 400s with "Function call is missing a thought_signature".
+    drive_orchestrator_native(
+        &http,
+        auth,
+        model,
+        system_prompt,
+        user_prompt,
+        db,
+        task_rid,
+        ws_tx,
+        filestore,
+    )
+    .await
 }
 
-/// Attach the orchestrator's tools and run the ReAct loop. Generic over the
-/// completion model so `studio` (gemini) and `managed` (openai-on-Vertex) share
-/// one body.
-async fn drive_orchestrator<M>(
-    builder: AgentBuilder<M>,
+/// Manual Gemini function-calling loop over the NATIVE `generateContent` REST
+/// (both auth modes), armed with the five orchestrator tools. Mirrors
+/// `drive_oneshot_native`: the model's content object is echoed back into
+/// `contents` VERBATIM (carrying the `thoughtSignature`), MAX_TURNS=6 with a
+/// last-turn `toolConfig { mode: NONE }`, and an empty-turn nudge. The tool
+/// bodies are the SAME rig `Tool` impls the legacy rig agent was built from —
+/// we deserialize the model's JSON args into each tool's typed `Args` and call
+/// it directly.
+#[allow(clippy::too_many_arguments)]
+async fn drive_orchestrator_native(
+    http: &reqwest::Client,
+    auth: &eck_core::ai::AiAuth,
+    model: &str,
     system_prompt: &str,
     user_prompt: &str,
     db: eck_core::db::SurrealDb,
     task_rid: String,
     ws_tx: tokio::sync::broadcast::Sender<String>,
     filestore: Arc<FileStore>,
-) -> anyhow::Result<String>
-where
-    M: CompletionModel,
-{
-    let agent = builder
-        .preamble(system_prompt)
-        .tool(AskHumanTool {
-            db: db.clone(),
-            task_rid: task_rid.clone(),
-            ws_tx,
-        })
-        .tool(ListTicketAttachmentsTool { db: db.clone() })
-        .tool(AnalyzeQcReportTool { db: db.clone(), filestore })
-        .tool(OcrAttachmentTool { db: db.clone() })
-        .tool(AnalyzeAttachmentVisualTool { db })
-        .build();
+) -> anyhow::Result<String> {
+    // The five orchestrator tools — the same structs the rig agent was built
+    // from, so their DB/vision/OCR behavior is byte-identical.
+    let ask_human = AskHumanTool {
+        db: db.clone(),
+        task_rid: task_rid.clone(),
+        ws_tx,
+    };
+    let list_attachments = ListTicketAttachmentsTool { db: db.clone() };
+    let analyze_qc = AnalyzeQcReportTool {
+        db: db.clone(),
+        filestore,
+    };
+    let ocr = OcrAttachmentTool { db: db.clone() };
+    let analyze_visual = AnalyzeAttachmentVisualTool { db: db.clone() };
 
-    // rig-core 0.33 defaults `max_turns=0` — first tool result kills the
-    // request with MaxTurnError. Give the orchestrator enough headroom for
-    // list_attachments → analyze_qc_report → final answer, plus an
-    // occasional ask_human branch.
-    let response: String = agent.prompt(user_prompt).max_turns(6).await?;
-    Ok(response)
+    // functionDeclarations: name + description pulled from each rig `Tool` impl
+    // (single source of truth — the system prompt references these names), with
+    // parameter schemas hand-written to the native-Gemini OpenAPI subset.
+    // (schemars output carries `$schema`/`$ref`/`definitions` that the raw
+    // generateContent endpoint does not accept.)
+    let decls = vec![
+        native_decl(
+            &ask_human,
+            json!({
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The specific question for the human operator. The operator sees only this single message, not the surrounding conversation."
+                    }
+                },
+                "required": ["question"],
+            }),
+        )
+        .await,
+        native_decl(
+            &list_attachments,
+            json!({
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "string",
+                        "description": "Zoho document id (internal 17-digit, no prefix) OR the short public ticket number printed on correspondence."
+                    }
+                },
+                "required": ["ticket_id"],
+            }),
+        )
+        .await,
+        native_decl(
+            &analyze_qc,
+            json!({
+                "type": "object",
+                "properties": {
+                    "file_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "CAS UUIDs of QC report files to analyze."
+                    }
+                },
+                "required": ["file_ids"],
+            }),
+        )
+        .await,
+        native_decl(
+            &ocr,
+            json!({
+                "type": "object",
+                "properties": {
+                    "file_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "CAS UUIDs of attachment files to OCR (from list_ticket_attachments)."
+                    }
+                },
+                "required": ["file_ids"],
+            }),
+        )
+        .await,
+        native_decl(
+            &analyze_visual,
+            json!({
+                "type": "object",
+                "properties": {
+                    "file_id": {
+                        "type": "string",
+                        "description": "CAS UUID of the attachment page to inspect."
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "A specific, self-contained question about what the image shows."
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "Optional page index (default 0) for multi-page scan PDFs."
+                    },
+                    "region": {
+                        "type": "object",
+                        "description": "Optional relative (0..1) crop region — use the SMALLEST region that answers the question.",
+                        "properties": {
+                            "x": { "type": "number" },
+                            "y": { "type": "number" },
+                            "w": { "type": "number" },
+                            "h": { "type": "number" }
+                        }
+                    }
+                },
+                "required": ["file_id", "question"],
+            }),
+        )
+        .await,
+    ];
+
+    let mut contents = vec![json!({ "role": "user", "parts": [{ "text": user_prompt }] })];
+    const MAX_TURNS: usize = 6;
+    for turn in 0..MAX_TURNS {
+        // Last turn: forbid further tool calls so the model MUST answer from
+        // what it has gathered rather than burning the budget on one more probe.
+        let last = turn + 1 == MAX_TURNS;
+        let mut body = json!({
+            "systemInstruction": { "parts": [{ "text": system_prompt }] },
+            "contents": contents,
+            "tools": [{ "functionDeclarations": decls }],
+        });
+        if last {
+            body["toolConfig"] = json!({ "functionCallingConfig": { "mode": "NONE" } });
+        }
+        let resp = auth.generate_content_raw(http, model, body).await?;
+        let content = resp["candidates"][0]["content"].clone();
+        let parts = content
+            .get("parts")
+            .and_then(|p| p.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let calls: Vec<Value> = parts
+            .iter()
+            .filter(|p| p.get("functionCall").is_some())
+            .cloned()
+            .collect();
+        if calls.is_empty() {
+            let text: String = parts
+                .iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("");
+            if text.trim().is_empty() {
+                // Gemini 3.x with thinkingBudget=0 occasionally emits an empty
+                // STOP turn — nudge once instead of failing the whole run.
+                if !last {
+                    warn!("[Orchestrator] turn {turn}: empty model turn — nudging for a final answer");
+                    contents.push(json!({
+                        "role": "user",
+                        "parts": [{ "text": "Answer now, based on what you have gathered." }]
+                    }));
+                    continue;
+                }
+                anyhow::bail!(
+                    "orchestrator returned neither text nor tool calls (finishReason: {})",
+                    resp["candidates"][0]["finishReason"].as_str().unwrap_or("?")
+                );
+            }
+            return Ok(text);
+        }
+
+        // Echo the model turn back VERBATIM — this is what carries the
+        // thoughtSignature forward — then dispatch every call and answer with
+        // functionResponse parts.
+        contents.push(content);
+        let mut response_parts: Vec<Value> = Vec::new();
+        for call in calls {
+            let fc = &call["functionCall"];
+            let name = fc["name"].as_str().unwrap_or("").to_string();
+            let args = fc.get("args").cloned().unwrap_or_else(|| json!({}));
+            info!("[Orchestrator] turn {turn}: tool call {name}({args})");
+            let response_obj = dispatch_orchestrator_tool(
+                &name,
+                args,
+                &ask_human,
+                &list_attachments,
+                &analyze_qc,
+                &ocr,
+                &analyze_visual,
+            )
+            .await;
+            response_parts.push(json!({
+                "functionResponse": { "name": name, "response": response_obj }
+            }));
+        }
+        contents.push(json!({ "role": "user", "parts": response_parts }));
+    }
+    anyhow::bail!("orchestrator did not reach a final answer within 6 turns")
+}
+
+/// Build one Gemini `functionDeclaration` from a rig `Tool` impl: reuse the
+/// impl's `name`/`description` (single source of truth) with a hand-written,
+/// native-Gemini-safe parameter schema.
+async fn native_decl<T: Tool>(tool: &T, parameters: Value) -> Value {
+    let def = tool.definition(String::new()).await;
+    json!({
+        "name": def.name,
+        "description": def.description,
+        "parameters": parameters,
+    })
+}
+
+/// Dispatch one model tool call to the matching rig `Tool` impl. The model's
+/// JSON `args` are deserialized into the tool's typed `Args`; any deserialize
+/// or tool error is returned as `{ "error": ... }` so the model can recover
+/// instead of aborting the whole run.
+///
+/// `ask_human` needs no loop-level special-casing: the tool body already flips
+/// the task to `awaiting_human` in the DB (and pings the operator WS) and
+/// returns a "paused — end your turn now" note, which we hand straight back as
+/// the functionResponse. The parking itself is completed by
+/// `try_claim_and_execute` re-reading the post-run task state.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_orchestrator_tool(
+    name: &str,
+    args: Value,
+    ask_human: &AskHumanTool,
+    list_attachments: &ListTicketAttachmentsTool,
+    analyze_qc: &AnalyzeQcReportTool,
+    ocr: &OcrAttachmentTool,
+    analyze_visual: &AnalyzeAttachmentVisualTool,
+) -> Value {
+    let result: Result<Value, String> = match name {
+        "ask_human" => match serde_json::from_value::<AskHumanArgs>(args) {
+            Ok(a) => ask_human.call(a).await.map_err(|e| e.to_string()),
+            Err(e) => Err(format!("invalid args: {e}")),
+        },
+        "list_ticket_attachments" => {
+            match serde_json::from_value::<ListTicketAttachmentsArgs>(args) {
+                Ok(a) => list_attachments.call(a).await.map_err(|e| e.to_string()),
+                Err(e) => Err(format!("invalid args: {e}")),
+            }
+        }
+        "analyze_qc_report" => match serde_json::from_value::<AnalyzeQcReportArgs>(args) {
+            Ok(a) => analyze_qc.call(a).await.map_err(|e| e.to_string()),
+            Err(e) => Err(format!("invalid args: {e}")),
+        },
+        "ocr_attachment" => match serde_json::from_value::<OcrAttachmentArgs>(args) {
+            Ok(a) => ocr.call(a).await.map_err(|e| e.to_string()),
+            Err(e) => Err(format!("invalid args: {e}")),
+        },
+        "analyze_attachment_visual" => {
+            match serde_json::from_value::<AnalyzeAttachmentVisualArgs>(args) {
+                Ok(a) => analyze_visual.call(a).await.map_err(|e| e.to_string()),
+                Err(e) => Err(format!("invalid args: {e}")),
+            }
+        }
+        other => Err(format!("unknown tool '{other}'")),
+    };
+    match result {
+        Ok(v) if v.is_object() => v,
+        Ok(v) => json!({ "result": v }),
+        Err(e) => json!({ "error": e }),
+    }
 }
 
 // ── One-shot brain (MCP `ask_brain`) ─────────────────────────────────────
