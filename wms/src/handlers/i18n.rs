@@ -657,8 +657,19 @@ async fn run_language_job(state: Arc<AppState>, lang: String) {
             "generationConfig": { "temperature": 0.1, "maxOutputTokens": 8192 },
         });
 
-        let text = match auth.generate_content(&http, &model_name, payload).await {
-            Ok((t, usage)) => {
+        let _ = &auth; // resolved above only to gate on is_configured()
+        let text = match eck_core::ai::AiAuth::generate_for_task(
+            &http,
+            "i18n",
+            &model_name,
+            payload,
+            None,
+        )
+        .await
+        {
+            Ok(g) => {
+                tracing::info!("[ai] task=i18n path={} model={}", g.path, g.model);
+                let (t, usage) = (g.text, g.usage);
                 if !usage.is_null() {
                     crate::ai::telemetry::log_telemetry(
                         &state.db,

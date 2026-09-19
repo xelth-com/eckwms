@@ -2,19 +2,23 @@ use axum::{
     extract::State,
     http::{header, StatusCode},
     response::IntoResponse,
-    Json,
+    Extension, Json,
 };
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use printpdf::{
     BuiltinFont, Color, Mm, PdfDocument, PdfLayerReference, Rect, Rgb,
 };
 use qrcode::{EcLevel, QrCode};
 use serde::Deserialize;
+use serde_json::json;
 use std::io::BufWriter;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use eck_core::auth::Claims;
 use eck_core::utils::smart_tag::SmartTag;
 
+use crate::services::printing;
 use crate::AppState;
 
 // ─── Request types ───────────────────────────────────────────────────────────
@@ -52,7 +56,7 @@ pub struct WarehouseConfig {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LabelRequest {
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     pub label_type: String,
     #[serde(default)]
     pub start_number: i64,
@@ -99,10 +103,57 @@ struct LabelItem {
 
 // ─── Base32 / CRC helpers ────────────────────────────────────────────────────
 
+/// The eck-base32 alphabet, shared with xelixir (`customer_installer::ECK_BASE32`,
+/// `share.rs`, the ESP32 agent's `xlt_b32.c`) and PsiCode. 32 symbols from the QR
+/// alphanumeric set (uppercase only); I, O, S and Z are deliberately absent because
+/// they read as 1, 0, 5 and 2.
+///
+/// INPUT RULE (operator decision 2026-09-05): codes are typed by people from a
+/// label, a QR or a phone's Wi-Fi list, so a DECODER must be lenient — fold
+/// lowercase to uppercase, and map the four excluded look-alikes onto the digit
+/// they resemble: O→0, I→1, S→5, Z→2. NOTHING else: L is a real symbol, so a
+/// lowercase l is an L, never a 1. Only where the eck alphabet is expected —
+/// never on hex, MACs or uuids. Output never uses the look-alikes.
 const BASE32_CHARS: &[u8] = b"0123456789ABCDEFGHJKLMNPQRTUVWXY";
 
 fn to_base32_char(num: usize) -> char {
     if num >= BASE32_CHARS.len() { '?' } else { BASE32_CHARS[num] as char }
+}
+
+/// Lenient inverse of `to_base32_char` (see the INPUT RULE above). `None` for a
+/// character that is neither in the alphabet nor one of the folded look-alikes.
+#[allow(dead_code)]
+pub(crate) fn from_base32_char(c: char) -> Option<usize> {
+    let c = match c.to_ascii_uppercase() {
+        'O' => '0',
+        'I' => '1',
+        'S' => '5',
+        'Z' => '2',
+        other => other,
+    };
+    BASE32_CHARS.iter().position(|&b| b as char == c)
+}
+
+#[cfg(test)]
+mod base32_tests {
+    use super::*;
+
+    #[test]
+    fn eck_base32_round_trips_and_folds_look_alikes() {
+        for (i, &b) in BASE32_CHARS.iter().enumerate() {
+            assert_eq!(from_base32_char(b as char), Some(i));
+            assert_eq!(from_base32_char((b as char).to_ascii_lowercase()), Some(i));
+        }
+        assert_eq!(from_base32_char('O'), Some(0));
+        assert_eq!(from_base32_char('o'), Some(0));
+        assert_eq!(from_base32_char('I'), Some(1));
+        assert_eq!(from_base32_char('S'), Some(5));
+        assert_eq!(from_base32_char('Z'), Some(2));
+        assert_eq!(from_base32_char('-'), None);
+        for c in ['I', 'O', 'S', 'Z'] {
+            assert!(!BASE32_CHARS.contains(&(c as u8)), "alphabet must not contain {c}");
+        }
+    }
 }
 
 fn eck_crc(value: i64) -> String {
@@ -369,13 +420,13 @@ fn generate_labels_pdf(cfg: &LabelRequest, items: &[LabelItem]) -> Result<Vec<u8
     Ok(buf)
 }
 
-// ─── Handler ─────────────────────────────────────────────────────────────────
+// ─── Shared builder ──────────────────────────────────────────────────────────
 
-/// POST /api/print/labels
-pub async fn generate_labels(
-    State(_state): State<Arc<AppState>>,
-    Json(mut payload): Json<LabelRequest>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+/// Normalize a `LabelRequest` (apply defaults), build the label items, and
+/// render the PDF bytes. Shared by the download route (`generate_labels`), the
+/// direct-print route (`print_and_send`), and the MCP `print_labels` tool so the
+/// generator lives in exactly one place.
+pub fn build_labels_pdf(payload: &mut LabelRequest) -> Result<Vec<u8>, anyhow::Error> {
     // Apply defaults
     if payload.cols == 0 { payload.cols = 3; }
     if payload.rows == 0 { payload.rows = 7; }
@@ -447,11 +498,25 @@ pub async fn generate_labels(
         }
     }
 
-    let pdf_bytes = generate_labels_pdf(&payload, &items).map_err(|e| {
+    generate_labels_pdf(payload, &items)
+}
+
+// ─── Handlers ────────────────────────────────────────────────────────────────
+
+/// POST /api/print/labels — generate a label sheet and return it as a
+/// downloadable PDF (unchanged behaviour).
+pub async fn generate_labels(
+    State(_state): State<Arc<AppState>>,
+    Json(mut payload): Json<LabelRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let label_type = payload.label_type.clone();
+    let start_number = payload.start_number;
+
+    let pdf_bytes = build_labels_pdf(&mut payload).map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to generate PDF: {}", e))
     })?;
 
-    let filename = format!("labels_{}_{}.pdf", payload.label_type, payload.start_number);
+    let filename = format!("labels_{}_{}.pdf", label_type, start_number);
 
     Ok((
         [
@@ -461,4 +526,72 @@ pub async fn generate_labels(
         ],
         pdf_bytes,
     ))
+}
+
+// ─── Direct printing (physical CUPS printers) ─────────────────────────────────
+
+/// GET /api/print/printers — list the CUPS queues on this node. Auth-protected
+/// (any authenticated user). Empty list = no CUPS / no printers on this node.
+pub async fn list_printers(
+    Extension(_claims): Extension<Claims>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let printers = printing::list_printers()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({ "printers": printers })))
+}
+
+/// Body for `POST /api/print/send`: EITHER a label job (all `LabelRequest`
+/// fields, flattened) OR a raw base64 `pdf`, plus the target `printer`/`copies`.
+#[derive(Deserialize)]
+pub struct PrintSendRequest {
+    /// Target CUPS queue; `None`/empty → the node's default queue.
+    #[serde(default)]
+    pub printer: Option<String>,
+    /// Copies (clamped to 1..=50 downstream). Defaults to 1.
+    #[serde(default)]
+    pub copies: Option<u32>,
+    /// Raw PDF to print, base64-encoded. When present it takes precedence over
+    /// the label-job fields.
+    #[serde(default)]
+    pub pdf: Option<String>,
+    /// Label-job fields (same shape as `POST /print/labels`). Used when `pdf`
+    /// is absent.
+    #[serde(flatten)]
+    pub label: LabelRequest,
+}
+
+/// POST /api/print/send — render (or accept) a PDF and send it to a physical
+/// printer via CUPS. Auth-protected. Returns `{ success, job }`.
+pub async fn print_and_send(
+    State(_state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<PrintSendRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // A kiosk/exhibition observer is read-only and must not fire a physical
+    // printer. (auth_middleware already blocks observer POSTs, but keep an
+    // explicit, clearer refusal here in case this handler is ever mounted
+    // outside that layer.)
+    if claims.role == "observer" {
+        return Err((StatusCode::FORBIDDEN, "printing requires a signed-in operator".to_string()));
+    }
+
+    let copies = payload.copies.unwrap_or(1);
+    let printer = payload.printer.clone();
+
+    // Prefer an explicitly-supplied PDF; otherwise render the label job.
+    let pdf_bytes: Vec<u8> = if let Some(ref b64) = payload.pdf {
+        B64.decode(b64.trim())
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid base64 pdf: {e}")))?
+    } else {
+        let mut label = payload.label;
+        build_labels_pdf(&mut label)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to generate PDF: {e}")))?
+    };
+
+    let job = printing::print_pdf(printer, pdf_bytes, copies)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(json!({ "success": true, "job": job })))
 }

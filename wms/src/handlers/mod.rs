@@ -12,6 +12,7 @@ pub mod pickings;
 pub mod print;
 pub mod products;
 pub mod quants;
+pub mod receiving;
 pub mod proofs;
 pub mod rma;
 pub mod users;
@@ -32,5 +33,12 @@ pub mod xelixir;
 pub mod ops;
 pub mod gdpr;
 pub mod odoo;
+pub mod claimlist;
 pub mod i18n;
 pub mod plugins;
+/// `POST /api/pii/spans` — the "eck masker" NER span server (slice 2), mounted
+/// only when `ECK_PII_SPANS_SERVE=1`. See `.eck/PII_REMOTE_MASKING.md`.
+pub mod pii_spans;
+pub mod or_proxy;
+pub mod vault_admin;
+pub mod vault_safe;

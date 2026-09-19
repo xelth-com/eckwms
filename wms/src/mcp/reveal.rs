@@ -157,6 +157,19 @@ async fn resolve_from_db(
 
     let mut found: HashMap<String, String> = HashMap::new();
     let mut seen_docs: HashSet<String> = HashSet::new();
+
+    // Vault first (`.eck/PII_VAULT.md` P1 item 4): on a reveal-capable node the
+    // clear is one point read + one decrypt away, and it resolves tokens that
+    // NO re-hash can — a token minted from a field the raw payload no longer
+    // carries, or on a node whose `document_raw` never synced. Empty map (and
+    // therefore a pure no-op) on any node without a vault key, which is what
+    // keeps the legacy re-hash path below the sole mechanism there.
+    let vaulted = eck_core::pii_vault::get_many(&state.db, tokens).await;
+    for (tok, val) in vaulted {
+        state.pii_reveal.record(tok.clone(), val.clone());
+        found.insert(tok, val);
+    }
+
     for t in tokens.iter().take(64) {
         if parse_pii_token(t).is_none() || found.contains_key(t) {
             continue;
@@ -201,19 +214,54 @@ async fn resolve_from_db(
             // reproduce the identical (token, span) pairs. Only nodes running
             // ECK_PII_NER=local can do this — elsewhere such tokens stay
             // unresolved, same as any thin-node token.
-            #[cfg(feature = "local-embed")]
-            if crate::ai::local_ner::ner_mode() == "local" {
-                if let Some(subj) = payload.get("subject").and_then(|v| v.as_str()) {
-                    match crate::ai::local_ner::extract_entities(subj).await {
-                        Ok((persons, _orgs)) => {
+            //
+            // The egress ladder (`build_ticket_text` → `register_prose_person_names`)
+            // also mints NER PER tokens from free-text PROSE (thread bodies /
+            // signatures / description), so the reveal side re-runs the model over
+            // that same prose to reproduce those tokens. NER-ORG spans are excluded
+            // so a person-shaped brand stays unresolved (it was never masked).
+            let ner_mode = crate::ai::pii_mode::pii_ner_mode();
+            if ner_mode == "local" || ner_mode == "remote" {
+                let mut ner_src = String::new();
+                for k in ["subject", "description"] {
+                    if let Some(v) = payload.get(k).and_then(|v| v.as_str()) {
+                        ner_src.push_str(v);
+                        ner_src.push('\n');
+                    }
+                }
+                for th in &threads {
+                    if let Some(p) = th.get("payload") {
+                        for k in ["content", "plainText"] {
+                            if let Some(v) = p.get(k).and_then(|v| v.as_str()) {
+                                ner_src.push_str(&crate::ai::summarization::strip_html(v));
+                                ner_src.push('\n');
+                            }
+                        }
+                    }
+                }
+                if !ner_src.trim().is_empty() {
+                    match crate::ai::pii_mode::extract_entities(&ner_src).await {
+                        Ok((persons, orgs)) => {
+                            let in_org = |n: &str| {
+                                let n = n.trim().to_lowercase();
+                                orgs.iter().any(|o| {
+                                    let o = o.to_lowercase();
+                                    o == n || o.contains(&n)
+                                })
+                            };
                             for name in persons {
+                                if !eck_core::utils::anonymizer::plausible_person_name(&name)
+                                    || in_org(&name)
+                                {
+                                    continue;
+                                }
                                 state.pii_reveal.record(
                                     eck_core::utils::anonymizer::obfuscate_pii(&name, "Name"),
                                     name,
                                 );
                             }
                         }
-                        Err(e) => tracing::warn!("[NER] reveal-side subject extraction failed: {e}"),
+                        Err(e) => tracing::warn!("[NER] reveal-side prose extraction failed: {e}"),
                     }
                 }
             }
@@ -250,6 +298,92 @@ pub(crate) async fn augment_from_db(state: &Arc<crate::AppState>, mut result: Va
         .filter(|t| !found.contains_key(t))
         .collect::<Vec<_>>());
     result
+}
+
+/// Rate-limited + audited wrapper around [`reveal_tokens_method`] +
+/// [`augment_from_db`] — the ONE place both master-tier clear-PII surfaces
+/// (the shim's `reveal_tokens` JSON-RPC method and `reveal_file_local`) go
+/// through, so neither can bypass the P0 reveal cap
+/// (`.eck/PII_VAULT.md` §4/§9 item 3). `surface` is the audit `surface` field
+/// (`"mcp_reveal_tokens"` or `"mcp_reveal_file"`).
+///
+/// OPEN QUESTION: the master tier today is a single shared bearer
+/// (`ECM_MCP_MASTER_TOKEN` / a personal session bearer whose username isn't
+/// threaded through `dispatch_tool` — see `mcp::mod::authenticate`), so there
+/// is no real per-caller subject to key the rate limit or the audit `who` on.
+/// This buckets all static-master-token reveals under the fixed subject
+/// `"mcp-master"` until session identity is plumbed through; a personal
+/// session bearer's actual username should replace it then.
+pub(crate) async fn reveal_tokens_guarded(
+    state: &Arc<crate::AppState>,
+    tier: McpTier,
+    params: &Value,
+    surface: &str,
+) -> Result<Value, (i32, String)> {
+    const SUBJECT: &str = "mcp-master";
+
+    let result = reveal_tokens_method(state.pii_reveal.as_ref(), tier, params)?;
+    let result = augment_from_db(state, result).await;
+
+    let revealed = result
+        .get("revealed")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    if revealed.is_empty() {
+        return Ok(result);
+    }
+
+    let mut kinds: HashMap<String, u32> = HashMap::new();
+    for token in revealed.keys() {
+        if let Some(kind) = eck_core::utils::anonymizer::parse_pii_token(token) {
+            *kinds.entry(kind.to_string()).or_insert(0) += 1;
+        }
+    }
+    let n = revealed.len() as u32;
+
+    match crate::reveal_guard::global().check(SUBJECT, n) {
+        Ok(()) => {
+            eck_core::audit::append_soft(
+                &state.db,
+                &state.server_identity,
+                &eck_core::audit::wms_chain(&state.instance_id),
+                "reveal",
+                "pii-reveal",
+                eck_core::audit::class::REVEAL,
+                &format!("PII reveal: {n} token(s) on {surface}"),
+                crate::reveal_guard::audit_payload(SUBJECT, "master", surface, n, &kinds, &[], false),
+            )
+            .await;
+            Ok(result)
+        }
+        Err(denied) => {
+            tracing::warn!(
+                "[reveal] denied for {SUBJECT} on {surface}: {n} token(s), retry_after={}s",
+                denied.retry_after_secs
+            );
+            eck_core::audit::append_soft(
+                &state.db,
+                &state.server_identity,
+                &eck_core::audit::wms_chain(&state.instance_id),
+                "reveal",
+                "pii-reveal",
+                eck_core::audit::class::REVEAL,
+                &format!("PII reveal DENIED (rate limit): {n} token(s) on {surface}"),
+                crate::reveal_guard::audit_payload(SUBJECT, "master", surface, n, &kinds, &[], true),
+            )
+            .await;
+            // Denied: serve the tokenised text, as for any non-master caller —
+            // move every would-be-revealed token back into `unresolved`.
+            let mut unresolved: Vec<Value> = result
+                .get("unresolved")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            unresolved.extend(revealed.keys().map(|k| Value::String(k.clone())));
+            Ok(json!({ "revealed": serde_json::Map::new(), "unresolved": unresolved }))
+        }
+    }
 }
 
 #[cfg(test)]

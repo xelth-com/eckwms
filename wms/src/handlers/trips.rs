@@ -271,17 +271,22 @@ pub async fn upload_trip_core(
 
     // Preserve the EARLIEST values across re-uploads: created_at and the
     // purpose-declaration timestamp (GoBD anti-fabrication anchor — the first
-    // declaration wins, later re-uploads never push it forward).
+    // declaration wins, later re-uploads never push it forward). Same pattern
+    // stamps home_instance_id once (creator = authority, ownership rule): the
+    // node that first receives a device's trip is its home, which gates the
+    // cell-resolver's single-writer rule and the ownership conflict verdict.
     let _: Vec<Value> = state
         .db
         .query(
             "UPDATE type::record('trip', $id) SET \
              created_at = created_at ?? $now, \
-             purpose_declared_at = purpose_declared_at ?? $declared",
+             purpose_declared_at = purpose_declared_at ?? $declared, \
+             home_instance_id = home_instance_id ?? $iid",
         )
         .bind(("id", body.trip_uuid.clone()))
         .bind(("now", Utc::now().to_rfc3339()))
         .bind(("declared", body.purpose_declared_at.clone()))
+        .bind(("iid", state.instance_id.clone()))
         .await
         .map_err(db_err)?
         .take(0)
@@ -620,7 +625,12 @@ async fn gemini_match_tickets(orders: &[Value], query: &str, limit: usize) -> Op
         "generationConfig": { "temperature": 0.0, "maxOutputTokens": 256 }
     });
 
-    let (text, _usage) = auth.generate_content(&http, &model, payload).await.ok()?;
+    let _ = &auth; // resolved above only to gate on is_configured()
+    let gen = eck_core::ai::AiAuth::generate_for_task(&http, "trips", &model, payload, None)
+        .await
+        .ok()?;
+    tracing::info!("[ai] task=trips path={} model={}", gen.path, gen.model);
+    let (text, _usage) = (gen.text, gen.usage);
     let indices = parse_index_array(&text);
     let mut out = Vec::new();
     for n in indices.into_iter().take(limit) {
@@ -850,12 +860,14 @@ pub async fn cell_cache(
     Query(q): Query<CellCacheQuery>,
 ) -> ApiResult<Json<Vec<Value>>> {
     let limit = q.limit.unwrap_or(5000).clamp(1, 50000);
+    // resolve_failed != true skips negative-cache tombstones (cells OpenCelliD
+    // does not know) — the PDA cache format expects coordinates.
     let query = if q.since.is_some() {
         "SELECT record::id(id) AS key, mcc, mnc, tac, cid, lat, lng, range_m \
-         FROM cell_tower WHERE resolved_at > $since LIMIT $lim"
+         FROM cell_tower WHERE resolve_failed != true AND resolved_at > $since LIMIT $lim"
     } else {
         "SELECT record::id(id) AS key, mcc, mnc, tac, cid, lat, lng, range_m \
-         FROM cell_tower LIMIT $lim"
+         FROM cell_tower WHERE resolve_failed != true LIMIT $lim"
     };
     let mut stmt = state.db.query(query).bind(("lim", limit));
     if let Some(since) = q.since {

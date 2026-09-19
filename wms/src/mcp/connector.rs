@@ -35,20 +35,19 @@ fn err(status: StatusCode, msg: impl Into<String>) -> Response {
 /// `super::authenticate` reads. Empty/unset → an actionable 400 naming the var.
 fn resolve_token(master: bool) -> Result<String, Response> {
     if master {
+        // ECK_MCP_MASTER_TOKEN ONLY — the XELIXIR_SERVICE_TOKEN fallback was retired
+        // (F8, 2026-09-03 audit): a bundle must never be minted with the shared
+        // xelixir secret, and `super::authenticate` no longer accepts it as master.
         let token = std::env::var("ECK_MCP_MASTER_TOKEN")
             .ok()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| {
-                std::env::var("XELIXIR_SERVICE_TOKEN")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty())
-            })
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
             .unwrap_or_default();
-        if token.trim().is_empty() {
+        if token.is_empty() {
             return Err(err(
                 StatusCode::BAD_REQUEST,
                 "master tier token is not configured on this node — set ECK_MCP_MASTER_TOKEN \
-                 (or XELIXIR_SERVICE_TOKEN) before generating a master connector",
+                 before generating a master connector",
             ));
         }
         Ok(token)

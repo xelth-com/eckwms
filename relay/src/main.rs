@@ -72,10 +72,19 @@ async fn main() {
             // Same GC policy for the paid client-MCP channel.
             let res = cleanup_db
                 .query("DELETE client_mcp_task WHERE acked = true AND acked_at != NONE AND acked_at < $cutoff;")
-                .bind(("cutoff", cutoff_iso))
+                .bind(("cutoff", cutoff_iso.clone()))
                 .await;
             if let Err(e) = res {
                 tracing::warn!("client_mcp_task GC error: {e}");
+            }
+
+            // Same GC policy for the native AI-distribution channel.
+            let res = cleanup_db
+                .query("DELETE ai_task WHERE acked = true AND acked_at != NONE AND acked_at < $cutoff;")
+                .bind(("cutoff", cutoff_iso))
+                .await;
+            if let Err(e) = res {
+                tracing::warn!("ai_task GC error: {e}");
             }
 
             // Drop expired / burned pair-code rendezvous entries. `expires_at` is
@@ -132,6 +141,12 @@ fn build_router(db: db::RelayDb) -> Router {
         .route("/E/c/poll/{self_uuid}", get(handlers::c_poll))
         .route("/E/c/ack/{task_id}", post(handlers::c_ack))
         .route("/E/c/result/{task_id}", get(handlers::c_result))
+        // Native paid-mesh AI distribution (dumb pipe; license verified on the
+        // serving node, not here). See handlers::ai_relay.
+        .route("/E/ai/dispatch/{target_uuid}", post(handlers::ai_dispatch))
+        .route("/E/ai/poll/{self_uuid}", get(handlers::ai_poll))
+        .route("/E/ai/ack/{task_id}", post(handlers::ai_ack))
+        .route("/E/ai/result/{task_id}", get(handlers::ai_result))
         // Pair-code onboarding rendezvous (typed code -> ECK$ pairing string).
         .route("/E/pair/announce", post(handlers::pair_announce))
         .route("/E/pair/code", post(handlers::pair_resolve))
@@ -274,6 +289,130 @@ mod client_mcp_gate_tests {
         assert_eq!(tasks[0]["id"].as_str().unwrap(), task_id);
 
         std::env::remove_var("ECK_SUB_ROOT_PUBKEY");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod ai_relay_tests {
+    //! Loopback test for the native AI-distribution channel (`/E/ai/*`): the
+    //! full dispatch → poll (with delivered_at stamp) → pending → ack → completed
+    //! lifecycle against the relay's real router + an embedded DB, plus the
+    //! target-mismatch guard. No cert gate, no network — the license inside the
+    //! payload is opaque here (verified only on the serving node).
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use serde_json::{json, Value};
+    use tower::ServiceExt;
+
+    async fn post(app: &Router, uri: &str, body: Value) -> (StatusCode, Value) {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    async fn get(app: &Router, uri: &str) -> (StatusCode, Value) {
+        let resp = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    fn envelope(target: &str) -> Value {
+        json!({
+            "envelope": {
+                "target_uuid": target,
+                "kind": "ai.or.request",
+                "nonce": uuid::Uuid::new_v4().to_string(),
+                "created_at": chrono::Utc::now().timestamp(),
+                "expires_at": chrono::Utc::now().timestamp() + 600,
+            },
+            "license": "opaque-paid-license-token",
+            "request": { "model": "z-ai/glm-5.3-flash", "messages": [] },
+        })
+    }
+
+    #[tokio::test]
+    async fn ai_channel_roundtrip_and_target_guard() {
+        let tmp = std::env::temp_dir().join(format!("relay-ai-test-{}", uuid::Uuid::new_v4()));
+        let db = db::init_db(tmp.to_str().unwrap()).await.unwrap();
+        let app = build_router(db);
+        let target = "serving-node-1";
+
+        // Target mismatch → 400 (an envelope can't be misrouted by URL tweak).
+        let (st, _) = post(&app, &format!("/E/ai/dispatch/{target}"), envelope("someone-else")).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "path/envelope target mismatch is rejected");
+
+        // Dispatch → task_id.
+        let (st, dj) = post(&app, &format!("/E/ai/dispatch/{target}"), envelope(target)).await;
+        assert_eq!(st, StatusCode::OK);
+        let task_id = dj["task_id"].as_str().unwrap().to_string();
+
+        // Result is pending before any ack.
+        let (_, r) = get(&app, &format!("/E/ai/result/{task_id}")).await;
+        assert_eq!(r["status"], "pending");
+
+        // Serving node polls → gets exactly the one task, with its opaque payload.
+        let (_, polled) = get(&app, &format!("/E/ai/poll/{target}")).await;
+        let tasks = polled["tasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["id"].as_str().unwrap(), task_id);
+        assert_eq!(tasks[0]["payload"]["license"], "opaque-paid-license-token");
+
+        // A second immediate poll returns NOTHING: delivered_at was stamped, so a
+        // slow (minutes-long) generation isn't re-handed until the redeliver window.
+        let (_, polled2) = get(&app, &format!("/E/ai/poll/{target}")).await;
+        assert!(
+            polled2["tasks"].as_array().unwrap().is_empty(),
+            "delivered_at stamp hides the in-flight task from re-poll"
+        );
+
+        // Serving node acks {status, body}.
+        let ack_body = json!({ "status": 200, "body": {
+            "choices": [{ "message": { "content": "OK" }, "finish_reason": "stop" }],
+            "usage": { "prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6 }
+        }});
+        let (st, _) = post(&app, &format!("/E/ai/ack/{task_id}"), ack_body.clone()).await;
+        assert_eq!(st, StatusCode::OK);
+
+        // Result now completed + success, carrying the serving node's body verbatim.
+        let (_, r) = get(&app, &format!("/E/ai/result/{task_id}")).await;
+        assert_eq!(r["status"], "completed");
+        assert_eq!(r["success"], true);
+        assert_eq!(r["result"]["status"], 200);
+        assert_eq!(r["result"]["body"]["choices"][0]["message"]["content"], "OK");
+
+        // FIRST-ACK-WINS: a second (redelivery) ack with an error must NOT clobber.
+        let (_, _) = post(&app, &format!("/E/ai/ack/{task_id}"), json!({"status": 502, "error":"dup"})).await;
+        let (_, r) = get(&app, &format!("/E/ai/result/{task_id}")).await;
+        assert_eq!(r["result"]["status"], 200, "first ack wins; redelivery can't overwrite");
+        assert_eq!(r["success"], true);
+
+        // A non-2xx serving status surfaces as a FAILED result (fallback ladder).
+        let (_, dj2) = post(&app, &format!("/E/ai/dispatch/{target}"), envelope(target)).await;
+        let t2 = dj2["task_id"].as_str().unwrap().to_string();
+        post(&app, &format!("/E/ai/ack/{t2}"), json!({"status": 402, "body": {"error":"cap"}})).await;
+        let (_, r2) = get(&app, &format!("/E/ai/result/{t2}")).await;
+        assert_eq!(r2["status"], "failed");
+        assert_eq!(r2["success"], false);
+
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -17,7 +17,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 governor = "0.8"
 base64 = "0.22"
-surrealdb = { version = "3", features = ["kv-surrealkv", "protocol-ws"] }
+surrealdb = { version = "=3.2.4", features = ["kv-surrealkv", "protocol-ws"] }
 
 [dev-dependencies]
 ed25519-dalek = { version = "2", features = ["rand_core"] }

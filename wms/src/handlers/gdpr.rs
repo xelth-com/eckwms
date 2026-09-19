@@ -7,6 +7,13 @@
 //! subject's identifiers we recompute their tokens and match rows by
 //! `pii_fingerprints CONTAINSANY`, then erase the derived vector.
 //!
+//! Since the PII vault (`.eck/PII_VAULT.md` P1, 2026-09-11) the same token list
+//! also drives a **crypto-shred**: each `pii_vault:{token}` row is deleted, and
+//! with it the only copy of that row's DEK, so the sealed clear value is gone
+//! everywhere at once. The token survives on the business records as an
+//! anonymous pseudonym — which is what makes Art. 17 satisfiable without
+//! touching a §147 AO / GoBD-retained record. No-op on a node with no vault key.
+//!
 //! Scope: this erases the **AI-derived** data — the embedding vector and the
 //! fingerprint list — which are pseudonymised personal data under GDPR (the
 //! controller holds the pepper, so they're re-identifiable; see
@@ -105,7 +112,7 @@ pub async fn erase_subject(
             // terminal 'erased' state so the embedding worker (which only picks
             // up 'pending') will not re-embed it.
             format!(
-                "UPDATE {table} SET embedding = NONE, pii_fingerprints = [], \
+                "UPDATE {table} SET embedding = NONE, pii_fingerprints = [], pii_fuzzy = [], \
                      embedding_status = 'erased', embedding_error = NONE, erased_at = time::now() \
                  WHERE pii_fingerprints CONTAINSANY $tokens \
                  RETURN record::id(id) AS id"
@@ -137,9 +144,32 @@ pub async fn erase_subject(
         erased.insert((*table).to_string(), Value::Array(ids));
     }
 
+    // 2b. Crypto-shred the subject's vault rows (`.eck/PII_VAULT.md` §3.1,
+    //     P1 item 5). Deleting the row destroys the only copy of the per-row
+    //     DEK, so the ciphertext everywhere (including a peer's not-yet-synced
+    //     copy, once the tombstone reaches it) is permanently unopenable. The
+    //     token survives on the business records as an anonymous pseudonym,
+    //     which is exactly what makes Art. 17 satisfiable without touching the
+    //     §147 AO / GoBD-retained record.
+    //
+    //     No-op on a node without a vault key (`pii_vault::shred` returns
+    //     false immediately) — there is nothing to shred there, and the
+    //     existing vector/fingerprint erasure above is unchanged either way.
+    //     A shred on a node that HAS the key but is not the home node is still
+    //     correct: the delete tombstones and converges.
+    let mut shredded: Vec<String> = Vec::new();
+    if !req.dry_run && eck_core::pii_vault::enabled() {
+        for token in &tokens {
+            if eck_core::pii_vault::shred(&state.db, token).await {
+                shredded.push(token.clone());
+            }
+        }
+    }
+    let vault_shredded = shredded.len();
+
     // 3. Record the erasure itself in the tamper-evident audit chain (GoBD
     //    accountability). Only counts go in — never the tokens or raw PII.
-    if !req.dry_run && total > 0 {
+    if !req.dry_run && (total > 0 || vault_shredded > 0) {
         let per_table: Value = erased
             .iter()
             .map(|(t, v)| (t.clone(), json!(v.as_array().map(|a| a.len()).unwrap_or(0))))
@@ -152,11 +182,21 @@ pub async fn erase_subject(
             "gdpr",
             "gdpr-erase",
             eck_core::audit::class::MUTATE,
-            &format!("GDPR Art.17 erasure of {total} AI-derived vector(s)"),
-            json!({ "token_count": tokens.len(), "total": total, "tables": per_table }),
+            &format!(
+                "GDPR Art.17 erasure of {total} AI-derived vector(s) + {vault_shredded} vault row(s) crypto-shredded"
+            ),
+            json!({
+                "token_count": tokens.len(),
+                "total": total,
+                "tables": per_table,
+                "vault_shredded": vault_shredded,
+            }),
         )
         .await;
-        info!("[gdpr] erased {total} derived vector(s) across {} table(s)", EMBEDDED_TABLES.len());
+        info!(
+            "[gdpr] erased {total} derived vector(s) across {} table(s); crypto-shredded {vault_shredded} vault row(s)",
+            EMBEDDED_TABLES.len()
+        );
     }
 
     Ok(Json(json!({
@@ -164,6 +204,7 @@ pub async fn erase_subject(
         "dry_run": req.dry_run,
         "token_count": tokens.len(),
         "total": total,
+        "vault_shredded": vault_shredded,
         "erased": Value::Object(erased),
     })))
 }

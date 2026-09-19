@@ -7,14 +7,18 @@
 This document specifies the per-node document-AI pipeline: provider auth,
 summarization (live and batch), embeddings, the spend observer / circuit breaker,
 loop protection, and telemetry. It is descriptive of the shipped code in
-`core/src/ai.rs` (provider abstraction + metering seam) and `wms/src/ai/*`
-(`summarization.rs`, `summarization_batch.rs`, `embeddings.rs`, `observer.rs`,
-`telemetry.rs`, `loop_guard.rs`, and neighbors `doc_classify.rs`,
-`translation.rs`). Anchors are `file::symbol`.
+`core/src/ai.rs` (provider abstraction, cheap-tier task router, metering seam)
+and `wms/src/ai/*` (`summarization.rs`, `summarization_batch.rs`,
+`embeddings.rs`, `local_embed.rs`, `observer.rs`, `telemetry.rs`,
+`loop_guard.rs`, `orchestrator.rs`, `stale_reply.rs`, `optimizer.rs`,
+`kb_client.rs`, and neighbors `doc_classify.rs`, `translation.rs`). Anchors are
+`file::symbol`.
 
-All generative and embedding calls target Google's Gemini family. Two auth
-backends exist; everything downstream (prompt building, PII masking, completion
-write) is shared between them.
+Generative and embedding calls target Google's Gemini family (Studio or Vertex);
+a per-task router (§1a) can additionally send selected tasks to an
+OpenRouter-compatible endpoint with a time-budgeted hedge back to Gemini. Two
+Gemini auth backends exist; everything downstream (prompt building, PII masking,
+completion write) is shared between them.
 
 ---
 
@@ -54,6 +58,34 @@ than local guesses.
 In **studio** mode the managed-only paths (batch, mint, metering) are inert:
 Studio always falls through to the live `generateContent` path and the metering
 seam is a no-op.
+
+---
+
+## 1a. Cheap-tier task routing (time budget + hedge)
+
+`core/src/ai.rs::generate_for_task` adds an optional per-task router in front of
+the Gemini path — the mechanism behind the memory of a "glm-first cheap tier".
+
+- **Route table.** `or_route_for_task(task)` reads `ECK_AI_TASK_ROUTES`
+  (`task=model`, `*=model` wildcard, `task=off`/empty opt-out). A routed task is
+  sent to an OpenRouter-compatible endpoint via the `AiAuth::OpenRouter` variant.
+- **Transports (public seam only).** BYOK direct = `OPENROUTER_API_KEY`
+  (+ optional `ECK_OR_BASE_URL`); managed = an `ECK_LICENSE_TOKEN` bearer to
+  `ECK_OR_PROXY_URL`, or a native relay hop via `ECK_OR_SERVE_NODE` → the
+  relay's `/E/ai/*` queue (a serving node runs the poller under `ECK_OR_SERVE`).
+  Only the OpenAI-chat↔Gemini request/response shim (`or_build_request` /
+  `or_translate_response`) and these env-configured endpoints are in the public
+  crates; the upstream key ladder and wallet metering are authority-side
+  (`80-boundaries.md`).
+- **Time budget + hedge.** `task_budget_secs()` reads `ECK_AI_TASK_BUDGET`
+  (`task=secs`, `*` wildcard, unknown → 120 s). The OpenRouter attempt runs
+  under that budget; if it elapses with the request still in flight the router
+  fires **Gemini in parallel** and takes whichever returns first (recorded
+  `path` = `or` / `gemini` / `gemini-hedge`, with a `fallback_reason`). An
+  OpenRouter error before the budget falls straight through to Gemini —
+  satisfying the rule that every non-Google route has a Gemini fallback.
+- **Node model policy.** `ECK_AI_MODEL_DENY` (a vendor-prefix denylist) can null
+  a route so a node never calls a disallowed model.
 
 ---
 
@@ -216,6 +248,16 @@ mesh without every node recomputing them.
 Query embeddings are anonymized before embedding to match the stored (masked)
 vectors; vectors are 768-dim.
 
+- **Backend.** Studio mode calls `:embedContent`; **managed mode embeds DIRECT
+  on Vertex** (`gemini-embedding-2-preview`, region `us-central1` via
+  `ECK_VERTEX_EMBED_LOCATION`) with the minted bearer — the former authority
+  `/ai/embed` proxy is **retired**. `ECK_EMBED_VIA_AUTHORITY=1` is a rollback
+  hatch that re-routes managed embeddings through the proxy (`ECK_EMBED_URL`).
+  `ECK_EMBED_MODE=local` instead runs an on-device model
+  (`wms/src/ai/local_embed.rs`, candle) with idle-unload
+  (`ECK_EMBED_IDLE_UNLOAD_SECS`). Model must stay in the same 768-dim
+  `gemini-embedding-2` vector space across the mesh.
+
 ---
 
 ## 5. Adjacent stages
@@ -264,6 +306,34 @@ mesh balance, which is absorbed process-wide so the dashboard gauge refreshes on
 every AI call, not just on the ~hourly mint.
 
 ---
+
+## 7. Brain, orchestrator & learning loop
+
+Beyond per-document summarization, the node runs an agentic **brain** — the same
+Gemini agent reachable as the `ask_brain` MCP tool and the `/api/ai/chat`(`/stream`)
+Brain-Chat surface (`wms/src/ai/orchestrator.rs`, tools in `wms/src/ai/tools.rs`).
+
+- **Concurrency + budget.** Capped at `ECK_BRAIN_CONCURRENCY` runs (default 1)
+  and subject to the same observer `BudgetLevel` breaker (§2). A benchmark
+  harness (`ECK_BRAIN_BENCH`, `POST /api/ai/bench/brain`) is the eval gate.
+- **Multi-turn chat.** Brain-Chat keeps `ECK_CHAT_KEEP_TURNS` verbatim turns and
+  compacts older ones in chunks of `ECK_CHAT_COMPACT_CHUNK`
+  (`GEMINI_CHAT_COMPACT_MODEL`); transcripts + per-turn metrics are stored and
+  readable master-side (`chat_transcripts`/`chat_transcript` MCP tools).
+- **Deterministic pre-checks.** Before any model call, a "customer delivered, we
+  are silent" guard (`wms/src/ai/stale_reply.rs`, `ECK_STALE_REPLY_DAYS`) injects
+  a directive when the newest thread is inbound and the ticket has been silent
+  past the threshold; management/legal decisions route to an `ask_human` /
+  operator-inbox pause (`/api/ai/tasks`, `/api/ai/tasks/:id/reply`).
+- **Image passthrough.** After `ocr_attachment`/`analyze_attachment_visual` the
+  page image is appended as a user turn (`ECK_BRAIN_IMAGE_PASSTHROUGH`, default
+  on) so multimodal models see the page, not only a description.
+- **Learning loop.** Resolved-ticket lessons feed a knowledge base
+  (`wms/src/ai/kb_client.rs` `kb_brief` + digest, `repair_distiller.rs`), and an
+  SOP optimizer (`wms/src/ai/optimizer.rs`) distills good-only outcomes with
+  cosine dedup (`ECK_SOP_DEDUP_COS`). The orchestrator worker is opt-in per node
+  (`ECK_ORCHESTRATOR_WORKER=1`). The KB endpoint it publishes to is external
+  (`XELIXIR_KB_URL`); the client seam is public.
 
 ## STATE MACHINE (summary)
 

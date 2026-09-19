@@ -1,3 +1,4 @@
+mod ai_relay;
 mod client_mcp;
 mod health;
 mod mesh;
@@ -23,4 +24,7 @@ pub use xelixir::{
 };
 pub use client_mcp::{
     ack as c_ack, dispatch as c_dispatch, poll as c_poll, result as c_result,
+};
+pub use ai_relay::{
+    ack as ai_ack, dispatch as ai_dispatch, poll as ai_poll, result as ai_result,
 };

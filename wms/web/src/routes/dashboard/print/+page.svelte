@@ -123,6 +123,14 @@
     let loading = false;
     let previewEl;
 
+    // Physical printing (CUPS on the node) + browser-native local fallback
+    const LOCAL_PRINTER = '__local__'; // sentinel: print via this browser
+    let printers = [];
+    let selectedPrinter = ''; // '' = node default queue
+    let copies = 1;
+    let printersLoaded = false;
+    let printing = false;
+
     // Computed
     $: layoutKey = `${cols}x${rows}`;
     $: count = pages * cols * rows;
@@ -237,6 +245,183 @@
         }
     }
 
+    // Build the label-job request body shared by the download route
+    // (/api/print/labels) and the direct-print route (/api/print/send).
+    function buildRequestBody() {
+        const requestBody = {
+            type: selectedType,
+            startNumber: parseInt(startNumber),
+            count: parseInt(count),
+            cols: parseInt(cols),
+            rows: parseInt(rows),
+            marginTop: marginTop,
+            marginBottom: marginBottom,
+            marginLeft: marginLeft,
+            marginRight: marginRight,
+            gapX: gapX,
+            gapY: gapY,
+            isTightMode: isTightMode,
+            serialDigits: serialDigits,
+            contentConfig: styleCfg,
+            rackId: selectedRack || null
+        };
+        if (selectedType === 'p') {
+            requestBody.warehouseConfig = warehouseConfig;
+        }
+        return requestBody;
+    }
+
+    async function loadPrinters() {
+        try {
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch('/api/print/printers', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                printers = data.printers || [];
+                const def = printers.find(p => p.is_default);
+                // If the node has CUPS queues, default to its default (or first)
+                // — backend/CUPS path. If the node reports none, fall back to
+                // browser-native local printing (always possible).
+                if (def) {
+                    selectedPrinter = def.name;
+                } else if (printers.length > 0) {
+                    selectedPrinter = printers[0].name;
+                } else {
+                    selectedPrinter = LOCAL_PRINTER;
+                }
+            } else {
+                selectedPrinter = LOCAL_PRINTER;
+            }
+        } catch (e) {
+            console.error(e);
+            selectedPrinter = LOCAL_PRINTER;
+        } finally {
+            printersLoaded = true;
+        }
+    }
+
+    // Browser-native local printing: fetch the SAME PDF the download button
+    // produces, load it into a hidden iframe, and fire the operator's own OS
+    // print dialog → their local/USB/network printer. Used as a fallback when
+    // the backend node has no reachable CUPS queue.
+    async function printLocally() {
+        const requestBody = buildRequestBody();
+        const token = localStorage.getItem('auth_token');
+        const response = await fetch('/api/print/labels', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+            const err = await response.text();
+            throw new Error(err || tr('print.print_failed'));
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+        iframe.style.display = 'none';
+
+        // One idempotent cleanup shared by every exit path (print fired, load
+        // error, or onload never arriving) so the object URL and the hidden
+        // iframe can't leak.
+        let cleaned = false;
+        const cleanup = () => {
+            if (cleaned) return;
+            cleaned = true;
+            window.URL.revokeObjectURL(url);
+            if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+        };
+
+        let fired = false;
+        // If the blob never renders (blocked PDF viewer, corrupt response),
+        // onload may never fire — don't leak silently, report and clean up.
+        const loadGuard = setTimeout(() => {
+            if (fired) return;
+            toastStore.add(tr('print.print_failed'), 'error');
+            cleanup();
+        }, 15000);
+
+        iframe.onload = () => {
+            if (fired) return; // guard: some browsers fire onload twice
+            fired = true;
+            clearTimeout(loadGuard);
+            try {
+                iframe.contentWindow.focus();
+                iframe.contentWindow.print();
+            } catch (e) {
+                console.error(e);
+            }
+            // Clean up after the print dialog has had time to grab the doc.
+            setTimeout(cleanup, 60000);
+        };
+        iframe.onerror = () => {
+            clearTimeout(loadGuard);
+            toastStore.add(tr('print.print_failed'), 'error');
+            cleanup();
+        };
+
+        document.body.appendChild(iframe);
+        iframe.src = url;
+
+        toastStore.add(tr('print.local_print_sent'), 'success');
+    }
+
+    async function printDirect() {
+        if (!selectedType) {
+            toastStore.add(tr('print.select_type_first'), 'error');
+            return;
+        }
+        printing = true;
+        try {
+            // Local (browser) path — no backend printer involved.
+            if (selectedPrinter === LOCAL_PRINTER) {
+                await printLocally();
+                return;
+            }
+
+            const requestBody = buildRequestBody();
+            requestBody.printer = selectedPrinter || null;
+            requestBody.copies = parseInt(copies) || 1;
+
+            const token = localStorage.getItem('auth_token');
+            const response = await fetch('/api/print/send', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                const err = await response.text();
+                throw new Error(err || tr('print.print_failed'));
+            }
+
+            const data = await response.json();
+            toastStore.add(tr('print.print_success', { job: data.job || '' }), 'success');
+        } catch (e) {
+            console.error(e);
+            toastStore.add(e.message, 'error');
+        } finally {
+            printing = false;
+        }
+    }
+
     async function generatePDF() {
         if (!selectedType) {
             toastStore.add(tr('print.select_type_first'), 'error');
@@ -247,27 +432,7 @@
             // Logic: In UI, tight mode simply means we might draw cut lines differently,
             // but margin logic remains.
             // For the backend, we pass the raw values.
-            const requestBody = {
-                type: selectedType,
-                startNumber: parseInt(startNumber),
-                count: parseInt(count),
-                cols: parseInt(cols),
-                rows: parseInt(rows),
-                marginTop: marginTop,
-                marginBottom: marginBottom,
-                marginLeft: marginLeft,
-                marginRight: marginRight,
-                gapX: gapX,
-                gapY: gapY,
-                isTightMode: isTightMode,
-                serialDigits: serialDigits,
-                contentConfig: styleCfg,
-                rackId: selectedRack || null
-            };
-
-            if (selectedType === 'p') {
-                requestBody.warehouseConfig = warehouseConfig;
-            }
+            const requestBody = buildRequestBody();
 
             const token = localStorage.getItem('auth_token');
             const response = await fetch('/api/print/labels', {
@@ -303,6 +468,9 @@
     }
 
     onMount(() => {
+        // Discover physical printers on this node (best-effort; empty = none).
+        loadPrinters();
+
         // Load print settings from localStorage
         const saved = localStorage.getItem('print_settings');
         if (saved) {
@@ -578,10 +746,37 @@
         </div>
     </div>
 
-    <!-- Generate -->
+    <!-- Generate / Print -->
+    <div class="print-controls">
+        <div class="printer-field">
+            <label>{$t('print.printer')}</label>
+            <select bind:value={selectedPrinter}>
+                <option value={LOCAL_PRINTER}>{$t('print.local_printer')}</option>
+                <option value="">{$t('print.default_printer')}</option>
+                {#each printers as p}
+                    <option value={p.name}>{p.name}{p.is_default ? ' ★' : ''}</option>
+                {/each}
+            </select>
+        </div>
+        <div class="printer-field copies" class:muted={selectedPrinter === LOCAL_PRINTER}>
+            <label>{$t('print.copies')}</label>
+            <input type="number" bind:value={copies} min="1" max="50"
+                   disabled={selectedPrinter === LOCAL_PRINTER}
+                   title={selectedPrinter === LOCAL_PRINTER ? $t('print.copies_local_hint') : ''} />
+        </div>
+    </div>
+
+    {#if printersLoaded && printers.length === 0}
+        <p class="no-printers">{$t('print.no_printers_local')}</p>
+    {/if}
+
     <div class="actions">
         <button class="btn primary large" on:click={generatePDF} disabled={loading || !selectedType}>
             {loading ? $t('print.generating') : $t('print.generate_pdf')}
+        </button>
+        <button class="btn accent large" on:click={printDirect}
+                disabled={printing || !selectedType}>
+            {printing ? $t('print.printing') : $t('print.print_direct')}
         </button>
     </div>
 </div>
@@ -806,9 +1001,19 @@
     .c-item input { width: 100%; }
 
     .btn { padding: 10px 20px; background: #5a7ba9; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-    .btn:disabled { opacity: 0.5; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn.accent { background: #2f855a; }
     .btn-sm { padding: 5px 10px; background: #333; color: #ccc; border: none; border-radius: 3px; cursor: pointer; }
-    .actions { display: flex; justify-content: center; margin-top: 20px; }
+    .actions { display: flex; justify-content: center; gap: 12px; margin-top: 20px; }
+
+    /* Printer picker */
+    .print-controls { display: flex; justify-content: center; gap: 16px; margin-top: 16px; align-items: flex-end; flex-wrap: wrap; }
+    .printer-field label { display: block; font-size: 0.75rem; color: #888; margin-bottom: 3px; }
+    .printer-field select, .printer-field input { background: #111; border: 1px solid #444; color: #fff; padding: 6px; border-radius: 3px; }
+    .printer-field select { min-width: 220px; }
+    .printer-field.copies input { width: 70px; text-align: center; }
+    .printer-field.muted { opacity: 0.45; }
+    .no-printers { text-align: center; color: #b45309; font-size: 0.85rem; margin-top: 8px; }
 
     /* Warehouse */
     .card-header { display: flex; justify-content: space-between; align-items: center; }

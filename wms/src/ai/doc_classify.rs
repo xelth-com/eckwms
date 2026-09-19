@@ -180,18 +180,19 @@ async fn mask_extracted_text(text: &str) -> String {
     masked
 }
 
-/// On-device NER person-name masking, mirroring
-/// `embeddings::local_extract_and_anonymize`: each PER span the German NER model
-/// finds (gated by `plausible_person_name`) is replaced with its deterministic
-/// `Name_` token. Best-effort — any failure returns the text unchanged and the
-/// heuristic + regex backstop below still runs.
-#[cfg(feature = "local-embed")]
+/// NER person-name masking via the routing facade (`local` or `remote`): each
+/// PER span the model finds (gated by `plausible_person_name`) is replaced with
+/// its deterministic `Name_` token. In `gemini` mode this is a no-op (the
+/// caller's heuristic + regex backstop handles masking). Best-effort — any
+/// failure returns the text unchanged and the heuristic + regex backstop below
+/// still runs (fail-closed to lexicon, never unmasked egress).
 async fn ner_mask_names(text: &str) -> String {
-    if crate::ai::local_ner::ner_mode() != "local" {
+    let mode = crate::ai::pii_mode::pii_ner_mode();
+    if mode != "local" && mode != "remote" {
         return text.to_string();
     }
     let mut work = text.to_string();
-    match crate::ai::local_ner::extract_person_names(&work).await {
+    match crate::ai::pii_mode::extract_person_names(&work).await {
         Ok(names) => {
             for name in names {
                 let name = name.trim();
@@ -207,14 +208,9 @@ async fn ner_mask_names(text: &str) -> String {
                 }
             }
         }
-        Err(e) => warn!("[DocClassify] local NER failed ({e}) — heuristic+regex backstop only"),
+        Err(e) => warn!("[DocClassify] {mode} NER failed ({e}) — heuristic+regex backstop only"),
     }
     work
-}
-
-#[cfg(not(feature = "local-embed"))]
-async fn ner_mask_names(text: &str) -> String {
-    text.to_string()
 }
 
 /// Truncate to at most `max` bytes at a UTF-8 char boundary (floor) — pure, so
@@ -265,7 +261,7 @@ async fn call_model(
     model: &str,
     masked_text: &str,
     nudge: bool,
-) -> anyhow::Result<(String, Value)> {
+) -> anyhow::Result<(String, String, Value)> {
     let prefix = if nudge { JSON_ONLY_NUDGE } else { "" };
     let prompt = format!(
         "{prefix}{CLASSIFY_INSTRUCTION}\n\nDocument text (OCR; PII already masked as opaque tokens):\n\n{masked_text}"
@@ -278,7 +274,11 @@ async fn call_model(
             "maxOutputTokens": 1024,
         }
     });
-    auth.generate_content(http, model, payload).await
+    let _ = auth; // caller resolved auth only to gate on is_configured()
+    let gen =
+        eck_core::ai::AiAuth::generate_for_task(http, "classify", model, payload, None).await?;
+    tracing::info!("[ai] task=classify path={} model={}", gen.path, gen.model);
+    Ok((gen.text, gen.model, gen.usage))
 }
 
 /// Outcome of a single blob classification, for the sweep's batch accounting.
@@ -314,8 +314,8 @@ pub(crate) async fn classify_one(
 
     // First attempt.
     let first = match call_model(http, auth, &model, &masked, false).await {
-        Ok((resp, usage)) => {
-            log_telemetry(db, "doc_classify", &model, cas_uuid, &usage).await;
+        Ok((resp, served_model, usage)) => {
+            log_telemetry(db, "doc_classify", &served_model, cas_uuid, &usage).await;
             resp
         }
         Err(e) => {
@@ -330,8 +330,8 @@ pub(crate) async fn classify_one(
 
     // One retry with a JSON-only nudge.
     let second = match call_model(http, auth, &model, &masked, true).await {
-        Ok((resp, usage)) => {
-            log_telemetry(db, "doc_classify", &model, cas_uuid, &usage).await;
+        Ok((resp, served_model, usage)) => {
+            log_telemetry(db, "doc_classify", &served_model, cas_uuid, &usage).await;
             resp
         }
         Err(e) => {

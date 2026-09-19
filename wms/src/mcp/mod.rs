@@ -33,6 +33,7 @@
 
 pub(crate) mod connector;
 pub(crate) mod reveal;
+pub mod session;
 pub(crate) mod tools;
 
 use std::sync::Arc;
@@ -57,6 +58,11 @@ pub(crate) enum McpTier {
     /// Automated caller (server-side `claude -p`, external agents on the agent
     /// token): PII masked, Zone-1 unreadable.
     Agent,
+    /// Read-only observer (kiosk / exhibition session, nobody signed in):
+    /// PII masked like Agent AND no side-effecting tools (printing etc.).
+    /// The dashboard chat must keep working for this tier — it may read and
+    /// ask, never change anything in the world.
+    Observer,
 }
 
 impl McpTier {
@@ -81,10 +87,16 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Resolve the bearer to a tier, or an HTTP error response.
 ///
-/// Master token: `ECK_MCP_MASTER_TOKEN`, falling back to `XELIXIR_SERVICE_TOKEN`
-/// so the endpoint is usable today without provisioning a new secret. Agent
+/// Master token: `ECK_MCP_MASTER_TOKEN` ONLY (no XELIXIR_SERVICE_TOKEN fallback —
+/// F8: retired the shared secret; unset ⇒ static master tier disabled). Agent
 /// token: `ECK_MCP_AGENT_TOKEN` (optional — unset means no agent tier yet).
-fn authenticate(headers: &HeaderMap) -> Result<McpTier, Response> {
+///
+/// After the static env tokens, a PERSONAL browser session bearer (minted by
+/// `POST /api/auth/mcp-session`, stored hashed in the node-local `mcp_session`
+/// table) is accepted — bound to the caller's install via the `X-Eck-Client`
+/// header. The bearer only ever arrives in the Authorization header and is only
+/// ever hashed, never logged.
+async fn authenticate(state: &Arc<AppState>, headers: &HeaderMap) -> Result<McpTier, Response> {
     let provided = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -94,24 +106,44 @@ fn authenticate(headers: &HeaderMap) -> Result<McpTier, Response> {
         return Err((StatusCode::UNAUTHORIZED, "Unauthorized").into_response());
     };
 
+    // Master tier ONLY from a dedicated secret (F8, 2026-09-03 audit). The former
+    // fallback to XELIXIR_SERVICE_TOKEN meant one shared secret authorized both
+    // xelixir service use AND full master MCP (clear-PII reveal + surrealql_read):
+    // a compromise of one domain granted the other. No fallback now — if
+    // ECK_MCP_MASTER_TOKEN is unset the static master tier is simply disabled
+    // (session bearers still work); main.rs warns about that at startup.
     let master = std::env::var("ECK_MCP_MASTER_TOKEN")
         .ok()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("XELIXIR_SERVICE_TOKEN").ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
         .unwrap_or_default();
     let agent = std::env::var("ECK_MCP_AGENT_TOKEN").unwrap_or_default();
 
-    if master.is_empty() && agent.is_empty() {
-        return Err(
-            (StatusCode::INTERNAL_SERVER_ERROR, "MCP token not configured").into_response(),
-        );
-    }
+    // Static env tokens (constant-time compared) take precedence.
     if !master.is_empty() && ct_eq(provided.as_bytes(), master.as_bytes()) {
         return Ok(McpTier::Master);
     }
     if !agent.is_empty() && ct_eq(provided.as_bytes(), agent.as_bytes()) {
         return Ok(McpTier::Agent);
     }
+
+    // Personal browser session bearer (client-bound). Absent config for the
+    // static tokens is fine — a node can serve session bearers only.
+    let client = headers
+        .get("x-eck-client")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    match session::authenticate_session(state, &provided, client).await {
+        session::SessionAuth::Tier(t) => return Ok(t),
+        session::SessionAuth::ClientMismatch => {
+            return Err((StatusCode::UNAUTHORIZED, "session bound to another client").into_response());
+        }
+        session::SessionAuth::None => {}
+    }
+
+    // No static token matched and no valid session bearer. (A node may run with
+    // only session bearers and no static tokens configured — still a 401 here,
+    // never a 500, so a bad credential looks the same either way.)
     Err((StatusCode::UNAUTHORIZED, "Unauthorized").into_response())
 }
 
@@ -169,11 +201,11 @@ pub(crate) async fn handle_jsonrpc(
         // refused. Runs on BOTH transports (bearer `/mcp` and signed
         // `/mcp/signed` incl. over_relay) — the real values return to the
         // caller's own machine (the shim), never into a normal tool response.
-        "reveal_tokens" => match reveal::reveal_tokens_method(&state.pii_reveal, tier, &params) {
-            // Tokens the RAM map never saw (baked into stored summaries at
-            // distillation) get a second chance via the pii_fingerprints-indexed
-            // DB re-derivation — master tier is already proven by the Ok path.
-            Ok(v) => jsonrpc_result(&id, reveal::augment_from_db(state, v).await),
+        // Rate-limited + audited (`reveal_guard`, `.eck/PII_VAULT.md` §4/§9
+        // item 3) — `reveal_tokens_guarded` also runs the pii_fingerprints DB
+        // fallback (`augment_from_db`) internally.
+        "reveal_tokens" => match reveal::reveal_tokens_guarded(state, tier, &params, "mcp_reveal_tokens").await {
+            Ok(v) => jsonrpc_result(&id, v),
             Err((code, msg)) => jsonrpc_error(&id, code, &msg),
         },
         "tools/list" => {
@@ -228,7 +260,7 @@ pub async fn mcp_handler(
     headers: HeaderMap,
     Json(req): Json<Value>,
 ) -> Response {
-    let tier = match authenticate(&headers) {
+    let tier = match authenticate(&state, &headers).await {
         Ok(t) => t,
         Err(e) => return e,
     };

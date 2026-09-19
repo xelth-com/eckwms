@@ -1,5 +1,8 @@
 use sha2::{Sha256, Digest};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, Mutex};
+use std::collections::HashMap;
+use zeroize::Zeroizing;
+use serde::{Serialize, Deserialize};
 use regex::Regex;
 
 /// Compute a 64-bit SimHash from character bigrams, keyed with SYNC_SECRET as pepper.
@@ -7,18 +10,18 @@ use regex::Regex;
 /// enabling privacy-preserving record linkage (PPRL).
 /// The pepper prevents dictionary attacks on the hash tokens.
 fn simhash(text: &str) -> u64 {
-    // The pepper MUST come from SYNC_SECRET — there is deliberately NO fallback
+    // The pepper MUST be configured — there is deliberately NO fallback
     // default. A known/public pepper makes the obfuscated PII tokens reversible
     // by dictionary attack (hash candidate names with the known pepper, match
     // tokens), which would void the Zero-Knowledge / "PII never leaves in
     // plaintext" guarantee. Fail closed rather than ship reversible anonymisation.
-    let pepper = std::env::var("SYNC_SECRET")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .expect(
-            "SYNC_SECRET (PPRL pepper) is unset — refusing to anonymise PII with a \
-             publicly-known default pepper (it would be reversible). Set SYNC_SECRET.",
-        );
+    // Sourced from the process-global KeyRing (authority / keyfile / env
+    // SYNC_SECRET); env-only config gives the identical bytes → identical tokens.
+    let pepper = crate::keyring::pepper().expect(
+        "SYNC_SECRET (PPRL pepper) is unset — refusing to anonymise PII with a \
+         publicly-known default pepper (it would be reversible). Set SYNC_SECRET.",
+    );
+    let pepper = pepper.as_slice();
     let lower = text.to_lowercase();
     let chars: Vec<char> = lower.chars().collect();
 
@@ -26,7 +29,7 @@ fn simhash(text: &str) -> u64 {
         // Too short for bigrams — keyed SHA256 hash directly
         let mut hasher = Sha256::new();
         hasher.update(lower.as_bytes());
-        hasher.update(pepper.as_bytes());
+        hasher.update(pepper);
         let digest = hasher.finalize();
         return u64::from_be_bytes(digest[0..8].try_into().unwrap());
     }
@@ -37,7 +40,7 @@ fn simhash(text: &str) -> u64 {
         let bigram: String = window.iter().collect();
         let mut hasher = Sha256::new();
         hasher.update(bigram.as_bytes());
-        hasher.update(pepper.as_bytes());
+        hasher.update(pepper);
         let digest = hasher.finalize();
         let h = u64::from_be_bytes(digest[0..8].try_into().unwrap());
 
@@ -62,8 +65,513 @@ fn simhash(text: &str) -> u64 {
 /// Obfuscate a PII string using keyed SimHash.
 /// Returns a token like `Name_8E5F3A1B00000000` that preserves similarity
 /// (similar names → similar hashes) without revealing the original value.
+///
+/// Side effect (Name only): when the value carries ≥ 2 letters, its fuzzy
+/// signature is recorded in the process-wide MINT LOG keyed by the emitted
+/// token. That lets Channel B derive a `FuzzySig` for tokens that appear ONLY
+/// as `Name_<hex>` in NER/LLM-extracted prose (no structured clear field to
+/// re-derive from) — see [`fuzzy_sig_for_token`] and `derive_pii_fuzzy`.
 pub fn obfuscate_pii(text: &str, pii_type: &str) -> String {
-    format!("{}_{:016X}", pii_type, simhash(text))
+    let token = format!("{}_{:016X}", pii_type, simhash(text));
+    if text.chars().filter(|c| c.is_alphabetic()).count() >= 2 {
+        match pii_type {
+            "Name" => note_pii_sig(&token, text, SigKind::Name),
+            "Address" => note_pii_sig(&token, text, SigKind::Address),
+            _ => {}
+        }
+    }
+    token
+}
+
+// ─── PPRL fuzzy name resolution (typo-tolerant person lookup) ────────────────
+// Per-word 256-bit Bloom over padded character bigrams (k=2) scored by Dice,
+// OR-ed with a keyed Kölner-Phonetik word key — the `.eck/PPRL_FUZZY.md` design,
+// bench-tuned in `.eck/bench/pprl_bench{,2}.py`. Threshold and 256-bit/k=2
+// parameters are FIXED by the bench; do not retune.
+
+/// Similarity threshold for a fuzzy name match (bench winner — do not retune).
+pub const PII_FUZZY_THRESHOLD: f32 = 0.75;
+
+/// The same fail-closed pepper `simhash` uses — a known/public pepper would make
+/// the Bloom/phonetic signatures reversible by dictionary attack, so refuse to
+/// derive one without `SYNC_SECRET`.
+fn pprl_pepper() -> Arc<Zeroizing<Vec<u8>>> {
+    crate::keyring::pepper().expect(
+        "SYNC_SECRET (PPRL pepper) is unset — refusing to derive reversible \
+         fuzzy PII signatures with a publicly-known default pepper. Set SYNC_SECRET.",
+    )
+}
+
+/// Map an accented Latin letter to its base ASCII letter. Manual Latin-1
+/// Supplement + Latin Extended-A table (no new crate) — the diacritic strip in
+/// [`fold_name`], applied AFTER ß/ä/ö/ü have already been expanded. Returns
+/// `None` for a char that is not an accented Latin letter (caller keeps it if it
+/// is `[a-z0-9]`, drops it otherwise).
+fn strip_diacritic(c: char) -> Option<char> {
+    Some(match c {
+        'à' | 'á' | 'â' | 'ã' | 'å' | 'ā' | 'ă' | 'ą' => 'a',
+        'ç' | 'ć' | 'č' | 'ĉ' | 'ċ' => 'c',
+        'ď' | 'đ' => 'd',
+        'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => 'e',
+        'ĝ' | 'ğ' | 'ġ' | 'ģ' => 'g',
+        'ĥ' | 'ħ' => 'h',
+        'ì' | 'í' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => 'i',
+        'ĵ' => 'j',
+        'ķ' => 'k',
+        'ĺ' | 'ļ' | 'ľ' | 'ł' => 'l',
+        'ñ' | 'ń' | 'ņ' | 'ň' => 'n',
+        'ò' | 'ó' | 'ô' | 'õ' | 'ø' | 'ō' | 'ŏ' | 'ő' => 'o',
+        'ŕ' | 'ŗ' | 'ř' => 'r',
+        'ś' | 'ŝ' | 'ş' | 'š' => 's',
+        'ţ' | 'ť' | 'ŧ' => 't',
+        'ù' | 'ú' | 'û' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => 'u',
+        'ŵ' => 'w',
+        'ý' | 'ÿ' | 'ŷ' => 'y',
+        'ź' | 'ż' | 'ž' => 'z',
+        _ => return None,
+    })
+}
+
+/// Fold a name to comparable lowercase ASCII words: lowercase → ß→ss, ä/ö/ü→
+/// ae/oe/ue → strip other diacritics → keep `[a-z0-9]`; split on whitespace,
+/// `-`, `'`, `.`; drop words < 2 chars; dedupe preserving order.
+pub fn fold_name(s: &str) -> Vec<String> {
+    let lower = s.to_lowercase();
+    let mut buf = String::with_capacity(lower.len());
+    for c in lower.chars() {
+        match c {
+            'ß' => buf.push_str("ss"),
+            'ä' => buf.push_str("ae"),
+            'ö' => buf.push_str("oe"),
+            'ü' => buf.push_str("ue"),
+            // Explicit split characters become a boundary.
+            ' ' | '\t' | '\n' | '\r' | '-' | '\'' | '.' => buf.push(' '),
+            _ => {
+                if let Some(base) = strip_diacritic(c) {
+                    buf.push(base);
+                } else if c.is_ascii_alphanumeric() {
+                    buf.push(c);
+                }
+                // Any other char (punctuation, symbol) is dropped — keep [a-z0-9].
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for w in buf.split_whitespace() {
+        if w.chars().count() < 2 {
+            continue;
+        }
+        if seen.insert(w.to_string()) {
+            out.push(w.to_string());
+        }
+    }
+    out
+}
+
+/// What a [`FuzzySig`] describes — a person name or a postal address. Selects
+/// the fold + per-word encoding and tags search output; scoring is unified
+/// (see [`fuzzy_score`]). Serialized as `"Name"` / `"Address"`.
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub enum SigKind {
+    Name,
+    Address,
+}
+
+impl SigKind {
+    /// The `obfuscate_pii` label for this kind.
+    pub fn label(self) -> &'static str {
+        match self {
+            SigKind::Name => "Name",
+            SigKind::Address => "Address",
+        }
+    }
+}
+
+fn default_sig_kind() -> SigKind {
+    SigKind::Name
+}
+
+/// Per-word peppered signature: a 256-bit Bloom over padded bigrams (as 64 hex)
+/// and a keyed key (16 hex, or "" when absent). For an alphabetic word the key
+/// is the keyed Kölner-Phonetik code; for a numeric/alphanumeric ADDRESS word
+/// the Bloom is all-zero and the key is a keyed hash of the EXACT token, so it
+/// matches only on exact equality (house numbers / zips must not fuzz).
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct WordSig {
+    /// 64 hex = 256-bit bloom filter of padded character bigrams (all-zero for
+    /// an exact-match numeric token).
+    pub b: String,
+    /// 16 hex keyed phonetic/exact key, or "" (never matches).
+    pub p: String,
+}
+
+/// Fuzzy signature of a whole name or address — one [`WordSig`] per folded
+/// word. JSON shape: `{ "k": "Name"|"Address", "w": [...] }`.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct FuzzySig {
+    /// Discriminator (`k` in JSON); defaults to `Name` for pre-`kind` data.
+    #[serde(rename = "k", default = "default_sig_kind")]
+    pub kind: SigKind,
+    pub w: Vec<WordSig>,
+}
+
+/// 256-bit Bloom (k=2) over the DEDUPED padded character bigrams of `word`.
+/// `idx = u64::from_be_bytes(sha256([i] ++ bigram ++ pepper)[0..8]) % 256`.
+fn bloom_word(word: &str, pepper: &[u8]) -> [u8; 32] {
+    let padded = format!("_{word}_");
+    let chars: Vec<char> = padded.chars().collect();
+    let mut bits = [0u8; 32];
+    for win in chars.windows(2) {
+        let bigram: String = win.iter().collect();
+        for i in 0u8..2 {
+            let mut hasher = Sha256::new();
+            hasher.update([i]);
+            hasher.update(bigram.as_bytes());
+            hasher.update(pepper);
+            let digest = hasher.finalize();
+            let idx = (u64::from_be_bytes(digest[0..8].try_into().unwrap()) % 256) as usize;
+            bits[idx / 8] |= 1 << (idx % 8);
+        }
+    }
+    bits
+}
+
+/// Kölner Phonetik code of a single word — ported VERBATIM from the bench
+/// (`koelner` in `.eck/bench/pprl_bench.py`), including consecutive-dedupe,
+/// inner-zero drop and `-` removal. Input is expected already folded; non-alpha
+/// chars are dropped exactly as the bench does.
+fn koelner(word: &str) -> String {
+    let w: Vec<char> = word.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+    let mut out = String::new();
+    for i in 0..w.len() {
+        let c = w[i];
+        let p = if i > 0 { w[i - 1] } else { '\0' };
+        let n = if i + 1 < w.len() { w[i + 1] } else { '\0' };
+        let code: &str = match c {
+            'a' | 'e' | 'i' | 'j' | 'o' | 'u' | 'y' => "0",
+            'h' => "-",
+            'b' => "1",
+            'p' => {
+                if n == 'h' {
+                    "3"
+                } else {
+                    "1"
+                }
+            }
+            'd' | 't' => {
+                if matches!(n, 'c' | 's' | 'z') {
+                    "8"
+                } else {
+                    "2"
+                }
+            }
+            'f' | 'v' | 'w' => "3",
+            'g' | 'k' | 'q' => "4",
+            'c' => {
+                if i == 0 {
+                    if matches!(n, 'a' | 'h' | 'k' | 'l' | 'o' | 'q' | 'r' | 'u' | 'x') {
+                        "4"
+                    } else {
+                        "8"
+                    }
+                } else if matches!(p, 's' | 'z') || !matches!(n, 'a' | 'h' | 'k' | 'o' | 'q' | 'u' | 'x') {
+                    "8"
+                } else {
+                    "4"
+                }
+            }
+            'x' => {
+                if matches!(p, 'c' | 'k' | 'q') {
+                    "8"
+                } else {
+                    "48"
+                }
+            }
+            'l' => "5",
+            'm' | 'n' => "6",
+            'r' => "7",
+            's' | 'z' => "8",
+            _ => "",
+        };
+        out.push_str(code);
+    }
+    // Dedupe consecutive equal codes.
+    let mut dedup = String::new();
+    let mut prev: Option<char> = None;
+    for ch in out.chars() {
+        if prev != Some(ch) {
+            dedup.push(ch);
+        }
+        prev = Some(ch);
+    }
+    // Keep the first char, drop inner '0's, then strip '-'.
+    let mut res = String::new();
+    for (i, ch) in dedup.chars().enumerate() {
+        if i == 0 || ch != '0' {
+            res.push(ch);
+        }
+    }
+    res.replace('-', "")
+}
+
+/// Expand a purely-alphabetic German street/place abbreviation to its canonical
+/// form. `str`/`strasse` (also glued: `hauptstr` → `hauptstrasse`) → `strasse`;
+/// `pl`/`platz` → `platz`; `st` (from `st.`) → `sankt`. Everything else
+/// (`weg`, `allee`, `gasse`, plain words) is returned unchanged.
+fn expand_street_abbrev(w: &str) -> String {
+    match w {
+        "str" | "strasse" => return "strasse".to_string(),
+        "pl" | "platz" => return "platz".to_string(),
+        "st" => return "sankt".to_string(),
+        _ => {}
+    }
+    if w.ends_with("strasse") {
+        return w.to_string();
+    }
+    if let Some(stem) = w.strip_suffix("str") {
+        if !stem.is_empty() {
+            return format!("{stem}strasse");
+        }
+    }
+    w.to_string()
+}
+
+/// Fold a postal address to comparable tokens (spec §F). Lowercase + umlaut/ß
+/// folding, split letters from a following digit run (`str12` → `str 12`;
+/// `12a` stays), split on `,` `/` `-` `.` and whitespace, expand street
+/// abbreviations, KEEP numeric/alphanumeric tokens of ANY length (the ≥2-char
+/// rule applies to purely alphabetic words only), drop country words, dedupe
+/// preserving order.
+pub fn fold_address(s: &str) -> Vec<String> {
+    let lower = s.to_lowercase();
+    let mut buf = String::with_capacity(lower.len());
+    let mut prev_alpha = false;
+    for c in lower.chars() {
+        match c {
+            'ß' => {
+                buf.push_str("ss");
+                prev_alpha = true;
+            }
+            'ä' => {
+                buf.push_str("ae");
+                prev_alpha = true;
+            }
+            'ö' => {
+                buf.push_str("oe");
+                prev_alpha = true;
+            }
+            'ü' => {
+                buf.push_str("ue");
+                prev_alpha = true;
+            }
+            ' ' | '\t' | '\n' | '\r' | ',' | '/' | '-' | '.' => {
+                buf.push(' ');
+                prev_alpha = false;
+            }
+            _ => {
+                let mapped =
+                    strip_diacritic(c).or_else(|| c.is_ascii_alphanumeric().then_some(c));
+                if let Some(ch) = mapped {
+                    // Split letters from a following digit (letter→digit only).
+                    if ch.is_ascii_digit() && prev_alpha {
+                        buf.push(' ');
+                    }
+                    buf.push(ch);
+                    prev_alpha = ch.is_ascii_alphabetic();
+                } else {
+                    prev_alpha = false;
+                }
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for raw in buf.split_whitespace() {
+        let has_digit = raw.chars().any(|c| c.is_ascii_digit());
+        let token = if has_digit {
+            // Numeric / alphanumeric: keep verbatim at ANY length.
+            raw.to_string()
+        } else {
+            let t = expand_street_abbrev(raw);
+            // Drop country words + purely-alphabetic tokens shorter than 2 chars.
+            if matches!(t.as_str(), "deutschland" | "germany" | "de") {
+                continue;
+            }
+            if t.chars().count() < 2 {
+                continue;
+            }
+            t
+        };
+        if seen.insert(token.clone()) {
+            out.push(token);
+        }
+    }
+    out
+}
+
+/// Build the per-word signature for one folded token under `kind`.
+fn word_sig(word: &str, kind: SigKind, pepper: &[u8]) -> WordSig {
+    let numeric_exact = kind == SigKind::Address && word.chars().any(|c| c.is_ascii_digit());
+    if numeric_exact {
+        // Exact-match token: zero bloom, keyed hash of the EXACT token. The
+        // `num:` prefix keeps it from ever colliding with a phonetic code
+        // (koelner codes are digit strings, never containing ':').
+        let mut hasher = Sha256::new();
+        hasher.update(b"num:");
+        hasher.update(word.as_bytes());
+        hasher.update(pepper);
+        return WordSig {
+            b: hex::encode([0u8; 32]),
+            p: hex::encode(&hasher.finalize()[0..8]),
+        };
+    }
+    let bits = bloom_word(word, pepper);
+    let code = koelner(word);
+    let p = if code.is_empty() {
+        String::new()
+    } else {
+        let mut hasher = Sha256::new();
+        hasher.update(code.as_bytes());
+        hasher.update(pepper);
+        hex::encode(&hasher.finalize()[0..8])
+    };
+    WordSig {
+        b: hex::encode(bits),
+        p,
+    }
+}
+
+/// Derive the [`FuzzySig`] of a person name from its clear value (Name kind).
+pub fn pii_fuzzy_sig(name: &str) -> FuzzySig {
+    pii_fuzzy_sig_kind(name, SigKind::Name)
+}
+
+/// Derive the [`FuzzySig`] of `value` under `kind` (needs the pepper). Names use
+/// [`fold_name`]; addresses use [`fold_address`] with exact-match numeric tokens.
+pub fn pii_fuzzy_sig_kind(value: &str, kind: SigKind) -> FuzzySig {
+    let pepper = pprl_pepper();
+    let words = match kind {
+        SigKind::Name => fold_name(value),
+        SigKind::Address => fold_address(value),
+    };
+    let w = words
+        .iter()
+        .map(|word| word_sig(word, kind, pepper.as_slice()))
+        .collect();
+    FuzzySig { kind, w }
+}
+
+/// Build an Address [`FuzzySig`] from separate address components (street /
+/// zip / city). The word list is the UNION of `fold_address` over each part in
+/// the given order (deduped), so a city-only or zip-only query can hit the sig
+/// even when the clear address line holds only the street. The stored *token*
+/// stays derived from whatever exact string the reveal path hashes — this only
+/// widens the sig's word set. Needs the pepper.
+pub fn pii_fuzzy_sig_address(components: &[&str]) -> FuzzySig {
+    let pepper = pprl_pepper();
+    let mut seen = std::collections::HashSet::new();
+    let mut words: Vec<String> = Vec::new();
+    for c in components {
+        for w in fold_address(c) {
+            if seen.insert(w.clone()) {
+                words.push(w);
+            }
+        }
+    }
+    let w = words
+        .iter()
+        .map(|word| word_sig(word, SigKind::Address, pepper.as_slice()))
+        .collect();
+    FuzzySig {
+        kind: SigKind::Address,
+        w,
+    }
+}
+
+/// Dice coefficient over two Bloom-bit byte slices: `2·|a∧b| / (|a|+|b|)`.
+/// Either side empty (no bits) → 0.
+fn dice_bytes(a: &[u8], b: &[u8]) -> f32 {
+    let ca: u32 = a.iter().map(|x| x.count_ones()).sum();
+    let cb: u32 = b.iter().map(|x| x.count_ones()).sum();
+    if ca + cb == 0 {
+        return 0.0;
+    }
+    let inter: u32 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| (x & y).count_ones())
+        .sum();
+    2.0 * inter as f32 / (ca + cb) as f32
+}
+
+/// Fuzzy match score of query signature `q` against document signature `d`:
+/// mean over `q.w` of the max over `d.w` of the per-word score. Per word:
+///   * numeric/alphanumeric ADDRESS token (all-zero bloom) — 1.0 ONLY on an
+///     exact keyed-token match, else 0 (house numbers / zips must not fuzz);
+///   * alphabetic word — when the keyed phonetic keys are equal AND non-empty,
+///     `Dice.max(0.85)`; else plain `Dice` of the Blooms.
+/// The `.max(0.85)` floor keeps recall (any phonetic match clears the 0.75
+/// threshold) while letting a spelling-exact pair (Dice = 1.0) outrank a
+/// phonetic-only one (e.g. Müller vs Möller), so results prefer exact spelling.
+/// Empty either side → 0. Directional — call as `fuzzy_score(query_sig, doc_sig)`.
+pub fn fuzzy_score(q: &FuzzySig, d: &FuzzySig) -> f32 {
+    if q.w.is_empty() || d.w.is_empty() {
+        return 0.0;
+    }
+    let d_decoded: Vec<(Vec<u8>, &str)> = d
+        .w
+        .iter()
+        .map(|dw| (hex::decode(&dw.b).unwrap_or_default(), dw.p.as_str()))
+        .collect();
+    let mut total = 0.0f32;
+    for qw in &q.w {
+        let qbits = hex::decode(&qw.b).unwrap_or_default();
+        let numeric = qbits.iter().all(|&b| b == 0);
+        let mut best = 0.0f32;
+        for (dbits, dp) in &d_decoded {
+            let phonetic_eq = !qw.p.is_empty() && qw.p.as_str() == *dp;
+            let s = if numeric {
+                // Exact-match token: full credit only on an exact keyed match.
+                if phonetic_eq { 1.0 } else { 0.0 }
+            } else if phonetic_eq {
+                dice_bytes(&qbits, dbits).max(0.85)
+            } else {
+                dice_bytes(&qbits, dbits)
+            };
+            if s > best {
+                best = s;
+            }
+        }
+        total += best;
+    }
+    total / q.w.len() as f32
+}
+
+/// Process-wide MINT LOG: `Name_<hex>` / `Address_<hex>` token → its
+/// [`FuzzySig`], populated by [`obfuscate_pii`] as names/addresses are masked.
+/// Lets Channel B resolve tokens that live ONLY as pseudonyms in extracted
+/// prose (no structured clear field). Capped at 50 000 entries; on
+/// overflow the whole map is cleared and repopulated (a fresh sweep re-derives).
+fn mint_log() -> &'static Mutex<HashMap<String, FuzzySig>> {
+    static M: OnceLock<Mutex<HashMap<String, FuzzySig>>> = OnceLock::new();
+    M.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn note_pii_sig(token: &str, value: &str, kind: SigKind) {
+    let sig = pii_fuzzy_sig_kind(value, kind);
+    if let Ok(mut map) = mint_log().lock() {
+        if map.len() >= 50_000 {
+            map.clear();
+        }
+        map.insert(token.to_string(), sig);
+    }
+}
+
+/// Look up the mint-logged [`FuzzySig`] for a `Name_<hex>` token, if this
+/// process has masked that value since start.
+pub fn fuzzy_sig_for_token(token: &str) -> Option<FuzzySig> {
+    mint_log().lock().ok()?.get(token).cloned()
 }
 
 /// Deterministic regex backstop for structured PII that an LLM extractor can
@@ -95,6 +603,7 @@ pub fn scrub_pii_regex(text: &str) -> (String, Vec<String>) {
         matches.dedup();
         for original in matches {
             if original.trim().is_empty() { continue; }
+            if *label == "Phone" && is_date_like(&original) { continue; }
             let token = obfuscate_pii(original.trim(), label);
             if out.contains(&original) {
                 out = out.replace(&original, &token);
@@ -147,6 +656,9 @@ pub fn pprl_reveal_map(text: &str) -> Vec<(String, String)> {
         for m in re.find_iter(text) {
             let original = m.as_str().trim();
             if original.is_empty() {
+                continue;
+            }
+            if *label == "Phone" && is_date_like(original) {
                 continue;
             }
             let token = obfuscate_pii(original, label);
@@ -574,6 +1086,19 @@ fn pii_patterns() -> &'static [(&'static str, Regex)] {
     })
 }
 
+/// A national-phone candidate that is really a DATE — `01.09.26`, `05.04.2026`,
+/// `08.07.` (day.month with the year elided), or a `01.09.-05.09.` range half.
+/// The national pattern (`0…` + separators) cannot tell them apart, and masking
+/// a delivery/appointment date as `Phone_…` destroyed the one fact the ticket
+/// carried (2026-09-07 bench, ticket 32791). Dates are not PII on their own.
+fn is_date_like(s: &str) -> bool {
+    static DATE: OnceLock<Regex> = OnceLock::new();
+    let re = DATE.get_or_init(|| {
+        Regex::new(r"^\d{1,2}[./]\d{1,2}(?:[./](?:\d{2}|\d{4})?)?[./]?$").unwrap()
+    });
+    re.is_match(s.trim())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -629,6 +1154,22 @@ mod tests {
         assert!(scrubbed.contains("Email_"), "no email token: {scrubbed}");
         assert!(scrubbed.contains("Iban_"), "no IBAN token: {scrubbed}");
         assert!(fps.len() >= 4, "expected >=4 fingerprints, got {}: {fps:?}", fps.len());
+    }
+
+    #[test]
+    fn regex_backstop_leaves_dates_alone_but_masks_phones() {
+        setup();
+        let (scrubbed, toks) = scrub_pii_regex(
+            "Gerät wird am 01.09.26 geliefert, Termin 05.04.2026, Abholung 08.07. bis 10.07.; Rückruf 0391 886 4384 oder 0176/64988533.",
+        );
+        assert!(scrubbed.contains("01.09.26"), "date masked: {scrubbed}");
+        assert!(scrubbed.contains("05.04.2026"), "date masked: {scrubbed}");
+        assert!(scrubbed.contains("08.07."), "date masked: {scrubbed}");
+        assert!(!scrubbed.contains("0391 886 4384"), "phone leaked: {scrubbed}");
+        assert!(!scrubbed.contains("64988533"), "phone leaked: {scrubbed}");
+        assert_eq!(toks.len(), 2, "exactly the two phones: {toks:?}");
+        assert!(is_date_like("01.09.26") && is_date_like("5.4.2026") && is_date_like("08.07.") && is_date_like("01/09/2026"));
+        assert!(!is_date_like("0391 886 4384") && !is_date_like("0176/64988533"));
     }
 
     #[test]
@@ -860,5 +1401,177 @@ mod tests {
         // Token embedded in a longer query is a full-text query, not a token.
         assert_eq!(parse_pii_token("who is Name_5AC7269A88303052?"), None);
         assert_eq!(parse_pii_token("Katharina"), None);
+    }
+
+    // ── PPRL fuzzy name resolution (spec `.eck/PPRL_FUZZY.md` §A) ─────────────
+
+    #[test]
+    fn fold_name_splits_dedups_and_drops_short() {
+        setup();
+        assert_eq!(fold_name("Müller-Lüdenscheidt"), vec!["mueller", "luedenscheidt"]);
+        // Umlaut expansion, diacritic strip, lowercase.
+        assert_eq!(fold_name("Hans Müller"), vec!["hans", "mueller"]);
+        assert_eq!(fold_name("José Öztürk"), vec!["jose", "oeztuerk"]);
+        // Words < 2 chars dropped ("o" from an apostrophe split), dedupe preserves order.
+        assert_eq!(fold_name("O'Brien Brien"), vec!["brien"]);
+    }
+
+    #[test]
+    fn phonetic_keys_equal_for_meyer_maier_mayer() {
+        setup();
+        let m = pii_fuzzy_sig("Meyer");
+        let a = pii_fuzzy_sig("Maier");
+        let y = pii_fuzzy_sig("Mayer");
+        assert_eq!(m.w.len(), 1);
+        assert!(!m.w[0].p.is_empty(), "phonetic key must be present");
+        assert_eq!(m.w[0].p, a.w[0].p, "Meyer/Maier phonetic keys differ");
+        assert_eq!(m.w[0].p, y.w[0].p, "Meyer/Mayer phonetic keys differ");
+        // Phonetic-equal but spelling-different pairs clear the 0.85 floor
+        // (recall preserved) yet stay BELOW an exact-spelling self-match (1.0),
+        // so exact spelling ranks first.
+        let s_ma = fuzzy_score(&m, &a);
+        assert!(s_ma >= 0.85, "Meyer/Maier phonetic score too low: {s_ma}");
+        assert!(s_ma < 1.0, "phonetic-only pair must not tie an exact match: {s_ma}");
+        assert_eq!(fuzzy_score(&m, &m), 1.0, "exact spelling must score 1.0");
+    }
+
+    #[test]
+    fn fuzzy_matches_typos_above_threshold() {
+        setup();
+        let base = pii_fuzzy_sig("Hans Müller");
+        for variant in ["Hans Muller", "Hnas Müller", "Müller Hans", "Hans Mueller"] {
+            let q = pii_fuzzy_sig(variant);
+            let s = fuzzy_score(&q, &base);
+            assert!(
+                s >= PII_FUZZY_THRESHOLD,
+                "'{variant}' vs 'Hans Müller' = {s} < {PII_FUZZY_THRESHOLD}"
+            );
+        }
+        // Surname-only query resolves to the full name (mean over 1 word = 1.0).
+        let surname = pii_fuzzy_sig("Müller");
+        assert!(
+            fuzzy_score(&surname, &base) >= PII_FUZZY_THRESHOLD,
+            "surname-only query should match the full name"
+        );
+    }
+
+    #[test]
+    fn fuzzy_separates_unrelated_names() {
+        setup();
+        let a = pii_fuzzy_sig("Stefan Schmidt");
+        let b = pii_fuzzy_sig("Hans Müller");
+        let s = fuzzy_score(&a, &b);
+        assert!(s < 0.5, "unrelated names scored too high: {s}");
+    }
+
+    #[test]
+    fn fuzzy_sig_serde_round_trip() {
+        setup();
+        let sig = pii_fuzzy_sig("Hans Müller");
+        let json = serde_json::to_string(&sig).unwrap();
+        let back: FuzzySig = serde_json::from_str(&json).unwrap();
+        assert_eq!(sig, back);
+    }
+
+    #[test]
+    fn mint_log_records_name_signatures() {
+        setup();
+        let token = obfuscate_pii("Katharina Niedermayer", "Name");
+        let sig = fuzzy_sig_for_token(&token).expect("Name mint should log a signature");
+        // The logged sig equals a fresh derivation from the clear value.
+        assert_eq!(sig, pii_fuzzy_sig("Katharina Niedermayer"));
+        // Non-Name labels are not logged.
+        let email = obfuscate_pii("a@b.de", "Email");
+        assert!(fuzzy_sig_for_token(&email).is_none());
+    }
+
+    // ── PPRL fuzzy ADDRESS resolution (spec `.eck/PPRL_FUZZY.md` §F) ──────────
+
+    #[test]
+    fn fold_address_normalises_and_expands() {
+        setup();
+        // Abbrev expansion (glued + standalone), split letters from digits,
+        // split on comma, keep zip + house number, drop nothing valid.
+        assert_eq!(
+            fold_address("Hauptstr. 12, 10115 Berlin"),
+            vec!["hauptstrasse", "12", "10115", "berlin"]
+        );
+        assert_eq!(fold_address("Bahnhofstr 5"), vec!["bahnhofstrasse", "5"]);
+        assert_eq!(fold_address("Bahnhofstraße 5"), vec!["bahnhofstrasse", "5"]);
+        // "12a" stays a single alphanumeric token; country word dropped.
+        assert_eq!(
+            fold_address("Musterweg 12a, Deutschland"),
+            vec!["musterweg", "12a"]
+        );
+    }
+
+    #[test]
+    fn address_sig_kind_and_serde() {
+        setup();
+        let sig = pii_fuzzy_sig_kind("Hauptstr. 12, 10115 Berlin", SigKind::Address);
+        assert_eq!(sig.kind, SigKind::Address);
+        let json = serde_json::to_string(&sig).unwrap();
+        assert!(json.contains("\"k\":\"Address\""), "kind must serialize as k: {json}");
+        let back: FuzzySig = serde_json::from_str(&json).unwrap();
+        assert_eq!(sig, back);
+        // Backward-compat: JSON without `k` defaults to Name.
+        let legacy: FuzzySig = serde_json::from_str("{\"w\":[]}").unwrap();
+        assert_eq!(legacy.kind, SigKind::Name);
+    }
+
+    #[test]
+    fn address_fuzzy_matches_variants_but_not_wrong_number() {
+        setup();
+        let doc = pii_fuzzy_sig_kind("Hauptstraße 12 Berlin", SigKind::Address);
+        let q = pii_fuzzy_sig_kind("Hauptstr. 12, 10115 Berlin", SigKind::Address);
+        let s = fuzzy_score(&q, &doc);
+        assert!(s >= PII_FUZZY_THRESHOLD, "typo'd address should match: {s}");
+        // Wrong house number must pull the mean below threshold.
+        let wrong = pii_fuzzy_sig_kind("Hauptstraße 14 Berlin", SigKind::Address);
+        let s_wrong = fuzzy_score(&q, &wrong);
+        assert!(s_wrong < PII_FUZZY_THRESHOLD, "wrong number matched: {s_wrong}");
+        // Abbreviation-only difference still matches.
+        let a = pii_fuzzy_sig_kind("Bahnhofstrasse 5", SigKind::Address);
+        let b = pii_fuzzy_sig_kind("Bahnhofstr 5", SigKind::Address);
+        assert!(fuzzy_score(&a, &b) >= PII_FUZZY_THRESHOLD);
+    }
+
+    #[test]
+    fn address_zip_only_matches_record() {
+        setup();
+        let doc = pii_fuzzy_sig_kind("Hauptstraße 12, 10115 Berlin", SigKind::Address);
+        let zip = pii_fuzzy_sig_kind("10115", SigKind::Address);
+        assert!(
+            (fuzzy_score(&zip, &doc) - 1.0).abs() < 1e-6,
+            "zip-only query should score 1.0 against a matching record"
+        );
+        // A different zip must not match.
+        let other = pii_fuzzy_sig_kind("99999", SigKind::Address);
+        assert_eq!(fuzzy_score(&other, &doc), 0.0);
+    }
+
+    #[test]
+    fn address_sig_from_components_matches_city_and_zip_only() {
+        setup();
+        // Real-data shape: street on `address`, zip/city in their own fields.
+        let doc = pii_fuzzy_sig_address(&["Musterallee 15-21", "12345", "Beispielstadt"]);
+        let city = pii_fuzzy_sig_kind("Beispielstadt", SigKind::Address);
+        let zip = pii_fuzzy_sig_kind("12345", SigKind::Address);
+        assert!(
+            (fuzzy_score(&city, &doc) - 1.0).abs() < 1e-6,
+            "city-only query must hit the combined address sig"
+        );
+        assert!(
+            (fuzzy_score(&zip, &doc) - 1.0).abs() < 1e-6,
+            "zip-only query must hit the combined address sig"
+        );
+    }
+
+    #[test]
+    fn address_mint_log_records_signatures() {
+        setup();
+        let token = obfuscate_pii("Hauptstraße 12, 10115 Berlin", "Address");
+        let sig = fuzzy_sig_for_token(&token).expect("Address mint should log a signature");
+        assert_eq!(sig.kind, SigKind::Address);
     }
 }

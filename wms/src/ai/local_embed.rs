@@ -17,8 +17,10 @@ use candle_core::{Device, Tensor};
 use candle_nn::{Module, VarBuilder};
 use candle_transformers::models::jina_bert::{BertModel, Config};
 use std::sync::Mutex;
-use tokio::sync::OnceCell;
+use std::sync::OnceLock;
 use tracing::info;
+
+use super::idle_model::IdleModel;
 
 /// Canonical id recorded as `embedding_model` on every locally-produced vector
 /// (see `embeddings::effective_embed_model`) so a later model migration can tell
@@ -40,7 +42,20 @@ pub struct LocalEmbedder {
     model: Mutex<BertModel>,
 }
 
-static EMBEDDER: OnceCell<LocalEmbedder> = OnceCell::const_new();
+/// Idle-unloadable holder for the process-wide embedder. Loaded lazily on first
+/// use (on the blocking pool) and dropped by a background reaper after
+/// `ECK_EMBED_IDLE_UNLOAD_SECS` of no use (default 600; `0` = never unload).
+static EMBEDDER: OnceLock<IdleModel<LocalEmbedder>> = OnceLock::new();
+
+fn embedder_holder() -> &'static IdleModel<LocalEmbedder> {
+    EMBEDDER.get_or_init(|| {
+        let idle_secs = std::env::var("ECK_EMBED_IDLE_UNLOAD_SECS")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(600);
+        IdleModel::new("Embeddings", idle_secs, LocalEmbedder::load_blocking)
+    })
+}
 
 impl LocalEmbedder {
     /// Blocking load: reads tokenizer/config/weights from `ECK_EMBED_MODEL_DIR`
@@ -153,16 +168,12 @@ impl LocalEmbedder {
     }
 }
 
-/// Lazily initialize (and, on first use, download) the process-wide embedder.
-/// `EMBEDDER` is a `static`, so the returned reference is `'static`.
-async fn embedder() -> Result<&'static LocalEmbedder> {
-    EMBEDDER
-        .get_or_try_init(|| async {
-            tokio::task::spawn_blocking(LocalEmbedder::load_blocking)
-                .await
-                .context("local embedder load task panicked")?
-        })
-        .await
+/// Lazily initialize (downloading on first use) and return the process-wide
+/// embedder as an `Arc`. The load runs on the blocking pool and is
+/// idle-unloadable (see [`embedder_holder`]); the returned `Arc` keeps the model
+/// alive for the caller even if the reaper drops the shared slot meanwhile.
+async fn embedder() -> Result<std::sync::Arc<LocalEmbedder>> {
+    embedder_holder().get().await
 }
 
 /// Embed `text` into a 768-dim, L2-normalized vector on-device. The model is

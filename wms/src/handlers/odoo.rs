@@ -2,9 +2,11 @@
 //!
 //! - `GET  /api/odoo/ping` — authenticate + live counts (no persistence).
 //! - `POST /api/odoo/sync` — pull master data into local `odoo_*` tables.
+//! - `POST /api/odoo/bridge-products` — bridge `odoo_product` into `product`.
+//! - `POST /api/odoo/bridge-partners` — bridge `odoo_partner` into `partner`.
 //!
-//! Both are mounted behind the JWT `auth_middleware` (see `main.rs`). They are
-//! read-only against Odoo; `sync` only writes to the local mesh DB.
+//! All are mounted behind the JWT `auth_middleware` (see `main.rs`). They are
+//! read-only against Odoo; `sync`/`bridge-*` only write to the local mesh DB.
 
 use std::sync::Arc;
 
@@ -51,7 +53,7 @@ pub async fn ping(State(_state): State<Arc<AppState>>) -> ApiResult {
 pub async fn sync(State(state): State<Arc<AppState>>, Json(body): Json<Value>) -> ApiResult {
     let product_limit = body.get("product_limit").and_then(|v| v.as_i64()).unwrap_or(0);
     let quant_limit = body.get("quant_limit").and_then(|v| v.as_i64()).unwrap_or(0);
-    let counts = pull_master_data(&state, product_limit, quant_limit)
+    let counts = pull_master_data(&state.db, &state.instance_id, product_limit, quant_limit)
         .await
         .map_err(upstream)?;
     Ok(Json(json!({ "ok": true, "synced": counts })))
@@ -62,6 +64,17 @@ pub async fn sync(State(state): State<Arc<AppState>>, Json(body): Json<Value>) -
 /// writes only to the local mesh DB. Run a `/sync` first so the mirror is fresh.
 pub async fn bridge_products(State(state): State<Arc<AppState>>) -> ApiResult {
     let res = crate::services::odoo::bridge_products(&state)
+        .await
+        .map_err(upstream)?;
+    Ok(Json(json!({ "ok": true, "bridged": res })))
+}
+
+/// POST /api/odoo/bridge-partners — map the odoo_partner mirror into 9eck's
+/// native `partner` table (merge by odoo_id/email/name, create the rest).
+/// Idempotent; writes only to the local mesh DB. Run a `/sync` first so the
+/// mirror is fresh.
+pub async fn bridge_partners(State(state): State<Arc<AppState>>) -> ApiResult {
+    let res = crate::services::odoo::bridge_partners(&state)
         .await
         .map_err(upstream)?;
     Ok(Json(json!({ "ok": true, "bridged": res })))

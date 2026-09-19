@@ -23,6 +23,8 @@ export default {
     support_title: "Support-Tickets",
     support_loading_btn: "Wird geladen…",
     support_refresh: "Aktualisieren",
+    support_load_more: "Mehr laden",
+    support_loading_more: "Wird geladen…",
     support_loading: "Tickets werden geladen…",
     support_failed: "Laden fehlgeschlagen: {error}",
     support_empty_title: "Noch keine Support-Tickets importiert",

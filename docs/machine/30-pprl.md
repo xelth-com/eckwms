@@ -7,10 +7,13 @@
 This document specifies the privacy-preserving record-linkage (PPRL) layer that
 tokenizes personal data before it reaches any cloud model or external-facing
 surface. It is descriptive of the shipped code in
-`core/src/utils/anonymizer.rs` (the token primitive), `wms/src/mcp/tools.rs` and
-`wms/src/mcp/reveal.rs` (the MCP tokenize/mask/reveal paths), and
-`wms/src/ai/pii_policy.rs` (the egress policy). Local NER is an optional,
-feature-gated augmentation (`wms/src/ai/local_ner.rs`).
+`core/src/utils/anonymizer.rs` (the SimHash token primitive + the Bloom256/Kölner
+fuzzy signature), `wms/src/mcp/tools.rs` and `wms/src/mcp/reveal.rs` (the MCP
+tokenize/mask/reveal paths), `wms/src/ai/pii_policy.rs` (the egress policy) and
+`wms/src/ai/pii_fuzzy.rs` (the fuzzy resolver). NER is an optional augmentation,
+on-device or peer-served (`wms/src/ai/local_ner.rs`, `wms/src/ai/pii_remote.rs`).
+An optional zero-knowledge PII vault lives in `core/src/vault/*` +
+`core/src/pii_vault.rs`.
 
 The design goal is a single, stable **pseudonym token** that (a) never exposes
 the clear value, (b) is identical for identical inputs across every node and
@@ -97,10 +100,15 @@ Free text is scrubbed in layers by `mask_free_text`:
    runs (serial numbers, order numbers) are **not** masked and search recall is
    preserved. Each match becomes the same `obfuscate_pii` token as every other
    path.
-3. **Optional local NER** — when built with the local-embed feature and
-   `ECK_PII_NER=local`, `wms/src/ai/local_ner.rs` adds an on-device
-   named-entity pass over prose (e.g. subject lines) that the lexicon backstop
-   would miss, minting the same deterministic `Name_` tokens. Absent that, the
+3. **Optional NER** — `ECK_PII_NER` selects a named-entity pass over prose (e.g.
+   subject lines) that the lexicon backstop would miss, minting the same
+   deterministic `Name_` tokens. `local` runs an on-device candle model
+   (`wms/src/ai/local_ner.rs`, `mschiesser/ner-bert-german`, weights from
+   `ECK_NER_MODEL_DIR`, idle-unloaded after `ECK_NER_IDLE_UNLOAD_SECS`).
+   `remote` offloads span detection to a peer node
+   (`wms/src/ai/pii_remote.rs` → `ECK_PII_SPANS_URL`; that peer serves it when
+   `ECK_PII_SPANS_SERVE=1`), and is **fail-closed** — a detector error drops to
+   the regex backstop rather than sending names onward. Absent either, the
    lexicon/heuristic is the fallback.
 
 Because every path routes through `obfuscate_pii` with the same pepper, a name
@@ -127,6 +135,26 @@ Free-text bodies additionally mask bare first-name references
 (`tools.rs::thread_name_needles` + `mask_known_names`) by using the structured
 participants already known for the thread, mapping a bare part to the token of
 the full name so correlation and reveal keep working.
+
+### 3.1 Fuzzy name search (typo-tolerant, still masked)
+
+The SimHash token (§1) is an **exact-match** key: a misspelled name tokenizes to
+a different token, so exact-token pivots miss typos. A separate, deliberately
+fuzzy signature covers approximate name/address search **without** un-masking.
+
+`anonymizer.rs` derives, per word, a **256-bit Bloom filter** (`bloom_word`,
+k=2 over padded character bigrams, emitted as 64 hex) **and** a **Kölner
+Phonetik** code (`koelner`), combined into a `FuzzySig`/`WordSig`
+(`SigKind::{Name,Address}`); numeric address tokens use an exact keyed hash
+(`num:` prefix) instead. All of it is peppered with `SYNC_SECRET`, so the
+signature is not reversible to the clear value. `wms/src/ai/pii_policy.rs::
+derive_pii_fuzzy` writes these into `document.pii_fuzzy`, and an in-memory
+resolver (`wms/src/ai/pii_fuzzy.rs::FuzzyIndex`, reloaded periodically) matches a
+query by **Dice overlap** of the Bloom sets with a phonetic floor (a Kölner match
+lifts the score toward the accept threshold). This is what lets a search for a
+mistyped customer name still find the record while the clear name never leaves
+the node. `pii_fuzzy` is a locally re-derivable index (in `IGNORED_FIELDS`), so
+it never drives cross-node convergence.
 
 ---
 
@@ -207,6 +235,26 @@ egress).
 
 ---
 
+## 7. Zero-knowledge PII vault (optional persistent reveal source)
+
+The RAM-only reveal store (§4.1) forgets tokens on restart or eviction, and DB
+fallback needs the raw payload on the queried node. `core/src/vault/*` +
+`core/src/pii_vault.rs` add an **optional, zero-knowledge** persistent store for
+the `token → clear` material that keeps the "no plaintext at rest" property:
+
+- Each vaulted blob is sealed under a per-node **KEK** (key-encryption key) that
+  **never leaves the node** (`vault/kek.rs`); the sealed blob is then split by
+  **Shamir secret sharing, threshold 2-of-3** (`vault/shamir.rs`, GF(256)), one
+  share held by each of three share-holder nodes you run (`ECK_VAULT_NODES`).
+- Recovering a value needs **at least two** shares reconstituted plus the node
+  KEK — **no single node ever holds enough to read the clear data**, so a single
+  compromised host discloses nothing. `ECK_VAULT_SERVE=1` turns a node into a
+  share-holder (`/api/vault/*` surface); admin lifecycle (bootstrap, enroll,
+  join, revoke, recover, rotate, sweep) is under `/api/admin/vault/*`.
+- The vault is off by default (`ECK_VAULT_DISABLE`, `ECK_RAW_AT_REST` as the
+  deliberate raw-at-rest opt-out) and is a self-hosted subsystem — no vendor
+  authority is involved (`80-boundaries.md`).
+
 ## GUARANTEES
 
 1. Same clear value + same `pii_type` + same pepper → identical token, on every
@@ -219,9 +267,10 @@ egress).
 4. Clear reveal is reachable only by a master-tier caller and only via the
    `reveal_tokens` method / `reveal_file_local` tool, which write clear values to
    local files, never over the wire; an agent-tier caller is refused.
-5. No persistent plaintext vault exists; the reveal map is RAM-only and bounded,
-   and DB-fallback reveal re-derives tokens from raw data rather than reading a
-   stored clear copy.
+5. No persistent **plaintext** vault exists; the live reveal map is RAM-only and
+   bounded, and DB-fallback reveal re-derives tokens from raw data rather than
+   reading a stored clear copy. The optional PII vault (§7) stores only sealed,
+   Shamir-sharded material — no single node holds a readable clear copy.
 6. The egress policy fails closed: an unknown/absent value, or an unknown policy
    string, resolves to `masked`.
 7. `pii_fingerprints` (the erasure/correlation index) and MCP tokenization stay

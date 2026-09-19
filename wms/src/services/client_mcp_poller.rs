@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+use eck_core::utils::identity::{sign_message, ServerIdentity};
 use eck_core::xelixir::subscription::read_sub_root_from_env;
 
 use crate::services::client_mcp::serve_signed;
@@ -60,11 +61,37 @@ fn http_client(timeout_secs: u64) -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-async fn ack_relay(relay_url: &str, task_id: &str, body: Value) {
+/// Sign a `poll`/`ack` canonical with the node's server-identity key. Returns
+/// the `(ts, signature)` to send alongside `X-Eck-Node-Key` so the relay can
+/// bind this request to our identity (F3). `None` if signing fails (we then send
+/// the request unsigned — an `optional` relay accepts it, a `required` one 401s).
+fn sign_node(identity: &ServerIdentity, prefix: &str, subject: &str) -> Option<(i64, String)> {
+    let ts = chrono::Utc::now().timestamp();
+    let canonical = format!("{prefix}:{subject}:{ts}");
+    match sign_message(&identity.private_key, &canonical) {
+        Ok(sig) => Some((ts, sig)),
+        Err(e) => {
+            warn!("[client_mcp] could not sign {prefix} for {subject}: {e}");
+            None
+        }
+    }
+}
+
+async fn ack_relay(relay_url: &str, task_id: &str, body: Value, identity: &ServerIdentity) {
     let url = format!("{}/E/c/ack/{}", relay_url, task_id);
     let client = http_client(15);
+    // Sign once; the whole retry burst fits well inside the relay's freshness
+    // window, and re-signing per attempt buys nothing.
+    let signed = sign_node(identity, "eck-cmcp-ack", task_id);
     for attempt in 1..=ACK_MAX_ATTEMPTS {
-        match client.post(&url).json(&body).send().await {
+        let mut req = client.post(&url).json(&body);
+        if let Some((ts, sig)) = &signed {
+            req = req
+                .header("X-Eck-Node-Key", &identity.public_key)
+                .header("X-Eck-Node-Ts", ts.to_string())
+                .header("X-Eck-Node-Sig", sig);
+        }
+        match req.send().await {
             Ok(r) if r.status().is_success() => return,
             Ok(r) => warn!(
                 "[client_mcp] ack task={} attempt {}/{} non-success: {}",
@@ -129,8 +156,16 @@ async fn poll_once(
     let relay_url = relay_base_url();
     let url = format!("{}/E/c/poll/{}", relay_url, state.instance_id);
 
-    let resp = http_client(POLL_TIMEOUT_SECS)
-        .get(&url)
+    // Sign the poll with our server-identity key (F3c): the relay binds our
+    // instance_id to this pubkey and rejects a spoofed poll of our queue.
+    let mut req = http_client(POLL_TIMEOUT_SECS).get(&url);
+    if let Some((ts, sig)) = sign_node(&state.server_identity, "eck-cmcp-poll", &state.instance_id) {
+        req = req
+            .header("X-Eck-Node-Key", &state.server_identity.public_key)
+            .header("X-Eck-Node-Ts", ts.to_string())
+            .header("X-Eck-Node-Sig", sig);
+    }
+    let resp = req
         .send()
         .await
         .map_err(|e| format!("poll request failed: {}", e))?;
@@ -183,7 +218,7 @@ async fn poll_once(
 
         let Some(payload) = task.get("payload").cloned() else {
             warn!("[client_mcp] task {} has no payload — dropping", task_id);
-            ack_relay(&relay_url, &task_id, json!({"error": "invalid payload"})).await;
+            ack_relay(&relay_url, &task_id, json!({"error": "invalid payload"}), &state.server_identity).await;
             in_flight.lock().await.remove(&task_id);
             continue;
         };
@@ -199,7 +234,7 @@ async fn poll_once(
         tokio::spawn(async move {
             let outcome = serve_signed(&state_w, payload).await;
             info!("[client_mcp] served task={} status={}", task_w, outcome.http_status());
-            ack_relay(&relay_w, &task_w, outcome.into_ack_body()).await;
+            ack_relay(&relay_w, &task_w, outcome.into_ack_body(), &state_w.server_identity).await;
             // Mark completed BEFORE leaving in_flight so no poll can slip
             // between the two sets and re-execute the task.
             {

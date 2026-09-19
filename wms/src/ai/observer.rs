@@ -464,7 +464,11 @@ async fn run_ai_analysis(state: &Arc<AppState>, http: &HttpClient) -> anyhow::Re
         "generationConfig": { "responseMimeType": "application/json", "temperature": 0.1 }
     });
 
-    let (response_text, _usage) = auth.generate_content(http, &gen_model, payload).await?;
+    let _ = &auth; // resolved above only to gate on is_configured()
+    let gen =
+        eck_core::ai::AiAuth::generate_for_task(http, "observer", &gen_model, payload, None).await?;
+    tracing::info!("[ai] task=observer path={} model={}", gen.path, gen.model);
+    let (response_text, _usage) = (gen.text, gen.usage);
 
     let analysis: Value =
         serde_json::from_str(&response_text).unwrap_or_else(|_| json!({"status": "ok"}));

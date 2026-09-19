@@ -23,8 +23,10 @@ use candle_core::{DType, Device, Tensor, D};
 use candle_nn::{linear, Linear, Module, VarBuilder};
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use std::sync::Mutex;
-use tokio::sync::OnceCell;
+use std::sync::OnceLock;
 use tracing::{info, warn};
+
+use super::idle_model::IdleModel;
 
 /// Canonical model id (used only for the one-time init log). Kept short.
 pub const MODEL_NAME: &str = "ner-bert-german";
@@ -104,7 +106,21 @@ pub struct LocalNer {
     sep_id: u32,
 }
 
-static NER: OnceCell<LocalNer> = OnceCell::const_new();
+/// Idle-unloadable holder for the process-wide NER model. Loaded lazily on first
+/// use (on the blocking pool) and dropped by a background reaper after
+/// `ECK_NER_IDLE_UNLOAD_SECS` of no use (default 600; `0` = never unload) — the
+/// ~1.4 GB resident weights are the kiosk memory hog we want to shed when idle.
+static NER: OnceLock<IdleModel<LocalNer>> = OnceLock::new();
+
+fn ner_holder() -> &'static IdleModel<LocalNer> {
+    NER.get_or_init(|| {
+        let idle_secs = std::env::var("ECK_NER_IDLE_UNLOAD_SECS")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(600);
+        IdleModel::new("NER", idle_secs, LocalNer::load_blocking)
+    })
+}
 
 impl LocalNer {
     /// Blocking load: reads tokenizer/config/weights from `ECK_NER_MODEL_DIR`
@@ -421,15 +437,12 @@ fn merge_bio_entities(tokens: &[&str], labels: &[&str], class: &str) -> Vec<Stri
         .collect()
 }
 
-/// Lazily initialize (and, on first use, download) the process-wide NER model.
-/// `NER` is a `static`, so the returned reference is `'static`.
-async fn ner() -> Result<&'static LocalNer> {
-    NER.get_or_try_init(|| async {
-        tokio::task::spawn_blocking(LocalNer::load_blocking)
-            .await
-            .context("local NER load task panicked")?
-    })
-    .await
+/// Lazily initialize (downloading on first use) and return the process-wide NER
+/// model as an `Arc`. The load runs on the blocking pool and is idle-unloadable
+/// (see [`ner_holder`]); the returned `Arc` keeps the model alive for the caller
+/// even if the reaper drops the shared slot meanwhile.
+async fn ner() -> Result<std::sync::Arc<LocalNer>> {
+    ner_holder().get().await
 }
 
 /// Extract the deduplicated set of PER (person-name) entities from `text` using

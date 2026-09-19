@@ -126,8 +126,14 @@ pub async fn resolve_voice(
         }
     });
 
-    let text = match auth.generate_content(&http, &model, payload).await {
-        Ok((t, _usage)) => t,
+    let _ = &auth; // resolved above only to gate on is_configured()
+    let text = match eck_core::ai::AiAuth::generate_for_task(&http, "voice", &model, payload, None)
+        .await
+    {
+        Ok(g) => {
+            tracing::info!("[ai] task=voice path={} model={}", g.path, g.model);
+            g.text
+        }
         Err(e) => {
             warn!("[voice] gemini resolve error: {e}");
             return Ok(Json(VoiceResolveResp {

@@ -59,7 +59,7 @@
         loadSimilar();
         // Load all tickets asynchronously for the "Related Tickets" feature
         api.get('/api/support/tickets').then(res => {
-            allTickets = res || [];
+            allTickets = res?.tickets || [];
             computeRelatedTickets();
         }).catch(e => console.warn('Failed to load related tickets', e));
     });

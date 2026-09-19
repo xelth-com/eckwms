@@ -153,7 +153,11 @@ async fn main() -> Result<(), anyhow::Error> {
          DEFINE TABLE IF NOT EXISTS order SCHEMALESS;
          REMOVE FIELD IF EXISTS embedding ON order;
          DEFINE FIELD embedding ON order TYPE option<array<float>>;
-         DEFINE INDEX IF NOT EXISTS repair_embedding ON order FIELDS embedding
+         -- Same index NAME as the wms ensure-indexes block (embedding_hnsw):
+         -- the old `repair_embedding` name left every dev DB with TWO HNSW
+         -- indexes over the same 768-dim vectors (double RAM, 2026-09-11).
+         REMOVE INDEX IF EXISTS repair_embedding ON order;
+         DEFINE INDEX IF NOT EXISTS embedding_hnsw ON order FIELDS embedding
              HNSW DIMENSION 768 DIST COSINE TYPE F32;
 
          -- BM25 full-text indexes for hybrid search
@@ -169,7 +173,8 @@ async fn main() -> Result<(), anyhow::Error> {
          DEFINE TABLE IF NOT EXISTS document SCHEMALESS;
          REMOVE FIELD IF EXISTS embedding ON document;
          DEFINE FIELD embedding ON document TYPE option<array<float>>;
-         DEFINE INDEX IF NOT EXISTS document_embedding ON document FIELDS embedding
+         REMOVE INDEX IF EXISTS document_embedding ON document;
+         DEFINE INDEX IF NOT EXISTS doc_embedding_hnsw ON document FIELDS embedding
              HNSW DIMENSION 768 DIST COSINE TYPE F32;
          -- Full-text over MASKED fields only (ai_summary + distilled subject);
          -- the legacy payload.content index searched raw text that

@@ -1,10 +1,11 @@
 # eckWMS — agent-native, offline-first WMS/RMA node (open core)
 
 > Rust node binary: warehouse/repair/field-service management with embedded
-> SurrealDB, decentralized merkle-mesh sync, built-in POS, and an MCP surface
-> that treats AI agents as first-class users behind a deterministic PII
-> pseudonymization layer. AGPL-3.0. This documentation set is machine-first:
-> written to be consumed by agents, not marketed to humans.
+> SurrealDB, decentralized merkle-mesh sync, a feature-gated POS module, and an
+> MCP surface that treats AI agents as first-class users behind a deterministic
+> PII pseudonymization layer (with an optional zero-knowledge vault). AGPL-3.0,
+> public version 0.2.0. This documentation set is machine-first: written to be
+> consumed by agents, not marketed to humans.
 
 Start here, in order:
 
@@ -14,7 +15,7 @@ Start here, in order:
 - [PII pseudonymization](docs/machine/30-pprl.md): token grammar, guarantees, threat model
 - [MCP tool catalog](docs/machine/40-mcp-tools.md): every tool with JSON schema, tier gates, PII behavior
 - [HTTP surface](docs/machine/45-http-surface.md): route inventory with auth gates
-- [AI pipeline](docs/machine/50-ai-pipeline.md): summarization state machine, batch mode, embeddings
+- [AI pipeline](docs/machine/50-ai-pipeline.md): summarization state machine, batch mode, embeddings, cheap-tier task routing, brain/learning loop
 - [Config matrix](docs/machine/60-config-matrix.md): every env var, defaults, minimal-env recipes
 - [Integration quickstart](docs/machine/70-integration.md): connect an MCP agent in minutes
 - [Open-core boundary](docs/machine/80-boundaries.md): exactly what is standalone vs commercial

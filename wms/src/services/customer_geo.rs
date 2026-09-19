@@ -358,8 +358,10 @@ async fn load_sources(db: &SurrealDb, self_id: &str) -> Vec<Source> {
         Err(e) => error!("[CustomerGeo] source ticket select failed: {e}"),
     }
 
-    // Exact Online partners with a city (sparse today; coverage grows later).
-    let psql = "SELECT record::id(id) AS id, name, phone, email, city FROM partner WHERE city != ''";
+    // Partners with a city (Exact Online + Odoo sources; sparse today, coverage
+    // grows later). Zip is present when the source system provides one (Odoo
+    // does; Exact today does not) — used as-is when non-empty.
+    let psql = "SELECT record::id(id) AS id, name, phone, email, city, zip FROM partner WHERE city != ''";
     match db.query(psql).await.and_then(|mut r| r.take(0)) {
         Ok(rows) => {
             let rows: Vec<Value> = rows;
@@ -384,13 +386,18 @@ async fn load_sources(db: &SurrealDb, self_id: &str) -> Vec<Source> {
                     continue;
                 }
                 let city_norm = city.trim().to_lowercase();
+                let zip = row
+                    .get("zip")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
                 out.push(Source {
-                    // Partners carry no zip → coarse (city-centre) placement.
                     ref_id: format!("partner:{rid}"),
                     email,
                     phone,
                     company,
-                    zip: None,
+                    zip,
                     city,
                     city_norm,
                 });
@@ -425,14 +432,21 @@ async fn place_from_candidates(
 
     // Stamp the source tag + provenance separately (small UPDATE), then re-bump.
     let matchinfo = json!({ "via": via, "ref": ref_id, "city": city, "zip": zip });
+    // Mirror the resolved town into `meta.geo_city` — the DERIVED town-name
+    // fallback the brain's ticket tools search by (see vorwahl.rs). We never
+    // overwrite the authoritative Zoho `meta.city`; `geo_city` rides the same
+    // geo block and is not a summary-seed field, so it neither re-arms
+    // summarization nor flips a sync digest beyond the geo change already made.
     let q = "UPDATE document SET \
              meta.geo_source = 'customer_db', \
+             meta.geo_city = $city, \
              meta.customer_match = $m, \
              updated_at = time::now() \
          WHERE record::id(id) = $id RETURN NONE";
     if let Err(e) = db
         .query(q)
         .bind(("id", id.to_string()))
+        .bind(("city", city.clone()))
         .bind(("m", matchinfo))
         .await
     {

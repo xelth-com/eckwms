@@ -1,3 +1,13 @@
 [workspace]
 members = ["core", "wms", "relay", "compliance", "migrator"]
 resolver = "2"
+
+# Vendored surrealdb API crate (surrealdb-core stays from crates.io). The only
+# change vs upstream 3.2.4 is a ~7-line patch in
+# `src/engine/local/native.rs::run_router` that re-injects the endpoint query
+# params UNPREFIXED onto the datastore builder's ConfigMap, so the embedded
+# SurrealKV block-cache / memtable / HNSW-cache tuning keys actually take effect
+# (upstream force-prefixes them with `datastore_` and they never match the
+# parsers). See vendor/surrealdb-3.2.4/README-ECK-PATCH.md for the exact diff and upgrade instructions.
+[patch.crates-io]
+surrealdb = { path = "vendor/surrealdb-3.2.4" }

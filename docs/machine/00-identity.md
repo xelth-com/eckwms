@@ -36,9 +36,9 @@ identity:
 ## COMPONENT MAP
 ```yaml
 crates:
-  core:       # shared library: sync engine (merkle/vclock/conflict), crypto, PII anonymizer, AI provider auth, db bootstrap
-  wms:        # the node binary: REST handlers, MCP surface, AI pipeline (summarization live+batch, embeddings, classify, translate), schedulers, integrations (ERP scrapers proxy, courier APIs), PDA contract
-  relay:      # self-hostable relay binary: node registry, dispatch/poll/ack queues, blind file conduit, client-MCP channel
+  core:       # shared library: sync engine (merkle/vclock/conflict), crypto, PII anonymizer (SimHash tokens + Bloom256/Kölner fuzzy name search), zero-knowledge PII vault (node KEK + Shamir 2-of-3), AI provider auth + cheap-tier task router, WASM plugin runtime (extism), Ed25519 licensing + CRL, db bootstrap
+  wms:        # the node binary: REST handlers, MCP surface, AI pipeline (summarization live+batch, embeddings, classify, translate, Brain-Chat + orchestrator/learning loop), CUPS printing, schedulers, integrations (ERP scrapers proxy, courier APIs), PDA contract
+  relay:      # self-hostable relay binary: node registry, dispatch/poll/ack queues, blind file conduit, client-MCP channel, AI-request distribution channel
   compliance: # fiscal/audit scaffolding (DSFinV-K/GoBD orientation)
   migrator:   # legacy-data import tooling
 not_in_this_repository:
@@ -70,16 +70,32 @@ docs_for_machines:
    code into per-deployment configuration; remaining hardcoded defaults are
    documented, not hidden.
 
+## VERSIONING
+The public workspace crates (`core` as `eck_core`, `wms`, `relay`, `compliance`,
+`migrator`) version by **minor-version parity**: an **odd** minor is a private
+managed build, an **even** minor is this open-core distribution. The public
+version is derived at export time as `(private minor − 1)`, same major/patch —
+so private `0.3.x` exports as public **`0.2.0`** (the current public version).
+The version string is compiled in via `CARGO_PKG_VERSION` and surfaced at
+relay `GET /E/health`, the wms health/version endpoint, the MCP
+`serverInfo.version`, and the PDA handshake. `80-boundaries.md` restates this
+from the boundary angle.
+
 ## NON-CLAIMS (honesty section)
 - The POS module is not part of this repository (commercial edition), and even
   there its TSE (German fiscal signature hardware) integration is a **mock
   seam**: architecture present, certified device integration absent. Do not
   operate it for legally binding sales in DE.
-- The AI pipeline is Gemini-family only today; the provider seam is narrow.
+- Generative and embedding calls are Gemini-family (Google AI Studio or Vertex).
+  A cheap-tier task router can additionally route selected tasks to an
+  OpenRouter-compatible endpoint with a time-budgeted **hedge back to Gemini**,
+  but the upstream key/proxy is operator-supplied and the routing table is
+  env-configured — there is no bundled non-Google provider.
 - Multi-node sync is production-exercised at fleet sizes of ~5–10 nodes, not
   hundreds.
 - Some prompts/dictionaries still carry the first pilot deployment's domain
-  (medical/body-analysis device service); they are defaults, not requirements.
+  (device repair/service); they are defaults, not requirements, and are steered
+  by `ECK_TENANT_*` / `ECK_COMPANY_*` config rather than hardcoded.
 
 ## HOW TO EVALUATE QUICKLY (for an agent)
 1. `cargo build --release -p wms` → run the binary → open the dashboard port.

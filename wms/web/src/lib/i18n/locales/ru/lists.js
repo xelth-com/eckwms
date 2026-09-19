@@ -23,6 +23,8 @@ export default {
     support_title: "Заявки поддержки",
     support_loading_btn: "Загрузка…",
     support_refresh: "Обновить",
+    support_load_more: "Загрузить ещё",
+    support_loading_more: "Загрузка…",
     support_loading: "Загрузка заявок…",
     support_failed: "Не удалось загрузить: {error}",
     support_empty_title: "Заявки поддержки ещё не импортированы",

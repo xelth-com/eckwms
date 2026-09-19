@@ -25,6 +25,9 @@ pub async fn start_cron_jobs(db: SurrealDb, instance_id: String) {
             loop {
                 interval.tick().await;
                 info!("[scheduler] Starting hourly sync cycle");
+                // Self-heal: on edge nodes the Node scraper dies with reboots;
+                // respawn it here instead of requiring a manual /api/scraper/start.
+                crate::handlers::scraper_proxy::ensure_scraper_running().await;
                 sync_opal(&db, &client, &iid).await;
                 sync_dhl(&db, &client, &iid).await;
                 {
@@ -36,10 +39,24 @@ pub async fn start_cron_jobs(db: SurrealDb, instance_id: String) {
                     })
                     .await;
                 }
+                // Odoo mirror pull (dormant unless ODOO_URL is configured) —
+                // keeps odoo_* master-data tables fresh on the always-on node.
+                if std::env::var("ODOO_URL").is_ok() {
+                    match crate::services::odoo::pull_master_data(&db, &iid, 0, 0).await {
+                        Ok(c) => info!("[scheduler] odoo mirror pull: {}", c),
+                        Err(e) => warn!("[scheduler] odoo mirror pull failed: {}", e),
+                    }
+                }
                 // Odoo on-hand projection (no-op unless ODOO_WRITE_ENABLED=true)
                 match crate::services::odoo::project_dirty(&db).await {
                     Ok(s) => debug!("[scheduler] odoo projection: {}", s),
                     Err(e) => warn!("[scheduler] odoo projection failed: {}", e),
+                }
+                // Claimlist reader (no-op unless CLAIMLIST_TOKEN_FILE is set;
+                // cheap metadata poll, downloads only on workbook change)
+                match crate::services::claimlist::check_and_ingest(&db).await {
+                    Ok(s) => debug!("[scheduler] claimlist check: {}", s),
+                    Err(e) => warn!("[scheduler] claimlist check failed: {}", e),
                 }
             }
         });
@@ -58,12 +75,20 @@ pub async fn start_cron_jobs(db: SurrealDb, instance_id: String) {
                 run_daily_sync(&db, &client, &iid).await;
             }
 
+            // `ECK_DAILY_SYNC_HOUR` (0-23, default 6, LOCAL clock of the box —
+            // a kiosk running in UTC needs 1 to land the full Zoho walk at
+            // 03:00 Berlin instead of 08:00-12:30 working hours as on 2026-09-11).
+            let daily_hour: u32 = std::env::var("ECK_DAILY_SYNC_HOUR")
+                .ok()
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .filter(|h| *h < 24)
+                .unwrap_or(6);
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
             loop {
                 interval.tick().await;
                 let hour = chrono::Local::now().hour();
-                if hour == 6 {
-                    info!("[scheduler] Starting daily morning sync (06:00)");
+                if hour == daily_hour {
+                    info!("[scheduler] Starting daily morning sync ({daily_hour:02}:00 local)");
                     run_daily_sync(&db, &client, &iid).await;
                     // Sleep 23h to prevent re-trigger within the same day
                     tokio::time::sleep(std::time::Duration::from_secs(23 * 3600)).await;
@@ -83,6 +108,21 @@ pub async fn start_cron_jobs(db: SurrealDb, instance_id: String) {
             loop {
                 interval.tick().await;
                 crate::handlers::files::sweep_expired_temp(&db).await;
+            }
+        });
+    }
+
+    // Task 4: TTL reaper for low-priority evidence (scan frames) — the camera
+    // frames a barcode/OCR was read from expire after ~2 weeks and are wiped
+    // from disk AND the DB (edges + tombstoned row) hourly, bounded per run.
+    {
+        let db = db.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(180)).await;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                crate::handlers::files::reap_expired_files(&db).await;
             }
         });
     }
@@ -294,6 +334,18 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
 
     info!("[scheduler] Zoho {}: fetched {} tickets", if full_sync { "full" } else { "incremental" }, tickets.len());
 
+    // A FULL walk re-hashes the whole corpus; bound how many summaries one
+    // walk may re-arm (the rest defer to the next walk). See support.rs.
+    if full_sync {
+        let budget = support::full_walk_rearm_budget();
+        info!("[scheduler] Zoho full: summary re-arm budget for this walk = {budget}");
+        support::set_rearm_budget(Some(budget));
+    } else {
+        // A full walk that panicked inside run_guarded would leave its budget
+        // armed; an incremental walk always runs unbounded.
+        support::set_rearm_budget(None);
+    }
+
     // 2. Import each ticket via the shared service
     for ticket in &tickets {
         let ticket_id_owned = match ticket.get("id") {
@@ -473,6 +525,9 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
     }
 
     let status = if errors > 0 { "partial" } else { "ok" };
+    if full_sync {
+        support::set_rearm_budget(None);
+    }
     info!("[scheduler] Zoho sync done: {} updated, {} skipped, {} errors", updated, skipped, errors);
     log_sync(db, instance_id, "zoho_desk", status, started, created, updated, skipped, errors, &error_detail).await;
 }
@@ -905,6 +960,7 @@ async fn log_sync(
 }
 
 async fn run_daily_sync(db: &SurrealDb, client: &reqwest::Client, instance_id: &str) {
+    crate::handlers::scraper_proxy::ensure_scraper_running().await;
     let (db2, c2, i2) = (db.clone(), client.clone(), instance_id.to_string());
     run_guarded(db, instance_id, "zoho_desk", async move {
         sync_zoho(&db2, &c2, &i2, true).await;

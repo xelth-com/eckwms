@@ -145,7 +145,11 @@ pub async fn try_grounding_one(
         "generationConfig": { "temperature": 0.1, "maxOutputTokens": 512 }
     });
 
-    let (text, usage) = match auth.generate_content(http, model, payload).await {
+    // EXEMPT from GLM/OpenRouter task-routing: this call depends on the Gemini
+    // `googleSearch` grounding tool, which the OR shim drops — an ungrounded
+    // model would fabricate a plausible-but-wrong address (worse than none), so
+    // address discovery stays on the direct Gemini path.
+    let (text, usage) = match eck_core::ai::with_ai_task("address_discovery", auth.generate_content(http, model, payload)).await {
         Ok(t) => t,
         Err(e) => { warn!("[Discover] {id}: gemini error: {e}"); return GroundOutcome::Error; }
     };

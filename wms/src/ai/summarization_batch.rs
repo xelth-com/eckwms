@@ -971,6 +971,14 @@ async fn complete_job(
                     completed.insert(doc_id);
                     continue;
                 }
+                // Strip the (never-stored) PII self-report off the batch response
+                // BEFORE storing — same discipline as the live path. The clean
+                // summary is persisted; the leak quotes funnel into the local
+                // quarantine + validator + lexicon hotfix. (write_summary_completion
+                // re-strips defensively, but we strip here so the leaks reach the
+                // pipeline WITH their source-entity context.)
+                let (summary, leaks) = summarization::strip_pii_leaks(&summary);
+                summarization::process_pii_leaks(db, &format!("document:{doc_id}"), leaks).await;
                 let subject = subjects.get(&doc_id).cloned().unwrap_or_default();
                 let matched = summarization::write_summary_completion(db, &doc_id, &subject, &summary, instance_id).await?;
                 if matched {

@@ -527,7 +527,24 @@ pub async fn apply_pushed_entities(
     let mut applied = 0usize;
     let merkle_svc = merkle::MerkleService::new(state.db.clone(), state.instance_id.clone());
 
-    for entity in entities {
+    for raw_entity in entities {
+        // PII_VAULT.md P0#4: a pushed `document_raw` row's `payload` may have
+        // arrived envelope-encrypted (new sender) or plaintext (legacy sender
+        // mid-rollout). Normalize to plaintext-for-storage here, in ONE place,
+        // before anything below touches `entity` — raw docs aren't encrypted
+        // at rest yet (that's P1), so a decryptable row is stored the same as
+        // a legacy plaintext one. A row this node cannot decrypt (encrypted,
+        // no local data key) is skipped entirely rather than stored as
+        // unusable ciphertext.
+        let entity: Value = if entity_type == "document_raw" {
+            match eck_core::utils::crypto::decrypt_raw_doc_payload(raw_entity.clone()) {
+                Some(v) => v,
+                None => continue,
+            }
+        } else {
+            raw_entity.clone()
+        };
+
         // Prefer the canonical foo_id column (a bare UUID) for tables that
         // carry one — that's what conflict::resolve_and_upsert and the merkle
         // tree both use as the record key. Fall back to extracting the leaf
@@ -783,18 +800,257 @@ pub async fn raw_docs(
     State(state): State<Arc<AppState>>,
     Path(ticket_id): Path<String>,
 ) -> ApiResult<Json<Vec<Value>>> {
-    // Blind-cache invariant: `document_raw` payloads are never envelope-encrypted
-    // (and are intentionally never synced to caches in the first place). A keyless
-    // cache must not serve raw doc bodies — refuse on cache nodes (defense-in-depth).
+    // Blind-cache invariant: `document_raw` is intentionally never synced to
+    // caches in the first place. A keyless cache must not serve raw doc bodies
+    // — refuse on cache nodes (defense-in-depth).
     if state.node_role == "cache" {
         return Ok(Json(vec![]));
     }
     let rows: Vec<Value> = state.db
         .query("SELECT record::id(id) AS id, type, ticket_id, payload, updated_at FROM document_raw WHERE record::id(id) = $tid OR ticket_id = $tid ORDER BY updated_at ASC")
-        .bind(("tid", ticket_id))
+        .bind(("tid", ticket_id.clone()))
         .await
         .and_then(|mut r| r.take(0))
         .map_err(db_err)?;
 
-    Ok(Json(rows))
+    // PII_VAULT.md P0#4: `document_raw.payload` is a whole customer ticket/thread
+    // (name/email/phone/address in clear) — it must not cross the wire in
+    // plaintext. Envelope-encrypt every row's payload when we hold the mesh
+    // data key; when we don't, REFUSE rather than leak (a full node without
+    // MESH_DATA_KEY is a misconfiguration, not a green light to serve clear PII).
+    match eck_core::utils::crypto::data_key() {
+        Some(key) => Ok(Json(eck_core::utils::crypto::encrypt_raw_doc_payloads(
+            rows, &key,
+        ))),
+        None => {
+            warn!(
+                "raw docs not served: no mesh data key (ticket {})",
+                ticket_id
+            );
+            Ok(Json(vec![]))
+        }
+    }
+}
+
+// ─── Re-envelope (P0.7 MDK rotation sweep, cache side) ───────────────────────
+//
+// A cache node (eck1/2/3) stores what a full node served it: an opaque
+// `{"__enc": …}` envelope per row, sealed under the tenant's mesh data key. When
+// the home node rotates that key (`POST /admin/vault/rotate {"mdk":true}`) those
+// stored envelopes are still epoch-0 ciphertext — exactly the bytes anyone who
+// copied the old world-readable `.env` can open. The sweep replaces them.
+//
+// Two endpoints, both cache-side and both under the mesh SYNC_SECRET layer:
+//
+//   GET  /api/mesh/re-envelope/ids  — hand me the envelopes you hold, paged
+//   POST /api/mesh/re-envelope      — here they are again, sealed under the new key
+//
+// The invariants that make this safe:
+//   * the cache ENUMERATES, the home node re-seals. What comes back is the
+//     SAME plaintext: the home opens the old envelope with the retired epoch it
+//     kept (`prev_mdk`) and re-seals it — it never re-reads its own row, so a
+//     row the home has since changed or lost is re-encoded, not rewritten.
+//   * the cache never gains a row it did not already have: the apply path
+//     UPDATEs existing records only, never upserts.
+//   * only the envelope bytes change. No vclock is touched, no business field is
+//     invented. The `entity_checksum` content hash is re-recorded because it was
+//     computed over the envelope, and leaving it stale would fake divergence.
+//   * idempotent: re-applying the same batch just rewrites the same row with a
+//     fresh nonce. A half-finished sweep resumes by asking for the page again.
+
+/// Entity classes whose rows a cache may hold as envelopes. Anything else is
+/// refused outright — this endpoint must not become a generic row writer.
+const RE_ENVELOPE_TYPES: &[&str] = &["document", "file_resource", "document_raw"];
+
+#[derive(Deserialize)]
+pub struct ReEnvelopeIdsQuery {
+    pub entity_type: String,
+    /// Resume cursor: return ids strictly greater than this one.
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// GET /api/mesh/re-envelope/ids?entity_type=document&after=…&limit=…
+///
+/// Cache-side enumeration for the rotation sweep: the envelopes this node holds,
+/// ordered by id so the caller can page and resume, each with the key epoch it
+/// claims (absent tag = epoch 0). Handing back the ciphertext costs the cache
+/// nothing — it is bytes it cannot read either way — and lets the sweeper
+/// re-seal the exact same plaintext instead of guessing at its own current row.
+/// Non-envelope rows are reported only as a count: a cache should not hold
+/// plaintext at all, and the sweep cannot fix that by re-encrypting.
+pub async fn re_envelope_ids(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<ReEnvelopeIdsQuery>,
+) -> ApiResult<Json<Value>> {
+    if !RE_ENVELOPE_TYPES.contains(&q.entity_type.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("entity_type '{}' is not re-envelopable", q.entity_type),
+        ));
+    }
+    let limit = q.limit.unwrap_or(25).clamp(1, 200);
+    let after = q.after.unwrap_or_default();
+    // `entity_type` is whitelisted above, so interpolating it is safe.
+    let query = format!(
+        "SELECT *, record::id(id) AS id FROM {} WHERE record::id(id) > $after \
+         ORDER BY id ASC LIMIT $lim",
+        q.entity_type
+    );
+    let rows: Vec<Value> = state
+        .db
+        .query(&query)
+        .bind(("after", after))
+        .bind(("lim", limit as i64))
+        .await
+        .map_err(db_err)?
+        .take(0)
+        .map_err(db_err)?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    let mut plaintext = 0usize;
+    let mut next_cursor: Option<String> = None;
+    for row in &rows {
+        let Some(id) = row.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        next_cursor = Some(id.to_string());
+        if !eck_core::utils::crypto::is_encrypted(row) {
+            plaintext += 1;
+            continue;
+        }
+        let mut enc = json!({ "__enc": row.get("__enc").cloned().unwrap_or(Value::Null) });
+        if let Some(e) = eck_core::utils::crypto::envelope_epoch(row) {
+            enc["__e"] = json!(e);
+        }
+        out.push(json!({
+            "id": id,
+            "epoch": eck_core::utils::crypto::envelope_epoch(row).unwrap_or(0),
+            "enc": enc,
+        }));
+    }
+    Ok(Json(json!({
+        "entity_type": q.entity_type,
+        "rows": out,
+        "plaintext_rows": plaintext,
+        "next_cursor": next_cursor,
+        // `false` means this page was the last one.
+        "more": rows.len() == limit,
+        "node_role": state.node_role,
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct ReEnvelopeRow {
+    pub id: String,
+    /// The full replacement envelope (`{"__enc": …, "__e": n}`).
+    pub enc: Value,
+}
+
+#[derive(Deserialize)]
+pub struct ReEnvelopeRequest {
+    pub entity_type: String,
+    /// The key epoch every `enc` in this batch was sealed under — echoed back
+    /// for the caller's progress accounting; never trusted as a key selector.
+    #[serde(default)]
+    pub mdk_epoch: u32,
+    pub rows: Vec<ReEnvelopeRow>,
+    #[serde(default)]
+    pub source_instance: String,
+}
+
+/// POST /api/mesh/re-envelope — replace stored envelope bytes in place.
+///
+/// Applies only to records that ALREADY exist here (missing ids are reported,
+/// not created) and only when the stored row is itself an envelope: rewriting a
+/// plaintext row would silently destroy data this node may be the only holder of.
+pub async fn re_envelope_apply(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ReEnvelopeRequest>,
+) -> ApiResult<Json<Value>> {
+    if !RE_ENVELOPE_TYPES.contains(&req.entity_type.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("entity_type '{}' is not re-envelopable", req.entity_type),
+        ));
+    }
+    let merkle_svc = merkle::MerkleService::new(state.db.clone(), state.instance_id.clone());
+    let (mut applied, mut missing, mut skipped) = (0usize, 0usize, 0usize);
+
+    for row in &req.rows {
+        if !eck_core::utils::crypto::is_encrypted(&row.enc) {
+            skipped += 1;
+            continue;
+        }
+        let select = format!(
+            "SELECT *, record::id(id) AS id FROM {} WHERE record::id(id) = $id LIMIT 1",
+            req.entity_type
+        );
+        let existing: Vec<Value> = state
+            .db
+            .query(&select)
+            .bind(("id", row.id.clone()))
+            .await
+            .map_err(db_err)?
+            .take(0)
+            .map_err(db_err)?;
+        let Some(current) = existing.into_iter().next() else {
+            missing += 1;
+            continue;
+        };
+        if !eck_core::utils::crypto::is_encrypted(&current) {
+            // Plaintext here is a pre-blind-cache leftover (or a misconfigured
+            // node). Overwriting it with ciphertext we cannot verify against it
+            // would be destructive — leave it and let the operator see the count.
+            skipped += 1;
+            continue;
+        }
+        let update = format!(
+            "UPDATE {} SET __enc = $enc, __e = $epoch WHERE record::id(id) = $id",
+            req.entity_type
+        );
+        let enc_b64 = row.enc.get("__enc").cloned().unwrap_or(Value::Null);
+        let epoch = eck_core::utils::crypto::envelope_epoch(&row.enc).unwrap_or(0);
+        state
+            .db
+            .query(&update)
+            .bind(("enc", enc_b64))
+            .bind(("epoch", epoch))
+            .bind(("id", row.id.clone()))
+            .await
+            .map_err(db_err)?;
+
+        // The stored checksum was taken over the OLD envelope bytes; re-record
+        // it over the new ones so the merkle leaf matches what is on disk.
+        if let Err(e) = merkle_svc
+            .record_checksum(&req.entity_type, &row.id, &row.enc)
+            .await
+        {
+            warn!(
+                "re-envelope {}:{} checksum update failed: {}",
+                req.entity_type, row.id, e
+            );
+        }
+        applied += 1;
+    }
+    merkle::invalidate_root_cache(&req.entity_type);
+
+    info!(
+        "re-envelope {} from {}: applied={} missing={} skipped={} (mdk_epoch={})",
+        req.entity_type,
+        if req.source_instance.is_empty() { "?" } else { &req.source_instance },
+        applied,
+        missing,
+        skipped,
+        req.mdk_epoch
+    );
+    Ok(Json(json!({
+        "ok": true,
+        "entity_type": req.entity_type,
+        "applied": applied,
+        "missing": missing,
+        "skipped": skipped,
+    })))
 }

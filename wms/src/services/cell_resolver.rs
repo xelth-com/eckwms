@@ -3,9 +3,30 @@
 //! Trips arrive with points that carry raw cell identity (MCC/MNC/TAC/CID)
 //! instead of coordinates — the PDA records them passively without GPS.
 //! This worker geocodes those cells:
-//!   1. `cell_tower` cache table (towers don't move — resolve once, keep forever)
+//!   1. `cell_tower` cache table (towers don't move — resolve once, keep
+//!      forever). Negative results are cached too: a cell OpenCelliD does not
+//!      know gets a `resolve_failed: true` tombstone row, so an unknown cell
+//!      costs ONE lookup mesh-wide, ever. (2026-08-10: the missing negative
+//!      cache + three keyed cloud nodes re-resolving the same stuck open trip
+//!      burned ~33k OpenCelliD requests in a week.)
 //!   2. OpenCelliD HTTP API (needs `OPENCELLID_API_KEY`; free tier is rate-limited,
 //!      so lookups are throttled to one per second and capped per cycle)
+//!
+//! SINGLE-WRITER RULE (2026-08-10): only the trip's HOME node
+//! (`home_instance_id`, ownership rule of conflict.rs) mutates the trip row —
+//! points, distance, seal, retention — and every such write bumps the author
+//! `_vclock` so peers adopt it instead of LWW-fighting it. Non-home nodes that
+//! hold an API key still perform lookups, but write ONLY into the mesh-synced
+//! `cell_tower` cache; the home node (which may have no key at all, e.g. the
+//! kiosk) then resolves its points from the cache. Before this, a non-home
+//! node's point flags were reverted on every convergence with the authority's
+//! copy, which re-armed the same lookups forever.
+//!
+//! Open trips whose recording died (device gone, app killed) are auto-closed
+//! by the home node after `TRIP_OPEN_AUTOCLOSE_HOURS` (default 24, 0 =
+//! disabled) without new activity — mirroring the movFast app's own
+//! "auto-closed: recording was interrupted" behavior, so an abandoned open
+//! trip cannot sit in every node's resolve queue indefinitely.
 //!
 //! When every point of an ended trip is resolved (or the trip is older than
 //! 24 h — leftover cells are marked failed), the worker computes the trip
@@ -30,7 +51,11 @@ const MAX_PLAUSIBLE_SPEED_KMH: f64 = 160.0;
 /// Odometer chain tolerance: prev trip end vs next trip start (km)
 const ODOMETER_GAP_TOLERANCE_KM: f64 = 0.5;
 
-pub async fn start_cell_resolver_worker(db: SurrealDb, hedera_client: Option<HederaClient>) {
+pub async fn start_cell_resolver_worker(
+    db: SurrealDb,
+    hedera_client: Option<HederaClient>,
+    instance_id: String,
+) {
     tokio::time::sleep(Duration::from_secs(45)).await;
     info!("[CellResolver] Background worker started");
 
@@ -56,25 +81,50 @@ pub async fn start_cell_resolver_worker(db: SurrealDb, hedera_client: Option<Hed
         // once the trip is resolved and older than TRIP_RAW_RETENTION_DAYS
         // (default 14, legal guidance is 7–30). Aggregates (distance,
         // odometer, timestamps) and the tower cache (no PII) are kept.
-        // Runs roughly twice a day.
+        // Runs roughly twice a day. Home-gated single-writer: pruning is a
+        // per-row authored write (vclock bump) so peers ADOPT the pruned row —
+        // three nodes pruning concurrently at three timestamps was permanent
+        // content divergence. Legacy rows without a home keep old behavior.
         if cycles % 1440 == 1 {
             let days: i64 = std::env::var("TRIP_RAW_RETENTION_DAYS")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(14);
             let cutoff = (Utc::now() - chrono::Duration::days(days)).to_rfc3339();
-            match db
+            let prune_ids: Vec<Value> = db
                 .query(
-                    "UPDATE trip SET points = [], points_pruned_at = $now \
+                    "SELECT VALUE record::id(id) FROM trip \
                      WHERE ended_at < $cutoff AND needs_resolution = false \
-                     AND points_pruned_at IS NONE AND array::len(points ?? []) > 0",
+                     AND points_pruned_at IS NONE AND array::len(points ?? []) > 0 \
+                     AND (home_instance_id = $iid OR home_instance_id IS NONE)",
                 )
                 .bind(("cutoff", cutoff))
-                .bind(("now", Utc::now().to_rfc3339()))
+                .bind(("iid", instance_id.clone()))
                 .await
-            {
-                Ok(_) => debug!("[CellResolver] retention pass done ({}d window)", days),
-                Err(e) => warn!("[CellResolver] retention pass failed: {}", e),
+                .and_then(|mut r| r.take(0))
+                .unwrap_or_default();
+            for idv in &prune_ids {
+                let Some(id) = idv.as_str() else { continue };
+                let vc = next_trip_vclock(&db, id, &instance_id).await;
+                let res = db
+                    .query(
+                        "UPDATE type::record('trip', $id) SET points = [], \
+                         points_pruned_at = $now, updated_at = $now, _vclock = $vc",
+                    )
+                    .bind(("id", id.to_string()))
+                    .bind(("now", Utc::now().to_rfc3339()))
+                    .bind(("vc", vc))
+                    .await;
+                if let Err(e) = res {
+                    warn!("[CellResolver] retention prune of trip {} failed: {}", id, e);
+                }
+            }
+            if !prune_ids.is_empty() {
+                debug!(
+                    "[CellResolver] retention pass pruned {} trips ({}d window)",
+                    prune_ids.len(),
+                    days
+                );
             }
         }
 
@@ -82,7 +132,7 @@ pub async fn start_cell_resolver_worker(db: SurrealDb, hedera_client: Option<Hed
             .query(
                 "SELECT record::id(id) AS id, points, ended_at, status, started_at, \
                  device_id, driver_user_id, purpose, purpose_ref, purpose_declared_at, \
-                 purpose_source, vehicle_plate, note, \
+                 purpose_source, vehicle_plate, note, home_instance_id, \
                  start_odometer_km, start_odometer_source, end_odometer_km, end_odometer_source \
                  FROM trip WHERE needs_resolution = true LIMIT $lim",
             )
@@ -97,7 +147,15 @@ pub async fn start_cell_resolver_worker(db: SurrealDb, hedera_client: Option<Hed
         };
 
         for trip in trips {
-            process_trip(&db, &client, api_key.as_deref(), hedera_client.as_ref(), trip).await;
+            process_trip(
+                &db,
+                &client,
+                api_key.as_deref(),
+                hedera_client.as_ref(),
+                &instance_id,
+                trip,
+            )
+            .await;
         }
     }
 }
@@ -107,17 +165,74 @@ async fn process_trip(
     client: &Client,
     api_key: Option<&str>,
     hedera_client: Option<&HederaClient>,
-    trip: Value,
+    instance_id: &str,
+    mut trip: Value,
 ) {
     let trip_id = match trip.get("id").and_then(|v| v.as_str()) {
         Some(id) => id.to_string(),
         None => return,
     };
+    // Single-writer gate: only the trip's HOME node mutates the trip row.
+    // A legacy row without home_instance_id keeps the old any-node behavior
+    // (better a churn-prone resolve than a trip nobody may finish).
+    let is_home = trip
+        .get("home_instance_id")
+        .and_then(|v| v.as_str())
+        .map_or(true, |h| h == instance_id);
     let mut points: Vec<Value> = trip
         .get("points")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
+
+    // Auto-close an abandoned open trip: recording died (device off, app
+    // killed) and never came back, so the app-side "auto-closed: recording was
+    // interrupted" close never fired. Without this the trip stays `open`
+    // forever, never becomes expired (that clock keys off ended_at), and sits
+    // in every node's resolve queue indefinitely.
+    let mut trip_ended = trip.get("status").and_then(|v| v.as_str()) == Some("ended");
+    if is_home && !trip_ended {
+        if let Some(close_at) = stale_open_close_ts(&trip, &points, Utc::now(), autoclose_hours())
+        {
+            let prev_note = trip.get("note").and_then(|v| v.as_str()).unwrap_or("");
+            let close_note = format!(
+                "auto-closed: recording was interrupted; ended at last recorded activity {}",
+                close_at
+            );
+            let note = if prev_note.is_empty() {
+                close_note
+            } else {
+                format!("{} | {}", prev_note, close_note)
+            };
+            let vc = next_trip_vclock(db, &trip_id, instance_id).await;
+            let update = json!({
+                "status": "ended",
+                "ended_at": close_at,
+                "note": note,
+                "updated_at": Utc::now().to_rfc3339(),
+                "_vclock": vc,
+            });
+            match db
+                .query("UPDATE type::record('trip', $id) MERGE $update")
+                .bind(("id", trip_id.clone()))
+                .bind(("update", update.clone()))
+                .await
+            {
+                Ok(_) => {
+                    info!("[CellResolver] trip {} auto-closed (stale open, last activity {})", trip_id, close_at);
+                    // Keep the in-memory copy coherent — trip_expired below and
+                    // the seal canonical both read ended_at/status from it.
+                    if let Some(obj) = trip.as_object_mut() {
+                        obj.insert("status".into(), json!("ended"));
+                        obj.insert("ended_at".into(), json!(close_at));
+                        obj.insert("note".into(), update["note"].clone());
+                    }
+                    trip_ended = true;
+                }
+                Err(e) => warn!("[CellResolver] trip {} auto-close failed: {}", trip_id, e),
+            }
+        }
+    }
 
     let ended_at = trip.get("ended_at").and_then(|v| v.as_str()).map(String::from);
     let trip_expired = ended_at
@@ -129,6 +244,9 @@ async fn process_trip(
     let mut lookups_done = 0usize;
     let mut changed = false;
     let mut still_pending = 0usize;
+    // A transient API failure (HTTP 5xx/429, network) stops further lookups
+    // this cycle — hammering a rate-limited endpoint helps nobody.
+    let mut api_degraded = false;
 
     for p in points.iter_mut() {
         let has_coords = p.get("lat").and_then(|v| v.as_f64()).is_some();
@@ -144,70 +262,109 @@ async fn process_trip(
             p.get("cid").and_then(|v| v.as_i64()),
         );
         let (Some(mcc), Some(mnc), Some(tac), Some(cid)) = (mcc, mnc, tac, cid) else {
-            set_point_failed(p);
-            changed = true;
+            if is_home {
+                set_point_failed(p);
+                changed = true;
+            }
             continue;
         };
 
         let cache_key = format!("{}-{}-{}-{}", mcc, mnc, tac, cid);
 
-        // 1. Cache hit?
+        // 1. Cache hit? (positive rows carry lat/lng; negative rows carry
+        //    resolve_failed: true — a cell OpenCelliD does not know)
         let cached: Option<Value> = db
             .select(("cell_tower", cache_key.as_str()))
             .await
             .ok()
             .flatten();
 
-        let resolved = if let Some(tower) = cached {
-            Some(tower)
-        } else if let Some(key) = api_key {
-            if lookups_done >= LOOKUPS_PER_CYCLE || trip_expired {
-                still_pending += 1;
-                continue;
-            }
-            lookups_done += 1;
-            // Free-tier politeness: one lookup per second
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            match opencellid_lookup(client, key, mcc, mnc, tac, cid).await {
-                Some(tower) => {
-                    let _: Result<Option<Value>, _> = db
-                        .create(("cell_tower", cache_key.as_str()))
-                        .content(tower.clone())
-                        .await;
-                    Some(tower)
-                }
-                None => {
-                    // Unknown to OpenCelliD — don't retry forever
+        if let Some(tower) = cached {
+            if tower.get("resolve_failed").and_then(|v| v.as_bool()).unwrap_or(false) {
+                if is_home {
                     set_point_failed(p);
                     changed = true;
-                    continue;
                 }
+            } else if is_home {
+                adopt_tower(p, &tower);
+                changed = true;
             }
-        } else {
-            if trip_expired {
+            continue;
+        }
+
+        // 2. Cache miss on an expired trip: give up on the cell (home marks the
+        //    point failed; a non-home node has nothing to write).
+        if trip_expired {
+            if is_home {
                 set_point_failed(p);
                 changed = true;
             } else {
                 still_pending += 1;
             }
             continue;
-        };
+        }
 
-        if let Some(tower) = resolved {
-            if let Some(obj) = p.as_object_mut() {
-                obj.insert("lat".into(), tower.get("lat").cloned().unwrap_or(Value::Null));
-                obj.insert("lng".into(), tower.get("lng").cloned().unwrap_or(Value::Null));
-                obj.insert(
-                    "accuracy_m".into(),
-                    tower.get("range_m").cloned().unwrap_or(json!(1500)),
-                );
-                obj.insert("resolved_by".into(), json!("cell_tower"));
+        // 3. API lookup — any keyed node may perform it, but the RESULT goes
+        //    into the mesh-synced cell_tower cache only; the home node adopts
+        //    coordinates into the trip row (possibly next cycle, from cache).
+        let Some(key) = api_key else {
+            still_pending += 1;
+            continue;
+        };
+        if api_degraded || lookups_done >= LOOKUPS_PER_CYCLE {
+            still_pending += 1;
+            continue;
+        }
+        lookups_done += 1;
+        // Free-tier politeness: one lookup per second
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        match opencellid_lookup(client, key, mcc, mnc, tac, cid).await {
+            Lookup::Found(tower) => {
+                let _: Result<Option<Value>, _> = db
+                    .create(("cell_tower", cache_key.as_str()))
+                    .content(tower.clone())
+                    .await;
+                if is_home {
+                    adopt_tower(p, &tower);
+                    changed = true;
+                } else {
+                    still_pending += 1;
+                }
             }
-            changed = true;
+            Lookup::UnknownCell => {
+                // Negative cache: tombstone the cell mesh-wide so no node ever
+                // asks OpenCelliD about it again.
+                let tombstone = json!({
+                    "mcc": mcc, "mnc": mnc, "tac": tac, "cid": cid,
+                    "resolve_failed": true,
+                    "source": "opencellid",
+                    "samples": 0,
+                    "resolved_at": Utc::now().to_rfc3339(),
+                });
+                let _: Result<Option<Value>, _> = db
+                    .create(("cell_tower", cache_key.as_str()))
+                    .content(tombstone)
+                    .await;
+                if is_home {
+                    set_point_failed(p);
+                    changed = true;
+                }
+            }
+            Lookup::Transient => {
+                // NEVER tombstone on quota/network errors — that would poison
+                // the mesh-wide cache with cells that exist. Retry next cycle.
+                api_degraded = true;
+                still_pending += 1;
+            }
         }
     }
 
-    let trip_ended = trip.get("status").and_then(|v| v.as_str()) == Some("ended");
+    // Non-home nodes only feed the shared cache — the trip row is the home
+    // node's to write (its convergence would revert our copy anyway).
+    if !is_home {
+        return;
+    }
+
     let resolution_complete = still_pending == 0 && (trip_ended || trip_expired);
 
     let mut update = json!({ "points": points });
@@ -229,6 +386,12 @@ async fn process_trip(
         return;
     }
 
+    // Author the write properly: bump this node's vclock component so peers
+    // ADOPT the row (the "synced-table writers must stamp _vclock" tech-debt —
+    // the unstamped resolver write was exactly what peers kept reverting).
+    update["_vclock"] = next_trip_vclock(db, &trip_id, instance_id).await;
+    update["updated_at"] = json!(Utc::now().to_rfc3339());
+
     let res = db
         .query("UPDATE type::record('trip', $id) MERGE $update")
         .bind(("id", trip_id.clone()))
@@ -240,8 +403,68 @@ async fn process_trip(
     }
 
     if resolution_complete {
-        seal_trip(db, hedera_client, &trip, &trip_id, final_distance).await;
+        seal_trip(db, hedera_client, instance_id, &trip, &trip_id, final_distance).await;
     }
+}
+
+/// Copy a resolved tower's coordinates onto a track point.
+fn adopt_tower(p: &mut Value, tower: &Value) {
+    if let Some(obj) = p.as_object_mut() {
+        obj.insert("lat".into(), tower.get("lat").cloned().unwrap_or(Value::Null));
+        obj.insert("lng".into(), tower.get("lng").cloned().unwrap_or(Value::Null));
+        obj.insert(
+            "accuracy_m".into(),
+            tower.get("range_m").cloned().unwrap_or(json!(1500)),
+        );
+        obj.insert("resolved_by".into(), json!("cell_tower"));
+    }
+}
+
+/// Hours of inactivity after which the HOME node auto-closes an open trip.
+/// 0 disables the auto-close entirely.
+fn autoclose_hours() -> i64 {
+    std::env::var("TRIP_OPEN_AUTOCLOSE_HOURS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(24)
+}
+
+/// For an OPEN trip, decide whether recording is dead: returns the timestamp
+/// to close the trip at (last point ts, else started_at) when the last
+/// activity is older than `hours`. Pure so it's testable.
+fn stale_open_close_ts(
+    trip: &Value,
+    points: &[Value],
+    now: DateTime<Utc>,
+    hours: i64,
+) -> Option<String> {
+    if hours <= 0 {
+        return None;
+    }
+    let last_activity = points
+        .iter()
+        .filter_map(|p| p.get("ts").and_then(|v| v.as_str()))
+        .max()
+        .or_else(|| trip.get("started_at").and_then(|v| v.as_str()))?
+        .to_string();
+    let t = DateTime::parse_from_rfc3339(&last_activity).ok()?;
+    if now.signed_duration_since(t.with_timezone(&Utc)).num_hours() >= hours {
+        Some(last_activity)
+    } else {
+        None
+    }
+}
+
+/// Read-increment this node's `_vclock` component on a trip row (preserving
+/// peer components) — the house way to author a write on a synced table.
+async fn next_trip_vclock(db: &SurrealDb, trip_id: &str, instance_id: &str) -> Value {
+    let cur: Vec<Value> = db
+        .query("SELECT VALUE _vclock FROM type::record('trip', $id) LIMIT 1")
+        .bind(("id", trip_id.to_string()))
+        .await
+        .and_then(|mut r| r.take(0))
+        .unwrap_or_default();
+    eck_core::sync::conflict::next_local_vclock(cur.first(), instance_id)
 }
 
 /// GoBD seal (Fahrtenbuch "unveränderbar"): canonical hash over the financially
@@ -252,6 +475,7 @@ async fn process_trip(
 async fn seal_trip(
     db: &SurrealDb,
     hedera_client: Option<&HederaClient>,
+    instance_id: &str,
     trip: &Value,
     trip_id: &str,
     distance: Option<f64>,
@@ -325,18 +549,25 @@ async fn seal_trip(
         "hedera_timestamp": receipt.as_ref().map(|r| r.consensus_timestamp.clone()),
     });
 
+    // Authored write: bump the home vclock so the sealed row dominates peers'
+    // copies (the seal is only ever written by the home node — see the
+    // single-writer gate in process_trip).
+    let vc = next_trip_vclock(db, trip_id, instance_id).await;
     let res = db
         .query(
             "UPDATE type::record('trip', $id) SET \
              seal_hash = $hash, odometer_gap_km = $gap, \
              seal_canonical_version = $ver, \
-             hedera_seals = array::concat(hedera_seals ?? [], [$seal])",
+             hedera_seals = array::concat(hedera_seals ?? [], [$seal]), \
+             _vclock = $vc, updated_at = $now",
         )
         .bind(("id", trip_id.to_string()))
         .bind(("hash", hash.clone()))
         .bind(("gap", odometer_gap_km))
         .bind(("ver", FAHRTENBUCH_CANONICAL_VERSION))
         .bind(("seal", seal))
+        .bind(("vc", vc))
+        .bind(("now", Utc::now().to_rfc3339()))
         .await;
     match res {
         Ok(_) => info!(
@@ -404,7 +635,17 @@ fn set_point_failed(p: &mut Value) {
     }
 }
 
-/// OpenCelliD single-cell lookup → {lat, lng, range_m, resolved_at} or None.
+/// Outcome of an OpenCelliD lookup. The distinction matters for caching:
+/// `UnknownCell` is a DEFINITIVE answer and gets a mesh-wide tombstone;
+/// `Transient` (quota, network, 5xx) must never be cached or the mesh would be
+/// poisoned with tombstones for cells that exist.
+enum Lookup {
+    Found(Value),
+    UnknownCell,
+    Transient,
+}
+
+/// OpenCelliD single-cell lookup → {lat, lng, range_m, resolved_at}.
 async fn opencellid_lookup(
     client: &Client,
     key: &str,
@@ -412,19 +653,42 @@ async fn opencellid_lookup(
     mnc: i64,
     tac: i64,
     cid: i64,
-) -> Option<Value> {
+) -> Lookup {
     let url = format!(
         "https://opencellid.org/cell/get?key={}&mcc={}&mnc={}&lac={}&cellid={}&format=json",
         key, mcc, mnc, tac, cid
     );
-    let resp = client.get(&url).send().await.ok()?;
-    if !resp.status().is_success() {
-        debug!("[CellResolver] OpenCelliD HTTP {} for {}-{}-{}-{}", resp.status(), mcc, mnc, tac, cid);
-        return None;
+    let resp = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            debug!("[CellResolver] OpenCelliD request error for {}-{}-{}-{}: {}", mcc, mnc, tac, cid, e);
+            return Lookup::Transient;
+        }
+    };
+    let status = resp.status();
+    if !status.is_success() {
+        debug!("[CellResolver] OpenCelliD HTTP {} for {}-{}-{}-{}", status, mcc, mnc, tac, cid);
+        // 404 = the API answered: this cell is not in the database. Anything
+        // else (401/403 key trouble, 429 quota, 5xx) is not a statement about
+        // the cell — retry later.
+        return if status.as_u16() == 404 {
+            Lookup::UnknownCell
+        } else {
+            Lookup::Transient
+        };
     }
-    let body: Value = resp.json().await.ok()?;
-    let lat = body.get("lat").and_then(|v| v.as_f64())?;
-    let lon = body.get("lon").and_then(|v| v.as_f64())?;
+    let body: Value = match resp.json().await {
+        Ok(b) => b,
+        Err(_) => return Lookup::Transient,
+    };
+    let (Some(lat), Some(lon)) = (
+        body.get("lat").and_then(|v| v.as_f64()),
+        body.get("lon").and_then(|v| v.as_f64()),
+    ) else {
+        // 2xx with no coordinates ({"error":"cell not found"} style body) —
+        // a definitive miss, not an outage.
+        return Lookup::UnknownCell;
+    };
     let mut range = body.get("range").and_then(|v| v.as_f64()).unwrap_or(1500.0);
     let samples = body.get("samples").and_then(|v| v.as_i64()).unwrap_or(0);
     // Single-observation towers are the 100-km-jump factory (2026-07-06: all
@@ -434,7 +698,7 @@ async fn opencellid_lookup(
     if samples <= 1 {
         range = range.max(20_000.0);
     }
-    Some(json!({
+    Lookup::Found(json!({
         "lat": lat,
         "lng": lon,
         "range_m": range,
@@ -590,6 +854,33 @@ mod tests {
         let d = compute_distance_km(&points).unwrap();
         // fused track ~1.11 km × 1.0 (GPS gets no road factor) ≈ 1.1 km — NOT 0
         assert!(d > 1.0, "expected fused-based distance >1 km, got {d}");
+    }
+
+    #[test]
+    fn stale_open_trip_detection() {
+        let now = DateTime::parse_from_rfc3339("2026-08-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let trip = json!({ "started_at": "2026-07-30T13:09:07.735Z" });
+        let points = vec![
+            json!({"ts": "2026-07-30T13:10:00Z"}),
+            json!({"ts": "2026-07-30T18:04:38.942Z"}),
+        ];
+        // 11 days silent → close at the LAST point ts, not started_at
+        assert_eq!(
+            stale_open_close_ts(&trip, &points, now, 24).as_deref(),
+            Some("2026-07-30T18:04:38.942Z")
+        );
+        // no points → falls back to started_at
+        assert_eq!(
+            stale_open_close_ts(&trip, &[], now, 24).as_deref(),
+            Some("2026-07-30T13:09:07.735Z")
+        );
+        // fresh activity → stays open
+        let fresh = vec![json!({"ts": "2026-08-10T11:30:00Z"})];
+        assert_eq!(stale_open_close_ts(&trip, &fresh, now, 24), None);
+        // 0 = feature disabled
+        assert_eq!(stale_open_close_ts(&trip, &points, now, 0), None);
     }
 
     #[test]

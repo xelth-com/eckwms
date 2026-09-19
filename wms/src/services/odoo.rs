@@ -302,7 +302,7 @@ impl OdooClient {
 /// Upsert raw Odoo rows into a local mesh table keyed by the Odoo integer id
 /// (`<table>:<odoo_id>`). Schemaless — the row is stored verbatim, including
 /// its many2one `[id, "name"]` pairs, so callers can correlate later.
-async fn upsert_all(state: &AppState, table: &str, rows: &[Value]) -> Result<(), String> {
+async fn upsert_all(db: &eck_core::db::SurrealDb, instance_id: &str, table: &str, rows: &[Value]) -> Result<(), String> {
     let now = chrono::Utc::now().to_rfc3339();
     for row in rows {
         let id = row
@@ -315,8 +315,7 @@ async fn upsert_all(state: &AppState, table: &str, rows: &[Value]) -> Result<(),
         // null every import — a null/stale clock can't dominate on a peer, so the
         // synced row is dropped as "local wins/equal" and the mesh churns re-pushing
         // it forever (the partner/product/file_resource non-convergence class).
-        let existing: Option<Value> = state
-            .db
+        let existing: Option<Value> = db
             .query("SELECT _vclock FROM type::record($rid) LIMIT 1")
             .bind(("rid", rid.clone()))
             .await
@@ -325,7 +324,7 @@ async fn upsert_all(state: &AppState, table: &str, rows: &[Value]) -> Result<(),
             .flatten();
         let vclock = eck_core::sync::conflict::next_local_vclock(
             existing.as_ref().and_then(|v| v.get("_vclock")),
-            &state.instance_id,
+            instance_id,
         );
         // Stamp `updated_at` for the LWW tiebreaker on mesh re-sync. It is in
         // `merkle::IGNORED_FIELDS`, so it never changes the content hash (no
@@ -338,8 +337,7 @@ async fn upsert_all(state: &AppState, table: &str, rows: &[Value]) -> Result<(),
         }
         // `.query().await` only reports transport errors; a per-statement DB
         // error surfaces on `.take()`, so take(0) to actually assert success.
-        let mut resp = state
-            .db
+        let mut resp = db
             .query("UPSERT type::record($rid) CONTENT $data")
             .bind(("rid", rid))
             .bind(("data", data))
@@ -352,14 +350,16 @@ async fn upsert_all(state: &AppState, table: &str, rows: &[Value]) -> Result<(),
     Ok(())
 }
 
-/// Pull warehouses, locations, products and on-hand quants from Odoo and
-/// upsert them into local `odoo_*` tables. Read-only against Odoo.
-/// `product_limit` / `quant_limit` bound the first sync (`0` = unbounded).
+/// Pull warehouses, locations, products, on-hand quants and partners from Odoo
+/// and upsert them into local `odoo_*` tables. Read-only against Odoo.
+/// `product_limit` / `quant_limit` bound the first sync (`0` = unbounded);
+/// partners are always pulled unbounded (~9k rows on the pilot tenant).
 ///
 /// NOTE: these tables are persisted locally only; wiring them into merkle mesh
 /// propagation (vclock bumps like other entities) is a follow-up step.
 pub async fn pull_master_data(
-    state: &AppState,
+    db: &eck_core::db::SurrealDb,
+    instance_id: &str,
     product_limit: i64,
     quant_limit: i64,
 ) -> Result<Value, String> {
@@ -373,7 +373,7 @@ pub async fn pull_master_data(
             0,
         )
         .await?;
-    upsert_all(state, "odoo_warehouse", &warehouses).await?;
+    upsert_all(db, instance_id, "odoo_warehouse", &warehouses).await?;
 
     let locations = client
         .search_read(
@@ -383,7 +383,7 @@ pub async fn pull_master_data(
             0,
         )
         .await?;
-    upsert_all(state, "odoo_location", &locations).await?;
+    upsert_all(db, instance_id, "odoo_location", &locations).await?;
 
     let products = client
         .search_read(
@@ -396,7 +396,7 @@ pub async fn pull_master_data(
             product_limit,
         )
         .await?;
-    upsert_all(state, "odoo_product", &products).await?;
+    upsert_all(db, instance_id, "odoo_product", &products).await?;
 
     let quants = client
         .search_read(
@@ -406,13 +406,30 @@ pub async fn pull_master_data(
             quant_limit,
         )
         .await?;
-    upsert_all(state, "odoo_quant", &quants).await?;
+    upsert_all(db, instance_id, "odoo_quant", &quants).await?;
+
+    let partners = client
+        .search_read(
+            "res.partner",
+            json!([]),
+            &[
+                // "mobile" removed: dropped from res.partner by the Odoo 19 build
+                // 20260708 on the pilot tenant (Invalid field error on search_read)
+                "name", "email", "phone", "street", "street2", "zip", "city",
+                "country_id", "country_code", "vat", "ref", "is_company", "parent_id",
+                "customer_rank", "supplier_rank", "active",
+            ],
+            0,
+        )
+        .await?;
+    upsert_all(db, instance_id, "odoo_partner", &partners).await?;
 
     let counts = json!({
         "warehouses": warehouses.len(),
         "locations": locations.len(),
         "products": products.len(),
         "quants": quants.len(),
+        "partners": partners.len(),
     });
     info!("[odoo] pull_master_data synced {}", counts);
     Ok(counts)
@@ -546,6 +563,215 @@ pub async fn bridge_products(state: &AppState) -> Result<Value, String> {
         "skipped": skipped,
     });
     info!("[odoo] bridge_products {}", summary);
+    Ok(summary)
+}
+
+/// Bridge the `odoo_partner` mirror into 9eck's native `partner` table.
+///
+/// Skips mirror rows with no name, and rows carrying none of email/phone/city
+/// (useless for matching or geocoding). Match an existing 9eck partner by (a)
+/// the `odoo_id` link (re-run idempotency), else (b) lowercased/trimmed email
+/// equality, else (c) lowercased/trimmed name equality. On match, MERGE: link
+/// `odoo_id` and fill only empty/missing contact fields — Exact-sourced data is
+/// never overwritten. No match creates `partner:odoo_<id>` with
+/// `source_system: "odoo"`. Idempotent; sets `updated_at` for the mesh LWW
+/// tiebreaker (no manual vclock bump — matches the existing `partner` CRUD
+/// convention used by the Exact Online scheduler sync).
+pub async fn bridge_partners(state: &AppState) -> Result<Value, String> {
+    let rows: Vec<Value> = state
+        .db
+        .query("SELECT * FROM odoo_partner")
+        .await
+        .map_err(|e| format!("load odoo_partner: {}", e))?
+        .take(0)
+        .map_err(|e| format!("load odoo_partner: {}", e))?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let (mut merged, mut created, mut skipped) = (0u64, 0u64, 0u64);
+
+    for r in &rows {
+        let Some(odoo_id) = r.get("id").and_then(record_leaf_int) else {
+            skipped += 1;
+            continue;
+        };
+        let name = r
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let Some(name) = name else {
+            skipped += 1;
+            continue;
+        };
+        let email = r
+            .get("email")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let phone = r
+            .get("phone")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let mobile = r
+            .get("mobile")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let city = r
+            .get("city")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        if email.is_none() && phone.is_none() && city.is_none() {
+            skipped += 1;
+            continue;
+        }
+        let zip = r
+            .get("zip")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let street = {
+            let s1 = r.get("street").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let s2 = r.get("street2").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let joined = [s1, s2].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
+            if joined.is_empty() { None } else { Some(joined) }
+        };
+        let country_code = r.get("country_code").and_then(|v| v.as_str()).map(str::to_string).filter(|s| !s.is_empty());
+        let country_name = many2one_name(r.get("country_id")).as_str().map(str::to_string);
+        let country = country_code.or(country_name);
+        let vat = r.get("vat").cloned().unwrap_or(Value::Null);
+        let is_company = r.get("is_company").cloned().unwrap_or(json!(false));
+        let parent_name = many2one_name(r.get("parent_id"));
+        let customer_rank = r.get("customer_rank").cloned().unwrap_or(Value::Null);
+
+        // Locate an existing 9eck partner: odoo_id link, else email, else name.
+        let existing: Vec<Value> = state
+            .db
+            .query("SELECT VALUE id FROM partner WHERE odoo_id = $oid LIMIT 1")
+            .bind(("oid", odoo_id))
+            .await
+            .map_err(|e| format!("match by odoo_id: {}", e))?
+            .take(0)
+            .map_err(|e| format!("match by odoo_id: {}", e))?;
+        let mut existing_id = existing.into_iter().next().and_then(|v| v.as_str().map(String::from));
+
+        if existing_id.is_none() {
+            if let Some(e) = &email {
+                let el = e.to_lowercase();
+                let rows: Vec<Value> = state
+                    .db
+                    .query("SELECT VALUE id FROM partner WHERE string::lowercase(email ?? '') = $e LIMIT 1")
+                    .bind(("e", el))
+                    .await
+                    .map_err(|e| format!("match by email: {}", e))?
+                    .take(0)
+                    .map_err(|e| format!("match by email: {}", e))?;
+                existing_id = rows.into_iter().next().and_then(|v| v.as_str().map(String::from));
+            }
+        }
+        if existing_id.is_none() {
+            let nl = name.to_lowercase();
+            let rows: Vec<Value> = state
+                .db
+                .query("SELECT VALUE id FROM partner WHERE string::lowercase(name ?? '') = $n LIMIT 1")
+                .bind(("n", nl))
+                .await
+                .map_err(|e| format!("match by name: {}", e))?
+                .take(0)
+                .map_err(|e| format!("match by name: {}", e))?;
+            existing_id = rows.into_iter().next().and_then(|v| v.as_str().map(String::from));
+        }
+
+        if let Some(rid) = existing_id {
+            // Fill only empty/missing contact fields — never overwrite Exact data.
+            let current: Option<Value> = state
+                .db
+                .query("SELECT email, phone, mobile, city, country, zip, street FROM type::record($rid) LIMIT 1")
+                .bind(("rid", rid.clone()))
+                .await
+                .and_then(|mut resp| resp.take(0))
+                .ok()
+                .flatten();
+            let is_empty = |v: Option<&Value>| match v {
+                None => true,
+                Some(Value::Null) => true,
+                Some(Value::String(s)) => s.trim().is_empty(),
+                _ => false,
+            };
+            let mut patch = json!({ "odoo_id": odoo_id, "updated_at": now });
+            let patch_obj = patch.as_object_mut().unwrap();
+            let cur = current.as_ref();
+            if let Some(v) = &email {
+                if is_empty(cur.and_then(|c| c.get("email"))) { patch_obj.insert("email".into(), json!(v)); }
+            }
+            if let Some(v) = &phone {
+                if is_empty(cur.and_then(|c| c.get("phone"))) { patch_obj.insert("phone".into(), json!(v)); }
+            }
+            if let Some(v) = &mobile {
+                if is_empty(cur.and_then(|c| c.get("mobile"))) { patch_obj.insert("mobile".into(), json!(v)); }
+            }
+            if let Some(v) = &city {
+                if is_empty(cur.and_then(|c| c.get("city"))) { patch_obj.insert("city".into(), json!(v)); }
+            }
+            if let Some(v) = &country {
+                if is_empty(cur.and_then(|c| c.get("country"))) { patch_obj.insert("country".into(), json!(v)); }
+            }
+            if let Some(v) = &zip {
+                if is_empty(cur.and_then(|c| c.get("zip"))) { patch_obj.insert("zip".into(), json!(v)); }
+            }
+            if let Some(v) = &street {
+                if is_empty(cur.and_then(|c| c.get("street"))) { patch_obj.insert("street".into(), json!(v)); }
+            }
+            let mut resp = state
+                .db
+                .query("UPDATE type::record($rid) MERGE $patch")
+                .bind(("rid", rid))
+                .bind(("patch", patch))
+                .await
+                .map_err(|e| format!("merge partner: {}", e))?;
+            let _: Vec<Value> = resp.take(0).map_err(|e| format!("merge partner apply: {}", e))?;
+            merged += 1;
+        } else {
+            let rid = format!("partner:odoo_{}", odoo_id);
+            let content = json!({
+                "source_system": "odoo",
+                "external_id": format!("odoo_{}", odoo_id),
+                "name": name,
+                "email": email,
+                "phone": phone,
+                "mobile": mobile,
+                "city": city,
+                "zip": zip,
+                "street": street,
+                "country": country,
+                "vat": vat,
+                "is_company": is_company,
+                "parent_name": parent_name,
+                "customer_rank": customer_rank,
+                "odoo_id": odoo_id,
+                "updated_at": now,
+            });
+            let mut resp = state
+                .db
+                .query("UPSERT type::record($rid) CONTENT $content")
+                .bind(("rid", rid))
+                .bind(("content", content))
+                .await
+                .map_err(|e| format!("create partner: {}", e))?;
+            let _: Vec<Value> = resp.take(0).map_err(|e| format!("create partner apply: {}", e))?;
+            created += 1;
+        }
+    }
+
+    let summary = json!({
+        "total": rows.len(),
+        "merged": merged,
+        "created": created,
+        "skipped": skipped,
+    });
+    info!("[odoo] bridge_partners {}", summary);
     Ok(summary)
 }
 

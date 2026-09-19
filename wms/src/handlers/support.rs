@@ -22,6 +22,38 @@ fn may_reveal_pii(claims: Option<&Claims>) -> bool {
     matches!(claims.map(|c| c.role.as_str()), Some("admin") | Some("operator"))
 }
 
+/// Which `(kind, token, value)` triples `list_tickets`' subject-reveal would
+/// substitute into `subject`, given the ticket's `meta` — same dictionary
+/// (full customer name + its >2-char parts, email, phone) the distiller
+/// masked with. Read-only: does not touch `subject`. Used twice — once to
+/// SIZE the rate-limit check before anything is revealed, once (only if
+/// admitted) to actually perform the substitutions — so the two passes can
+/// never disagree on what would be revealed.
+fn subject_reveal_hits(subject: &str, meta: &Value) -> Vec<(&'static str, String, String)> {
+    let customer = meta["customer"].as_str().unwrap_or("");
+    let mut pairs: Vec<(&str, String)> = vec![("Name", customer.to_string())];
+    for part in customer.split_whitespace() {
+        if part.len() > 2 {
+            pairs.push(("Name", part.to_string()));
+        }
+    }
+    pairs.push(("Email", meta["email"].as_str().unwrap_or("").to_string()));
+    pairs.push(("Phone", meta["phone"].as_str().unwrap_or("").to_string()));
+
+    let mut hits = Vec::new();
+    for (label, value) in &pairs {
+        let v = value.trim();
+        if v.len() < 2 {
+            continue;
+        }
+        let token = obfuscate_pii(v, label);
+        if subject.contains(&token) {
+            hits.push((*label, token, v.to_string()));
+        }
+    }
+    hits
+}
+
 type ApiResult<T> = Result<T, (StatusCode, String)>;
 
 fn db_err(e: impl std::fmt::Display) -> (StatusCode, String) {
@@ -426,11 +458,12 @@ pub async fn backfill_meta(
             // writing it here does not perturb sync.
             let shash = crate::services::support::summary_seed_hash(&meta);
 
-            // pii_fingerprints is DERIVED from meta.subject (among others) — a
-            // rewritten meta invalidates it. NONE re-enters the row into the
-            // fingerprint self-heal sweep, which re-derives from the new values.
+            // pii_fingerprints (and its Channel-B `pii_fuzzy` sibling) is
+            // DERIVED from meta.subject/meta.customer (among others) — a
+            // rewritten meta invalidates both. NONE re-enters the row into the
+            // fingerprint + fuzzy self-heal sweeps, which re-derive from the new values.
             let res = db
-                .query("UPDATE type::record($rid) SET meta = $meta, summary_source_hash = $shash, pii_fingerprints = NONE")
+                .query("UPDATE type::record($rid) SET meta = $meta, summary_source_hash = $shash, pii_fingerprints = NONE, pii_fuzzy = NONE")
                 .bind(("rid", rid.clone()))
                 .bind(("meta", meta))
                 .bind(("shash", shash))
@@ -911,7 +944,41 @@ pub async fn backfill_customfields(
     })))
 }
 
-/// GET /api/support/tickets — list all imported support tickets.
+/// Query params for `list_tickets` server-side paging.
+#[derive(Deserialize)]
+pub struct ListTicketsQuery {
+    /// Page size. Defaults to 300, clamped to [1, 1000] (or [1, 5000] when
+    /// `open_only` is set — open tickets are bounded by nature).
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Cursor: an `updated_at` value from a previous page's last row
+    /// (`next_before` in the response). When present, only rows strictly
+    /// older than it are returned.
+    #[serde(default)]
+    pub before: Option<String>,
+    /// Exclude closed tickets server-side (same predicate as
+    /// `services::support::is_closed_ticket_status`). For the dashboard map —
+    /// the kiosk's landing view — which needs every OPEN ticket regardless of
+    /// how long ago it was last touched, not just the newest N overall.
+    #[serde(default, deserialize_with = "de_bool_lenient")]
+    pub open_only: bool,
+}
+
+/// Query-string booleans arrive as `1`/`0`/`true`/`false`/`yes`/`no` (the
+/// dashboard map sends `open_only=1`); serde's stock `bool` accepts only the
+/// literal `true`/`false` and turns everything else into a 400 — which broke
+/// the map on first live run (2026-09-05). Absent → `false` via `default`.
+fn de_bool_lenient<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    let s = <String as serde::Deserialize>::deserialize(d)?;
+    match s.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "" | "0" | "false" | "no" | "off" => Ok(false),
+        other => Err(serde::de::Error::custom(format!("invalid boolean `{other}`"))),
+    }
+}
+
+/// GET /api/support/tickets — list imported support tickets, newest first,
+/// server-side paged (`limit`, `before`).
 /// Reads promoted metadata from `document.meta` (no payload needed).
 ///
 /// `meta.subject` is stored MASKED (the distiller tokenises the contact's
@@ -922,58 +989,144 @@ pub async fn backfill_customfields(
 /// list — the detail view's full reveal restores those from the raw payload.
 pub async fn list_tickets(
     State(state): State<Arc<AppState>>,
+    Query(q): Query<ListTicketsQuery>,
     claims: Option<Extension<Claims>>,
-) -> ApiResult<Json<Vec<Value>>> {
+) -> ApiResult<Json<Value>> {
     let reveal = may_reveal_pii(claims.as_ref().map(|Extension(c)| c));
-    let rows: Vec<Value> = state.db
-        .query("SELECT record::id(id) AS id, status, meta, summary_status, updated_at FROM document WHERE type = 'support_ticket' ORDER BY updated_at DESC")
+    let max_limit: u32 = if q.open_only { 5000 } else { 1000 };
+    let limit: i64 = q.limit.unwrap_or(300).clamp(1, max_limit) as i64;
+
+    let mut conditions = vec!["type = 'support_ticket'".to_string()];
+    if q.before.is_some() {
+        conditions.push("updated_at < $before".to_string());
+    }
+    if q.open_only {
+        // Same closed-status predicate as `services::support::is_closed_ticket_status`
+        // (used by should_seed_ai_task to skip re-triaging archived tickets) —
+        // one definition of "closed", never two that can drift apart.
+        conditions.push("(status IS NONE OR string::lowercase(status) != 'closed')".to_string());
+    }
+    let query = format!(
+        "SELECT record::id(id) AS id, status, meta, summary_status, thread_count, updated_at \
+         FROM document WHERE {} ORDER BY updated_at DESC LIMIT $limit",
+        conditions.join(" AND ")
+    );
+    let mut stmt = state.db.query(&query).bind(("limit", limit));
+    if let Some(before) = q.before.clone() {
+        stmt = stmt.bind(("before", before));
+    }
+    let rows: Vec<Value> = stmt
         .await
         .and_then(|mut r| r.take(0))
         .map_err(db_err)?;
 
-    // Count threads per ticket
-    let thread_counts: Vec<Value> = state.db
-        .query("SELECT ticket_id, count() AS cnt FROM document WHERE type = 'support_thread' GROUP BY ticket_id")
-        .await
-        .and_then(|mut r| r.take(0))
-        .unwrap_or_default();
-
-    let thread_map: std::collections::HashMap<String, i64> = thread_counts
+    // `thread_count` is stamped on the document row at `import_thread` time
+    // (services::support::import_thread) — read it directly. Legacy rows
+    // imported before that fix have it NONE; for those (and only those) fall
+    // back to one bounded count query scoped to THIS PAGE's ids, never a
+    // whole-table GROUP BY scan.
+    let legacy_ids: Vec<String> = rows
         .iter()
-        .filter_map(|v| {
-            let tid = v.get("ticket_id")?.as_str()?;
-            let cnt = v.get("cnt")?.as_i64()?;
-            Some((tid.to_string(), cnt))
-        })
+        .filter(|r| r.get("thread_count").map(|v| v.is_null()).unwrap_or(true))
+        .filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
         .collect();
+
+    let thread_map: std::collections::HashMap<String, i64> = if legacy_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        let thread_counts: Vec<Value> = state.db
+            .query("SELECT ticket_id, count() AS cnt FROM document WHERE type = 'support_thread' AND ticket_id IN $ids GROUP BY ticket_id")
+            .bind(("ids", legacy_ids))
+            .await
+            .and_then(|mut r| r.take(0))
+            .unwrap_or_default();
+
+        thread_counts
+            .iter()
+            .filter_map(|v| {
+                let tid = v.get("ticket_id")?.as_str()?;
+                let cnt = v.get("cnt")?.as_i64()?;
+                Some((tid.to_string(), cnt))
+            })
+            .collect()
+    };
+
+    let next_before: Value = rows
+        .last()
+        .and_then(|r| r.get("updated_at").cloned())
+        .unwrap_or(Value::Null);
+
+    // Rate-limit + audit the reveal BEFORE anything is substituted: pre-count,
+    // read-only, which tokens `reveal` would actually swap back on this page
+    // (same dictionary as the substitution pass below — see
+    // `subject_reveal_hits`), then decide once for the whole page whether the
+    // reveal proceeds. `.eck/PII_VAULT.md` §4/§9 item 3.
+    let reveal_user = claims.as_ref().map(|Extension(c)| c.sub.clone()).unwrap_or_else(|| "unknown".to_string());
+    let reveal_role = claims.as_ref().map(|Extension(c)| c.role.clone()).unwrap_or_else(|| "none".to_string());
+    let mut reveal_kinds: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut reveal_tickets: Vec<String> = Vec::new();
+    let mut reveal_token_count: u32 = 0;
+    if reveal {
+        for row in &rows {
+            let id = row.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let m = row.get("meta").cloned().unwrap_or(json!({}));
+            let subject = m["subject"].as_str().unwrap_or("(no subject)").to_string();
+            if subject.contains('_') {
+                for (label, _token, _value) in subject_reveal_hits(&subject, &m) {
+                    reveal_token_count += 1;
+                    *reveal_kinds.entry(label.to_string()).or_insert(0) += 1;
+                    if !id.is_empty() && reveal_tickets.len() < 20 && !reveal_tickets.iter().any(|t| t == id) {
+                        reveal_tickets.push(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let reveal_effective = if reveal && reveal_token_count > 0 {
+        match crate::reveal_guard::global().check(&reveal_user, reveal_token_count) {
+            Ok(()) => {
+                eck_core::audit::append_soft(
+                    &state.db,
+                    &state.server_identity,
+                    &eck_core::audit::wms_chain(&state.instance_id),
+                    "reveal",
+                    "pii-reveal",
+                    eck_core::audit::class::REVEAL,
+                    &format!("PII reveal: {reveal_token_count} token(s) on ticket_list"),
+                    crate::reveal_guard::audit_payload(&reveal_user, &reveal_role, "ticket_list", reveal_token_count, &reveal_kinds, &reveal_tickets, false),
+                ).await;
+                true
+            }
+            Err(denied) => {
+                warn!("[reveal] denied for {reveal_user} on ticket_list: {reveal_token_count} token(s), retry_after={}s", denied.retry_after_secs);
+                eck_core::audit::append_soft(
+                    &state.db,
+                    &state.server_identity,
+                    &eck_core::audit::wms_chain(&state.instance_id),
+                    "reveal",
+                    "pii-reveal",
+                    eck_core::audit::class::REVEAL,
+                    &format!("PII reveal DENIED (rate limit): {reveal_token_count} token(s) on ticket_list"),
+                    crate::reveal_guard::audit_payload(&reveal_user, &reveal_role, "ticket_list", reveal_token_count, &reveal_kinds, &reveal_tickets, true),
+                ).await;
+                false
+            }
+        }
+    } else {
+        reveal
+    };
 
     let summaries: Vec<Value> = rows.iter().map(|row| {
         let id = row.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let m = row.get("meta").cloned().unwrap_or(json!({}));
 
         let mut subject = m["subject"].as_str().unwrap_or("(no subject)").to_string();
-        if reveal && subject.contains('_') {
+        if reveal_effective && subject.contains('_') {
             // Same value set the distiller masked with: full customer name,
             // its parts, email, phone. Plain replace, no reveal sentinels —
             // the list UI renders subjects verbatim.
-            let customer = m["customer"].as_str().unwrap_or("");
-            let mut pairs: Vec<(&str, String)> = vec![("Name", customer.to_string())];
-            for part in customer.split_whitespace() {
-                if part.len() > 2 {
-                    pairs.push(("Name", part.to_string()));
-                }
-            }
-            pairs.push(("Email", m["email"].as_str().unwrap_or("").to_string()));
-            pairs.push(("Phone", m["phone"].as_str().unwrap_or("").to_string()));
-            for (label, value) in &pairs {
-                let v = value.trim();
-                if v.len() < 2 {
-                    continue;
-                }
-                let token = obfuscate_pii(v, label);
-                if subject.contains(&token) {
-                    subject = subject.replace(&token, v);
-                }
+            for (_label, token, value) in subject_reveal_hits(&subject, &m) {
+                subject = subject.replace(&token, &value);
             }
         }
 
@@ -993,7 +1146,9 @@ pub async fn list_tickets(
             "device_model": m["device_model"].as_str().unwrap_or(""),
             "serial_number": m["serial_number"].as_str().unwrap_or(""),
             "manufacturing_date": m["manufacturing_date"].as_str().unwrap_or(""),
-            "thread_count": thread_map.get(id).copied().unwrap_or(0),
+            "thread_count": row.get("thread_count").and_then(|v| v.as_i64())
+                .or_else(|| thread_map.get(id).copied())
+                .unwrap_or(0),
             "latest_update": m["created_time"].as_str().or_else(|| row.get("updated_at").and_then(|v| v.as_str())).unwrap_or(""),
             "last_outbound_at": m["last_outbound_at"].as_str().unwrap_or(""),
             "assignee_id": m["assignee_id"].as_str().unwrap_or(""),
@@ -1001,7 +1156,10 @@ pub async fn list_tickets(
         })
     }).collect();
 
-    Ok(Json(summaries))
+    Ok(Json(json!({
+        "tickets": summaries,
+        "next_before": next_before,
+    })))
 }
 
 /// GET /api/support/tickets/:ticket_id/threads — get threads for a ticket.
@@ -1058,10 +1216,21 @@ fn strip_pii_markers(s: &str) -> String {
 /// (callers fetch these explicitly so the reveal works even when the response is
 /// served in `meta_only` mode, which strips thread payloads). `meta` carries the
 /// flat `document.meta` fields that survive even when no raw payload is present.
+#[cfg_attr(not(test), allow(dead_code))]
 fn reveal_summary(masked: &str, ticket_payload: &Value, threads: &[Value], meta: &Value) -> String {
+    reveal_summary_with(masked, &derive_reveal_pairs(ticket_payload, threads, meta))
+}
+
+/// [`reveal_summary`] over an ALREADY-BUILT dictionary. Substitution is
+/// first-wins (once a token is replaced it is gone from the text), so the
+/// caller decides precedence by ordering: `.eck/PII_VAULT.md` P1 item 4 puts
+/// the VAULT pairs first and the re-hash pairs after them, which makes the
+/// vault authoritative wherever it has a row and leaves the legacy re-hash as
+/// the fallback for every pre-P1 document.
+fn reveal_summary_with(masked: &str, pairs: &[(String, String)]) -> String {
     let mut out = masked.to_string();
-    for (token, value) in derive_reveal_pairs(ticket_payload, threads, meta) {
-        reveal_replace(&mut out, &token, &value);
+    for (token, value) in pairs {
+        reveal_replace(&mut out, token, value);
     }
     out
 }
@@ -1126,6 +1295,12 @@ pub(crate) fn derive_reveal_pairs(
     for (pii_type, value) in &pairs {
         let trimmed = value.trim();
         if trimmed.len() < 2 { continue; }
+        // P1 transition: on a vault node `meta.customer/email/phone/address`
+        // already HOLD the token. Re-hashing a token would mint a nonsense
+        // second-order token and could substitute one pseudonym for another in
+        // the summary — the clear for these lives in the vault and is supplied
+        // by the vault-first pairs ahead of this dictionary.
+        if eck_core::pii_vault::is_token(trimmed) { continue; }
         out.push((obfuscate_pii(trimmed, pii_type), trimmed.to_string()));
         // Zoho stores HTML entities in structured fields ("A &amp; B") while the
         // summary text carries the decoded form — hash the decoded variant too so
@@ -1164,6 +1339,24 @@ pub(crate) fn derive_reveal_pairs(
     }
     for (token, original) in pprl_reveal_map(&reveal_src) {
         out.push((token, original));
+    }
+
+    // (d0) Heuristic person-name tokens the egress ladder baked into the SUMMARY
+    // from free-text PROSE (thread bodies / signatures / description), not just
+    // the subject — re-run the SAME deterministic heuristic over the raw bodies
+    // (`reveal_src`) to reproduce the exact (token, span) pairs, plus the >2-char
+    // name PARTS the egress pass also registers. The NER layer's prose-only
+    // tokens are NOT re-derived here (that needs the async model); the master
+    // reveal path (`mcp::reveal`) augments those from the live model.
+    for (token, span) in eck_core::utils::anonymizer::mask_person_names_heuristic(&reveal_src).1 {
+        out.push((token, span.clone()));
+        if span.contains(' ') {
+            for part in span.split_whitespace() {
+                if part.len() > 2 {
+                    out.push((obfuscate_pii(part, "Name"), part.to_string()));
+                }
+            }
+        }
     }
 
     // (d) Heuristic person-name tokens baked into `meta.subject` — third-party
@@ -1300,13 +1493,17 @@ pub async fn get_ticket_threads(
     // (wrapping each in reveal sentinels so the UI can highlight them); for
     // everyone else the tokenised summary is returned untouched.
     //
-    // The reveal MUST read the FULL raw payloads, not the `meta_only` projection:
-    // the detail page and the dashboard card both request `meta_only=true`, which
-    // strips thread payloads — so the participant reveal would silently no-op and
-    // every thread-sourced name/email (a CC'd colleague, third-party support, the
-    // assignee's signature) would stay masked. So when revealing we fetch a
-    // dedicated full source: in full mode we already have it (`ticket_payload` /
-    // `raw_threads`); in meta_only we query it explicitly here.
+    // meta_only is the "open a ticket instantly" fast path: it must NOT re-fetch
+    // the full raw ticket/thread payloads just to reveal, or that path silently
+    // degrades to the same cost as the full detail fetch for exactly the tier
+    // that's auditing it (admin/operator). So in meta_only mode the reveal uses
+    // ONLY the meta-derived dictionary — `derive_reveal_pairs` driven purely by
+    // `meta` (customer/email/phone/company, the fields that survive even on a
+    // thin node with no raw payload at all) — with no thread payloads. Fewer
+    // tokens may resolve than the full detail view (participant names/emails
+    // sourced only from thread bodies won't), which is acceptable: nothing
+    // leaks, it just stays masked. The full raw-based reveal (`ticket_payload` /
+    // `raw_threads`) still runs for the non-meta_only detail fetch.
     let (ai_summary, ai_summary_marked) = if ai_summary_raw.is_empty() {
         (json!(null), json!(null))
     } else if !reveal {
@@ -1314,32 +1511,86 @@ pub async fn get_ticket_threads(
         (json!(ai_summary_raw), json!(ai_summary_raw))
     } else {
         let meta = ticket_doc.as_ref().and_then(|d| d.get("meta")).cloned().unwrap_or(json!({}));
-        let fetched_ticket: Value;
-        let fetched_threads: Vec<Value>;
         let (rt_payload, rt_threads): (&Value, &[Value]) = if q.meta_only {
-            let row: Option<Value> = state.db
-                .query("SELECT payload FROM document_raw WHERE record::id(id) = $tid LIMIT 1")
-                .bind(("tid", ticket_id.clone()))
-                .await
-                .and_then(|mut r| r.take(0))
-                .map_err(db_err)?;
-            fetched_ticket = row
-                .and_then(|d| d.get("payload").cloned())
-                .unwrap_or_else(|| meta.clone());
-            fetched_threads = state.db
-                .query("SELECT payload FROM document_raw WHERE type = 'support_thread' AND ticket_id = $tid ORDER BY updated_at ASC")
-                .bind(("tid", ticket_id.clone()))
-                .await
-                .and_then(|mut r| r.take(0))
-                .unwrap_or_default();
-            (&fetched_ticket, fetched_threads.as_slice())
+            (&meta, &[])
         } else {
             (&ticket_payload, raw_threads.as_slice())
         };
 
-        let marked = reveal_summary(ai_summary_raw, rt_payload, rt_threads, &meta);
-        let clean = strip_pii_markers(&marked);
-        (json!(clean), json!(marked))
+        // Rate-limit + audit BEFORE reveal_summary touches anything: count how
+        // many of `derive_reveal_pairs`' tokens are actually present in the
+        // masked summary (the same dictionary `reveal_summary` substitutes
+        // from below), then decide once whether the reveal proceeds.
+        // `.eck/PII_VAULT.md` §4/§9 item 3.
+        // Vault first (P1 item 4): decrypt whatever the vault holds for the
+        // tokens actually present in this summary, then append the legacy
+        // re-hash dictionary for everything the vault has no row for (every
+        // document written before P1, and every node without a vault key —
+        // where `get_many` returns an empty map and this is a pure no-op).
+        let mut pairs: Vec<(String, String)> = eck_core::pii_vault::get_many(
+            &state.db,
+            &eck_core::utils::anonymizer::extract_pii_tokens(ai_summary_raw),
+        )
+        .await
+        .into_iter()
+        .collect();
+        pairs.extend(derive_reveal_pairs(rt_payload, rt_threads, &meta));
+        let mut reveal_kinds: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut reveal_token_count: u32 = 0;
+        for (token, _value) in &pairs {
+            if !token.is_empty() && ai_summary_raw.contains(token.as_str()) {
+                reveal_token_count += 1;
+                if let Some(kind) = eck_core::utils::anonymizer::parse_pii_token(token) {
+                    *reveal_kinds.entry(kind.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+
+        let reveal_allowed = if reveal_token_count == 0 {
+            true
+        } else {
+            let user = claims.as_ref().map(|Extension(c)| c.sub.clone()).unwrap_or_else(|| "unknown".to_string());
+            let role = claims.as_ref().map(|Extension(c)| c.role.clone()).unwrap_or_else(|| "none".to_string());
+            let tickets = vec![ticket_id.clone()];
+            match crate::reveal_guard::global().check(&user, reveal_token_count) {
+                Ok(()) => {
+                    eck_core::audit::append_soft(
+                        &state.db,
+                        &state.server_identity,
+                        &eck_core::audit::wms_chain(&state.instance_id),
+                        "reveal",
+                        "pii-reveal",
+                        eck_core::audit::class::REVEAL,
+                        &format!("PII reveal: {reveal_token_count} token(s) on ticket_thread"),
+                        crate::reveal_guard::audit_payload(&user, &role, "ticket_thread", reveal_token_count, &reveal_kinds, &tickets, false),
+                    ).await;
+                    true
+                }
+                Err(denied) => {
+                    warn!("[reveal] denied for {user} on ticket_thread {ticket_id}: {reveal_token_count} token(s), retry_after={}s", denied.retry_after_secs);
+                    eck_core::audit::append_soft(
+                        &state.db,
+                        &state.server_identity,
+                        &eck_core::audit::wms_chain(&state.instance_id),
+                        "reveal",
+                        "pii-reveal",
+                        eck_core::audit::class::REVEAL,
+                        &format!("PII reveal DENIED (rate limit): {reveal_token_count} token(s) on ticket_thread"),
+                        crate::reveal_guard::audit_payload(&user, &role, "ticket_thread", reveal_token_count, &reveal_kinds, &tickets, true),
+                    ).await;
+                    false
+                }
+            }
+        };
+
+        if reveal_allowed {
+            let marked = reveal_summary_with(ai_summary_raw, &pairs);
+            let clean = strip_pii_markers(&marked);
+            (json!(clean), json!(marked))
+        } else {
+            // Denied: serve the tokenised summary as for an observer.
+            (json!(ai_summary_raw), json!(ai_summary_raw))
+        }
     };
 
     // In full mode, enrich each thread's payload with parent ticket metadata
@@ -1705,7 +1956,7 @@ pub async fn scrub_summaries(
             &state.instance_id,
         );
         let _ = state.db
-            .query("UPDATE type::record($rid) SET ai_summary = $s, pii_fingerprints = NONE, \
+            .query("UPDATE type::record($rid) SET ai_summary = $s, pii_fingerprints = NONE, pii_fuzzy = NONE, \
                     _vclock = $vc, updated_at = time::now()")
             .bind(("rid", format!("document:`{}`", id)))
             .bind(("s", out))

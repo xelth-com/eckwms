@@ -174,6 +174,11 @@ pub async fn status(
         "repair_order_prefix": repair_order_prefix(),
         "qr_prefixes": qr_prefixes_from_env(),
         "qr_tenant_suffix": std::env::var("QR_TENANT_SUFFIX").unwrap_or_default(),
+        // PII vault key-ring state (source / epochs / presence flags — never bytes).
+        "keyring": eck_core::keyring::status_json(),
+        // Encrypted data-at-rest volume (.eck/DATA_AT_REST.md). Device-facing
+        // subset: whether it is on and live, never the filesystem paths.
+        "datafs": eck_core::vault::datafs::status_json_public(),
     })))
 }
 
@@ -366,6 +371,14 @@ pub async fn handle_scan(
         .take(0)
         .unwrap_or_default();
 
+    // A unit already booked into the warehouse by receiving must resolve to
+    // ITSELF — matched case-insensitively on the code scanned off the thing or
+    // on our own RCV-/smart code, with its receipt header folded into `data`.
+    // Critically this runs BEFORE the 0-candidate branch below, so scanning a
+    // parcel we received does not mint a bogus stub product for it.
+    let receipt_unit =
+        crate::services::receiving::lookup_unit_by_code(&state.db, &barcode).await;
+
     let mut candidates: Vec<(String, Value)> = Vec::new();
     for p in products {
         candidates.push(("product".into(), p));
@@ -376,6 +389,9 @@ pub async fn handle_scan(
     for l in locations {
         candidates.push(("place".into(), l));
     }
+    if let Some(u) = receipt_unit {
+        candidates.push(("receipt_unit".into(), u));
+    }
 
     match candidates.len() {
         1 => {
@@ -384,6 +400,8 @@ pub async fn handle_scan(
                 .get("name")
                 .or_else(|| record.get("order_number"))
                 .or_else(|| record.get("complete_name"))
+                // receipt_unit: our own human code (RCV-… or the scanned b-… code)
+                .or_else(|| record.get("code"))
                 .and_then(|v| v.as_str())
                 .unwrap_or(&rtype)
                 .to_string();
@@ -420,10 +438,14 @@ pub async fn handle_scan(
                         "title": r.get("name")
                             .or_else(|| r.get("order_number"))
                             .or_else(|| r.get("complete_name"))
+                            .or_else(|| r.get("code"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("Unknown"),
                         "type": t,
-                        "id": r.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                        "id": r.get("id")
+                            .or_else(|| r.get("unit_id"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
                         "barcode": r.get("barcode")
                             .or_else(|| r.get("order_number"))
                             .and_then(|v| v.as_str())
@@ -469,12 +491,17 @@ pub async fn repair_event(
 ) -> ApiResult<Json<Value>> {
     require_active_device(&state, &body.source_device_id).await?;
 
-    let now = Utc::now().to_rfc3339();
+    // `created_at` is stamped IN SurrealQL: `$now` was never actually bound
+    // here (the binding lived on the order CREATE below, which has moved into
+    // `services::repair`), so every repair_event row was written with a missing
+    // created_at. `time::now()` is also the only way to get a real `datetime`
+    // rather than an RFC3339 string in a datetime column.
     let _ = state
         .db
         .query(
             "CREATE repair_event SET source_device_id = $src, target_device_id = $tgt, \
-             event_type = $et, data = $data, acting_user_id = $au, owner_user_id = $ou, created_at = $now",
+             event_type = $et, data = $data, acting_user_id = $au, owner_user_id = $ou, \
+             created_at = time::now()",
         )
         .bind(("src", body.source_device_id.clone()))
         .bind(("tgt", body.target_device_id.clone()))
@@ -486,69 +513,38 @@ pub async fn repair_event(
         .map_err(db_err)?;
 
     if body.event_type == "device_bound" {
-        // Reuse an open repair order for this serial if one exists
-        let open: Vec<Value> = state
-            .db
-            .query(
-                "SELECT record::id(id) AS id, order_number FROM order \
-                 WHERE serial_number = $sn AND status NOT IN ['completed', 'closed', 'cancelled', 'done'] \
-                 LIMIT 1",
-            )
-            .bind(("sn", body.target_device_id.clone()))
-            .await
-            .map_err(db_err)?
-            .take(0)
-            .unwrap_or_default();
+        // One live order per serial — the same act the receiving context
+        // performs from the other direction, so both go through
+        // `services::repair` instead of each minting orders their own way.
+        let (order, created) = crate::services::repair::open_repair_order(
+            &state.db,
+            &state.instance_id,
+            &crate::services::repair::OpenRepair {
+                serial: body.target_device_id.clone(),
+                issue: Some(body.data.clone()),
+                source: "repair/device_bound".into(),
+                created_by_device: Some(body.source_device_id.clone()),
+                acting_user_id: body.acting_user_id.clone(),
+                owner_user_id: body.owner_user_id.clone(),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-        if let Some(existing) = open.first() {
-            return Ok(Json(json!({
-                "success": true,
-                "created": false,
-                "order_id": existing.get("id"),
-                "order_number": existing.get("order_number"),
-            })));
+        if created {
+            info!(
+                "Repair: auto-created order {} for serial {}",
+                order.get("order_number").and_then(|v| v.as_str()).unwrap_or("?"),
+                body.target_device_id
+            );
         }
-
-        let prefix = repair_order_prefix();
-        let order_number = format!(
-            "{}{}-{:04}",
-            prefix,
-            Utc::now().format("%Y%m%d"),
-            rand::random::<u16>() % 10000
-        );
-
-        let created: Option<Value> = state
-            .db
-            .create("order")
-            .content(json!({
-                "uuid": uuid::Uuid::new_v4().to_string(),
-                "order_number": order_number,
-                "order_type": "repair",
-                "serial_number": body.target_device_id,
-                "status": "pending",
-                "priority": "normal",
-                "issue_description": body.data,
-                "metadata": {
-                    "created_by_device": body.source_device_id,
-                    "acting_user_id": body.acting_user_id,
-                    "owner_user_id": body.owner_user_id,
-                },
-                "created_at": now, "updated_at": now,
-            }))
-            .await
-            .map_err(db_err)?;
-
-        let created = created.unwrap_or(Value::Null);
-        info!(
-            "Repair: auto-created order {} for serial {}",
-            order_number,
-            created.get("serial_number").and_then(|v| v.as_str()).unwrap_or("?")
-        );
         return Ok(Json(json!({
             "success": true,
-            "created": true,
-            "order_number": order_number,
-            "order": created,
+            "created": created,
+            "order_id": order.get("order_uuid"),
+            "order_number": order.get("order_number"),
+            "order": order,
         })));
     }
 

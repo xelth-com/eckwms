@@ -1,10 +1,10 @@
 [package]
 name = "eck_core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-surrealdb = { version = "3", features = ["kv-surrealkv", "protocol-ws"] }
+surrealdb = { version = "=3.2.4", features = ["kv-surrealkv", "protocol-ws"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
@@ -14,6 +14,12 @@ base64 = "0.22"
 rand = "0.8"
 hex = "0.4"
 sha2 = "0.10"
+# Vault key derivation (core/src/vault): HKDF-SHA256 over the tenant master key.
+# Pure Rust (RustCrypto) — `cargo tree -i openssl-sys` MUST stay empty.
+hkdf = "0.12"
+hmac = "0.12"
+# `<mount>/secrets.env` after the encrypted data volume is up (core/src/vault/datafs.rs).
+dotenvy = "0.15"
 regex = "1"
 thiserror = "2.0"
 tracing = "0.1"
@@ -23,6 +29,9 @@ futures-util = "0.3"
 murmur3 = "0.5"
 ed25519-dalek = { version = "2", features = ["pkcs8", "rand_core"] }
 chacha20poly1305 = "0.10"
+# In-memory key material (KeyRing) is wiped on drop — pepper, mesh data key,
+# vault keys never linger in freed heap. See core/src/keyring.rs.
+zeroize = { version = "1", features = ["zeroize_derive"] }
 jsonwebtoken = "9.3"
 bcrypt = "0.15"
 # Audit-anchor: pure-Rust Hedera HCS over gRPC (tonic + rustls, NO openssl —

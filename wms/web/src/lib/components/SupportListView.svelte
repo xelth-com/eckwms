@@ -11,9 +11,13 @@
     // uniformly; no background work here to pause, data is fetched once onMount).
     export let active = true;
 
+    const PAGE_LIMIT = 300;
+
     let tickets = [];
     let loading = true;
+    let loadingMore = false;
     let error = null;
+    let nextBefore = null;
 
     onMount(async () => {
         await loadTickets();
@@ -23,13 +27,30 @@
         loading = true;
         error = null;
         try {
-            tickets = await api.get('/api/support/tickets');
+            const res = await api.get(`/api/support/tickets?limit=${PAGE_LIMIT}`);
+            tickets = res.tickets || [];
+            nextBefore = res.next_before || null;
         } catch (e) {
             console.error(e);
             error = e.message;
             toastStore.add(tr('lists.support_load_failed'), 'error');
         } finally {
             loading = false;
+        }
+    }
+
+    async function loadMore() {
+        if (!nextBefore || loadingMore) return;
+        loadingMore = true;
+        try {
+            const res = await api.get(`/api/support/tickets?limit=${PAGE_LIMIT}&before=${encodeURIComponent(nextBefore)}`);
+            tickets = [...tickets, ...(res.tickets || [])];
+            nextBefore = res.next_before || null;
+        } catch (e) {
+            console.error(e);
+            toastStore.add(tr('lists.support_load_failed'), 'error');
+        } finally {
+            loadingMore = false;
         }
     }
 
@@ -169,6 +190,13 @@
                 </tbody>
             </table>
         </div>
+        {#if nextBefore}
+            <div class="load-more-row">
+                <button class="load-more-btn" on:click={loadMore} disabled={loadingMore}>
+                    {loadingMore ? $t('lists.support_loading_more') : $t('lists.support_load_more')}
+                </button>
+            </div>
+        {/if}
     {/if}
 </div>
 
@@ -195,6 +223,20 @@
     }
     .refresh-btn:hover:not(:disabled) { background: #4a69bd; color: white; }
     .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .load-more-row { display: flex; justify-content: center; padding: 1.2rem 0; }
+    .load-more-btn {
+        padding: 0.6rem 1.4rem;
+        border-radius: 4px;
+        border: 1px solid #333;
+        background: #1e1e1e;
+        color: #aaa;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .load-more-btn:hover:not(:disabled) { background: #252525; color: #fff; border-color: #4a69bd; }
+    .load-more-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .loading { color: #aaa; text-align: center; padding: 3rem; }
 

@@ -23,6 +23,8 @@ export default {
     support_title: "지원 티켓",
     support_loading_btn: "불러오는 중…",
     support_refresh: "새로고침",
+    support_load_more: "더 보기",
+    support_loading_more: "불러오는 중…",
     support_loading: "티켓을 불러오는 중…",
     support_failed: "불러오기 실패: {error}",
     support_empty_title: "아직 가져온 지원 티켓이 없습니다",

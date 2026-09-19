@@ -57,6 +57,21 @@ pub struct RegisterRequest {
     /// Private/LAN address advertised alongside the public `base_url` (B3).
     #[serde(default)]
     pub lan_url: Option<String>,
+    /// Base64 Ed25519 server-identity public key of the registering node (F3
+    /// strong binding). When present with a valid `node_sig`/`node_ts` the relay
+    /// records it on the registry row, so the client-MCP channel can bind
+    /// instance_id → pubkey from a source stronger than trust-on-first-use.
+    /// Optional/serde-default so pre-upgrade nodes still register.
+    #[serde(default)]
+    pub node_pubkey: Option<String>,
+    /// Unix timestamp the node signed for this registration (freshness bound,
+    /// 300 s). Part of the canonical string `eck-register:{instance_id}:{ts}`.
+    #[serde(default)]
+    pub node_ts: Option<i64>,
+    /// Base64 detached Ed25519 signature over `eck-register:{instance_id}:{ts}`,
+    /// proving the node holds the private key for `node_pubkey`.
+    #[serde(default)]
+    pub node_sig: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

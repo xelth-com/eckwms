@@ -307,8 +307,12 @@ async fn process_ticket(
             "maxOutputTokens": 1024,
         }
     });
-    let (response_text, usage) = auth.generate_content(http, gen_model, payload).await?;
-    log_telemetry(&state.db, "repair_distiller", gen_model, ticket_id, &usage).await;
+    let _ = &auth; // resolved above only to gate on is_configured()
+    let gen =
+        eck_core::ai::AiAuth::generate_for_task(http, "distiller", gen_model, payload, None).await?;
+    tracing::info!("[ai] task=distiller path={} model={}", gen.path, gen.model);
+    let (response_text, served_model, usage) = (gen.text, gen.model, gen.usage);
+    log_telemetry(&state.db, "repair_distiller", &served_model, ticket_id, &usage).await;
 
     let parsed: Value = serde_json::from_str(&response_text)
         .map_err(|e| anyhow::anyhow!("distiller LLM non-JSON: {e} (body: {response_text})"))?;
@@ -438,12 +442,7 @@ async fn push_to_xelixir_kb(
     confidence: &str,
     ticket_number: &str,
 ) -> anyhow::Result<Option<String>> {
-    let url = match std::env::var("XELIXIR_KB_URL") {
-        Ok(u) if !u.is_empty() => u,
-        _ => return Ok(None),
-    };
-    let token = std::env::var("XELIXIR_KB_TOKEN").unwrap_or_default();
-    if token.is_empty() {
+    if !crate::ai::kb_client::configured() {
         return Ok(None);
     }
 
@@ -469,37 +468,12 @@ async fn push_to_xelixir_kb(
         "tags": ["field-repair", format!("src:zoho:{ticket_number}")],
         "anchors": anchors,
     });
-    let body = json!({
-        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": { "name": "kb_record", "arguments": args }
-    });
-
-    let resp = http
-        .post(&url)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Accept", "application/json, text/event-stream")
-        .json(&body)
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await?;
-    let raw = resp.text().await?;
-
-    // The MCP endpoint replies as SSE: lines prefixed with "data: ".
-    for line in raw.lines() {
-        let payload = line.strip_prefix("data: ").unwrap_or(line);
-        if let Ok(v) = serde_json::from_str::<Value>(payload) {
-            if let Some(err) = v.get("error") {
-                return Err(anyhow::anyhow!("kb_record error: {err}"));
-            }
-            if let Some(text) = v.pointer("/result/content/0/text").and_then(|t| t.as_str()) {
-                if let Ok(inner) = serde_json::from_str::<Value>(text) {
-                    if let Some(fid) = inner.get("finding_id").and_then(|f| f.as_str()) {
-                        return Ok(Some(fid.to_string()));
-                    }
-                }
-                return Ok(Some(text.chars().take(60).collect()));
-            }
+    let text =
+        crate::ai::kb_client::call_tool(http, "kb_record", args, Duration::from_secs(30)).await?;
+    if let Ok(inner) = serde_json::from_str::<Value>(&text) {
+        if let Some(fid) = inner.get("finding_id").and_then(|f| f.as_str()) {
+            return Ok(Some(fid.to_string()));
         }
     }
-    Err(anyhow::anyhow!("kb_record: no usable response ({})", raw.chars().take(200).collect::<String>()))
+    Ok(Some(text.chars().take(60).collect()))
 }

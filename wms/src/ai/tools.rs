@@ -12,6 +12,7 @@ use eck_core::utils::anonymizer::{obfuscate_pii, parse_pii_token};
 use eck_core::utils::filestore::FileStore;
 
 use crate::ai::embeddings::embed_query;
+use crate::ai::pii_fuzzy::{Candidate, FuzzyIndex};
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -103,6 +104,76 @@ impl Tool for AskHumanTool {
             "note": "Task has been paused. The operator will reply asynchronously. \
                     End your turn now — do not call any more tools."
         }))
+    }
+}
+
+// ─── Tool: KB Brief (xelixir knowledge-base recall) ──────────────────────────
+
+/// The recall front door to the xelixir Knowledge Base. Wraps
+/// `crate::ai::kb_client::kb_brief` and is the SINGLE implementation shared by
+/// the triage loop (`dispatch_orchestrator_tool`) and the one-shot / Brain-Chat
+/// loop (`drive_oneshot_native`). The model's free-text `symptom` is masked with
+/// the SAME PII ladder the prompt description uses before it leaves the node.
+#[derive(Clone)]
+pub struct KbBriefTool {
+    /// An HTTP client for the KB endpoint (+ any masker cloud call).
+    pub http: reqwest::Client,
+}
+
+#[derive(Deserialize, Serialize, schemars::JsonSchema)]
+pub struct KbBriefArgs {
+    /// Device model, e.g. "DNO3-580". Take it from the ticket
+    /// (`meta.device_model`) or the customer's message.
+    pub model: String,
+    /// Free-text symptom / customer complaint — what is actually wrong.
+    pub symptom: String,
+    /// Optional device error code shown on screen or reported by the customer.
+    #[serde(default)]
+    pub error_code: Option<String>,
+}
+
+impl Tool for KbBriefTool {
+    const NAME: &'static str = "kb_brief";
+    type Error = ToolError;
+    type Args = KbBriefArgs;
+    type Output = Value;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Knowledge base recall for a device model + symptom/error code. \
+                Call it BEFORE proposing any diagnostic or repair step for a device, and \
+                whenever the customer names an error code. If the digest is empty, say the \
+                KB has nothing and reason from the ticket only."
+                .to_string(),
+            parameters: schemars::schema_for!(KbBriefArgs).into(),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        if !crate::ai::kb_client::configured() {
+            return Ok(json!({ "kb": "not configured" }));
+        }
+        let error_code = args.error_code.unwrap_or_default();
+        // Defense in depth: the model may echo raw customer text into `symptom`,
+        // so mask it with the same ladder the prompt description went through
+        // (fail-closed to the regex backstop) before it reaches xelixir.
+        let symptom = crate::ai::orchestrator::mask_free_text(&self.http, &args.symptom).await;
+        match crate::ai::kb_client::kb_brief(&self.http, &args.model, &symptom, &error_code, 20).await
+        {
+            Ok(Some(raw)) => match crate::ai::kb_client::extract_brief(&raw) {
+                Some(brief) => {
+                    let details = crate::ai::kb_client::extract_details(&raw, 6, 900);
+                    Ok(json!({ "digest": brief, "details": details }))
+                }
+                None => Ok(json!({ "kb": "no findings" })),
+            },
+            Ok(None) => Ok(json!({ "kb": "not configured" })),
+            Err(e) => {
+                warn!("[KbBriefTool] kb_brief failed: {e}");
+                Ok(json!({ "kb": "error", "note": format!("recall failed: {e}") }))
+            }
+        }
     }
 }
 
@@ -529,7 +600,11 @@ impl Tool for AnalyzeAttachmentVisualTool {
                 ask_human), 'not_found', or 'no_image'. Every response also carries \
                 prior_analyses: up to the 5 most recent earlier Q&A for this file (question, \
                 answer, created_at) — check them FIRST and reuse an already-paid answer instead \
-                of asking again. This call is METERED."
+                of asking again. Cached: an identical or near-identical question on the same \
+                file/page is answered from the journal for free (cached: true|\"semantic\"); \
+                prior_analyses lists earlier Q&A — read them before asking something new. This \
+                call is METERED. When image passthrough is on, the page image is shown to the \
+                loop model as well."
                 .to_string(),
             parameters: schemars::schema_for!(AnalyzeAttachmentVisualArgs).into(),
         }
@@ -569,6 +644,9 @@ impl Tool for AnalyzeAttachmentVisualTool {
 #[derive(Clone)]
 pub struct SearchDatabaseTool {
     pub db: SurrealDb,
+    /// Typo-tolerant name/address resolver (`.eck/PPRL_FUZZY.md`). `None` on
+    /// internal paths (e.g. CSV enrichment) that don't need fuzzy resolution.
+    pub fuzzy: Option<Arc<FuzzyIndex>>,
 }
 
 #[derive(Deserialize, Serialize, schemars::JsonSchema)]
@@ -594,12 +672,19 @@ impl Tool for SearchDatabaseTool {
                 Use `table`='order' to look up repair/RMA records by order \
                 number, customer name, or issue description. Use \
                 `table`='document' to look up Zoho support tickets by \
-                subject/summary content. A pseudonym token (Name_<hex>, \
+                subject/summary content, company, or city (incl. the town \
+                derived from the phone area code when no city was on file). A \
+                pseudonym token (Name_<hex>, \
                 Email_<hex>, …) as the query performs an EXACT match — every \
                 record referencing that person — instead of fuzzy retrieval. \
-                Returns up to 3 fuzzy (10 exact) matches with a compact \
-                projection — enough to disambiguate a CSV row, not enough \
-                to exfiltrate the whole record."
+                Person names AND addresses are typo-tolerant (phonetic + bigram \
+                similarity, incl. word-order swaps, umlaut spellings and \
+                city/zip-only fragments); results carry the resolved Name_/ \
+                Address_ token(s). \
+                Returns a compact projection (company + city in the clear, \
+                street/phone/email stay tokenized) — up to 10 matches for \
+                `document`, 3 for a fuzzy `order` lookup (10 on an exact token) \
+                — enough to disambiguate, not enough to exfiltrate the record."
                 .to_string(),
             parameters: schemars::schema_for!(SearchDatabaseArgs).into(),
         }
@@ -625,6 +710,17 @@ impl Tool for SearchDatabaseTool {
         // string is semantic noise. Route them to exact fingerprint lookup.
         if let Some(label) = parse_pii_token(q) {
             return self.search_by_token(table, q, label).await;
+        }
+
+        // Typo-tolerant person/address resolution (`.eck/PPRL_FUZZY.md` §D): a
+        // non-token query that looks like a name or an address is resolved to
+        // Name_/Address_ tokens, each of which runs the exact fingerprint path.
+        // Empty → fall through to the normal hybrid search unchanged.
+        if let Some(fuzzy) = &self.fuzzy {
+            let cands = fuzzy.resolve_query(q, 10);
+            if !cands.is_empty() {
+                return self.fuzzy_resolve(table, cands).await;
+            }
         }
 
         // embed_query self-resolves auth (studio key or managed Vertex bearer);
@@ -658,7 +754,16 @@ impl Tool for SearchDatabaseTool {
         // Search must only see what the caller is allowed to read back.
         let bm25_fields: &[&str] = match table {
             "order" => &["issue_description", "customer_name", "order_number"],
-            "document" => &["ai_summary", "meta.subject"],
+            // company + city (stated and area-code-derived) join the masked
+            // ai_summary/subject so a place- or company-only query finds a
+            // ticket whose city lives only in the masked Address token.
+            "document" => &[
+                "ai_summary",
+                "meta.subject",
+                "meta.company",
+                "meta.city",
+                "meta.geo_city",
+            ],
             _ => &[],
         };
 
@@ -687,7 +792,8 @@ impl Tool for SearchDatabaseTool {
             }
             "document" => {
                 "record::id(id) AS id, meta.ticket_number AS ticket_number, \
-                 meta.subject AS subject, ai_summary, status"
+                 meta.subject AS subject, meta.company AS company, \
+                 meta.city AS city, meta.geo_city AS geo_city, ai_summary, status"
             }
             _ => "record::id(id) AS id",
         };
@@ -700,10 +806,16 @@ impl Tool for SearchDatabaseTool {
             _ => "",
         };
 
+        // `document` (Zoho tickets) needs a wider net than an `order` lookup:
+        // a place/company query legitimately hits many tickets in one town, so
+        // return up to 10 there while keeping `order` at the tight 3 its CSV-
+        // enrichment callers expect.
+        let final_n = if table == "document" { 10 } else { 3 };
+
         let rows: Vec<Value> = if q_vector.is_empty() {
             // BM25-only fallback.
             let sql = format!(
-                "SELECT {projection} FROM {table} WHERE ({bm25_where}){type_filter} LIMIT 3"
+                "SELECT {projection} FROM {table} WHERE ({bm25_where}){type_filter} LIMIT {final_n}"
             );
             self.db.query(&sql).await?.take(0)?
         } else {
@@ -712,7 +824,7 @@ impl Tool for SearchDatabaseTool {
                 "LET $vec = SELECT id, vector::distance::knn() AS distance \
                  FROM {table} WHERE embedding <|10,100|> $qe{type_filter};\
                  LET $bm = SELECT id FROM {table} WHERE ({bm25_where}){type_filter} LIMIT 10;\
-                 LET $hybrid = search::rrf([$vec, $bm], 3, 60);\
+                 LET $hybrid = search::rrf([$vec, $bm], {final_n}, 60);\
                  SELECT {projection} FROM $hybrid.id;"
             );
             let mut response = self
@@ -735,6 +847,63 @@ impl Tool for SearchDatabaseTool {
 }
 
 impl SearchDatabaseTool {
+    /// Fuzzy-name/address path: run the exact `search_by_token` for each
+    /// resolved candidate token, union the rows (dedupe by id) in candidate-
+    /// score order, cap at 10, and return them tagged `match_mode`
+    /// `fuzzy_name` / `fuzzy_address` with the `candidates` (token + score +
+    /// kind). NEVER returns clear values or raw signatures.
+    async fn fuzzy_resolve(
+        &self,
+        table: &str,
+        mut cands: Vec<Candidate>,
+    ) -> Result<Value, ToolError> {
+        // Global score order (both-kinds queries concatenate per-kind lists).
+        cands.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.token.cmp(&b.token))
+        });
+        let mut seen = std::collections::HashSet::new();
+        let mut matches: Vec<Value> = Vec::new();
+        for c in &cands {
+            let label = c.token.split('_').next().unwrap_or("Name");
+            let res = self.search_by_token(table, &c.token, label).await?;
+            if let Some(arr) = res.get("matches").and_then(|m| m.as_array()) {
+                for row in arr {
+                    let id = row.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+                    if id.is_empty() || seen.insert(id.to_string()) {
+                        matches.push(row.clone());
+                        if matches.len() >= 10 {
+                            break;
+                        }
+                    }
+                }
+            }
+            if matches.len() >= 10 {
+                break;
+            }
+        }
+        use eck_core::utils::anonymizer::SigKind;
+        let has_name = cands.iter().any(|c| c.kind == SigKind::Name);
+        let has_addr = cands.iter().any(|c| c.kind == SigKind::Address);
+        let match_mode = match (has_name, has_addr) {
+            (true, true) => "fuzzy_name_or_address",
+            (false, true) => "fuzzy_address",
+            _ => "fuzzy_name",
+        };
+        let candidates: Vec<Value> = cands
+            .iter()
+            .map(|c| json!({ "token": c.token, "score": c.score, "kind": c.kind.label() }))
+            .collect();
+        Ok(json!({
+            "table": table,
+            "match_mode": match_mode,
+            "candidates": candidates,
+            "matches": matches,
+        }))
+    }
+
     /// Exact lookup by pseudonym token. `document` rows carry a
     /// `pii_fingerprints` array (every token present in the masked summary +
     /// subject — see wms summarization + the main.rs self-heal), so a token

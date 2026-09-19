@@ -38,7 +38,16 @@ use eck_core::db::SurrealDb;
 /// office scans, DCTDecode, and Flate raw bitmaps now feed the OCR ladder where
 /// the old JPEG byte-grep saw nothing. Bumping re-arms the sweep so the whole
 /// corpus re-reads with the new decoder.
-pub const EXTRACTOR_VER: i64 = 2;
+///
+/// v3 (2026-09-10): AcroForm field extraction — a fillable PDF form (e.g. the
+/// tenant's "Reparaturauftrag") stores the customer's Firma/Straße/PLZ/Ort in the
+/// AcroForm field VALUES, which `pdf_extract` never reads (it only walks page
+/// content streams, so we saw the blank template). We now walk the AcroForm with
+/// lopdf after decryption and APPEND a `--- Formularfelder ---` block of
+/// `Feldname: Wert` lines to the extracted text on both the text-layer and
+/// scan/OCR paths. Bumping re-arms the sweep so every stored extract is rebuilt
+/// with the form fields (no manual backfill).
+pub const EXTRACTOR_VER: i64 = 3;
 
 // ── File resolution ─────────────────────────────────────────────────────────
 
@@ -736,6 +745,224 @@ async fn maybe_decrypt_pdf(bytes: Vec<u8>) -> (Vec<u8>, bool) {
     }
 }
 
+// ── AcroForm field extraction (fillable PDF forms) ──────────────────────────
+//
+// A fillable form (`/AcroForm`) keeps what the customer typed in the field
+// VALUES (`/V`), inside compressed object streams — NOT in the page content
+// streams `pdf_extract` reads. So the text layer of a filled form is just the
+// blank template ("Konstanz" never appears). We walk the field tree with lopdf
+// after decryption and turn every filled field into a `Feldname: Wert` line,
+// appended to the extracted text as a delimited block. Same panic discipline as
+// the other lopdf walkers: the whole walk runs behind `catch_unwind`.
+
+/// Delimiter that opens the appended AcroForm block (see [`format_acroform_block`]).
+const ACROFORM_HEADER: &str = "--- Formularfelder ---";
+
+/// Decode a PDF text string (`/V`, `/T`) to Rust text. lopdf hands us the raw
+/// decoded bytes of both literal and hex strings; we only have to interpret the
+/// text encoding: UTF-16 with a BOM (the common case for filled forms — values
+/// arrive as `<FEFF…>` UTF-16BE hex), else PDFDocEncoding, approximated by latin1
+/// (byte → code point) which is correct for the ASCII + Latin-1 range that covers
+/// German field values.
+fn decode_pdf_text_string(bytes: &[u8]) -> String {
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        let u16s: Vec<u16> =
+            bytes[2..].chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        String::from_utf16_lossy(&u16s)
+    } else if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let u16s: Vec<u16> =
+            bytes[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        String::from_utf16_lossy(&u16s)
+    } else {
+        // PDFDocEncoding ≈ latin1 for the printable range.
+        bytes.iter().map(|&b| b as char).collect()
+    }
+}
+
+/// The field's partial name (`/T`) decoded to text, or `None` when absent/empty.
+fn acroform_partial_name(doc: &Document, dict: &Dictionary) -> Option<String> {
+    match dict.get(b"T").ok().map(|o| deref(doc, o)) {
+        Some(Object::String(b, _)) => {
+            let s = decode_pdf_text_string(b);
+            if s.is_empty() { None } else { Some(s) }
+        }
+        _ => None,
+    }
+}
+
+/// The display value of ONE terminal field, or `None` when empty/unset:
+///   * `/Btn` (checkbox/radio): the on-state name from `/V` (else `/AS`); `Off`
+///     and empty are skipped (unchecked).
+///   * `/Tx` / `/Ch` (text / choice): the `/V` string, or a `, `-joined array for
+///     a multi-select choice.
+/// `ft` is the field type (own `/FT`, else inherited from an ancestor).
+fn acroform_field_value(doc: &Document, dict: &Dictionary, ft: Option<&[u8]>) -> Option<String> {
+    let v = dict.get(b"V").ok().map(|o| deref(doc, o));
+    let is_btn = ft == Some(&b"Btn"[..]) || matches!(v, Some(Object::Name(_)));
+    if is_btn {
+        let name: Vec<u8> = match v {
+            Some(Object::Name(n)) => n.clone(),
+            _ => match dict.get(b"AS").ok().map(|o| deref(doc, o)) {
+                Some(Object::Name(n)) => n.clone(),
+                _ => return None,
+            },
+        };
+        let s = String::from_utf8_lossy(&name);
+        let s = s.trim();
+        if s.is_empty() || s == "Off" {
+            return None;
+        }
+        return Some(s.to_string());
+    }
+    match v? {
+        Object::String(b, _) => {
+            let s = decode_pdf_text_string(b);
+            let t = s.trim();
+            if t.is_empty() { None } else { Some(t.to_string()) }
+        }
+        Object::Array(arr) => {
+            let parts: Vec<String> = arr
+                .iter()
+                .filter_map(|o| match deref(doc, o) {
+                    Object::String(b, _) => {
+                        let s = decode_pdf_text_string(b);
+                        let t = s.trim();
+                        if t.is_empty() { None } else { Some(t.to_string()) }
+                    }
+                    _ => None,
+                })
+                .collect();
+            if parts.is_empty() { None } else { Some(parts.join(", ")) }
+        }
+        _ => None,
+    }
+}
+
+/// Recurse the AcroForm field tree. A node with `/Kids` that carry their own `/T`
+/// is a non-terminal field (fully-qualified names join with `.`, like PDF
+/// viewers); kids WITHOUT a `/T` are just widget annotations of THIS terminal
+/// field (radio widgets, a checkbox's appearance) and are not recursed into.
+/// `/FT` is inherited down the tree. Guarded against pathological depth/width.
+fn walk_acroform_field(
+    doc: &Document,
+    obj: &Object,
+    parent_name: &str,
+    inherited_ft: Option<Vec<u8>>,
+    out: &mut Vec<(String, String)>,
+    depth: usize,
+) {
+    if depth > 64 || out.len() >= 512 {
+        return;
+    }
+    let dict = match deref(doc, obj).as_dict() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let partial = acroform_partial_name(doc, dict);
+    let full = match &partial {
+        Some(t) => {
+            if parent_name.is_empty() {
+                t.clone()
+            } else {
+                format!("{parent_name}.{t}")
+            }
+        }
+        None => parent_name.to_string(),
+    };
+    let ft = dict
+        .get_deref(b"FT", doc)
+        .ok()
+        .and_then(|o| o.as_name().ok())
+        .map(|n| n.to_vec())
+        .or(inherited_ft);
+
+    let child_fields: Vec<&Object> =
+        match dict.get_deref(b"Kids", doc).ok().and_then(|o| o.as_array().ok()) {
+            Some(kids) => kids
+                .iter()
+                .filter(|k| deref(doc, k).as_dict().map(|d| d.has(b"T")).unwrap_or(false))
+                .collect(),
+            None => Vec::new(),
+        };
+    if !child_fields.is_empty() {
+        for kid in child_fields {
+            walk_acroform_field(doc, kid, &full, ft.clone(), out, depth + 1);
+        }
+        return;
+    }
+
+    if let Some(val) = acroform_field_value(doc, dict, ft.as_deref()) {
+        let name = if full.is_empty() { "Feld".to_string() } else { full };
+        out.push((name, val));
+    }
+}
+
+/// Extract every filled AcroForm field as `(fully-qualified name, value)` pairs in
+/// field order. Panic-safe (lopdf can panic on malformed files); returns an empty
+/// vec for a PDF with no AcroForm or that fails to parse.
+fn extract_acroform_fields(bytes: &[u8]) -> Vec<(String, String)> {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let doc = Document::load_mem(bytes).ok()?;
+        let root = deref(&doc, doc.trailer.get(b"Root").ok()?).as_dict().ok()?;
+        let acro = root.get_deref(b"AcroForm", &doc).ok()?.as_dict().ok()?;
+        let fields = acro.get_deref(b"Fields", &doc).ok()?.as_array().ok()?;
+        let mut out: Vec<(String, String)> = Vec::new();
+        for f in fields {
+            walk_acroform_field(&doc, f, "", None, &mut out, 0);
+        }
+        Some(out)
+    }));
+    res.ok().flatten().unwrap_or_default()
+}
+
+/// Format extracted fields into the appended block (one `Feldname: Wert` line
+/// each, internal whitespace in the value collapsed so the line stays minable).
+/// Empty string when there are no filled fields. Capped at ~8 000 chars so it can
+/// never crowd out the 20 000-char persisted store.
+fn format_acroform_block(fields: &[(String, String)]) -> String {
+    if fields.is_empty() {
+        return String::new();
+    }
+    let mut block = String::from(ACROFORM_HEADER);
+    for (name, val) in fields {
+        let val_flat = val.split_whitespace().collect::<Vec<_>>().join(" ");
+        if val_flat.is_empty() {
+            continue;
+        }
+        let line = format!("\n{name}: {val_flat}");
+        if block.len() + line.len() > 8000 {
+            break;
+        }
+        block.push_str(&line);
+    }
+    if block == ACROFORM_HEADER {
+        String::new()
+    } else {
+        block
+    }
+}
+
+/// Build the `--- Formularfelder ---` block for a (already decrypted) PDF on the
+/// blocking pool. Empty string when there are no filled fields / no AcroForm.
+async fn pdf_acroform_block(bytes: Vec<u8>) -> String {
+    tokio::task::spawn_blocking(move || format_acroform_block(&extract_acroform_fields(&bytes)))
+        .await
+        .unwrap_or_default()
+}
+
+/// Append the AcroForm block to the ladder/text-layer text with a blank-line
+/// delimiter. No-op when the block is empty; returns just the block when the base
+/// text is blank (a filled form whose page text was empty).
+fn append_form_block(text: &str, form_block: &str) -> String {
+    if form_block.is_empty() {
+        return text.to_string();
+    }
+    if text.trim().is_empty() {
+        return form_block.to_string();
+    }
+    format!("{}\n\n{}", text.trim_end(), form_block)
+}
+
 // ── OCR quality assessment ──────────────────────────────────────────────────
 
 /// Heuristic quality signal for OCR output. `has_essential` is deliberately NOT
@@ -1292,16 +1519,25 @@ async fn compute_ocr(cas_uuid: &str, name: &str, mime: &str, bytes: Vec<u8>) -> 
         // the whole ladder below then runs on plaintext bytes. A real user
         // password leaves the bytes unchanged → the `encrypted` fallback fires.
         let (bytes, decrypted) = maybe_decrypt_pdf(bytes).await;
+        // Fillable-form fields (`/AcroForm /V`) live in object streams the text
+        // layer never touches — extract them once and fold them into whichever
+        // ladder text we end up with (text layer OR scan OCR).
+        let form_block = pdf_acroform_block(bytes.clone()).await;
         let (layer, page_count) = pdf_text_layer(bytes.clone()).await;
         if non_ws_len(&layer) >= 50 {
-            return make_result(cas_uuid, name, "ok", "text_layer", &layer, page_count.max(1), decrypted, Vec::new());
+            let text = append_form_block(&layer, &form_block);
+            return make_result(cas_uuid, name, "ok", "text_layer", &text, page_count.max(1), decrypted, Vec::new());
         }
         // Scan PDF: decode the embedded page images (CCITT G3/G4, DCT JPEG, or
-        // raw Flate bitmaps) and OCR them. When nothing decodes: an `/Encrypt`
-        // trailer means an owner-password PDF; an unsupported image codec
-        // (JBIG2/JPX) is named so; otherwise the ladder reports `ocr_unavailable`.
+        // raw Flate bitmaps) and OCR them. When nothing decodes: filled form
+        // fields are still real content; else an `/Encrypt` trailer means an
+        // owner-password PDF; an unsupported image codec (JBIG2/JPX) is named so;
+        // otherwise the ladder reports `ocr_unavailable`.
         let (images, unsupported) = ocr_pdf_page_images(&bytes, 4).await;
         if images.is_empty() {
+            if !form_block.is_empty() {
+                return make_result(cas_uuid, name, "ok", "text_layer", &form_block, page_count.max(1), decrypted, Vec::new());
+            }
             if pdf_is_encrypted(&bytes) {
                 return make_result(cas_uuid, name, "encrypted", "", "", 0, decrypted, Vec::new());
             }
@@ -1311,7 +1547,16 @@ async fn compute_ocr(cas_uuid: &str, name: &str, mime: &str, bytes: Vec<u8>) -> 
         }
         let pages = images.len();
         let ladder = ocr_images(&images).await;
-        return make_result(cas_uuid, name, ladder.status, ladder.source, &ladder.text, pages, decrypted, ladder.lines);
+        let text = append_form_block(&ladder.text, &form_block);
+        // Any content — recognized page text OR filled form fields — is "ok".
+        let (status, source): (&str, &str) = if ladder.status == "ok" {
+            (ladder.status, ladder.source)
+        } else if !form_block.is_empty() {
+            ("ok", "text_layer")
+        } else {
+            (ladder.status, ladder.source)
+        };
+        return make_result(cas_uuid, name, status, source, &text, pages, decrypted, ladder.lines);
     }
 
     if is_image {
@@ -1539,12 +1784,147 @@ pub fn vision_policy() -> Policy {
     }
 }
 
+/// `ECK_VISION_CACHE_COS` — cosine floor for the semantic vision-journal cache.
+/// Garbage / unset → 0.92 (a near-paraphrase of the same question on the same
+/// page/region reuses the already-paid answer for free).
+fn vision_cache_cos() -> f64 {
+    std::env::var("ECK_VISION_CACHE_COS")
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite())
+        .unwrap_or(0.92)
+}
+
+/// One prior vision-journal row, prepared for cache matching. `page_ok` /
+/// `region_ok` are precomputed against the CURRENT call (same page; region
+/// reusable = the prior is whole-page, or names the same region rounded to 2
+/// decimals) so [`vision_cache_verdict`] stays a pure question-matcher.
+/// `question_embedding` is present only for rows written since the semantic
+/// cache landed; older rows are matched textually only. `question` /
+/// `question_norm` / `answer` are already PPRL-masked (that is what the journal
+/// stores), so a cache HIT returns the masked answer.
+#[derive(Clone)]
+struct PriorRow {
+    question: String,
+    answer: String,
+    model: String,
+    created_at: Value,
+    question_norm: String,
+    question_embedding: Option<Vec<f32>>,
+    page_ok: bool,
+    region_ok: bool,
+}
+
+/// Normalise a question for exact-match caching: trim, lowercase, collapse
+/// internal whitespace to single spaces.
+fn normalize_question(q: &str) -> String {
+    let mut out = String::with_capacity(q.len());
+    let mut pending_space = false;
+    for c in q.trim().chars() {
+        if c.is_whitespace() {
+            pending_space = !out.is_empty();
+        } else {
+            if pending_space {
+                out.push(' ');
+                pending_space = false;
+            }
+            out.extend(c.to_lowercase());
+        }
+    }
+    out
+}
+
+/// Stable key for a region, rounded to 2 decimals — the journal/id granularity.
+/// `None` (whole page) → `"full"`.
+fn region_key(region: Option<Region>) -> String {
+    match region {
+        None => "full".to_string(),
+        Some(r) => format!("{:.2},{:.2},{:.2},{:.2}", r.x, r.y, r.w, r.h),
+    }
+}
+
+/// Can a prior analysis over region `prior` answer a new call over region
+/// `current`? A whole-page prior (`None`) answers anything on the page; a cropped
+/// prior only answers the same rounded region (and never the whole page).
+fn region_reusable(prior: Option<Region>, current: Option<Region>) -> bool {
+    match prior {
+        None => true,
+        Some(_) => current.is_some() && region_key(prior) == region_key(current),
+    }
+}
+
+/// Deterministic `vision_analysis` row id: `sha256(file|page|region|q_norm)[..20]`,
+/// so the same analysis authored on two nodes converges to ONE meshed row.
+fn vision_row_id(file: &str, page: u32, region: Option<Region>, q_norm: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let pre = format!("{file}|{page}|{}|{q_norm}", region_key(region));
+    hex::encode(Sha256::digest(pre.as_bytes()))[..20].to_string()
+}
+
+/// Cosine similarity of two equal-length vectors; 0.0 on shape mismatch / zero
+/// magnitude (so a degenerate vector never spuriously "matches").
+fn cosine_sim(a: &[f32], b: &[f32]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let (mut dot, mut na, mut nb) = (0f64, 0f64, 0f64);
+    for (x, y) in a.iter().zip(b) {
+        let (x, y) = (*x as f64, *y as f64);
+        dot += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    dot / (na.sqrt() * nb.sqrt())
+}
+
+/// Decide whether a prior journal row already answers the current question,
+/// returning the index of the row to reuse (or `None` → pay for a fresh call).
+/// Only rows flagged page-and-region eligible are considered. Two passes:
+///   1. an EXACT normalised-question hit wins first (no embedding needed);
+///   2. otherwise the closest semantic neighbour at cosine ≥ `threshold`, but
+///      only when the current question is embedded (`q_emb`) AND the prior row
+///      carries a stored embedding.
+/// `prior` is newest-first, so among equal candidates the most recent wins.
+fn vision_cache_verdict(
+    prior: &[PriorRow],
+    q_norm: &str,
+    q_emb: Option<&[f32]>,
+    threshold: f64,
+) -> Option<usize> {
+    for (i, row) in prior.iter().enumerate() {
+        if row.page_ok && row.region_ok && row.question_norm == q_norm {
+            return Some(i);
+        }
+    }
+    let q_emb = q_emb?;
+    let mut best: Option<(usize, f64)> = None;
+    for (i, row) in prior.iter().enumerate() {
+        if !(row.page_ok && row.region_ok) {
+            continue;
+        }
+        let Some(emb) = row.question_embedding.as_deref() else {
+            continue;
+        };
+        let sim = cosine_sim(q_emb, emb);
+        if sim >= threshold && best.map_or(true, |(_, b)| sim > b) {
+            best = Some((i, sim));
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
 /// Policy-gated Gemini vision over ONE attachment page, wrapped with the vision
 /// journal (design 2026-07-28): every metered answer is a paid artifact that must
-/// never be lost. This fetches up to the 5 most recent prior analyses for the
-/// same file BEFORE the (possible) new call and returns them as `prior_analyses`
-/// (so a caller can reuse an already-paid answer), and on a successful call it
-/// writes the new answer to the node-local `vision_analysis` table.
+/// never be lost. Before any paid call this fetches up to the 5 most recent prior
+/// analyses for the file (returned as `prior_analyses` so a caller can reuse an
+/// already-paid answer) and, via [`vision_cache_verdict`], serves an identical or
+/// near-identical earlier answer for the same page/region FOR FREE (no Gemini
+/// call, no telemetry row). On a genuine miss it pays, masks the answer through
+/// the ticket-text masker, and journals it to the mesh-synced `vision_analysis`
+/// table under a deterministic id.
 pub async fn analyze_visual(
     db: &SurrealDb,
     cas_uuid: &str,
@@ -1552,25 +1932,129 @@ pub async fn analyze_visual(
     region: Option<Region>,
     page: u32,
 ) -> Value {
-    let prior = fetch_prior_analyses(db, cas_uuid, 5).await;
+    let http = reqwest::Client::new();
+    // Mask the question up front: it is what we compare against the (already
+    // masked) stored questions and what we journal. In the common case (no PII
+    // in the question) masking is a no-op, so exact-match caching still fires.
+    let q_masked = crate::ai::orchestrator::mask_free_text(&http, question).await;
+    let q_norm = normalize_question(&q_masked);
+
+    let prior = fetch_prior_rows(db, cas_uuid, page, region, 5).await;
+    let prior_view: Vec<Value> = prior
+        .iter()
+        .map(|r| {
+            json!({
+                "question": r.question,
+                "answer": r.answer.chars().take(300).collect::<String>(),
+                "created_at": r.created_at.clone(),
+            })
+        })
+        .collect();
+
+    let threshold = vision_cache_cos();
+
+    // Pass 1 — exact normalised-question hit needs no embedding.
+    if let Some(i) = vision_cache_verdict(&prior, &q_norm, None, threshold) {
+        return cached_response(&prior[i], &prior_view, false);
+    }
+    // Pass 2 — semantic. Only embed when at least one eligible prior can be
+    // compared (a stored embedding exists); otherwise there is nothing to hit.
+    let q_emb = if prior
+        .iter()
+        .any(|r| r.page_ok && r.region_ok && r.question_embedding.is_some())
+    {
+        crate::ai::embeddings::embed_query(question).await.ok()
+    } else {
+        None
+    };
+    if let Some(qe) = q_emb.as_deref() {
+        if let Some(i) = vision_cache_verdict(&prior, &q_norm, Some(qe), threshold) {
+            return cached_response(&prior[i], &prior_view, true);
+        }
+    }
+
+    // Genuine miss → pay for the vision call.
     let mut out = analyze_visual_inner(db, cas_uuid, question, region, page).await;
     if out.get("status").and_then(|v| v.as_str()) == Some("ok") {
-        write_vision_journal(db, cas_uuid, question, page, region, &out).await;
+        // Mask the answer (and reuse the masked question) BEFORE journaling — the
+        // raw answer is returned to THIS caller, but the journal (which meshes)
+        // must never carry raw PII. Embed the question if we haven't already, so
+        // every new row can be a semantic-cache candidate for peers.
+        let raw_answer = out.get("answer").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let masked_answer = crate::ai::orchestrator::mask_free_text(&http, &raw_answer).await;
+        let model = out.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let tokens_in = out.get("tokens_in").and_then(|v| v.as_i64()).unwrap_or(0);
+        let tokens_out = out.get("tokens_out").and_then(|v| v.as_i64()).unwrap_or(0);
+        let q_emb = match q_emb {
+            Some(e) => Some(e),
+            None => crate::ai::embeddings::embed_query(question).await.ok(),
+        };
+        write_vision_journal(
+            db,
+            cas_uuid,
+            &q_masked,
+            &q_norm,
+            page,
+            region,
+            &masked_answer,
+            &model,
+            tokens_in,
+            tokens_out,
+            q_emb.as_deref(),
+        )
+        .await;
+        // The vision_analysis journal above is the node-local cost record; it
+        // was never counted toward the shared `ai_telemetry` spend the budget
+        // circuit-breaker reads (telemetry::evaluate_budget), so vision calls
+        // were a blind spot for the breaker. Same usage shape as the other
+        // metered stages (see ai::image_summary's log_telemetry call).
+        let usage = json!({
+            "promptTokenCount": tokens_in,
+            "candidatesTokenCount": tokens_out,
+            "totalTokenCount": tokens_in + tokens_out,
+        });
+        crate::ai::telemetry::log_telemetry(db, "attachments_vision", &model, cas_uuid, &usage).await;
     }
     if let Some(obj) = out.as_object_mut() {
-        obj.insert("prior_analyses".to_string(), Value::Array(prior));
+        obj.insert("prior_analyses".to_string(), Value::Array(prior_view));
     }
     out
 }
 
-/// The most recent journal rows for one file: `{question, answer (≤300 chars),
-/// created_at}`, newest first. Best-effort — a missing table / read error yields
-/// an empty list.
-async fn fetch_prior_analyses(db: &SurrealDb, cas_uuid: &str, limit: i64) -> Vec<Value> {
+/// Build the tool-output JSON for a cache HIT: the stored (masked) answer, zero
+/// tokens, no telemetry. `semantic` distinguishes an exact reuse (`cached:true`)
+/// from a paraphrase reuse (`cached:"semantic"` + `cached_question`).
+fn cached_response(row: &PriorRow, prior_view: &[Value], semantic: bool) -> Value {
+    let mut resp = json!({
+        "status": "ok",
+        "answer": row.answer,
+        "model": row.model,
+        "cached": if semantic { Value::String("semantic".to_string()) } else { Value::Bool(true) },
+        "cached_from": row.created_at.clone(),
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "prior_analyses": Value::Array(prior_view.to_vec()),
+    });
+    if semantic {
+        resp["cached_question"] = json!(row.question);
+    }
+    resp
+}
+
+/// The most recent journal rows for one file (newest first), each tagged with
+/// page/region eligibility for the CURRENT call. Best-effort — a missing table /
+/// read error yields an empty list.
+async fn fetch_prior_rows(
+    db: &SurrealDb,
+    cas_uuid: &str,
+    page: u32,
+    region: Option<Region>,
+    limit: i64,
+) -> Vec<PriorRow> {
     let rows: Vec<Value> = db
         .query(
-            "SELECT question, answer, created_at FROM vision_analysis \
-             WHERE file = $f ORDER BY created_at DESC LIMIT $n",
+            "SELECT question, answer, model, page, region, question_embedding, created_at \
+             FROM vision_analysis WHERE file = $f ORDER BY created_at DESC LIMIT $n",
         )
         .bind(("f", cas_uuid.to_string()))
         .bind(("n", limit))
@@ -1580,51 +2064,90 @@ async fn fetch_prior_analyses(db: &SurrealDb, cas_uuid: &str, limit: i64) -> Vec
         .unwrap_or_default();
     rows.into_iter()
         .map(|r| {
-            let q = r.get("question").and_then(|v| v.as_str()).unwrap_or("");
-            let answer: String = r
-                .get("answer")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .chars()
-                .take(300)
-                .collect();
-            json!({
-                "question": q,
-                "answer": answer,
-                "created_at": r.get("created_at").cloned().unwrap_or(Value::Null),
-            })
+            let question = r.get("question").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let answer = r.get("answer").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let model = r.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let row_page = r.get("page").and_then(|v| v.as_u64()).unwrap_or(u64::MAX) as u32;
+            let row_region: Option<Region> = r
+                .get("region")
+                .filter(|v| !v.is_null())
+                .and_then(|v| serde_json::from_value::<Region>(v.clone()).ok());
+            let question_embedding: Option<Vec<f32>> = r
+                .get("question_embedding")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect());
+            PriorRow {
+                question_norm: normalize_question(&question),
+                question,
+                answer,
+                model,
+                created_at: r.get("created_at").cloned().unwrap_or(Value::Null),
+                question_embedding,
+                page_ok: row_page == page,
+                region_ok: region_reusable(row_region, region),
+            }
         })
         .collect()
 }
 
-/// Append one metered vision answer to the node-LOCAL `vision_analysis` journal
-/// (deliberately NOT in any sync set). Best-effort, log-on-error.
+/// Append one metered vision answer to the mesh-synced `vision_analysis` journal
+/// under a DETERMINISTIC id (so the same analysis from two nodes converges).
+/// `question` / `answer` are already PPRL-masked by the caller. Advances THIS
+/// node's `_vclock` so the row dominates a peer's copy (the `ai_summary`
+/// reference pattern). Best-effort, log-on-error.
+#[allow(clippy::too_many_arguments)]
 async fn write_vision_journal(
     db: &SurrealDb,
     cas_uuid: &str,
-    question: &str,
+    question_masked: &str,
+    question_norm: &str,
     page: u32,
     region: Option<Region>,
-    out: &Value,
+    answer_masked: &str,
+    model: &str,
+    tokens_in: i64,
+    tokens_out: i64,
+    question_embedding: Option<&[f32]>,
 ) {
     let region_json = region
         .map(|r| json!({ "x": r.x, "y": r.y, "w": r.w, "h": r.h }))
         .unwrap_or(Value::Null);
+    let emb_json = question_embedding
+        .map(|e| json!(e))
+        .unwrap_or(Value::Null);
+    // `instance_id` from the process-wide sync engine; a `local` fallback keeps
+    // the cost record (and its vclock) coherent in tests / before mesh install.
+    let iid = mesh_instance_id().unwrap_or_else(|| "local".to_string());
+    let id = vision_row_id(cas_uuid, page, region, question_norm);
+    let trid = format!("vision_analysis:`{}`", id);
+    let existing_vc: Option<Value> = db
+        .query("SELECT VALUE _vclock FROM type::record($trid) LIMIT 1")
+        .bind(("trid", trid.clone()))
+        .await
+        .ok()
+        .and_then(|mut r| r.take(0).ok())
+        .flatten();
+    let next_vc = eck_core::sync::conflict::next_local_vclock(existing_vc.as_ref(), &iid);
     let res = db
         .query(
-            "CREATE vision_analysis SET \
-                file = $f, question = $q, page = $p, region = $r, \
-                answer = $a, model = $m, tokens_in = $ti, tokens_out = $to, \
-                created_at = time::now()",
+            "UPSERT type::record($trid) CONTENT { \
+                file: $f, question: $q, question_norm: $qn, page: $p, region: $r, \
+                answer: $a, model: $m, tokens_in: $ti, tokens_out: $to, \
+                question_embedding: $qe, created_at: time::now(), _vclock: $vc \
+            }",
         )
+        .bind(("trid", trid))
         .bind(("f", cas_uuid.to_string()))
-        .bind(("q", question.to_string()))
+        .bind(("q", question_masked.to_string()))
+        .bind(("qn", question_norm.to_string()))
         .bind(("p", page))
         .bind(("r", region_json))
-        .bind(("a", out.get("answer").and_then(|v| v.as_str()).unwrap_or("").to_string()))
-        .bind(("m", out.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string()))
-        .bind(("ti", out.get("tokens_in").cloned().unwrap_or(Value::Null)))
-        .bind(("to", out.get("tokens_out").cloned().unwrap_or(Value::Null)))
+        .bind(("a", answer_masked.to_string()))
+        .bind(("m", model.to_string()))
+        .bind(("ti", tokens_in))
+        .bind(("to", tokens_out))
+        .bind(("qe", emb_json))
+        .bind(("vc", next_vc))
         .await;
     if let Err(e) = res {
         warn!("[attachments] vision journal write failed for {cas_uuid}: {e}");
@@ -1673,19 +2196,31 @@ async fn analyze_visual_inner(
     let is_encrypted_pdf =
         (mime.contains("pdf") || bytes.starts_with(b"%PDF")) && pdf_is_encrypted(&bytes);
 
-    // Decode → select page → crop → downscale entirely on the blocking pool.
-    let jpeg = tokio::task::spawn_blocking(move || build_vision_jpeg(&bytes, &mime, page, region)).await;
-    let jpeg = match jpeg {
-        Ok(Ok(Some(j))) => j,
-        Ok(Ok(None)) => {
-            let hint = if is_encrypted_pdf {
-                "PDF is encrypted (owner-password) — no text/vision extraction possible; the bytes are intact, use export_attachment"
-            } else {
-                "no rasterizable page (vector/text PDF or unsupported format) — use ocr_attachment for the text layer"
+    // Prepare the page ENTIRELY on the blocking pool: render (or fall back to the
+    // embedded image), and for a PDF resolve the AcroForm block so a fillable
+    // form is never analysed as if its logo were the page.
+    let prep = tokio::task::spawn_blocking(move || prepare_vision_input(&bytes, &mime, page, region))
+        .await;
+    let (jpeg, context) = match prep {
+        Ok(VisionPrep::Image { jpeg, context }) => (jpeg, context),
+        Ok(VisionPrep::NoRender { context }) => {
+            if is_encrypted_pdf {
+                return json!({
+                    "status": "no_image",
+                    "hint": "PDF is encrypted (owner-password) — no text/vision extraction possible; the bytes are intact, use export_attachment",
+                });
+            }
+            // A fillable form whose page could not be rendered: say so, and hand
+            // the brain the field values instead of silently analysing the logo.
+            return match context {
+                Some(block) => vision_form_note(&block),
+                None => json!({
+                    "status": "no_image",
+                    "hint": "no rasterizable page (vector/text PDF or unsupported format) — use ocr_attachment for the text layer",
+                }),
             };
-            return json!({ "status": "no_image", "hint": hint })
         }
-        Ok(Err(e)) => return json!({ "status": "error", "error": format!("image prep failed: {e}") }),
+        Ok(VisionPrep::Err(e)) => return json!({ "status": "error", "error": format!("image prep failed: {e}") }),
         Err(_) => return json!({ "status": "error", "error": "image prep task panicked" }),
     };
 
@@ -1701,34 +2236,94 @@ async fn analyze_visual_inner(
          Question: {question}"
     );
     match vision_generate(&auth, &http, &prompt, &jpeg).await {
-        Ok((answer, model, usage)) => json!({
-            "status": "ok",
-            "answer": answer,
-            "model": model,
-            "tokens_in": usage.get("promptTokenCount").and_then(|v| v.as_i64()),
-            "tokens_out": usage.get("candidatesTokenCount").and_then(|v| v.as_i64()),
-        }),
+        Ok((answer, model, usage)) => {
+            let mut out = json!({
+                "status": "ok",
+                "answer": answer,
+                "model": model,
+                "tokens_in": usage.get("promptTokenCount").and_then(|v| v.as_i64()),
+                "tokens_out": usage.get("candidatesTokenCount").and_then(|v| v.as_i64()),
+            });
+            // Filled form: also surface the exact typed field values so the brain
+            // can cross-check the rendered page (customer address / PLZ / Ort).
+            if let Some(block) = context {
+                out["context"] = Value::String(block);
+            }
+            out
+        }
         Err(e) => json!({ "status": "error", "error": format!("vision call failed: {e}") }),
     }
 }
 
-/// Decode the requested page, apply the region crop, and JPEG-encode at the
-/// policy max side (768 full / 1024 region). `Ok(None)` = nothing rasterizable.
-fn build_vision_jpeg(
-    bytes: &[u8],
-    mime: &str,
-    page: u32,
-    region: Option<Region>,
-) -> Result<Option<Vec<u8>>> {
-    let img = match decode_page(bytes, mime, page)? {
-        Some(i) => i,
-        None => return Ok(None),
+/// Outcome of preparing one attachment page for the vision call (all the
+/// CPU-bound decode/render/encode work, run on a blocking task).
+enum VisionPrep {
+    /// A page image ready to send, plus (for a PDF form) the `--- Formularfelder
+    /// ---` block to pass as `context`.
+    Image { jpeg: Vec<u8>, context: Option<String> },
+    /// No page image could be produced. `context` is `Some(block)` when the PDF
+    /// is a fillable form (→ note + field values), `None` otherwise (→ plain
+    /// no_image hint).
+    NoRender { context: Option<String> },
+    Err(String),
+}
+
+/// Decode/render the requested page and JPEG-encode it, deciding how a PDF form
+/// is handled: a `Rendered` page is analysed directly; an `Embedded` image on a
+/// PDF that HAS AcroForm fields is the logo (not the filled page) and is refused
+/// in favour of the form-field block; anything with no image degrades to
+/// [`VisionPrep::NoRender`]. The AcroForm block, when present, always rides along
+/// as `context`. Synchronous — call on a blocking pool.
+fn prepare_vision_input(bytes: &[u8], mime: &str, page: u32, region: Option<Region>) -> VisionPrep {
+    let is_pdf = mime.contains("pdf") || bytes.starts_with(b"%PDF");
+    let form_block = || {
+        if is_pdf {
+            let b = format_acroform_block(&extract_acroform_fields(bytes));
+            (!b.is_empty()).then_some(b)
+        } else {
+            None
+        }
     };
+    match decode_page_sourced(bytes, mime, page) {
+        Ok(Some(PageSource::Rendered(img))) => match encode_vision_jpeg(img, region) {
+            Ok(jpeg) => VisionPrep::Image { jpeg, context: form_block() },
+            Err(e) => VisionPrep::Err(format!("{e}")),
+        },
+        Ok(Some(PageSource::Embedded(img))) => {
+            // On a fillable form the only embedded image is the logo — refuse it.
+            if let Some(block) = form_block() {
+                return VisionPrep::NoRender { context: Some(block) };
+            }
+            match encode_vision_jpeg(img, region) {
+                Ok(jpeg) => VisionPrep::Image { jpeg, context: None },
+                Err(e) => VisionPrep::Err(format!("{e}")),
+            }
+        }
+        Ok(None) => VisionPrep::NoRender { context: form_block() },
+        Err(e) => VisionPrep::Err(format!("{e}")),
+    }
+}
+
+/// Crop to the requested region (if any) and JPEG-encode at the policy max side
+/// (768 full page / 1024 for a region crop).
+fn encode_vision_jpeg(img: DynamicImage, region: Option<Region>) -> Result<Vec<u8>> {
     let (img, max_side) = match region {
         Some(r) => (crop_relative(&img, r.x, r.y, r.w, r.h), 1024u32),
         None => (img, 768u32),
     };
-    Ok(Some(downscale_jpeg(&img, max_side)?))
+    downscale_jpeg(&img, max_side)
+}
+
+/// The `no_image` result for a fillable-form PDF whose page could not be
+/// rendered: an honest `note` plus the `--- Formularfelder ---` block as
+/// `context`, so the brain still gets the customer's address / PLZ / Ort even
+/// though there is no page image to analyse.
+fn vision_form_note(context_block: &str) -> Value {
+    json!({
+        "status": "no_image",
+        "note": "page not rendered: vector PDF without embedded page image; form field values are available via ocr_attachment",
+        "context": context_block,
+    })
 }
 
 /// Decode raster bytes to a `DynamicImage`, routing AVIF (which `image`'s
@@ -1736,7 +2331,7 @@ fn build_vision_jpeg(
 /// [`crate::ai::avif`] decoder, and everything else through `image`. Detection is
 /// by mime OR magic bytes, because CAS rows routinely carry `application/octet-
 /// stream` for both optimizer-produced and native `.avif` files.
-fn decode_image_bytes(bytes: &[u8], mime: &str) -> Result<DynamicImage> {
+pub(crate) fn decode_image_bytes(bytes: &[u8], mime: &str) -> Result<DynamicImage> {
     if mime == "image/avif" || crate::ai::avif::looks_like_avif(bytes) {
         crate::ai::avif::decode_avif(bytes)
     } else {
@@ -1744,27 +2339,192 @@ fn decode_image_bytes(bytes: &[u8], mime: &str) -> Result<DynamicImage> {
     }
 }
 
-/// Decode one page: for a scan PDF pick the `page`-th embedded JPEG, otherwise
-/// decode the image bytes directly. `Ok(None)` when there is no image to render.
-fn decode_page(bytes: &[u8], mime: &str, page: u32) -> Result<Option<DynamicImage>> {
+// ── PDF page rendering (full-page rasterizer) ────────────────────────────────
+//
+// A fillable service form (the tenant's "Reparaturauftrag") is VECTOR text plus
+// AcroForm field appearances; the only embedded image XObject is usually the
+// logo. So [`decode_pdf_page_image`] (the XObject decoder) returns the logo, not
+// the page the customer filled in — the vision model would "see" a logo. The fix
+// is to RENDER the page. Two rungs, tried in order, both optional so a minimal
+// build / a locked-down node still degrades honestly:
+//   1. External `ECK_PDF_RENDER_CMD` (e.g. `pdftoppm`, `mutool draw`) — same
+//      spirit as the `ECK_OCR_CMD` rung. The kiosk has none of these and no root
+//      to install them, so this is for nodes that DO ship a renderer.
+//   2. Pure-Rust `hayro` (feature `pdf-raster`, default-on) — CPU-only, no C
+//      library, embedded standard fonts. This is the rung the kiosk actually
+//      uses.
+// When NEITHER is available, [`pdf_render_available`] is false and the vision
+// path says so instead of silently analysing the logo.
+
+/// Render one PDF page (0-based) to a bitmap via the external renderer first,
+/// then the pure-Rust rasterizer. `None` when no renderer is available or the
+/// render produced nothing. Synchronous / CPU-bound — call it on a blocking pool.
+fn render_pdf_page(bytes: &[u8], page: u32) -> Option<DynamicImage> {
+    if let Ok(cmd) = std::env::var("ECK_PDF_RENDER_CMD") {
+        let cmd = cmd.trim().to_string();
+        if !cmd.is_empty() {
+            match render_pdf_page_external(&cmd, bytes, page) {
+                Some(img) => return Some(img),
+                None => warn!("[attachments] ECK_PDF_RENDER_CMD produced no page image"),
+            }
+        }
+    }
+    render_pdf_page_rust(bytes, page)
+}
+
+/// External-renderer rung. The command template is expanded with these
+/// placeholders and run to completion; the produced PNG is then read back:
+///   * `{in}`        — a temp path holding the PDF bytes.
+///   * `{page}`      — the 1-based page number.
+///   * `{outprefix}` — an output path WITHOUT extension.
+///   * `{out}`       — `{outprefix}.png` (a full output path).
+/// Recommended recipes (single deterministic output file):
+///   `pdftoppm -r 110 -f {page} -l {page} -png -singlefile {in} {outprefix}`
+///   `mutool draw -r 110 -o {out} {in} {page}`
+/// After the run we read `{out}` if present, else the first image file that
+/// appears next to `{outprefix}` (pdftoppm without `-singlefile` suffixes the
+/// page number). Blocking; runs inside a blocking task via [`render_pdf_page`].
+fn render_pdf_page_external(cmd_tmpl: &str, bytes: &[u8], page: u32) -> Option<DynamicImage> {
+    let dir = std::env::temp_dir();
+    let stem = format!("eck_pdfrender_{}", uuid::Uuid::new_v4());
+    let in_path = dir.join(format!("{stem}.pdf"));
+    let out_prefix = dir.join(&stem);
+    let out_path = dir.join(format!("{stem}.png"));
+    if std::fs::write(&in_path, bytes).is_err() {
+        return None;
+    }
+    let subst = |s: &str| -> String {
+        s.replace("{in}", &in_path.to_string_lossy())
+            .replace("{page}", &(page + 1).to_string())
+            .replace("{outprefix}", &out_prefix.to_string_lossy())
+            .replace("{out}", &out_path.to_string_lossy())
+    };
+    let parts: Vec<String> = cmd_tmpl.split_whitespace().map(subst).collect();
+    let img = (|| {
+        let (prog, rest) = parts.split_first()?;
+        let status = std::process::Command::new(prog)
+            .args(rest)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .ok()?;
+        if !status.success() {
+            return None;
+        }
+        // Prefer the exact {out}; else the first sibling file sharing the stem.
+        let produced: Option<PathBuf> = if out_path.exists() {
+            Some(out_path.clone())
+        } else {
+            std::fs::read_dir(&dir).ok()?.filter_map(|e| e.ok().map(|e| e.path())).find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with(&stem) && n != format!("{stem}.pdf"))
+                    .unwrap_or(false)
+            })
+        };
+        let data = std::fs::read(produced?).ok()?;
+        image::load_from_memory(&data).ok()
+    })();
+    let _ = std::fs::remove_file(&in_path);
+    let _ = std::fs::remove_file(&out_path);
+    img
+}
+
+/// Pure-Rust rasterizer rung (`hayro`, feature `pdf-raster`). Renders at 2× the
+/// native 72-dpi page (~144 dpi): enough for the 768 px vision downscale to keep
+/// filled form text legible. Panic-safe (same discipline as the lopdf walkers)
+/// and gated: with the feature off this is a no-op returning `None`.
+#[cfg(feature = "pdf-raster")]
+fn render_pdf_page_rust(bytes: &[u8], page: u32) -> Option<DynamicImage> {
+    use hayro::hayro_interpret::InterpreterSettings;
+    use hayro::hayro_syntax::Pdf;
+    use hayro::vello_cpu::color::palette::css::WHITE;
+    use hayro::{render, RenderCache, RenderSettings};
+
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let pdf = Pdf::new(bytes.to_vec()).ok()?;
+        let pages = pdf.pages();
+        let pg = pages.get(page as usize)?;
+        let cache = RenderCache::new();
+        let settings = InterpreterSettings::default();
+        let render_settings =
+            RenderSettings { x_scale: 2.0, y_scale: 2.0, bg_color: WHITE, ..Default::default() };
+        let pixmap = render(pg, &cache, &settings, &render_settings);
+        let (w, h) = (pixmap.width() as u32, pixmap.height() as u32);
+        if w == 0 || h == 0 {
+            return None;
+        }
+        // vello_cpu hands us premultiplied RGBA8; composite over white (the
+        // render background) to a straight RGB bitmap the vision encoder wants.
+        let data = pixmap.data_as_u8_slice();
+        let mut rgb = Vec::with_capacity((w as usize) * (h as usize) * 3);
+        for px in data.chunks_exact(4) {
+            let inv = 255u8.saturating_sub(px[3]);
+            rgb.push(px[0].saturating_add(inv));
+            rgb.push(px[1].saturating_add(inv));
+            rgb.push(px[2].saturating_add(inv));
+        }
+        image::RgbImage::from_raw(w, h, rgb).map(DynamicImage::ImageRgb8)
+    }));
+    res.ok().flatten()
+}
+
+#[cfg(not(feature = "pdf-raster"))]
+fn render_pdf_page_rust(_bytes: &[u8], _page: u32) -> Option<DynamicImage> {
+    None
+}
+
+/// Where a decoded page bitmap came from — the vision path treats these
+/// differently. A `Rendered` page is the real filled page; an `Embedded` image
+/// is a scan (good) OR, for a fillable form, just the logo (must not be analysed
+/// as if it were the page — see [`analyze_visual_inner`]).
+pub(crate) enum PageSource {
+    Rendered(DynamicImage),
+    Embedded(DynamicImage),
+}
+
+/// Decode one page, reporting its SOURCE. For a PDF: render the whole page first
+/// (`Rendered`), else fall back to the embedded image XObject / one-JPEG-per-page
+/// scan grep (`Embedded`). A non-PDF image is `Embedded`. `Ok(None)` when nothing
+/// is renderable/extractable.
+pub(crate) fn decode_page_sourced(
+    bytes: &[u8],
+    mime: &str,
+    page: u32,
+) -> Result<Option<PageSource>> {
     let is_pdf = mime.contains("pdf") || bytes.starts_with(b"%PDF");
     if is_pdf {
-        // Real image-XObject decode (CCITT G3/G4, DCT JPEG, raw Flate bitmap),
-        // honoring the exact page index the caller asked for.
-        if let Some(img) = decode_pdf_page_image(bytes, page as usize) {
-            return Ok(Some(img));
+        // 1. Full page render (vector text + form field appearances visible).
+        if let Some(img) = render_pdf_page(bytes, page) {
+            return Ok(Some(PageSource::Rendered(img)));
         }
-        // Fallback: our own scan ingest wraps one raw JPEG per page.
+        // 2. Embedded image XObject (CCITT G3/G4, DCT JPEG, raw Flate bitmap).
+        if let Some(img) = decode_pdf_page_image(bytes, page as usize) {
+            return Ok(Some(PageSource::Embedded(img)));
+        }
+        // 3. Our own scan ingest wraps one raw JPEG per page.
         let streams = extract_pdf_jpeg_streams(bytes, page as usize + 1);
         match streams.get(page as usize) {
-            Some(b) => Ok(Some(image::load_from_memory(b).context("decode PDF page image")?)),
+            Some(b) => Ok(Some(PageSource::Embedded(
+                image::load_from_memory(b).context("decode PDF page image")?,
+            ))),
             None => Ok(None),
         }
     } else if mime.starts_with("image/") || looks_like_image(bytes) {
-        Ok(Some(decode_image_bytes(bytes, mime)?))
+        Ok(Some(PageSource::Embedded(decode_image_bytes(bytes, mime)?)))
     } else {
         Ok(None)
     }
+}
+
+/// Decode one page to a bitmap regardless of source (page render, else embedded
+/// image). `Ok(None)` when there is no image to render. Thin flatten over
+/// [`decode_page_sourced`] for callers that don't care where the pixels came
+/// from (the passthrough re-render in `attachment_image`).
+pub(crate) fn decode_page(bytes: &[u8], mime: &str, page: u32) -> Result<Option<DynamicImage>> {
+    Ok(decode_page_sourced(bytes, mime, page)?.map(|s| match s {
+        PageSource::Rendered(img) | PageSource::Embedded(img) => img,
+    }))
 }
 
 // ── Image ops ───────────────────────────────────────────────────────────────
@@ -1827,8 +2587,11 @@ pub async fn vision_generate(
         }],
         "generationConfig": { "temperature": 0.2, "maxOutputTokens": 1024 }
     });
-    let (text, usage) = auth.generate_content(http, &model, body).await?;
-    Ok((text, model, usage))
+    let _ = auth; // caller resolved auth only to gate on is_configured()
+    let gen =
+        eck_core::ai::AiAuth::generate_for_task(http, "attachments", &model, body, None).await?;
+    tracing::info!("[ai] task=attachments path={} model={}", gen.path, gen.model);
+    Ok((gen.text, gen.model, gen.usage))
 }
 
 // ── Small helpers ───────────────────────────────────────────────────────────
@@ -2126,6 +2889,173 @@ mod tests {
         assert_eq!(rebuilt.source, "");
     }
 
+    // ── AcroForm field extraction (EXTRACTOR_VER 3) ───────────────────────────
+
+    /// A PDF literal string object (for `/T` names and text `/V` values — a bare
+    /// `&str` would become a `Name`, which the walker reads only for buttons).
+    fn lit(s: &str) -> Object {
+        Object::String(s.as_bytes().to_vec(), lopdf::StringFormat::Literal)
+    }
+
+    /// A UTF-16BE-with-BOM hex string `/V` — how filled forms store values.
+    fn utf16be(s: &str) -> Object {
+        let mut b = vec![0xFEu8, 0xFF];
+        for u in s.encode_utf16() {
+            b.extend_from_slice(&u.to_be_bytes());
+        }
+        Object::String(b, lopdf::StringFormat::Hexadecimal)
+    }
+
+    /// Wrap the given AcroForm field objects in a minimal one-page PDF (page +
+    /// /Root → /AcroForm → /Fields) and serialize to bytes.
+    fn save_form_pdf(doc: &mut Document, field_ids: &[ObjectId]) -> Vec<u8> {
+        let pages_id = doc.new_object_id();
+        let page_id = doc.new_object_id();
+        let mut page = Dictionary::new();
+        page.set("Type", "Page");
+        page.set("Parent", pages_id);
+        page.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(612),
+                Object::Integer(792),
+            ]),
+        );
+        doc.objects.insert(page_id, Object::Dictionary(page));
+        let mut pages = Dictionary::new();
+        pages.set("Type", "Pages");
+        pages.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages.set("Count", 1i64);
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let mut cat = Dictionary::new();
+        cat.set("Type", "Catalog");
+        cat.set("Pages", pages_id);
+        if !field_ids.is_empty() {
+            let mut acro = Dictionary::new();
+            acro.set(
+                "Fields",
+                Object::Array(field_ids.iter().map(|id| Object::Reference(*id)).collect()),
+            );
+            let acro_id = doc.add_object(Object::Dictionary(acro));
+            cat.set("AcroForm", acro_id);
+        }
+        let cat_id = doc.add_object(Object::Dictionary(cat));
+        doc.trailer.set("Root", cat_id);
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf).expect("serialize form PDF");
+        buf
+    }
+
+    fn text_field(doc: &mut Document, name: &str, value: Object) -> ObjectId {
+        let mut d = Dictionary::new();
+        d.set("FT", "Tx");
+        d.set("T", lit(name));
+        d.set("V", value);
+        doc.add_object(Object::Dictionary(d))
+    }
+
+    #[test]
+    fn acroform_extracts_filled_fields() {
+        let mut doc = Document::with_version("1.5");
+        // "Ort" carries a UTF-16BE value; "PLZ" a literal one.
+        let ort = text_field(&mut doc, "Ort", utf16be("Konstanz"));
+        let plz = text_field(&mut doc, "PLZ", lit("78467"));
+        // A checked checkbox (/V /Yes) and an unchecked one (/V /Off → skipped).
+        let mut cb = Dictionary::new();
+        cb.set("FT", "Btn");
+        cb.set("T", lit("Zustimmung"));
+        cb.set("V", "Yes");
+        cb.set("AS", "Yes");
+        let cb_id = doc.add_object(Object::Dictionary(cb));
+        let mut off = Dictionary::new();
+        off.set("FT", "Btn");
+        off.set("T", lit("Newsletter"));
+        off.set("V", "Off");
+        let off_id = doc.add_object(Object::Dictionary(off));
+
+        let bytes = save_form_pdf(&mut doc, &[ort, plz, cb_id, off_id]);
+        let fields = extract_acroform_fields(&bytes);
+        let block = format_acroform_block(&fields);
+
+        assert!(block.starts_with(ACROFORM_HEADER), "block: {block:?}");
+        assert!(block.contains("Ort: Konstanz"), "UTF-16 value decoded: {block:?}");
+        assert!(block.contains("PLZ: 78467"), "literal value: {block:?}");
+        assert!(block.contains("Zustimmung: Yes"), "checked box on-state: {block:?}");
+        assert!(!block.contains("Newsletter"), "Off checkbox is skipped: {block:?}");
+    }
+
+    #[test]
+    fn acroform_absent_leaves_text_unchanged() {
+        let mut doc = Document::with_version("1.5");
+        let bytes = save_form_pdf(&mut doc, &[]); // no /AcroForm
+        let fields = extract_acroform_fields(&bytes);
+        assert!(fields.is_empty(), "no AcroForm → no fields, got {fields:?}");
+        let block = format_acroform_block(&fields);
+        assert_eq!(block, "");
+        // Appending an empty block is a no-op on the ladder text.
+        assert_eq!(append_form_block("2010 chars of template", &block), "2010 chars of template");
+    }
+
+    #[test]
+    fn acroform_kids_fully_qualified_names() {
+        let mut doc = Document::with_version("1.5");
+        // A terminal child field "Ort" under a parent field "Adresse" (/Kids).
+        let mut child = Dictionary::new();
+        child.set("FT", "Tx");
+        child.set("T", lit("Ort"));
+        child.set("V", lit("Konstanz"));
+        let child_id = doc.add_object(Object::Dictionary(child));
+        let mut parent = Dictionary::new();
+        parent.set("T", lit("Adresse"));
+        parent.set("Kids", Object::Array(vec![Object::Reference(child_id)]));
+        let parent_id = doc.add_object(Object::Dictionary(parent));
+
+        let bytes = save_form_pdf(&mut doc, &[parent_id]);
+        let fields = extract_acroform_fields(&bytes);
+        assert_eq!(fields.len(), 1, "one terminal field, got {fields:?}");
+        assert_eq!(fields[0].0, "Adresse.Ort", "name is fully qualified with '.'");
+        assert_eq!(fields[0].1, "Konstanz");
+    }
+
+    #[test]
+    fn append_form_block_shapes() {
+        // Empty block → unchanged; blank base → just the block; else delimited.
+        assert_eq!(append_form_block("body", ""), "body");
+        assert_eq!(append_form_block("   ", "--- Formularfelder ---\nOrt: X"), "--- Formularfelder ---\nOrt: X");
+        let joined = append_form_block("body", "--- Formularfelder ---\nOrt: X");
+        assert!(joined.starts_with("body\n\n--- Formularfelder ---"), "{joined:?}");
+    }
+
+    /// The vision path's "no page render available → note + form block" branch:
+    /// a fillable form whose page cannot be rasterized must return a `no_image`
+    /// status with an explanatory `note` and the `--- Formularfelder ---` field
+    /// values as `context`, NOT silently analyse the logo. This exercises the
+    /// JSON shape the brain receives (`vision_form_note` over the extracted
+    /// block); the render-vs-embedded decision itself is covered by
+    /// `prepare_vision_input` at runtime.
+    #[test]
+    fn vision_form_note_carries_fields() {
+        let mut doc = Document::with_version("1.5");
+        let ort = text_field(&mut doc, "Ort", utf16be("Konstanz"));
+        let plz = text_field(&mut doc, "PLZ", lit("78467"));
+        let bytes = save_form_pdf(&mut doc, &[ort, plz]);
+
+        let block = format_acroform_block(&extract_acroform_fields(&bytes));
+        assert!(!block.is_empty(), "form fields must extract for the note branch");
+
+        let out = vision_form_note(&block);
+        assert_eq!(out["status"], "no_image");
+        let note = out["note"].as_str().unwrap_or_default();
+        assert!(note.contains("page not rendered"), "explanatory note present: {note:?}");
+        assert!(note.contains("ocr_attachment"), "points at ocr_attachment: {note:?}");
+        let ctx = out["context"].as_str().unwrap_or_default();
+        assert!(ctx.starts_with(ACROFORM_HEADER), "context is the form block: {ctx:?}");
+        assert!(ctx.contains("Ort: Konstanz"), "field value present: {ctx:?}");
+        assert!(ctx.contains("PLZ: 78467"), "field value present: {ctx:?}");
+    }
+
     /// Manual, real-corpus check (kept `#[ignore]`). Point `ECK_TEST_CCITT_PDF` at
     /// a real office-scanner CCITTFaxDecode CAS blob and run:
     ///
@@ -2209,6 +3139,88 @@ mod tests {
             text_chars >= 50 || jpeg_streams > 0,
             "decrypted output yields neither a text layer ({text_chars} chars) nor JPEG streams \
              ({jpeg_streams}) — content is still unreadable",
+        );
+    }
+
+    // ── vision journal cache ─────────────────────────────────────────────
+
+    fn row(norm: &str, emb: Option<Vec<f32>>, page_ok: bool, region_ok: bool) -> PriorRow {
+        PriorRow {
+            question: norm.to_string(),
+            answer: "a".to_string(),
+            model: "m".to_string(),
+            created_at: Value::Null,
+            question_norm: norm.to_string(),
+            question_embedding: emb,
+            page_ok,
+            region_ok,
+        }
+    }
+
+    #[test]
+    fn vision_normalize_question_collapses_ws() {
+        assert_eq!(normalize_question("  What  IS\tthe\nSerial? "), "what is the serial?");
+    }
+
+    #[test]
+    fn vision_region_reuse_rules() {
+        let r = Some(Region { x: 0.1, y: 0.2, w: 0.3, h: 0.4 });
+        // whole-page prior answers anything on the page
+        assert!(region_reusable(None, None));
+        assert!(region_reusable(None, r));
+        // cropped prior answers the same rounded region, not the whole page
+        assert!(region_reusable(r, r));
+        assert!(region_reusable(r, Some(Region { x: 0.101, y: 0.201, w: 0.30, h: 0.40 })));
+        assert!(!region_reusable(r, None));
+        assert!(!region_reusable(r, Some(Region { x: 0.9, y: 0.2, w: 0.3, h: 0.4 })));
+    }
+
+    #[test]
+    fn vision_row_id_is_deterministic_and_20_hex() {
+        let a = vision_row_id("cas-1", 0, None, "what is the serial");
+        let b = vision_row_id("cas-1", 0, None, "what is the serial");
+        let c = vision_row_id("cas-1", 1, None, "what is the serial");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(a.len(), 20);
+        assert!(a.chars().all(|ch| ch.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn vision_verdict_exact_hit() {
+        let prior = vec![
+            row("other question", None, true, true),
+            row("what is the serial", None, true, true),
+        ];
+        assert_eq!(vision_cache_verdict(&prior, "what is the serial", None, 0.92), Some(1));
+    }
+
+    #[test]
+    fn vision_verdict_semantic_hit() {
+        // Not an exact norm match, but the embedding is near-identical.
+        let prior = vec![row("give me the serial number", Some(vec![1.0, 0.0, 0.0]), true, true)];
+        let q_emb = vec![0.99, 0.14, 0.0]; // cos ≈ 0.990 vs [1,0,0]
+        assert_eq!(
+            vision_cache_verdict(&prior, "what is the serial", Some(&q_emb), 0.92),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn vision_verdict_page_mismatch_is_miss() {
+        // Exact norm + identical embedding, but the prior is on another page.
+        let prior = vec![row("what is the serial", Some(vec![1.0, 0.0, 0.0]), false, true)];
+        let q_emb = vec![1.0, 0.0, 0.0];
+        assert_eq!(vision_cache_verdict(&prior, "what is the serial", Some(&q_emb), 0.92), None);
+    }
+
+    #[test]
+    fn vision_verdict_below_threshold_is_miss() {
+        let prior = vec![row("give me the serial number", Some(vec![1.0, 0.0, 0.0]), true, true)];
+        let q_emb = vec![0.0, 1.0, 0.0]; // cos = 0 vs [1,0,0]
+        assert_eq!(
+            vision_cache_verdict(&prior, "what is the serial", Some(&q_emb), 0.92),
+            None
         );
     }
 }

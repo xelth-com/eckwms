@@ -7,15 +7,21 @@ catalog exposed at `POST /mcp`. Source of truth: `wms/src/mcp/tools.rs`
 `wms/src/mcp/mod.rs` (transport, bearer auth, tier gating). Audience: an AI
 agent or program calling this endpoint directly — not a human reader.
 
-**Counts (sanity check):** `tools_list` catalogs **14** tools. `dispatch_tool`
-has **14** named match arms (one per tool) plus one `other => error_result(...)`
+**Counts (sanity check):** `tools_list` catalogs **18** tools. `dispatch_tool`
+has **18** named match arms (one per tool) plus one `other => error_result(...)`
 fallback arm that answers unknown tool names with an MCP error result instead
-of a transport error — 14 = 14, consistent.
+of a transport error — 18 = 18, consistent.
 
-Of the 14, **4 are Master-tier-only** (filtered out of `tools_list` for the
-Agent tier): `surrealql_read`, `reveal_file_local`, `export_attachment`,
-`analyze_attachment_visual`. The Agent tier therefore sees **10** tools; the
-Master tier sees all **14**.
+Of the 18, **6 are Master-tier-only** (filtered out of `tools_list` for the
+lower tiers): `surrealql_read`, `reveal_file_local`, `export_attachment`,
+`analyze_attachment_visual`, `chat_transcripts`, `chat_transcript`.
+
+**Three tiers now.** `McpTier` is `Master`, `Agent`, or `Observer` (a
+read-only, masked-PII tier for an unattended kiosk/exhibition session with
+nobody signed in). One tool, `print_labels`, fires a physical printer, so it is
+hidden from `Observer` (`tier != McpTier::Observer`) but visible to Agent and
+Master; `list_printers` stays visible to all three (listing is harmless). Net
+visibility: **Master 18**, **Agent 12**, **Observer 11**.
 
 ## Surface contract
 
@@ -67,9 +73,11 @@ Master tier sees all **14**.
 
 Every tool on this surface returns names, emails, phone numbers, addresses,
 and company names as **stable pseudonym tokens** instead of clear text, for
-**every** tier (Agent and Master alike) — the two documented exceptions are
-`ocr_attachment` (returns raw scanned/OCR text unmasked) and
-`analyze_attachment_visual` (sends a raw image off-node; Master-only). A
+**every** tier (Agent and Master alike) — the documented exceptions are
+`ocr_attachment` (returns raw scanned/OCR text unmasked), and the master-only
+`analyze_attachment_visual` (sends a raw image off-node) and
+`chat_transcripts`/`chat_transcript` (Brain-Chat transcripts carry the clear
+names the master answered with). A
 token has the form `<Label>_<16 hex uppercase digits>`, e.g.
 `Name_3F2A00B1C4D5E6F7`. Valid labels: `Name`, `Email`, `Phone`, `Address`,
 `Company`, `Iban`, `VatId`, `Card` (only `Name`/`Email`/`Phone`/`Address`/
@@ -173,11 +181,20 @@ carries a clear value alongside its token.
 | PII behavior | tokenized (`customer`, `email`, `address`; `company` stays clear) |
 
 **Description (verbatim):**
-> Find support tickets by ticket number (exact) or a subject fragment
-> (case-insensitive substring). Optional status filter: 'open', 'closed', or
-> a literal status fragment (e.g. 'escalated'). Returns the newest matches
-> first. Each hit carries its `zoho_id` (the internal document id) — feed it
-> to list_ticket_attachments to pull that ticket's files.
+> Find support tickets by PLACE, company, ticket number, or subject, and/or
+> filter by status. `query` matches (case-insensitive): the ticket number
+> (exact), the ZIP (exact), or a substring of the subject, COMPANY, or CITY.
+> Use `city` to search by town — it matches the ticket's stated city AND the
+> town DERIVED from its phone area code when no city was on file (so a ticket
+> with no address can still be found by its town); use `company` to search by
+> customer/company name. `city` and `company` are ANDed with `query` and each
+> other when combined. Filter by `status`: 'open', 'closed', or a literal
+> status fragment (e.g. 'escalated'). To ENUMERATE every ticket in a status,
+> pass only `status` — never fake a wildcard with a single-letter query. At
+> least one of query/city/company/status is required. Newest first. Each hit
+> carries `city` + `city_source` ('zoho' = stated, 'area_code' = derived from
+> the phone, …), `zip`, `company`, and its `zoho_id` (feed that to
+> list_ticket_attachments).
 
 **inputSchema (verbatim):**
 ```json
@@ -186,11 +203,19 @@ carries a clear value alongside its token.
   "properties": {
     "query": {
       "type": "string",
-      "description": "Ticket number or a fragment of the subject line."
+      "description": "Ticket number/ZIP (exact) or a fragment of the subject, company, or city. Optional when city/company/status is given."
+    },
+    "city": {
+      "type": "string",
+      "description": "Optional: town to search by (case-insensitive substring). Matches the stated city OR the town derived from the phone area code."
+    },
+    "company": {
+      "type": "string",
+      "description": "Optional: company/customer name to search by (case-insensitive substring)."
     },
     "status": {
       "type": "string",
-      "description": "Optional: 'open', 'closed', or a status fragment to filter by."
+      "description": "Optional: 'open', 'closed', or a status fragment to filter by. Alone it enumerates the whole status."
     },
     "limit": {
       "type": "integer",
@@ -200,9 +225,11 @@ carries a clear value alongside its token.
   "required": []
 }
 ```
+(At least one of `query`/`city`/`company`/`status` is required — enforced in
+the handler, not the JSON schema.)
 
 **Result shape (top-level keys):**
-`{ query, status_filter, matched_before_status_filter, returned, pii_revealed: false, tickets: [{ ticket_number, zoho_id, subject, status, created_time, serial, model, customer, email, address, company }] }`
+`{ query, status_filter, matched_before_status_filter, returned, pii_revealed: false, tickets: [{ ticket_number, zoho_id, subject, status, created_time, serial, model, customer, email, address, company, city, city_source, zip }] }`
 
 ---
 
@@ -669,6 +696,19 @@ carries a clear value alongside its token.
     "context": {
       "type": "string",
       "description": "Optional supporting data (treated as untrusted data, max ~8k chars)."
+    },
+    "history": {
+      "type": "array",
+      "description": "Optional prior conversation turns (verbatim tail) for a multi-turn, cache-friendly chat. Each item is {role: 'user'|'assistant', text}.",
+      "items": { "type": "object", "properties": { "role": {"type":"string"}, "text": {"type":"string"} } }
+    },
+    "summary": {
+      "type": "string",
+      "description": "Optional compacted running summary carried from a prior turn."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Optional transcript-telemetry session id (server mints one if absent)."
     }
   },
   "required": ["question"]
@@ -676,4 +716,122 @@ carries a clear value alongside its token.
 ```
 
 **Result shape (top-level keys):**
-`{ answer, model, engine: "gemini", billing }` on success; an `isError` result if the AI budget circuit breaker is at halt level or the node is already running its concurrency limit of brain runs (retry shortly).
+`{ answer, model, engine: "gemini", billing }` on success; an `isError` result if the AI budget circuit breaker is at halt level or the node is already running its concurrency limit of brain runs (retry shortly). A `session_id` echo ties the run to a stored Brain-Chat transcript (see `chat_transcripts`/`chat_transcript`).
+
+---
+
+### 15. chat_transcripts
+
+| field | value |
+|---|---|
+| tier | **master-only** |
+| side-effects | read-only |
+| PII behavior | **clear-for-master** — session listings carry the clear customer names the brain answered with; master surface only |
+
+**Description (verbatim):**
+> List recent Brain-Chat sessions (dashboard/shim/mcp) with per-session
+> aggregates (turns, avg cache ratio, total cost, compactions). Master-only —
+> transcripts hold clear customer names.
+
+**inputSchema (verbatim):**
+```json
+{
+  "type": "object",
+  "properties": {
+    "limit": { "type": "integer", "description": "Max sessions (default 50)." },
+    "user": { "type": "string", "description": "Optional: filter to one user." }
+  }
+}
+```
+
+**Result shape:** a list of session rows with the aggregates named above (turns, avg cache ratio, total cost, compactions) keyed by `session_id`.
+
+---
+
+### 16. chat_transcript
+
+| field | value |
+|---|---|
+| tier | **master-only** |
+| side-effects | read-only |
+| PII behavior | **clear-for-master** — full transcript with clear names; master surface only |
+
+**Description (verbatim):**
+> The full markdown transcript of one Brain-Chat session (Q/A + per-turn
+> metrics + compaction summaries) — what the owner's analyst reads.
+> Master-only.
+
+**inputSchema (verbatim):**
+```json
+{
+  "type": "object",
+  "properties": {
+    "session_id": { "type": "string", "description": "The chat session id (from chat_transcripts)." }
+  },
+  "required": ["session_id"]
+}
+```
+
+**Result shape:** the markdown transcript text of the one session.
+
+---
+
+### 17. list_printers
+
+| field | value |
+|---|---|
+| tier | agent, master, **observer** (visible to all three) |
+| side-effects | read-only (queries the node's CUPS scheduler) |
+| PII behavior | n/a — printer queue names only |
+
+**Description (verbatim):**
+> List the physical printers (CUPS queues) available on THIS node that accept
+> jobs — name, whether it is the node default, and its CUPS state note. Feed a
+> `name` into `print_labels` as `printer` to target a specific queue. An empty
+> list means the node has no CUPS scheduler or no configured printers (labels
+> can still be generated as a downloadable PDF, just not printed here).
+
+**inputSchema (verbatim):**
+```json
+{ "type": "object", "properties": {}, "required": [] }
+```
+
+**Result shape:** a list of `{ name, is_default, state }` printer rows (empty when no CUPS scheduler / no configured queues).
+
+---
+
+### 18. print_labels
+
+| field | value |
+|---|---|
+| tier | agent, master (**hidden from observer** — fires a physical printer) |
+| side-effects | **writes physical output** (submits a CUPS print job) |
+| PII behavior | n/a — generates ECK label sheets from serial ranges, no identity fields |
+
+**Description (verbatim):**
+> Generate a sheet of ECK labels and print it directly to a physical printer
+> on this node (CUPS). `type` picks the label kind: 'i' item, 'b' box, 'p'
+> place/bin, 'l' label. `count` is how many labels; `start_number` the first
+> serial (default 0). `cols`/`rows` set the grid (default 3×7 = 21 per A4
+> page). `printer` names the queue from `list_printers` (omit for the node
+> default); `copies` prints the whole sheet N times (1..=50). Returns the CUPS
+> job id. Use `list_printers` first if unsure which queues exist.
+
+**inputSchema (verbatim):**
+```json
+{
+  "type": "object",
+  "properties": {
+    "type": { "type": "string", "description": "Label kind: 'i' (item), 'b' (box), 'p' (place/bin), 'l' (label). Default 'i'." },
+    "count": { "type": "integer", "description": "Number of labels to generate." },
+    "start_number": { "type": "integer", "description": "First serial number (default 0)." },
+    "cols": { "type": "integer", "description": "Grid columns per page (default 3)." },
+    "rows": { "type": "integer", "description": "Grid rows per page (default 7)." },
+    "printer": { "type": "string", "description": "Target CUPS queue name (from list_printers); omit for the node default." },
+    "copies": { "type": "integer", "description": "How many times to print the sheet (1..=50, default 1)." }
+  },
+  "required": ["type", "count"]
+}
+```
+
+**Result shape:** `{ status, job_id, printer, ... }` on success (the submitted CUPS job id); an `isError` result when the tier is Observer, no CUPS scheduler is present, or the queue rejects the job.

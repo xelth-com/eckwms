@@ -23,6 +23,8 @@ export default {
     support_title: "Support Tickets",
     support_loading_btn: "Loading...",
     support_refresh: "Refresh",
+    support_load_more: "Load more",
+    support_loading_more: "Loading more...",
     support_loading: "Loading tickets...",
     support_failed: "Failed to load: {error}",
     support_empty_title: "No support tickets imported yet",

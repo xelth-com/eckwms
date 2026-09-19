@@ -1,10 +1,20 @@
 [package]
 name = "wms"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [features]
-default = ["local-embed", "ocr-local"]
+default = ["local-embed", "ocr-local", "pdf-raster"]
+# Pure-Rust PDF page rasterizer (hayro) for the on-demand attachment vision
+# path (ai::attachments::render_pdf_page). Renders a full page â€” vector text +
+# AcroForm field appearances â€” on the CPU so a fillable service form is visible
+# to Gemini vision instead of only its embedded logo XObject. Default-on so the
+# fleet ships one binary; the kiosk has no poppler/mutool/pdfium and no root, so
+# a native renderer is not an option there. Building `--no-default-features`
+# drops hayro's weight; the vision path then uses the external
+# `ECK_PDF_RENDER_CMD` renderer if configured, else emits a "page not rendered"
+# note (form field values still reach the brain via ocr_attachment).
+pdf-raster = ["dep:hayro"]
 # POS module (ecKasse) â€” the /K/ paid register. Optional so the public
 # open-core build (which drops `pos/` from the workspace) still compiles; our
 # fleet ships it in via this default feature. Every `pos::` use in wms is
@@ -35,9 +45,10 @@ local-embed = [
 eck_core = { path = "../core" }
 # POS module (ecKasse) â€” mounted at /K/ behind the POS_ENABLED paid-tier gate.
 # Optional: enabled by the default `pos-module` feature (see [features] above).
-surrealdb = { version = "3", features = ["kv-mem", "kv-surrealkv"] }
+surrealdb = { version = "=3.2.4", features = ["kv-mem", "kv-surrealkv"] }
 axum = { version = "0.7", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
 tower-http = { version = "0.5", features = ["trace", "cors", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -67,9 +78,14 @@ crc32fast = "1.4"
 murmur3 = "0.5"
 sha2 = "0.10"
 hex = "0.4"
+zeroize = "1"
 rig-core = "0.33"
 schemars = "1"
 regex = "1"
+# Legacy Bridge #1 (services::claimlist): read the tenant's "Claimlist Germany"
+# weekly-report xlsx pulled headless over MS Graph. Pure-Rust xlsx reader, no
+# C deps. Env-gated â€” dormant unless CLAIMLIST_TOKEN_FILE is set.
+calamine = "0.26"
 urlencoding = "2"
 # On-demand attachment OCR / vision ladder (ai::attachments). pdf-extract pulls
 # the embedded text layer; scan PDFs fall back to image-stream OCR. ocrs/rten
@@ -90,6 +106,15 @@ fax = "0.2"
 # FlateDecode pre-pass when an image XObject stacks /Filter [FlateDecode <codec>];
 # already in the tree, added directly for the attachment XObject decoder.
 flate2 = "1"
+# Pure-Rust PDF page RASTERIZER (feature `pdf-raster`, default-on) for the
+# on-demand vision path: a fillable service form is vector text + AcroForm
+# fields with only the logo as an embedded image, so the XObject decoder above
+# sees the logo, not the filled page. hayro renders the whole page on the CPU
+# (no GPU, no C library, no poppler/mutool needed on the kiosk) with its own
+# embedded standard fonts (embed-fonts/embed-cmaps default features). Optional
+# so `--no-default-features` (open-core / minimal builds) drops it and the path
+# degrades to the external `ECK_PDF_RENDER_CMD` renderer or an honest note.
+hayro = { version = "0.7.1", optional = true }
 ocrs = { version = "0.12", optional = true }
 rten = { version = "0.24", optional = true }
 # Pure-Rust AVIF decode for the OCR/vision ladder (`image`'s avif feature is

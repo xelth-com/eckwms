@@ -18,6 +18,38 @@ const MAX_RETRIES: i64 = 5;
 /// LOOP_INTERVAL_SECS * (1 + IDLE_BACKOFF_CAP)) so a fully-embedded node idles.
 const IDLE_BACKOFF_CAP: u64 = 11; // 5s base → up to 60s when fully idle
 
+/// How long the worker pauses after the authority answers 402 (allowance
+/// exhausted). Funds come back on an operator top-up, not in seconds — so the
+/// worker sleeps instead of turning every pending doc into a paid-path 402
+/// every few seconds. Rows are untouched (still 'pending'); work resumes on
+/// the first post-pause cycle.
+const ALLOWANCE_PAUSE_SECS: u64 = 600;
+
+/// Unix-epoch second until which embedding calls are suspended (0 = not
+/// paused). Process-wide: any table hitting a 402 pauses them all — it's the
+/// same wallet.
+static ALLOWANCE_PAUSE_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_epoch() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Remaining pause seconds, if an allowance pause is active.
+fn allowance_pause_remaining() -> Option<u64> {
+    let until = ALLOWANCE_PAUSE_UNTIL.load(std::sync::atomic::Ordering::Relaxed);
+    (until > now_epoch()).then(|| until - now_epoch())
+}
+
+fn arm_allowance_pause() {
+    ALLOWANCE_PAUSE_UNTIL.store(
+        now_epoch() + ALLOWANCE_PAUSE_SECS,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
 /// Canonical `embedding_model` id written for on-device (local-mode) vectors.
 /// Kept as a literal here (not behind the feature) so `effective_embed_model`
 /// and its test compile whether or not `local-embed` is enabled. Must match
@@ -106,7 +138,7 @@ async fn embed_dispatch(
     // `local` is never true when the feature is compiled out (embed_mode can't
     // return "local" then); bind it so the parameter isn't flagged unused.
     let _ = local;
-    auth.embed_content(http, emb_model, text, EMBEDDING_DIM).await
+    eck_core::ai::with_ai_task("embedding", auth.embed_content(http, emb_model, text, EMBEDDING_DIM)).await
 }
 
 /// Spawns the background embedding worker that processes pending documents and orders.
@@ -118,7 +150,7 @@ async fn embed_dispatch(
 /// worker and whoever meets the missing vector first authors it. Asymmetric
 /// (one AI-dedicated box): set `ECK_EMBED_WORKER=0` on all other nodes — they
 /// consume vectors from the mesh and never call the embed API themselves.
-pub async fn start_embedding_worker(db: SurrealDb, gen_model: String, emb_model: String, instance_id: String) {
+pub async fn start_embedding_worker(db: SurrealDb, gen_model: String, emb_model: String, instance_id: String, fuzzy: std::sync::Arc<crate::ai::pii_fuzzy::FuzzyIndex>) {
     // Initial delay to let the server finish startup
     tokio::time::sleep(std::time::Duration::from_secs(15)).await;
     info!("[Embeddings] Worker started ({LOOP_INTERVAL_SECS}s interval)");
@@ -148,6 +180,14 @@ pub async fn start_embedding_worker(db: SurrealDb, gen_model: String, emb_model:
     loop {
         let sleep_secs = LOOP_INTERVAL_SECS + idle_cycles.min(IDLE_BACKOFF_CAP) * LOOP_INTERVAL_SECS;
         tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
+        // Allowance pause: a 402 from the authority means "no funds" — that
+        // won't clear in seconds, and each further attempt is a paid-path
+        // request per pending doc (2026-08-27: an hour of 402s every 2–7s).
+        // Sleep out the pause instead of scanning tables into the same wall.
+        if let Some(left) = allowance_pause_remaining() {
+            tokio::time::sleep(std::time::Duration::from_secs(left.min(ALLOWANCE_PAUSE_SECS))).await;
+            continue;
+        }
         eck_core::metrics::tick(eck_core::metrics::M::EmbeddingCycle);
         if last_reset.elapsed() >= RESET_EVERY {
             reset_retryable(&db).await;
@@ -180,7 +220,7 @@ pub async fn start_embedding_worker(db: SurrealDb, gen_model: String, emb_model:
             let mut attempts = 0;
             loop {
                 attempts += 1;
-                match process_table(&db, &http, &auth, table, &gen_model, &emb_model, &guard, &instance_id).await {
+                match process_table(&db, &http, &auth, table, &gen_model, &emb_model, &guard, &instance_id, &fuzzy).await {
                     Ok(found) => {
                         found_total += found;
                         break;
@@ -308,6 +348,7 @@ async fn process_table(
     emb_model: &str,
     guard: &LoopGuard,
     instance_id: &str,
+    fuzzy: &crate::ai::pii_fuzzy::FuzzyIndex,
 ) -> Result<usize, anyhow::Error> {
     // ── Circuit breaker check ──
     match current_budget_level() {
@@ -362,11 +403,31 @@ async fn process_table(
     let db_model = effective_embed_model(emb_model);
 
     let mut count = 0u32;
+    let mut index_rebuilt = false;
     for row in &rows {
         let id = match row.get("id").and_then(|v| v.as_str()) {
             Some(s) => s.to_string(),
             None => continue,
         };
+
+        // Stale-index guard (see the summarization worker, 2026-09-10): the
+        // `embedding_status = 'pending'` predicate is answered from
+        // `{table}_embstatus_idx` without re-checking the row, so a stale
+        // index entry hands us an already-embedded row every cycle. Trust the
+        // row, rebuild the index once per cycle.
+        let row_status = row.get("embedding_status").and_then(|v| v.as_str()).unwrap_or("");
+        if row_status != "pending" {
+            let idx = if table == "document" { "document_embstatus_idx".to_string() } else { format!("{table}_embstatus_idx") };
+            warn!("[Embeddings] stale index: {table}:{id} returned as pending but the row says {row_status:?} — skipping{}",
+                if index_rebuilt { "" } else { ", rebuilding index" });
+            if !index_rebuilt {
+                index_rebuilt = true;
+                if let Err(e) = db.query(format!("REBUILD INDEX IF EXISTS {idx} ON {table}")).await {
+                    warn!("[Embeddings] index rebuild failed: {e}");
+                }
+            }
+            continue;
+        }
 
         let guard_key = format!("{table}:{id}");
         if !guard.check_and_record(&guard_key) {
@@ -457,6 +518,21 @@ async fn process_table(
         fingerprints.sort();
         fingerprints.dedup();
 
+        // Channel-B fuzzy signatures — `document` rows only (`.eck/PPRL_FUZZY.md`
+        // §B). Derived from the same meta clear fields the Name/Address tokens
+        // hash from (+ the mint log), stored in `document.pii_fuzzy`, and
+        // upserted so this node resolves typos immediately (before the 10-min
+        // reload). Other tables have no fuzzy field.
+        let pii_fuzzy_val = if table == "document" {
+            let meta = row.get("meta").cloned().unwrap_or_default();
+            let pf = crate::ai::pii_policy::derive_pii_fuzzy(&meta, &fingerprints);
+            fuzzy.upsert_from_value(&pf);
+            Some(pf)
+        } else {
+            None
+        };
+        let fuzzy_set = if pii_fuzzy_val.is_some() { ", pii_fuzzy = $pf" } else { "" };
+
         let record_id = format!("{table}:`{id}`");
         match embed_dispatch(http, auth, emb_model, &anonymized_text, local).await {
             Ok((embedding, usage)) => {
@@ -467,20 +543,35 @@ async fn process_table(
                 let updated: Vec<Value> = db.query(&format!(
                     "UPDATE type::record($rid) SET embedding = $emb, embedding_model = $model, \
                          embedding_status = 'complete', \
-                         embedding_error = NONE, pii_fingerprints = $fingerprints \
+                         embedding_error = NONE, pii_fingerprints = $fingerprints{fuzzy_set} \
                      RETURN record::id(id) AS id"
                 ))
                 .bind(("rid", record_id.clone()))
                 .bind(("emb", embedding))
                 .bind(("model", db_model.clone()))
                 .bind(("fingerprints", fingerprints))
+                .bind(("pf", pii_fuzzy_val.unwrap_or(Value::Null)))
                 .await?
                 .take(0)?;
 
-                // Telemetry logs only when something was billed. Local mode
-                // returns a null usage (nothing billed) so this is skipped.
+                // Local mode returns a null usage (nothing billed upstream) —
+                // that left the breaker (telemetry::evaluate_budget) blind to
+                // ALL local-embed spend, which is the common case. Log a
+                // best-effort estimate instead: the same len/4 metering the
+                // authority uses, marked `estimated` so it's distinguishable
+                // from a real billed usage. Cloud-mode rows keep real usage.
                 if !usage.is_null() {
                     log_telemetry(db, "embedding", &db_model, &record_id, &usage).await;
+                } else {
+                    let estimated_tokens =
+                        (anonymized_text.chars().count() as i64 + 3) / 4;
+                    let estimated_usage = serde_json::json!({
+                        "promptTokenCount": estimated_tokens,
+                        "candidatesTokenCount": 0,
+                        "totalTokenCount": estimated_tokens,
+                        "estimated": true,
+                    });
+                    log_telemetry(db, "embedding", &db_model, &record_id, &estimated_usage).await;
                 }
 
                 if updated.is_empty() {
@@ -518,6 +609,14 @@ async fn process_table(
             }
             Err(e) => {
                 let es = e.to_string();
+                // Allowance exhausted (402): not a per-document failure either —
+                // pause the whole worker and stop the per-doc loop mid-batch.
+                // Rows keep their current status and re-enter after the pause.
+                if es.contains("402") {
+                    warn!("[Embeddings] {table}: allowance exhausted (402) — pausing embedding work {ALLOWANCE_PAUSE_SECS}s");
+                    arm_allowance_pause();
+                    return Ok(rows.len());
+                }
                 // The embedding BACKEND is unavailable (managed authority built
                 // without a text-brain / embedding model). This is not a
                 // per-document failure — retrying every doc forever just burns
@@ -586,17 +685,28 @@ pub(crate) async fn extract_and_anonymize(
     text: &str,
     model: &str,
 ) -> Result<(String, Vec<String>), anyhow::Error> {
-    // On-device path (ECK_PII_NER=local): run the deterministic regex backstop
-    // + the local German NER for names, skip Gemini entirely. Streets are masked
-    // by scrub_pii_regex's Address pattern; LOC/ORG are intentionally left in the
-    // clear. On any local NER error we fall through to the Gemini path below
-    // (never fail the document). Compiled out — and thus byte-identical to the
-    // old cloud-only behaviour — when the feature or env is off.
-    #[cfg(feature = "local-embed")]
-    if crate::ai::local_ner::ner_mode() == "local" {
+    // NER path (ECK_PII_NER=local or =remote): run the deterministic regex
+    // backstop + NER-for-names via the routing facade, skip Gemini entirely.
+    // Streets are masked by scrub_pii_regex's Address pattern; LOC/ORG are
+    // intentionally left in the clear. On error the two modes diverge:
+    //   * local  → fall through to the Gemini extraction path below (unchanged
+    //     legacy behaviour — a local install accepts the cloud fallback);
+    //   * remote → FAIL-CLOSED: a remote-masking subscriber contracted that the
+    //     US LLM only ever sees pseudonymized text, so we NEVER send names to
+    //     Gemini on a masker miss; degrade to the regex backstop only.
+    let pii_mode = crate::ai::pii_mode::pii_ner_mode();
+    if pii_mode == "local" || pii_mode == "remote" {
         match local_extract_and_anonymize(text).await {
             Ok(result) => return Ok(result),
             Err(e) => {
+                if pii_mode == "remote" {
+                    warn!(
+                        "[Embeddings] remote NER extraction failed ({e}) — fail-closed \
+                         to regex backstop (no cloud fallback)"
+                    );
+                    let (scrubbed, fps) = scrub_pii_regex(text);
+                    return Ok((scrubbed, fps));
+                }
                 warn!("[Embeddings] local NER extraction failed ({e}) — falling back to Gemini");
             }
         }
@@ -626,7 +736,7 @@ pub(crate) async fn extract_and_anonymize(
         }
     });
 
-    let (response_text, usage) = auth.generate_content(http, model, payload).await?;
+    let (response_text, usage) = eck_core::ai::with_ai_task("embedding", auth.generate_content(http, model, payload)).await?;
 
     // Log PII extraction usage (generation model call)
     if !usage.is_null() {
@@ -664,17 +774,18 @@ pub(crate) async fn extract_and_anonymize(
     Ok((anonymized, fingerprints))
 }
 
-/// On-device replacement for `extract_and_anonymize` (ECK_PII_NER=local). Runs
-/// the same deterministic `scrub_pii_regex` backstop as the cloud path (now also
-/// masking German street+house-number addresses), then masks person names found
-/// by the local German NER with the identical `obfuscate_pii`/`replace_pii_ci`
-/// tokens — so on-device summaries land in the same masked space as cloud ones,
-/// with zero Gemini calls. LOC/ORG entities are deliberately NOT masked (cities
-/// stay in the clear for the embedding's coarse-geo signal).
-#[cfg(feature = "local-embed")]
-async fn local_extract_and_anonymize(text: &str) -> Result<(String, Vec<String>), anyhow::Error> {
+/// Local/remote replacement for `extract_and_anonymize` (ECK_PII_NER=local or
+/// =remote). Runs the same deterministic `scrub_pii_regex` backstop as the cloud
+/// path (now also masking German street+house-number addresses), then masks
+/// person names found by the routing facade's NER with the identical
+/// `obfuscate_pii`/`replace_pii_ci` tokens — so NER-masked summaries land in the
+/// same masked space as cloud ones, with zero Gemini calls. LOC/ORG entities are
+/// deliberately NOT masked (cities stay in the clear for the embedding's
+/// coarse-geo signal). Ungated: the `remote` client path works without the
+/// `local-embed` feature.
+pub(crate) async fn local_extract_and_anonymize(text: &str) -> Result<(String, Vec<String>), anyhow::Error> {
     let (mut anonymized, mut fingerprints) = scrub_pii_regex(text);
-    let names = crate::ai::local_ner::extract_person_names(&anonymized).await?;
+    let names = crate::ai::pii_mode::extract_person_names(&anonymized).await?;
     for name in names {
         let token = obfuscate_pii(&name, "Name");
         anonymized = replace_pii_ci(&anonymized, &name, &token);
@@ -1102,7 +1213,7 @@ pub async fn embed_query(text: &str) -> Result<Vec<f32>, anyhow::Error> {
     };
 
     // 2. Embed the anonymized query
-    let (embedding, _usage) = auth.embed_content(&http, &emb_model, &anonymized_query, EMBEDDING_DIM).await?;
+    let (embedding, _usage) = eck_core::ai::with_ai_task("embedding", auth.embed_content(&http, &emb_model, &anonymized_query, EMBEDDING_DIM)).await?;
     Ok(embedding)
 }
 

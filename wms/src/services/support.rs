@@ -6,7 +6,7 @@ use eck_core::utils::anonymizer::{mask_person_names_heuristic, obfuscate_pii, sc
 use eck_core::utils::filestore::FileStore;
 use serde_json::{json, Value};
 use std::io::Cursor;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::PluginRuntime;
 
@@ -39,6 +39,47 @@ pub fn strip_volatile_sig_params(s: &str) -> String {
     re.replace_all(s, "").into_owned()
 }
 
+/// Remaining summary re-arms allowed for the current import walk.
+/// `-1` = unlimited (the default: hourly incremental imports, tests, admin
+/// re-imports). The scheduler arms a finite budget around a FULL walk via
+/// [`set_rearm_budget`] and disarms it afterwards.
+static REARM_BUDGET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+
+/// Arm (`Some(n)`) or disarm (`None`) the per-walk summary re-arm budget.
+pub fn set_rearm_budget(budget: Option<u32>) {
+    REARM_BUDGET.store(
+        budget.map(i64::from).unwrap_or(-1),
+        std::sync::atomic::Ordering::SeqCst,
+    );
+}
+
+/// Consume one unit of the re-arm budget. `true` = the re-arm may proceed.
+fn take_rearm_budget() -> bool {
+    use std::sync::atomic::Ordering::SeqCst;
+    let mut cur = REARM_BUDGET.load(SeqCst);
+    loop {
+        if cur < 0 {
+            return true;
+        }
+        if cur == 0 {
+            return false;
+        }
+        match REARM_BUDGET.compare_exchange(cur, cur - 1, SeqCst, SeqCst) {
+            Ok(_) => return true,
+            Err(actual) => cur = actual,
+        }
+    }
+}
+
+/// `ECK_ZOHO_FULL_REARM_BUDGET`: max summary re-arms one FULL Zoho walk may
+/// buy (default 150; 0 = defer everything, unset/invalid = default).
+pub fn full_walk_rearm_budget() -> u32 {
+    std::env::var("ECK_ZOHO_FULL_REARM_BUDGET")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(150)
+}
+
 /// `murmur3_hex` over a JSON seed with volatile Zoho signing params removed.
 /// EVERY change-detection hash in this module must go through here — a call
 /// site that hashes the raw serialization reintroduces the false-change churn.
@@ -53,6 +94,46 @@ fn stable_seed_hash(seed: &Value) -> String {
 /// `stable_seed_hash`). Shared by `import_thread` and the one-shot
 /// `restamp-thread-hashes` admin backfill, which must agree byte-for-byte or
 /// the restamp is useless.
+/// The meta fields `summary_seed_hash` reads — kept as a list so the re-arm
+/// audit log can name which one moved.
+const SUMMARY_SEED_FIELDS: &[&str] = &[
+    "subject", "description", "customer", "email", "phone", "company",
+    "address", "city", "zip", "device_model", "serial_number", "manufacturing_date",
+];
+
+/// Which summary-seed fields differ between the stored meta and the fresh one,
+/// rendered as `name(old_len→new_len)` after the same volatile-param strip the
+/// hash applies. Lengths only — this lands in the journal, never content.
+pub fn summary_seed_field_diff(old_meta: Option<&Value>, new_meta: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    for f in SUMMARY_SEED_FIELDS {
+        let o = old_meta.and_then(|m| m.get(*f)).cloned().unwrap_or(Value::Null);
+        let n = new_meta.get(*f).cloned().unwrap_or(Value::Null);
+        let os = strip_volatile_sig_params(&o.to_string());
+        let ns = strip_volatile_sig_params(&n.to_string());
+        if os != ns {
+            out.push(format!("{f}({}→{})", os.len(), ns.len()));
+        }
+    }
+    out
+}
+
+/// Same audit helper for a thread payload: which of the hashed thread fields
+/// differ from the previously stored raw payload (after the sig-param strip).
+pub fn thread_field_diff(old_thread: Option<&Value>, new_thread: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    for f in ["content", "plainText", "fromEmailAddress", "to", "summary"] {
+        let o = old_thread.and_then(|t| t.get(f)).and_then(|v| v.as_str()).unwrap_or("");
+        let n = new_thread.get(f).and_then(|v| v.as_str()).unwrap_or("");
+        let os = strip_volatile_sig_params(o);
+        let ns = strip_volatile_sig_params(n);
+        if os != ns {
+            out.push(format!("{f}({}→{})", os.len(), ns.len()));
+        }
+    }
+    out
+}
+
 pub fn thread_source_hash(thread: &Value) -> String {
     let hash_seed = json!({
         "content": thread.get("content").and_then(|v| v.as_str()).unwrap_or(""),
@@ -136,6 +217,63 @@ fn model_cf_keys() -> &'static Vec<String> {
     })
 }
 
+/// Serial-number prefix → device model table from `ECK_SERIAL_MODEL_PREFIXES`
+/// (`F9=ZetaBody270,U8=ZetaBody270S,I8=ZetaBody770,…`; prefixes compared
+/// case-insensitively, LONGEST prefix wins). Deployment data, not code: which
+/// prefix means which product is the vendor's numbering scheme. Cached per
+/// process; empty when unset.
+fn serial_model_prefixes() -> &'static Vec<(String, String)> {
+    static V: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+    V.get_or_init(|| parse_serial_prefixes(&std::env::var("ECK_SERIAL_MODEL_PREFIXES").unwrap_or_default()))
+}
+
+/// Parse `PREFIX=Model,PREFIX=Model,…` into a table sorted longest-prefix-first
+/// (prefixes upper-cased; malformed pairs dropped).
+fn parse_serial_prefixes(spec: &str) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = spec
+        .split(',')
+        .filter_map(|kv| {
+            let (k, m) = kv.split_once('=')?;
+            let k = k.trim().to_ascii_uppercase();
+            let m = m.trim().to_string();
+            (!k.is_empty() && !m.is_empty()).then_some((k, m))
+        })
+        .collect();
+    v.sort_by_key(|(k, _)| std::cmp::Reverse(k.len()));
+    v
+}
+
+/// Derive the device model from a serial number's prefix when the ticket's
+/// model field is empty (most web-form tickets: the customer types the serial
+/// but never picks a model). Backlog audit 2026-09-07: ~85 % of open tickets had
+/// an empty `device_model` and a usable serial, and the triage brain then asked
+/// the customer "which model?" instead of reading it — see
+/// `ECK_SERIAL_MODEL_PREFIXES`. Returns `None` when the table is empty or no
+/// prefix matches; never overrides an explicit model.
+pub fn model_from_serial(serial: &str) -> Option<String> {
+    model_from_serial_with(serial, serial_model_prefixes())
+}
+
+fn model_from_serial_with(serial: &str, table: &[(String, String)]) -> Option<String> {
+    let up = serial.trim().to_ascii_uppercase();
+    let s = up.trim_start_matches(|c: char| c == ':' || c.is_whitespace());
+    let s = s.strip_prefix("S/N").or_else(|| s.strip_prefix("SN")).unwrap_or(s);
+    let s = s.trim_start_matches(|c: char| c == ':' || c == '.' || c.is_whitespace());
+    if s.len() < 6 {
+        return None;
+    }
+    table.iter().find(|(k, _)| s.starts_with(k.as_str())).map(|(_, m)| m.clone())
+}
+
+/// True when a ticket status marks it CLOSED — history, not live work. Single
+/// source of truth for "what counts as closed": `should_seed_ai_task` uses it
+/// to skip re-triaging archived tickets (2026-08-27 incident, see below), and
+/// `handlers::support::list_tickets`'s `open_only` filter reuses it so the two
+/// definitions can never drift apart.
+pub(crate) fn is_closed_ticket_status(status: &str) -> bool {
+    status.eq_ignore_ascii_case("closed")
+}
+
 /// Decide whether a ticket's metadata is rich enough to justify seeding an
 /// `ai_task`. Returns false for replies/forwards, empty descriptions, and
 /// tickets whose "customer" is an internal support agent — those cases
@@ -162,6 +300,16 @@ fn should_seed_ai_task(meta: &Value) -> bool {
     }
     let customer = meta.get("customer").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
     if customer.starts_with("support_") || customer == "support" {
+        return false;
+    }
+
+    // Closed tickets are history, not work: triaging them can't change any
+    // outcome, and a fresh node importing the corpus would otherwise seed the
+    // whole archive (2026-08-27: 355 tasks / 7.8M units burned re-triaging
+    // closed tickets from months back). A ticket that reopens comes back from
+    // Zoho with a non-closed status and a changed hash, so it re-enters here.
+    let status = meta.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    if is_closed_ticket_status(status) {
         return false;
     }
 
@@ -287,34 +435,28 @@ pub struct SubjectNer {
     pub orgs: Vec<String>,
 }
 
-/// Run the on-device NER over the ticket's raw subject — `Some` only when
-/// `ECK_PII_NER=local`, the binary carries the `local-embed` feature and the
-/// model loads. Any failure degrades to `None` (= heuristic-only masking, the
-/// exact pre-NER behavior) rather than blocking the import. The heuristic
+/// Run NER over the ticket's raw subject via the routing facade — `Some` only
+/// when `ECK_PII_NER=local` (needs `local-embed`) or `=remote` (needs the eck
+/// masker reachable) and extraction succeeds. Any failure degrades to `None`
+/// (= heuristic-only masking, the exact pre-NER behavior) rather than blocking
+/// the import — fail-closed to the lexicon, never unmasked. The heuristic
 /// lexicon/stoplists are DACH-tuned; the model is what generalizes this
 /// beyond the first pilot customer.
 pub async fn subject_ner(ticket: &Value) -> Option<SubjectNer> {
-    #[cfg(feature = "local-embed")]
-    {
-        if crate::ai::local_ner::ner_mode() != "local" {
-            return None;
-        }
-        let subject = ticket.get("subject").and_then(|v| v.as_str()).unwrap_or("");
-        if subject.trim().is_empty() {
-            return None;
-        }
-        match crate::ai::local_ner::extract_entities(subject).await {
-            Ok((persons, orgs)) => return Some(SubjectNer { persons, orgs }),
-            Err(e) => {
-                tracing::warn!("[NER] subject extraction failed ({e}) — heuristic-only masking");
-                return None;
-            }
-        }
+    let mode = crate::ai::pii_mode::pii_ner_mode();
+    if mode != "local" && mode != "remote" {
+        return None;
     }
-    #[cfg(not(feature = "local-embed"))]
-    {
-        let _ = ticket;
-        None
+    let subject = ticket.get("subject").and_then(|v| v.as_str()).unwrap_or("");
+    if subject.trim().is_empty() {
+        return None;
+    }
+    match crate::ai::pii_mode::extract_entities(subject).await {
+        Ok((persons, orgs)) => Some(SubjectNer { persons, orgs }),
+        Err(e) => {
+            tracing::warn!("[NER] {mode} subject extraction failed ({e}) — heuristic-only masking");
+            None
+        }
     }
 }
 
@@ -420,6 +562,16 @@ pub fn extract_ticket_metadata_with_ner(ticket: &Value, ner: Option<&SubjectNer>
         if city.is_empty() { city = c; }
     }
 
+    // Model from the custom field, else derived from the serial prefix
+    // (`ECK_SERIAL_MODEL_PREFIXES`); never overrides an explicit model.
+    let device_model = {
+        let m = find_cf(&model_cf_keys().iter().map(String::as_str).collect::<Vec<_>>());
+        if m.trim().is_empty() {
+            model_from_serial(&find_cf(&["serial", "seriennummer", "serial_number"])).unwrap_or_default()
+        } else {
+            m
+        }
+    };
     json!({
         "subject": mask_subject(
             ticket.get("subject").and_then(|v| v.as_str()).unwrap_or(""),
@@ -436,7 +588,7 @@ pub fn extract_ticket_metadata_with_ner(ticket: &Value, ner: Option<&SubjectNer>
         "address": address,
         "city": city,
         "zip": zip,
-        "device_model": find_cf(&model_cf_keys().iter().map(String::as_str).collect::<Vec<_>>()),
+        "device_model": device_model,
         "serial_number": find_cf(&["serial", "seriennummer", "serial_number"]),
         "manufacturing_date": find_cf(&["herstellungsdatum", "manufacturing date", "manufacturing"]),
         "created_time": ticket.get("createdTime").and_then(|v| v.as_str()).unwrap_or(""),
@@ -650,6 +802,62 @@ async fn apply_ingest_transform_hook(
     }
 }
 
+/// Replace the clear customer PII in a freshly extracted `document.meta` with
+/// PPRL tokens and park the clear values in the vault
+/// (`.eck/PII_VAULT.md` §3.2, P1 item 3).
+///
+/// Gated end to end on `eck_core::pii_vault::enabled()` — a node without a
+/// vault key leaves `meta` untouched, so its behaviour is bit-for-bit what it
+/// was before P1. Per-field rules from §3.2 / §9.1:
+///
+/// * `customer` / `email` / `phone` / `address` → token + vault row;
+/// * `company` stays CLEAR (it is business data) **unless** the person-name
+///   heuristic fires on it — a person in the company field is a person;
+/// * `city` / `zip` stay CLEAR by owner decision: the task map places pins from
+///   them directly and must not need a decrypt. They ride along as sidecar
+///   fields of the Address vault row so the address fuzzy signature still
+///   spans street+zip+city.
+///
+/// A vault write that fails (disk, schema, key gone) returns `None` and the
+/// field keeps its clear value — an import is never broken by the vault.
+async fn tokenize_meta_into_vault(db: &SurrealDb, instance_id: &str, meta: &mut Value) {
+    use eck_core::pii_vault::{self as vault, Clear, Kind};
+
+    if !vault::enabled() {
+        return;
+    }
+
+    // Address first: it consumes zip/city as sidecar fields, which must still
+    // be readable from `meta` when we get there (they stay clear, but read them
+    // before any rewrite for clarity).
+    let zip = meta.get("zip").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let city = meta.get("city").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let address = meta.get("address").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if !address.is_empty() && !vault::is_token(&address) {
+        let clear = Clear::new(address).with("zip", zip).with("city", city);
+        if let Some(tok) = vault::put_clear(db, instance_id, Kind::Address, &clear).await {
+            meta["address"] = json!(tok);
+        }
+    }
+
+    for (field, kind) in [
+        ("customer", Kind::Name),
+        ("email", Kind::Email),
+        ("phone", Kind::Phone),
+    ] {
+        vault::tokenize_field(db, instance_id, meta, field, kind).await;
+    }
+
+    // §3.2: keep `company` clear unless `mask_person_names_heuristic`'s
+    // person test fires on it.
+    let company = meta.get("company").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if !company.is_empty() && !vault::is_token(&company) && vault::company_is_person(&company) {
+        if let Some(tok) = vault::put(db, instance_id, Kind::Company, &company).await {
+            meta["company"] = json!(tok);
+        }
+    }
+}
+
 /// Import or update a Zoho Desk ticket.
 /// - `document` table: lightweight metadata + AI summary (synced across mesh)
 /// - `document_raw` table: full Zoho payload (local only, not synced)
@@ -687,7 +895,7 @@ pub async fn import_ticket(
 
     // Check existing source_hash (+ vclock so a real change advances causality)
     let existing: Option<Value> = db
-        .query("SELECT source_hash, summary_source_hash, _vclock FROM document WHERE record::id(id) = $id LIMIT 1")
+        .query("SELECT source_hash, summary_source_hash, _vclock, meta FROM document WHERE record::id(id) = $id LIMIT 1")
         .bind(("id", id_owned.clone()))
         .await?
         .take(0)?;
@@ -719,6 +927,24 @@ pub async fn import_ticket(
         return Ok(ImportResult { changed: false, id: id_owned });
     }
 
+    // ── PII vault (.eck/PII_VAULT.md §3.2, P1 item 3) ──────────────────────
+    // From here on `meta` may hold TOKENS instead of clear customer PII. Two
+    // things are deliberately decided on the CLEAR meta, above this line, and
+    // must stay there:
+    //   * `stable_seed_hash` / `summary_seed_hash` — hashing tokens instead of
+    //     clear would flip every ticket's hash the day a node gets a vault key
+    //     and re-buy a Gemini summary for the whole corpus (the 2026-07-17
+    //     burn class). Hashing the clear keeps the hash identical across the
+    //     switch, which is also WHY legacy rows are not tokenised by this path:
+    //     an unchanged ticket short-circuits above and is left for the P1b
+    //     backfill sweep.
+    //   * `should_seed_ai_task` — it matches internal sender domains and
+    //     `support_*` names, which a token cannot satisfy.
+    // On a node with no vault key every call below is a no-op and `meta` stays
+    // clear, exactly as before.
+    let seed_ai_task = should_seed_ai_task(&meta);
+    tokenize_meta_into_vault(db, instance_id, &mut meta).await;
+
     // Reaching here = synced fields (meta/source_hash) truly changed → advance
     // THIS node's vclock so the change propagates to peers (kiosk) instead of
     // being dropped as "local wins/equal". `_vclock` is hash-ignored, so this
@@ -746,7 +972,34 @@ pub async fn import_ticket(
         .and_then(|v| v.get("summary_source_hash"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let rearm_summary = old_summary_hash != new_summary_hash;
+    let mut rearm_summary = old_summary_hash != new_summary_hash;
+    // Per-walk re-arm budget (2026-09-11): the first full Zoho walk after a
+    // deploy that changes extraction re-hashes the WHOLE corpus and re-armed
+    // 374 summaries in one morning on the 3.3GB/HDD kiosk (~480 AI calls,
+    // ~970 embeddings, box in swap for two hours). When the scheduler arms a
+    // budget, re-arms beyond it are DEFERRED: the stored summary_source_hash
+    // is left untouched, so the next walk picks the ticket up again. Only
+    // existing docs are deferred — a brand-new doc always gets its summary.
+    if rearm_summary && existing.is_some() && !take_rearm_budget() {
+        debug!(
+            "[import] re-arm for ticket {} deferred — per-walk budget exhausted (ECK_ZOHO_FULL_REARM_BUDGET)",
+            ticket_id
+        );
+        rearm_summary = false;
+    }
+    if rearm_summary {
+        // Spend audit trail (2026-09-10): every re-arm buys one AI summary, so
+        // name WHICH seed fields moved (names + lengths only — no PII). A
+        // re-arm with an empty list = the pii_policy marker or a brand-new doc.
+        let old_meta = existing.as_ref().and_then(|v| v.get("meta"));
+        let changed = summary_seed_field_diff(old_meta, &meta);
+        info!(
+            "[import] re-arm summary for ticket {} (existing={}): changed seed fields {:?}",
+            ticket_id,
+            existing.is_some(),
+            changed
+        );
+    }
     let ai_fields = if rearm_summary {
         "summary_status: 'enriching', \
          summary_retries: 0, \
@@ -771,6 +1024,7 @@ pub async fn import_ticket(
                  {ai_fields}\
                  _vclock: $vclock, \
                  pii_fingerprints: NONE, \
+                 pii_fuzzy: NONE, \
                  updated_at: time::now() \
              }}",
         ))
@@ -809,7 +1063,7 @@ pub async fn import_ticket(
     // Without this, the orchestrator spends Gemini budget on tickets
     // whose only sane outcome is ask_human("give me a QC report"), which
     // deadlocks the queue and confuses operators.
-    if !should_seed_ai_task(&meta) {
+    if !seed_ai_task {
         debug!("Ticket {} skipped ai_task seeding (noise)", ticket_id);
     } else if let Err(e) = db
         .query(
@@ -866,6 +1120,34 @@ pub async fn import_thread(
         return Ok(ImportResult { changed: false, id: tid_owned });
     }
 
+    // Spend audit trail (2026-09-10): a changed thread re-arms the parent's
+    // summary, so name which hashed fields moved vs the stored raw payload
+    // (lengths only). A brand-new thread logs with existing=false.
+    if existing.is_some() {
+        let old_raw: Option<Value> = db
+            .query("SELECT payload FROM document_raw WHERE record::id(id) = $id LIMIT 1")
+            .bind(("id", tid_owned.clone()))
+            .await?
+            .take(0)?;
+        let changed = thread_field_diff(old_raw.as_ref().and_then(|v| v.get("payload")), thread);
+        info!(
+            "[import] thread {} of ticket {} changed (hash {}→{}): fields {:?}",
+            thread_id,
+            ticket_id,
+            &old_hash[..old_hash.len().min(8)],
+            &new_hash[..8],
+            changed
+        );
+    } else {
+        info!("[import] new thread {} for ticket {}", thread_id, ticket_id);
+    }
+
+    // First time this thread's document row is created (vs. an update to an
+    // already-imported thread) — the parent ticket's `thread_count` is
+    // incremented exactly once per thread, here, so `list_tickets` can read
+    // it directly instead of a full-table GROUP BY scan.
+    let is_new_thread = existing.is_none();
+
     // Synced source_hash changed → advance this node's vclock so the thread
     // document propagates (hash-ignored field; see import_ticket).
     let next_vclock = eck_core::sync::conflict::next_local_vclock(
@@ -903,7 +1185,11 @@ pub async fn import_thread(
                  summary_error = NONE, \
                  updated_at = time::now() \
              WHERE record::id(id) = $tid \
-             AND summary_status IN ['completed', 'failed', 'skipped'];",
+             AND summary_status IN ['completed', 'failed', 'skipped']; \
+             UPDATE document SET \
+                 thread_count = IF thread_count = NONE THEN 1 ELSE thread_count + 1 END, \
+                 updated_at = time::now() \
+             WHERE record::id(id) = $tid AND $is_new_thread = true;",
         )
         .bind(("doc_rid", format!("document:`{}`", tid_owned)))
         .bind(("hash", new_hash.clone()))
@@ -915,6 +1201,12 @@ pub async fn import_thread(
         .bind(("direction", thread.get("direction").and_then(|v| v.as_str()).unwrap_or("").to_string()))
         .bind(("created_time", thread.get("createdTime").and_then(|v| v.as_str()).unwrap_or("").to_string()))
         .bind(("vclock", next_vclock))
+        // thread_count is a precomputed convenience counter, not itself part
+        // of a synced/merkle-critical field on this doc's own identity — it
+        // follows the SAME (no manual vclock bump) discipline as the sibling
+        // summary_status/last_outbound_at writes on the parent right above
+        // and below this block, in this same function.
+        .bind(("is_new_thread", is_new_thread))
         .await?
         .take(0)?;
 
@@ -1109,6 +1401,24 @@ pub async fn import_attachment(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_from_serial_uses_longest_prefix_and_never_panics() {
+        // Pure table variant: the process-wide OnceLock may already be initialised
+        // (empty) by another test, so the env-backed wrapper is not testable here.
+        let t = parse_serial_prefixes("F9=ZetaBody270,U8=ZetaBody270S,I8=ZetaBody770,I4=ZetaBody970,S32=ZetaBody970,S3=ZetaBody370S,T4=ZetaGrip, bad,=x,Q=");
+        let f = |s: &str| model_from_serial_with(s, &t);
+        assert_eq!(f("F92000568").as_deref(), Some("ZetaBody270"));
+        assert_eq!(f("s/n u825006559").as_deref(), Some("ZetaBody270S"));
+        assert_eq!(f("S32000022").as_deref(), Some("ZetaBody970"), "longest prefix wins");
+        assert_eq!(f("S31000022").as_deref(), Some("ZetaBody370S"));
+        assert_eq!(f("T424000050").as_deref(), Some("ZetaGrip"));
+        assert_eq!(f("ZZ123456"), None);
+        assert_eq!(f(""), None);
+        assert_eq!(f("F9"), None, "too short to be a serial");
+        assert_eq!(t.len(), 7, "malformed pairs dropped: {t:?}");
+        assert_eq!(model_from_serial_with("F92000568", &[]), None);
+    }
 
     #[test]
     fn parse_zip_city_handles_standard_german() {

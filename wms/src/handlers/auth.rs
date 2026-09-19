@@ -243,6 +243,65 @@ pub async fn setup_status(
     }
 }
 
+// Select specific fields to avoid SurrealDB Thing → Value deserialization issues.
+// Real accounts live in the mesh `db`; the node-local `users_db` holds only the
+// install-time setup-admin, so it is consulted as a fallback on a miss.
+pub(crate) const LOGIN_QUERY: &str = "SELECT record::id(id) AS user_id, username, password, email, name, role, pin, isActive, preferredLanguage, languages, mustChangePassword FROM user WHERE (username = $username OR email = $username) AND isActive = true AND deleted_at IS NONE LIMIT 1";
+
+/// Outcome of a credential check — shared by `/api/auth/login` and the MCP
+/// session mint (`/api/auth/mcp-session`) so both verify passwords through the
+/// EXACT same query + bcrypt path.
+pub(crate) enum CredCheck {
+    /// Verified — carries the raw user row so callers can read extra fields.
+    Ok(Box<Value>),
+    /// No such active user, or the password did not verify (indistinguishable
+    /// on purpose — never reveal which).
+    Invalid,
+    /// A DB error (not an auth failure).
+    Error(String),
+}
+
+/// Look the user up (mesh `db`, then node-local `users_db` fallback) and verify
+/// the password with bcrypt. NEVER logs or echoes the password. Pure auth core
+/// with no HTTP concerns, so the login handler and the MCP session endpoint
+/// share one implementation.
+pub(crate) async fn verify_credentials(
+    state: &Arc<AppState>,
+    username: &str,
+    password: &str,
+) -> CredCheck {
+    let primary: Result<Option<Value>, _> = state
+        .db
+        .query(LOGIN_QUERY)
+        .bind(("username", username.to_string()))
+        .await
+        .and_then(|mut r| r.take(0));
+
+    let user = match primary {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            let fallback: Result<Option<Value>, _> = state
+                .users_db
+                .query(LOGIN_QUERY)
+                .bind(("username", username.to_string()))
+                .await
+                .and_then(|mut r| r.take(0));
+            match fallback {
+                Ok(Some(u)) => u,
+                Ok(None) => return CredCheck::Invalid,
+                Err(e) => return CredCheck::Error(e.to_string()),
+            }
+        }
+        Err(e) => return CredCheck::Error(e.to_string()),
+    };
+
+    let password_hash = user.get("password").and_then(|v| v.as_str()).unwrap_or("");
+    if !eck_core::auth::verify_password(password, password_hash).unwrap_or(false) {
+        return CredCheck::Invalid;
+    }
+    CredCheck::Ok(Box::new(user))
+}
+
 /// POST /api/auth/login — verify credentials, return JWT
 pub async fn login(
     State(state): State<Arc<AppState>>,
@@ -257,60 +316,22 @@ pub async fn login(
             Json(json!({ "success": false, "error": "Too many login attempts", "retry_after": retry })),
         );
     }
-    // Select specific fields to avoid SurrealDB Thing → Value deserialization issues.
-    // Real accounts live in the mesh `db`; the node-local `users_db` holds only the
-    // install-time setup-admin, so it is consulted as a fallback on a miss.
-    const LOGIN_QUERY: &str = "SELECT record::id(id) AS user_id, username, password, email, name, role, pin, isActive, preferredLanguage, languages, mustChangePassword FROM user WHERE (username = $username OR email = $username) AND isActive = true AND deleted_at IS NONE LIMIT 1";
-    let result: Result<Option<serde_json::Value>, _> = state
-        .db
-        .query(LOGIN_QUERY)
-        .bind(("username", body.username.clone()))
-        .await
-        .and_then(|mut r| r.take(0));
 
-    let user = match result {
-        Ok(Some(u)) => u,
-        Ok(None) => {
-            let fallback: Result<Option<serde_json::Value>, _> = state
-                .users_db
-                .query(LOGIN_QUERY)
-                .bind(("username", body.username.clone()))
-                .await
-                .and_then(|mut r| r.take(0));
-            match fallback {
-                Ok(Some(u)) => u,
-                Ok(None) => {
-                    return (
-                        StatusCode::UNAUTHORIZED,
-                        Json(json!({ "success": false, "error": "Invalid credentials" })),
-                    );
-                }
-                Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "success": false, "error": e.to_string() })),
-                    );
-                }
-            }
+    let user = match verify_credentials(&state, &body.username, &body.password).await {
+        CredCheck::Ok(u) => *u,
+        CredCheck::Invalid => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "success": false, "error": "Invalid credentials" })),
+            );
         }
-        Err(e) => {
+        CredCheck::Error(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "success": false, "error": e.to_string() })),
+                Json(json!({ "success": false, "error": e })),
             );
         }
     };
-
-    let password_hash = user.get("password").and_then(|v| v.as_str()).unwrap_or("");
-
-    let verified = eck_core::auth::verify_password(&body.password, password_hash).unwrap_or(false);
-
-    if !verified {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "success": false, "error": "Invalid credentials" })),
-        );
-    }
 
     let user_id = user.get("user_id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
     let role = user.get("role").and_then(|v| v.as_str()).unwrap_or("operator");

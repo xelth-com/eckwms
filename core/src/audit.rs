@@ -42,6 +42,16 @@ pub mod class {
     pub const READ: &str = "read";
     pub const MUTATE: &str = "mutate";
     pub const FISCAL_TOUCH: &str = "fiscal-touch";
+    /// A PII reveal (re-hash, not decrypt — `.eck/PII_VAULT.md` §0/§4): batch-
+    /// anchored like `READ`, since revealing is a read of already-stored data,
+    /// but tracked under its own class so the audit UI can filter reveals
+    /// separately from ordinary business reads.
+    pub const REVEAL: &str = "reveal";
+    /// A vault-safe operation on the eck1/2/3 share-holder side
+    /// (`.eck/PII_VAULT.md` §2/§6-P0.5): every share PUT/GET, node
+    /// register/revoke, and every rejected (403/404) attempt. Batch-anchored;
+    /// its own class so the safe's access log filters cleanly.
+    pub const VAULT: &str = "vault";
 }
 
 /// One link in a per-`chain_id` tamper-evident chain.

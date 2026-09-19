@@ -313,8 +313,20 @@ async fn process(
         "generationConfig": { "temperature": 0.1, "maxOutputTokens": MAX_OUTPUT_TOKENS },
     });
 
-    let (translated, usage) = match auth.generate_content(http, model_name, payload).await {
-        Ok(r) => r,
+    let _ = &auth; // resolved above only to gate on is_configured()
+    let (translated, served_model, usage) = match eck_core::ai::AiAuth::generate_for_task(
+        http,
+        "translation",
+        model_name,
+        payload,
+        None,
+    )
+    .await
+    {
+        Ok(g) => {
+            info!("[ai] task=translation path={} model={}", g.path, g.model);
+            (g.text, g.model, g.usage)
+        }
         Err(e) => {
             // No retry — at most one Gemini call per enqueue (runaway guardrail).
             // Mark the row `failed` so the claim can't wedge the mesh: peers see a
@@ -373,7 +385,7 @@ async fn process(
     }
 
     if !usage.is_null() {
-        super::telemetry::log_telemetry(db, "translation", model_name, &trid, &usage).await;
+        super::telemetry::log_telemetry(db, "translation", &served_model, &trid, &usage).await;
     }
 
     // Announce completion so open dashboards re-fetch the ticket with ?lang=.

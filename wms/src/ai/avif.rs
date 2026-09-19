@@ -28,6 +28,12 @@
 
 use anyhow::{anyhow, Result};
 use image::{DynamicImage, RgbImage};
+
+/// Decompression-bomb caps shared by the vision/OCR decode paths: max per-side
+/// pixels and max RGB decode allocation (512 MiB). A frame past either is
+/// rejected rather than allocated.
+pub(crate) const MAX_SIDE: usize = 30_000;
+pub(crate) const MAX_DECODE_ALLOC: u64 = 512 * 1024 * 1024;
 use rav1d_safe::{ColorRange, Decoder, Frame, MatrixCoefficients, PixelLayout, PlaneView16, PlaneView8, Planes};
 
 /// ISOBMFF sniff for AVIF: bytes 4..8 == `ftyp` and either the major brand
@@ -100,6 +106,11 @@ fn frame_to_rgb(frame: &Frame) -> Result<DynamicImage> {
     let h = frame.height() as usize;
     if w == 0 || h == 0 {
         return Err(anyhow!("AVIF frame has a zero dimension ({w}x{h})"));
+    }
+    // Decompression-bomb guard: cap per-side dimension and the RGB allocation
+    // BEFORE we allocate `w*h*3`. A crafted AVIF could otherwise ask for gigabytes.
+    if w > MAX_SIDE || h > MAX_SIDE || (w as u64 * h as u64 * 3) > MAX_DECODE_ALLOC {
+        return Err(anyhow!("AVIF frame exceeds decode limits ({w}x{h})"));
     }
     let layout = frame.pixel_layout();
     let color = frame.color_info();

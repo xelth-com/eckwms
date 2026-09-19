@@ -38,8 +38,10 @@ flows:
   - goal: a device's service history
     call: device_history {serial: "<serial>"}
   - goal: find tickets
-    call: ticket_search {query, status?, limit?}   # subject/number match
+    call: ticket_search {query?, city?, company?, status?, limit?}  # number/ZIP/subject/company/city; status alone enumerates
     fallback: search_database {query}              # hybrid BM25+vector, finds unindexed
+  - goal: print warehouse/ECK labels on this node
+    call: list_printers → print_labels {type, count, printer?}   # CUPS; hidden from the Observer tier
   - goal: read what customer and agent actually wrote (verbatim thread bodies)
     call: ticket_thread {ticket: "<public number|doc id>", only_new?: true, limit?: 20}
   - goal: neighbors of a known ticket

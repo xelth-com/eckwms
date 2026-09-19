@@ -50,7 +50,75 @@
 //! request-time form needs capability+load advertisement in the mesh registry
 //! and a resolver — tracked in TECH_DEBT ("PII/AI capability routing").
 
+use eck_core::utils::anonymizer::{
+    fuzzy_sig_for_token, obfuscate_pii, pii_fuzzy_sig_address, pii_fuzzy_sig_kind, SigKind,
+};
+use serde_json::{json, Value};
 use tracing::warn;
+
+/// Build the `document.pii_fuzzy` value for a document (`.eck/PPRL_FUZZY.md` §B):
+/// `[{ "t": "Name_<hex>"|"Address_<hex>", "s": FuzzySig }]`, one entry per Name/
+/// Address token in `fingerprints` for which a signature is derivable.
+///
+/// For each identity token, in order:
+///   1. re-derive from the structured clear field the reveal path uses for that
+///      kind (`meta.customer` for Name, `meta.address` for Address) when
+///      `obfuscate_pii(value, kind) == token` — the SAME string those fields
+///      hash into the fingerprint, so the token is guaranteed to match;
+///   2. else fall back to the process mint log (`fuzzy_sig_for_token`) — this is
+///      how third-party names that live ONLY as tokens in extracted prose are
+///      resolved;
+///   3. else omit (unresolvable, e.g. a token minted before a restart) — the
+///      backfill sweep retries later.
+///
+/// Needs the PPRL pepper (the signatures are peppered like the tokens); returns
+/// `[]` when none is configured so callers never panic on a clear-only node.
+pub fn derive_pii_fuzzy(meta: &Value, fingerprints: &[String]) -> Value {
+    if eck_core::keyring::pepper().is_none() {
+        return json!([]);
+    }
+    let clear = |field: &str| -> Option<&str> {
+        meta.get(field)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    let name_clear = clear("customer");
+    let addr_clear = clear("address");
+    // Address components live in separate meta fields on real data (street on
+    // `address`, zip/city of their own); the sig unions all three so a
+    // city-only / zip-only query resolves, while the TOKEN stays derived from
+    // exactly the string the reveal path hashes (`meta.address`).
+    let zip_clear = clear("zip");
+    let city_clear = clear("city");
+
+    let mut out: Vec<Value> = Vec::new();
+    for token in fingerprints {
+        let sig = if token.starts_with("Name_") {
+            match name_clear {
+                Some(v) if obfuscate_pii(v, "Name") == *token => {
+                    Some(pii_fuzzy_sig_kind(v, SigKind::Name))
+                }
+                _ => fuzzy_sig_for_token(token),
+            }
+        } else if token.starts_with("Address_") {
+            match addr_clear {
+                Some(v) if obfuscate_pii(v, "Address") == *token => {
+                    let comps: Vec<&str> =
+                        [addr_clear, zip_clear, city_clear].into_iter().flatten().collect();
+                    Some(pii_fuzzy_sig_address(&comps))
+                }
+                _ => fuzzy_sig_for_token(token),
+            }
+        } else {
+            continue;
+        };
+        if let Some(sig) = sig {
+            out.push(json!({ "t": token, "s": sig }));
+        }
+    }
+    json!(out)
+}
 
 /// Which egress the caller is about to feed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

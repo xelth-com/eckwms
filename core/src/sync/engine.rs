@@ -120,7 +120,67 @@ pub const SYNC_ENTITY_TYPES: &[&str] = &[
     // there is no id collision to resolve; the per-author `$edge_exists` guard
     // plus convergence keeps a synced edge from being re-created as a duplicate.
     "has_attachment",
+    // Gemini-vision journal: one row per paid vision answer on an attachment page
+    // (metadata tier, like `has_attachment`/`file_resource` metadata — NOT a blob).
+    // The stored `answer`/`question` are PPRL-MASKED before write (the raw scan
+    // itself never meshes), so replicating the journal leaks no PII while making
+    // an already-paid answer reusable fleet-wide. The row id is deterministic —
+    // `sha256(file|page|region|question_norm)[..20]` — so the same analysis from
+    // two nodes converges instead of duplicating; it has no dedicated id column,
+    // so `bootstrap_checksums` keys it via the implicit `id` leaf through
+    // `extract_entity_leaf_id`, exactly like `ai_sop`/`translation`. The author's
+    // write bumps `_vclock` so its version dominates a peer's copy. The
+    // per-node-derived `question_embedding` is in `merkle::IGNORED_FIELDS`.
+    "vision_analysis",
+    // Warehouse receiving (2026-09-07): the parcel header and the units it was
+    // broken into. Both carry client_name/client_address -> also on the ops.rs
+    // ZONE_1_TABLES denylist. They mesh because receiving happens on whichever
+    // node the PDA can reach (kiosk on-LAN, master off-LAN) while the units are
+    // looked up from anywhere; ids are client-minted UUIDs, so two nodes never
+    // collide and LWW/vclock converges a re-edit.
+    "receipt",
+    "receipt_unit",
 ];
+
+/// Sync class **`vault`** (`.eck/PII_VAULT.md` §3.1, P1 item 1) — the tables
+/// that carry decryptable customer PII and therefore replicate ONLY between
+/// reveal-capable full nodes (`home` ↔ `operator`). They are a tier *next to*
+/// [`SYNC_ENTITY_TYPES`], not a member of it, so every existing sweep, merkle
+/// bootstrap and live-watch stays byte-identical on a node that has no vault
+/// key.
+///
+/// **How the role is decided: by the key, not by config.** A node participates
+/// in this tier iff [`vault_sync_enabled`] — i.e. `keyring::vault_key()` is
+/// `Some`. That is only true for a node whose safe blob (or keyfile) carries a
+/// VK, which only the `home`/`operator` roles get (§2). A cache node (eck1/2/3)
+/// or a relay can neither hold nor be handed a VK, so it can neither send nor
+/// receive these rows — and `MESH_NODE_ROLE` in a node's own env cannot
+/// escalate it into the tier, because the env never yields a VK. Belt and
+/// braces on top of that: [`sync_entity_with_peer`] refuses a vault table
+/// against any `peer.is_cache()` peer, and `pii_vault` is deliberately NOT in
+/// `RELAY_SYNC_TYPES` — vault rows never touch the relay queue.
+pub const VAULT_ENTITY_TYPES: &[&str] = &["pii_vault"];
+
+/// True when this node may hold and replicate vault rows (it has a VK).
+pub fn vault_sync_enabled() -> bool {
+    crate::pii_vault::enabled()
+}
+
+/// True when `entity_type` belongs to the `vault` sync class.
+pub fn is_vault_entity_type(entity_type: &str) -> bool {
+    VAULT_ENTITY_TYPES.contains(&entity_type)
+}
+
+/// The tables THIS node sweeps: the normal set, plus the `vault` tier when the
+/// node holds a vault key. Call this instead of iterating `SYNC_ENTITY_TYPES`
+/// directly in any sweep that should follow the node's role.
+pub fn sync_entity_types() -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = SYNC_ENTITY_TYPES.to_vec();
+    if vault_sync_enabled() {
+        v.extend_from_slice(VAULT_ENTITY_TYPES);
+    }
+    v
+}
 
 /// Which `SYNC_ENTITY_TYPES` entries are graph-edge (`TYPE RELATION`) tables.
 /// These need `INSERT RELATION` + `type::record()` coercion on the adopt path;
@@ -140,7 +200,15 @@ pub fn is_relation_entity_type(entity_type: &str) -> bool {
 /// write-anything surface (system_config, mesh_task, …). `document_raw` is
 /// allowed on top of SYNC_ENTITY_TYPES: it's not merkle-synced but IS pushed
 /// point-to-point by the `request_raw_docs` reverse-fetch.
+///
+/// `pii_vault` is accepted only while this node is in the `vault` tier: a node
+/// without a VK answers ENTITY_UNSUPPORTED for it, which is exactly the
+/// "version skew" path the caller already tolerates — so a cache node silently
+/// refuses vault rows instead of storing ciphertext it can never open.
 pub fn is_mesh_entity_type(entity_type: &str) -> bool {
+    if is_vault_entity_type(entity_type) {
+        return vault_sync_enabled();
+    }
     entity_type == "document_raw" || SYNC_ENTITY_TYPES.contains(&entity_type)
 }
 
@@ -161,6 +229,11 @@ const RELAY_SYNC_TYPES: &[&str] = &[
     // result "X is translated") only works on-LAN, and off-LAN nodes each re-call
     // Gemini for the same (source,field,lang).
     "translation",
+    // Vision journal (2026-09-07): one masked Gemini answer per (file, page,
+    // region, question), deterministic id, a few hundred bytes. Same argument as
+    // `translation`: a paid answer must reach off-LAN nodes or each of them
+    // pays Gemini again for the same page.
+    "vision_analysis",
     // Attachment edges ride the relay even though `file_resource` does not
     // (2026-07-25). Asymmetric on purpose: a file_resource row carries the
     // inline `avatar_b64` thumbnail (up to 50 KB of base64) and there are ~2000
@@ -171,6 +244,12 @@ const RELAY_SYNC_TYPES: &[&str] = &[
     // `file_resource` on-LAN just holds dangling edges, which SurrealDB permits
     // and `list_attachments` renders as empty fields.
     "has_attachment",
+    // Receiving rides the relay for the same reason `trip` does: the PDA that
+    // took the receipt is frequently off-LAN (LTE), and a parcel booked into
+    // ZONE-INBOUND from the road must still show up on the office master's zone
+    // list. Small rows (a header + a handful of units per parcel).
+    "receipt",
+    "receipt_unit",
     // ORDER MATTERS, and `document` goes LAST — the loop below is sequential
     // and every relay round-trip is capped at 20 s, so a type that never
     // converges starves everything after it. `document` is exactly that: ~10 k
@@ -304,6 +383,37 @@ fn futility_next(
     FutilityState {
         consecutive_futile,
         skip_until,
+    }
+}
+
+// ─── Boot-time checksum bootstrap mode ───────────────────────────────────────
+//
+// Decide whether the boot `bootstrap_checksums` should WIPE `entity_checksum`
+// before rebuilding, or take the cheap idempotent compare-and-skip refresh.
+//
+// The historical wipe existed to purge structurally-invalid rows — legacy
+// Thing-repr keys ("registered_device:de19…" instead of the bare leaf) that
+// landed records in the wrong merkle bucket. But wiping + re-UPSERTing ~35k rows
+// on EVERY restart costs ~80 s at ~77% CPU and races itself into "Transaction
+// conflict" on the kiosk. The compare-and-skip refresh already corrects every
+// still-existing row whose hash drifted, so a wipe is only actually needed when
+// the stored rows may be *structurally* wrong for this build — i.e. the content
+// hash schema changed (`merkle::hash_schema_version`: algorithm rev or
+// IGNORED_FIELDS set). We persist that marker and auto-wipe only when it changes
+// (or is absent — first boot after this ships), and honor an explicit
+// `ECK_CHECKSUM_BOOT_WIPE=1` override. Warm restarts on an unchanged schema then
+// take the no-wipe path and report "N unchanged".
+fn boot_should_wipe(
+    force_env: Option<&str>,
+    stored_version: Option<&str>,
+    current_version: &str,
+) -> bool {
+    if matches!(force_env, Some(v) if v == "1" || v.eq_ignore_ascii_case("true")) {
+        return true;
+    }
+    match stored_version {
+        Some(v) => v != current_version, // schema/hash-version changed → rebuild clean
+        None => true,                    // pre-marker DB (first boot after upgrade) → wipe once
     }
 }
 
@@ -832,7 +942,61 @@ impl SyncEngine {
             info!("bootstrap_checksums: skipped (node_role=cache)");
             return Ok(0);
         }
-        self.bootstrap_checksums_inner(true).await
+        // Pick the boot mode: cheap no-wipe refresh on a warm restart with an
+        // unchanged content-hash schema; full wipe only on a schema change,
+        // first boot after this ships (no marker yet), or ECK_CHECKSUM_BOOT_WIPE=1.
+        let current_version = merkle::hash_schema_version();
+        let stored_version = self.load_checksum_schema_version().await;
+        let force_env = std::env::var("ECK_CHECKSUM_BOOT_WIPE").ok();
+        let wipe = boot_should_wipe(force_env.as_deref(), stored_version.as_deref(), current_version);
+        if wipe {
+            info!(
+                "bootstrap_checksums: WIPE mode (stored_schema={:?} current_schema={} force_env={:?})",
+                stored_version, current_version, force_env
+            );
+        } else {
+            info!(
+                "bootstrap_checksums: no-wipe refresh (content-hash schema {} unchanged since last boot)",
+                current_version
+            );
+        }
+        let n = self.bootstrap_checksums_inner(wipe).await?;
+        // Persist the marker so the next warm restart takes the no-wipe path.
+        self.store_checksum_schema_version(current_version).await;
+        Ok(n)
+    }
+
+    /// Read the content-hash schema marker stored by the last successful boot
+    /// bootstrap. `None` on a pre-marker DB (older build / first boot) or any
+    /// read error — both treated as "wipe once" by [`boot_should_wipe`]. The
+    /// marker row is node-local (`checksum_bootstrap_meta` is NOT in
+    /// `SYNC_ENTITY_TYPES`, so it never meshes).
+    async fn load_checksum_schema_version(&self) -> Option<String> {
+        let rows: Vec<Value> = self
+            .db
+            .query("SELECT schema_version FROM checksum_bootstrap_meta:version")
+            .await
+            .ok()?
+            .take(0)
+            .ok()?;
+        rows.into_iter()
+            .next()?
+            .get("schema_version")?
+            .as_str()
+            .map(String::from)
+    }
+
+    /// Persist the current content-hash schema marker (fixed record id) after a
+    /// successful boot bootstrap.
+    async fn store_checksum_schema_version(&self, version: &str) {
+        let _ = self
+            .db
+            .query(
+                "UPSERT checksum_bootstrap_meta:version SET \
+                    schema_version = $v, updated_at = time::now()",
+            )
+            .bind(("v", version.to_string()))
+            .await;
     }
 
     /// Idempotent variant — no pre-wipe. Called from `sync_cycle` as the
@@ -850,6 +1014,7 @@ impl SyncEngine {
     async fn bootstrap_checksums_inner(&self, wipe: bool) -> anyhow::Result<usize> {
         let merkle_svc = merkle::MerkleService::new(self.db.clone(), self.instance_id.clone());
         let mut total = 0usize;
+        let mut total_unchanged = 0usize;
         // Profiling: total wall time across all tables — surface this at INFO so
         // a single grep in the journal exposes runaway bootstrap cost without
         // needing to bump the whole sync namespace to debug.
@@ -872,7 +1037,10 @@ impl SyncEngine {
             merkle::invalidate_root_cache_all();
         }
 
-        for entity_type in SYNC_ENTITY_TYPES {
+        // `sync_entity_types()` = the normal set plus the `vault` tier when
+        // this node holds a VK. On a node without one the list is identical to
+        // SYNC_ENTITY_TYPES, so nothing about this sweep changes.
+        for entity_type in &sync_entity_types() {
             let table_started = std::time::Instant::now();
             let mut hash_us_total: u64 = 0;
             let mut upsert_ms_total: u64 = 0;
@@ -1024,11 +1192,14 @@ impl SyncEngine {
                 );
             }
             total += count;
+            total_unchanged += skipped;
         }
 
         info!(
-            "bootstrap_checksums: total {} entity checksums updated in {} ms",
+            "bootstrap_checksums: total {} entity checksums updated, {} unchanged (wipe={}) in {} ms",
             total,
+            total_unchanged,
+            wipe,
             bootstrap_started.elapsed().as_millis()
         );
         Ok(total)
@@ -1143,9 +1314,9 @@ impl SyncEngine {
             // finishes ~N× faster, on a busy one OS nice/priority still
             // throttles us down.
             let results = futures_util::future::join_all(
-                SYNC_ENTITY_TYPES
-                    .iter()
-                    .map(|et| async move { (*et, self.sync_entity_with_peer(peer, et).await) }),
+                sync_entity_types()
+                    .into_iter()
+                    .map(|et| async move { (et, self.sync_entity_with_peer(peer, et).await) }),
             )
             .await;
 
@@ -1391,6 +1562,22 @@ impl SyncEngine {
         // MeshClient's 8s timeout → the body never decodes → the pair never
         // converges. Chunking keeps every request small enough to complete.
         const SYNC_BATCH: usize = 100;
+
+        // Sync class `vault` (`.eck/PII_VAULT.md` §3.1): decryptable customer
+        // PII replicates ONLY between reveal-capable full nodes. Two gates,
+        // both cheap and both fail-closed:
+        //   * this node must be in the tier at all (it holds a VK) — a node
+        //     that lost its key mid-run must stop pushing vault rows, not keep
+        //     shipping ciphertext around;
+        //   * the PEER must not be a cache (eck1/2/3). A cache could not
+        //     decrypt the rows anyway, so replicating them there would only
+        //     widen the ciphertext surface for nothing — the same reasoning
+        //     that keeps `document_raw` off the merkle sweep entirely.
+        // The relay path is covered by `pii_vault` simply not being in
+        // RELAY_SYNC_TYPES.
+        if is_vault_entity_type(entity_type) && (!vault_sync_enabled() || peer.is_cache()) {
+            return Ok(0);
+        }
 
         // Empty-root backoff: while a (cache peer, table) pair holds skip
         // credits, don't even fetch the remote root this cycle.
@@ -1963,6 +2150,21 @@ impl SyncEngine {
                         continue;
                     }
 
+                    // PII_VAULT.md P0#4: a document_raw payload is a whole
+                    // customer ticket/thread in clear — envelope-encrypt before
+                    // it leaves over this point-to-point push. No local mesh
+                    // data key = refuse the push rather than leak plaintext.
+                    let docs = match crate::utils::crypto::data_key() {
+                        Some(key) => crate::utils::crypto::encrypt_raw_doc_payloads(docs, &key),
+                        None => {
+                            warn!(
+                                "Task {}: raw docs not served: no mesh data key (ticket {})",
+                                task_id, ticket_id
+                            );
+                            continue;
+                        }
+                    };
+
                     // Push documents to the requesting peer
                     match peer.push_entities("document_raw", &docs, &self.instance_id).await {
                         Ok(n) => {
@@ -2166,7 +2368,8 @@ impl SyncEngine {
             debug!("spawn_live_watchers: skipped (node_role=cache)");
             return;
         }
-        for entity_type in SYNC_ENTITY_TYPES {
+        let watched = sync_entity_types();
+        for entity_type in &watched {
             let engine = std::sync::Arc::clone(self);
             let et = entity_type.to_string();
             tokio::spawn(async move {
@@ -2198,7 +2401,7 @@ impl SyncEngine {
         }
         info!(
             "spawn_live_watchers: started {} live streams",
-            SYNC_ENTITY_TYPES.len()
+            watched.len()
         );
     }
 
@@ -2476,5 +2679,34 @@ mod tests {
         assert_eq!(futility_skip_delay(4), Some(chrono::Duration::minutes(30)));
         assert_eq!(futility_skip_delay(5), Some(chrono::Duration::hours(1)));
         assert_eq!(futility_skip_delay(99), Some(chrono::Duration::hours(1)));
+    }
+
+    #[test]
+    fn boot_wipe_forced_by_env() {
+        assert!(boot_should_wipe(Some("1"), Some("abc"), "abc"));
+        assert!(boot_should_wipe(Some("true"), Some("abc"), "abc"));
+        assert!(boot_should_wipe(Some("TRUE"), Some("abc"), "abc"));
+    }
+
+    #[test]
+    fn boot_wipe_env_off_values_do_not_force() {
+        // Only 1/true force; anything else defers to the schema comparison.
+        assert!(!boot_should_wipe(Some("0"), Some("abc"), "abc"));
+        assert!(!boot_should_wipe(Some("no"), Some("abc"), "abc"));
+        assert!(!boot_should_wipe(None, Some("abc"), "abc"));
+    }
+
+    #[test]
+    fn boot_wipe_on_missing_or_changed_schema() {
+        // Pre-marker DB (first boot after upgrade) → wipe once.
+        assert!(boot_should_wipe(None, None, "abc"));
+        // Schema changed → wipe to rebuild clean.
+        assert!(boot_should_wipe(None, Some("old"), "abc"));
+    }
+
+    #[test]
+    fn boot_no_wipe_on_warm_restart_same_schema() {
+        // The common case: same schema as last boot, no force → cheap refresh.
+        assert!(!boot_should_wipe(None, Some("abc"), "abc"));
     }
 }

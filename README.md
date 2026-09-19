@@ -33,11 +33,13 @@ We use AI (Google Gemini) extensively, but in enterprise environments, AI needs 
 
 ### 4. Zero-Knowledge AI Search (GDPR & Privacy-Preserving)
 Sending raw customer data (PII) to cloud AI models violates strict European privacy laws. eckWMS implements a mathematical **Privacy-Preserving Record Linkage (PPRL)** pipeline to achieve "Zero-Knowledge" semantic search.
-* **Local PII Extraction:** Names and addresses are isolated before vectorization.
-* **Keyed SimHash:** PII is passed through a deterministic, collision-resistant LSH algorithm peppered with a cryptographic `SYNC_SECRET` (SHA-256 over character bigrams).
-* **Secure Embeddings:** Google Gemini processes clean text with obfuscated tokens (e.g., `Name_CC0068898836CB06`). The real identity never leaves your server.
+* **Local PII Extraction:** Names and addresses are isolated (lexicon + optional on-device or peer-served NER) before vectorization.
+* **Keyed pseudonym tokens:** PII becomes a deterministic keyed token peppered with a cryptographic `SYNC_SECRET` (`Name_<16 hex>`), stable across every node and record so agents can correlate and pivot on it — without ever seeing the clear value.
+* **Typo-tolerant search, still masked:** a separate per-word Bloom-256 + Kölner-Phonetik signature enables fuzzy name/address matching over masked data.
+* **Secure Embeddings:** Google Gemini processes clean text with obfuscated tokens. The real identity never leaves your server; reveal is master-tier only and only into a local file.
+* **Optional zero-knowledge vault:** persistent `token → clear` material can be sealed under a per-node key and Shamir-split 2-of-3 across your own nodes, so no single host can read it.
 
-This mathematically guarantees that customer identities never reach third-party AI providers in plaintext, while preserving the AI's ability to perform semantic vector search and match entities even with typos. See the math behind it in [PPRL_ARCHITECTURE.md](.eck/PPRL_ARCHITECTURE.md).
+This keeps customer identities out of third-party AI providers in plaintext while preserving semantic vector search and typo-tolerant matching. Full model: [`docs/machine/30-pprl.md`](docs/machine/30-pprl.md).
 
 ### 5. The Enterprise Vision: Extending Twenty CRM to a Full ERP
 While eckWMS serves as the operational high-speed edge, it is built to integrate. Our strategic vision is to bidirectionally sync with modern, open-source CRMs like **Twenty CRM**. 
@@ -47,11 +49,13 @@ By handling the heavy lifting of inventory (quants, pickings, move lines), hardw
 
 ## ⚡ Current Features
 
-* **Advanced Warehouse Management:** Full CRUD for Products, Locations, Racks, Quants, Pickings, and Move Lines.
+* **Advanced Warehouse Management:** Full CRUD for Products, Locations, Racks, Quants, Pickings, and Move Lines, plus unit intake/receiving.
 * **Repair & RMA Management:** Comprehensive lifecycle tracking for hardware repairs. Includes AI-powered "Find Similar Historical Repairs" to speed up technician diagnostics.
+* **Agent-native MCP surface:** an embedded Model Context Protocol server (`POST /mcp`) exposes the business graph as tools behind the PII masking layer — the distinguishing feature (see [`docs/machine/40-mcp-tools.md`](docs/machine/40-mcp-tools.md)).
+* **AI brain & cheap-tier routing:** live + Vertex-batch summarization, 768-dim hybrid search, an agentic Brain-Chat/orchestrator, and a task router that can send selected work to an OpenRouter-compatible model with a time-budgeted hedge back to Gemini.
 * **Content-Addressable FileStore (CAS):** 128-bit MurmurHash3 UUID storage for attachments and avatars. Identical files are automatically deduplicated.
-* **Smart Barcodes:** Native support for SmartTag V2 (19-byte compact binary barcodes) with URL-safe Base64 encoding.
-* **Hardware Integration:** Built-in ESC/POS printer drivers (TCP/USB) and PDF label sheet generation.
+* **Hardware Integration:** CUPS label printing (agent-first, browser fallback), plus SmartTag V2 compact binary barcodes.
+* **Extensibility & governance:** a sandboxed WASM (extism) plugin runtime on the ingest seam, and Ed25519 license gates with a CRL kill switch.
 * **Clickwrap Agreements:** Legally binding digital signatures for cost estimates and data privacy (AVV), sealed via Hedera HCS.
 * **Device Pairing:** Secure ECK-P1-ALPHA protocol utilizing Ed25519 cryptography and QR code handshakes.
 

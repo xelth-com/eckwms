@@ -1,7 +1,9 @@
 mod ai;
+mod datafs_cli;
 mod handlers;
 mod mcp;
 mod middleware;
+mod reveal_guard;
 mod services;
 mod utils;
 mod web;
@@ -62,6 +64,10 @@ pub struct AppState {
     /// back by the master-only `reveal_tokens` method. RAM only, bounded FIFO —
     /// deliberately NO persistent plaintext vault (see `mcp::reveal`).
     pub pii_reveal: Arc<crate::mcp::reveal::PiiRevealStore>,
+    /// Typo-tolerant name/address resolver over `Name_`/`Address_` tokens
+    /// (`.eck/PPRL_FUZZY.md`). Reloaded at startup + every 10 min from the DB,
+    /// `upsert`ed from the `pii_fuzzy` write sites. RAM only, derived data.
+    pub fuzzy_index: Arc<crate::ai::pii_fuzzy::FuzzyIndex>,
     /// WASM plugin engine + registry (`.eck/WASM_ARCHITECTURE.md`). `None`
     /// unless `ECK_PLUGIN_RUNTIME=1` — off by default, zero behavior change.
     pub plugins: Option<PluginRuntime>,
@@ -192,9 +198,31 @@ impl AppState {
 }
 
 fn main() {
+    // `wms datafs <init|mount|unmount|status|migrate>` — the offline
+    // data-at-rest subcommands (.eck/DATA_AT_REST.md). They need `.env` and the
+    // vault key and nothing else, so they run on a small runtime and exit
+    // without ever touching the DB. Keeping them in the same binary is what lets
+    // the migration script hand the key handling to code that already has it —
+    // the shell script never sees key material.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("datafs") {
+        std::process::exit(datafs_cli::main(&argv[2..]));
+    }
+
+    // Cap the blocking pool. tokio's default 512 blocking threads × a 16 MB
+    // stack is a latent ~8 GB commit ceiling; on the 3.3 GiB kiosk a fan-out of
+    // spawn_blocking loads/OCR/mmap work could balloon RAM and swap-thrash. 32 is
+    // ample for our IO/CPU blocking mix (model loads, hf-hub, PDF/OCR). Override
+    // via ECK_TOKIO_MAX_BLOCKING.
+    let max_blocking = std::env::var("ECK_TOKIO_MAX_BLOCKING")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(32);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(16 * 1024 * 1024) // 16 MB — SurrealDB debug builds + large Zoho payloads need extra stack
+        .max_blocking_threads(max_blocking)
         .build()
         .expect("Failed to build tokio runtime");
     runtime.block_on(async_main());
@@ -211,6 +239,80 @@ async fn async_main() {
         Err(dotenvy::Error::Io(ref io)) if io.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => Some(e),
     };
+
+    // Keys and the process image are the only place the data-volume key ever
+    // exists. Drop the dumpable flag before anything reads a secret: it kills
+    // core dumps and re-owns /proc/<pid>/{mem,environ,maps} to root, so no
+    // same-uid-adjacent process can scrape them. Pairs with `LimitCORE=0` in
+    // scripts/systemd/9eck-wms-datafs.conf. See .eck/DATA_AT_REST.md.
+    harden_process();
+
+    // ── boot phase 0: key ring, then the encrypted data volume ──────────────
+    // Order is load-bearing (.eck/DATA_AT_REST.md §Boot order): everything
+    // below — the log dir, the DB files, the CAS filestore, `secrets.env` —
+    // lives INSIDE `data/`, so none of it may be touched before the mount, and
+    // the mount's key comes from the safe, so the key ring must come first.
+    // Only env that lives OUTSIDE the volume is available here: INSTANCE_ID,
+    // ECK_VAULT_NODES, ECK_LICENSE_TOKEN, ECK_VAULT_KEK_FILE, ECK_DATAFS_*.
+    //
+    // A console-only subscriber is installed for the duration of this phase so
+    // vault/mount diagnostics are visible on stderr (journal) even though the
+    // rolling file sink cannot exist yet; the real dual-sink subscriber is
+    // installed immediately afterwards and re-states the key-ring status.
+    let instance_id = eck_core::utils::identity::ensure_uuid_instance_id(
+        &std::env::var("INSTANCE_ID").unwrap_or_default(),
+    );
+    {
+        let early = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .finish();
+        let _early = tracing::subscriber::set_default(early);
+
+        // Key material FIRST — the data-volume key is HKDF'd from the same safe
+        // blob as the pepper / MDK / vault key. `keyring::init` is idempotent,
+        // so the historical call site further down is now a no-op.
+        eck_core::keyring::init(&reqwest::Client::new(), &instance_id).await;
+        // Boot-time vault enrolment: if an operator dropped ECK_VAULT_ENROLL_CODE
+        // in and the ring did not come up safe-sourced, complete the join now
+        // (same routine as POST /admin/vault/join). Never panics; the code is
+        // never logged. Must stay ahead of the mount: on a first enrolment this
+        // is what produces the data-volume key.
+        if eck_core::keyring::source() != eck_core::keyring::KeySource::Safe {
+            if let Some(code) = std::env::var("ECK_VAULT_ENROLL_CODE")
+                .ok()
+                .map(|c| c.trim().to_string())
+                .filter(|c| !c.is_empty())
+            {
+                handlers::vault_admin::join_at_boot(&instance_id, &code).await;
+            }
+        }
+
+        // Mount `data/` (opt-in: ECK_DATAFS_CIPHER_DIR; no-op when unset).
+        // FATAL on failure — carrying on would let SurrealDB and the filestore
+        // recreate a plaintext `data/` under the mountpoint, which is precisely
+        // the state this feature abolishes.
+        if let Err(e) = eck_core::vault::datafs::mount_if_configured() {
+            error!("encrypted data volume unavailable: {e}");
+            eprintln!("FATAL: encrypted data volume unavailable: {e}");
+            std::process::exit(78); // EX_CONFIG
+        }
+
+        // Secrets that live INSIDE the volume: SYNC_SECRET, MESH_DATA_KEY,
+        // ENC_KEY, JWT_SECRET, ODOO_API_KEY, the AI keys, XELIXIR_SERVICE_TOKEN,
+        // ECK_MCP_*. Additive only — anything already set by `.env` or the unit
+        // wins, so a boot-critical var can still be forced from outside.
+        match eck_core::vault::datafs::load_secrets() {
+            Ok(Some(p)) => info!("loaded secrets from {}", p.display()),
+            Ok(None) => {}
+            Err(e) => error!(
+                "secrets file NOT loaded: {e} — dotenvy stops at the first malformed \
+                 line, so every var below it is MISSING"
+            ),
+        }
+    }
 
     // Dual sink: pretty ANSI in the terminal (for the human), plain rolling
     // file in `data/logs/wms.log.YYYY-MM-DD` (for the AI / postmortems).
@@ -238,12 +340,47 @@ async fn async_main() {
 
     info!("Starting eckWMS (9eck.com monorepo edition)");
     info!("File logs: {}/wms.log.<date>", log_dir);
+    // Boot phase 0 ran before this sink existed — restate its outcome so the
+    // file log (the postmortem source) carries it too.
+    info!("keyring: {}", eck_core::keyring::status_json());
+    info!("datafs: {}", eck_core::vault::datafs::status_json());
     if let Some(e) = &dotenv_err {
         error!(
             ".env only PARTIALLY loaded: {e} — every line after the failure \
              point is MISSING from the environment; quote values containing \
              spaces or quotes"
         );
+    }
+
+    // MCP master-tier token hygiene (F8, 2026-09-03 audit). The static master
+    // tier (clear-PII reveal + surrealql_read) is granted ONLY by
+    // ECK_MCP_MASTER_TOKEN — the former fallback to XELIXIR_SERVICE_TOKEN was
+    // removed so one shared secret no longer authorizes both domains. Warn if
+    // the dedicated token is missing (static master disabled — session bearers
+    // still work) and hard-warn if it was set to the reused xelixir secret.
+    {
+        let master = std::env::var("ECK_MCP_MASTER_TOKEN")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        match master {
+            None => tracing::warn!(
+                "ECK_MCP_MASTER_TOKEN is unset — static MCP master tier is DISABLED \
+                 (personal session bearers still work). Set it to enable master connectors."
+            ),
+            Some(m) => {
+                if std::env::var("XELIXIR_SERVICE_TOKEN")
+                    .ok()
+                    .map(|x| x.trim() == m)
+                    .unwrap_or(false)
+                {
+                    tracing::error!(
+                        "ECK_MCP_MASTER_TOKEN EQUALS XELIXIR_SERVICE_TOKEN — token reuse across \
+                         security domains (F8). Provision a distinct 32-byte MCP master token."
+                    );
+                }
+            }
+        }
     }
 
     // SurrealDB — Zone 2 (business / operational data).
@@ -308,6 +445,24 @@ async fn async_main() {
              DEFINE TABLE IF NOT EXISTS ai_thought SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS ai_sop SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS ai_inbox SCHEMALESS;
+             -- Node-local PII-leak quarantine (spec .eck/PII_REMOTE_MASKING.md §7):
+             -- holds the CLEAR unmasked-PII strings the LLM self-reported. It is
+             -- deliberately NOT in SYNC_ENTITY_TYPES (must never replicate the leak
+             -- across the mesh) and is on the ZONE_1_TABLES ops denylist.
+             DEFINE TABLE IF NOT EXISTS pii_leak_quarantine SCHEMALESS;
+             -- PII vault (.eck/PII_VAULT.md §3.1, P1): one row per PPRL token,
+             -- id = the token, clear value only as AEAD ciphertext under a
+             -- per-row DEK wrapped by VK[e]. Defined on EVERY node (a table
+             -- that exists but stays empty costs nothing and keeps the merkle
+             -- bootstrap from logspamming), but only a node holding a vault
+             -- key ever writes or replicates it — sync class `vault`, see
+             -- eck_core::sync::engine::VAULT_ENTITY_TYPES.
+             DEFINE TABLE IF NOT EXISTS pii_vault SCHEMALESS;
+             -- Rows are looked up by token (the record id) on the reveal path;
+             -- these two drive the P1b sweeps (rewrap by vk_epoch, re-mint by
+             -- pp_epoch) which would otherwise full-scan the table.
+             DEFINE INDEX IF NOT EXISTS pii_vault_vk_epoch ON pii_vault FIELDS vk_epoch;
+             DEFINE INDEX IF NOT EXISTS pii_vault_pp_epoch ON pii_vault FIELDS pp_epoch;
              DEFINE TABLE IF NOT EXISTS mesh_task SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS system_config SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS ops_audit_log SCHEMALESS;
@@ -326,6 +481,12 @@ async fn async_main() {
              DEFINE INDEX IF NOT EXISTS device_auth_challenge_nonce ON device_auth_challenge FIELDS nonce UNIQUE;
              DEFINE TABLE IF NOT EXISTS peer_health_state SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS scan_log SCHEMALESS;
+             -- Mesh-synced but previously never DEFINEd here: on a node with a
+             -- FRESH store the sync engine LIVE SELECT and its conflict-resolve
+             -- SELECT both fail with table-does-not-exist, so the entity type
+             -- can never converge (found on the kiosk re-init, 2026-09-07).
+             DEFINE TABLE IF NOT EXISTS vision_analysis SCHEMALESS;
+             DEFINE TABLE IF NOT EXISTS soll SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS repair_event SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS crm_update_log SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS opportunity SCHEMALESS;
@@ -351,7 +512,17 @@ async fn async_main() {
              DEFINE TABLE IF NOT EXISTS odoo_location SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS odoo_product SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS odoo_quant SCHEMALESS;
-             DEFINE TABLE IF NOT EXISTS stock_position SCHEMALESS;",
+             DEFINE TABLE IF NOT EXISTS stock_position SCHEMALESS;
+             -- Warehouse receiving: the parcel header + the units it became.
+             -- Both are in SYNC_ENTITY_TYPES, so they MUST exist before the
+             -- live-watch LIVE SELECT bridges start or their watcher dies at
+             -- boot and local writes never reach the merkle tree.
+             DEFINE TABLE IF NOT EXISTS receipt SCHEMALESS;
+             DEFINE TABLE IF NOT EXISTS receipt_unit SCHEMALESS;
+             DEFINE TABLE IF NOT EXISTS vault_share SCHEMALESS;
+             DEFINE TABLE IF NOT EXISTS vault_node SCHEMALESS;
+             DEFINE INDEX IF NOT EXISTS vault_share_key ON vault_share FIELDS tenant, node_id, kind UNIQUE;
+             DEFINE INDEX IF NOT EXISTS vault_node_key ON vault_node FIELDS tenant, node_id UNIQUE;",
         )
         .await
     {
@@ -392,6 +563,10 @@ async fn async_main() {
              DEFINE INDEX IF NOT EXISTS order_number_bm25 ON order FIELDS order_number FULLTEXT ANALYZER custom_analyzer BM25;
              DEFINE INDEX IF NOT EXISTS customer_name_bm25 ON order FIELDS customer_name FULLTEXT ANALYZER custom_analyzer BM25;
              DEFINE INDEX IF NOT EXISTS embedding_hnsw ON order FIELDS embedding HNSW DIMENSION 768 DIST COSINE;
+             -- Legacy names from the PG→SurrealDB migrator (24a71c9, 2026-03): a
+             -- second HNSW index over the same vectors = double in-RAM graph.
+             REMOVE INDEX IF EXISTS repair_embedding ON order;
+             REMOVE INDEX IF EXISTS document_embedding ON document;
              DEFINE INDEX IF NOT EXISTS task_state_idx ON ai_task FIELDS state;
              DEFINE INDEX IF NOT EXISTS sop_trigger_bm25 ON ai_sop FIELDS trigger_context FULLTEXT ANALYZER custom_analyzer BM25;
              DEFINE INDEX IF NOT EXISTS sop_embedding_hnsw ON ai_sop FIELDS embedding HNSW DIMENSION 768 DIST COSINE;
@@ -409,8 +584,30 @@ async fn async_main() {
              REMOVE INDEX IF EXISTS doc_content_bm25 ON document;
              DEFINE INDEX IF NOT EXISTS doc_summary_bm25 ON document FIELDS ai_summary FULLTEXT ANALYZER custom_analyzer BM25;
              DEFINE INDEX IF NOT EXISTS doc_subject_bm25 ON document FIELDS meta.subject FULLTEXT ANALYZER custom_analyzer BM25;
+             -- Place/company BM25 so search_database(document) can retrieve a
+             -- ticket by company or town — incl. `meta.geo_city`, the town the
+             -- phone area code resolved when Zoho carried no city (2026-09-08
+             -- #32030). company/city/zip are non-PII per the PPRL design. Same
+             -- deferred background task as doc_subject_bm25 — never on the boot
+             -- path, so index build can't block /E/health.
+             DEFINE INDEX IF NOT EXISTS doc_company_bm25 ON document FIELDS meta.company FULLTEXT ANALYZER custom_analyzer BM25;
+             DEFINE INDEX IF NOT EXISTS doc_city_bm25 ON document FIELDS meta.city FULLTEXT ANALYZER custom_analyzer BM25;
+             DEFINE INDEX IF NOT EXISTS doc_geo_city_bm25 ON document FIELDS meta.geo_city FULLTEXT ANALYZER custom_analyzer BM25;
              -- Exact pseudonym-token lookup (pii_fingerprints array).
              DEFINE INDEX IF NOT EXISTS doc_pii_fps_idx ON document FIELDS pii_fingerprints;
+             -- Ingest-pipeline review 2026-09-05 (.eck/INGEST_PIPELINE_REVIEW.md P0):
+             -- `document` had NO vector index (only order/ai_sop did), so
+             -- similar_tickets + search_database(document) ran brute-force KNN
+             -- over the whole corpus, and customer_360 / device_history /
+             -- ticket_search / the dashboard list filtered on unindexed
+             -- type / meta.* fields = full scans on every call. Same 768-dim
+             -- space as order.embedding (one embedding worker). Runs in this
+             -- background task, never on the boot path.
+             DEFINE INDEX IF NOT EXISTS doc_embedding_hnsw ON document FIELDS embedding HNSW DIMENSION 768 DIST COSINE;
+             DEFINE INDEX IF NOT EXISTS document_type_idx ON document FIELDS type;
+             DEFINE INDEX IF NOT EXISTS doc_ticket_number_idx ON document FIELDS meta.ticket_number;
+             DEFINE INDEX IF NOT EXISTS doc_email_idx ON document FIELDS meta.email;
+             DEFINE INDEX IF NOT EXISTS doc_serial_idx ON document FIELDS meta.serial_number;
              DEFINE INDEX IF NOT EXISTS order_embstatus_idx ON order FIELDS embedding_status;
              DEFINE INDEX IF NOT EXISTS partner_embstatus_idx ON partner FIELDS embedding_status;
              DEFINE INDEX IF NOT EXISTS product_embstatus_idx ON product FIELDS embedding_status;
@@ -419,13 +616,61 @@ async fn async_main() {
              DEFINE TABLE IF NOT EXISTS translation SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS has_translation TYPE RELATION IN record OUT translation SCHEMALESS;",
                 )
-                .await;
+                .await
+                // A statement-level error (bad DEFINE INDEX, unsupported
+                // field path, dimension mismatch…) lives INSIDE an Ok
+                // Response — without `check()` the batch logged "ensured"
+                // while an index silently never existed. Surface it.
+                .and_then(|r| r.check());
             match res {
                 Ok(_) => tracing::info!(
                     "search indexes ensured in {} ms",
                     started.elapsed().as_millis()
                 ),
                 Err(e) => tracing::warn!("Failed to ensure search indexes: {}", e),
+            }
+
+            // Belt for the sumstatus-index staleness bug (2026-09-10): on the
+            // edge kiosk, SurrealKV logged `Commit failed: Memtable arena
+            // is full` after restarts, and a stale entry in
+            // document_sumstatus_idx made the planner answer
+            // `summary_status = 'pending'` straight from the index without
+            // re-checking the row — the summarization worker re-bought the
+            // same summary every 10-30s. The workers now guard against this
+            // at runtime; rebuild the small equality/status indexes here too
+            // so a corrupted index self-heals shortly after boot. These are
+            // cheap (small cardinality fields, no FULLTEXT/HNSW rebuild) —
+            // unlike the BM25/HNSW DEFINEs above, never skip this gate: a
+            // blocking rebuild of those indexes is exactly the 2026-07-19
+            // kiosk incident this task must never repeat.
+            let rebuild_on_boot = std::env::var("ECK_REBUILD_STATUS_INDEXES_ON_BOOT")
+                .map(|v| v != "0")
+                .unwrap_or(true);
+            if rebuild_on_boot {
+                let rebuild_started = std::time::Instant::now();
+                let status_indexes: &[(&str, &str)] = &[
+                    ("document_sumstatus_idx", "document"),
+                    ("document_embstatus_idx", "document"),
+                    ("order_embstatus_idx", "order"),
+                    ("partner_embstatus_idx", "partner"),
+                    ("product_embstatus_idx", "product"),
+                    ("picking_embstatus_idx", "picking"),
+                ];
+                let mut had_failure = false;
+                for (idx, table) in status_indexes {
+                    let stmt = format!("REBUILD INDEX IF EXISTS {idx} ON {table}");
+                    let res = db_idx.query(stmt).await.and_then(|r| r.check());
+                    if let Err(e) = res {
+                        had_failure = true;
+                        tracing::warn!("Failed to rebuild status index {}: {}", idx, e);
+                    }
+                }
+                if !had_failure {
+                    tracing::info!(
+                        "[Indexes] status indexes rebuilt in {} ms",
+                        rebuild_started.elapsed().as_millis()
+                    );
+                }
             }
         });
     }
@@ -496,13 +741,17 @@ async fn async_main() {
     // whole table doesn't hold one query open for minutes. Rows the GDPR
     // erasure parked (`pii_fingerprints = []`) are NOT `IS NONE` and stay
     // untouched.
+    // Shared fuzzy PII index (`.eck/PPRL_FUZZY.md` §C) — created here so the
+    // self-heal + backfill sweeps below can `upsert` derived signatures for
+    // immediacy; the same Arc is stored in `AppState` and refreshed every 10 min.
+    let fuzzy_index = Arc::new(crate::ai::pii_fuzzy::FuzzyIndex::new());
     {
         let db_fps = db.clone();
+        let fuzzy = fuzzy_index.clone();
         tokio::spawn(async move {
-            // obfuscate_pii needs the SYNC_SECRET pepper (fails closed
-            // without one); the regex extraction over already-masked text
-            // works regardless.
-            let has_pepper = std::env::var("SYNC_SECRET").is_ok_and(|s| !s.is_empty());
+            // obfuscate_pii needs the PPRL pepper (fails closed without one);
+            // the regex extraction over already-masked text works regardless.
+            let has_pepper = eck_core::keyring::pepper().is_some();
             loop {
                 let rows: Vec<serde_json::Value> = match db_fps
                     .query(
@@ -548,12 +797,22 @@ async fn async_main() {
                     }
                     fps.sort();
                     fps.dedup();
+                    // Channel-B fuzzy signatures for the Name/Address tokens we
+                    // just derived (§B): written in the SAME statement, and
+                    // upserted so this node can resolve typos immediately.
+                    let pf = if has_pepper {
+                        crate::ai::pii_policy::derive_pii_fuzzy(&meta, &fps)
+                    } else {
+                        serde_json::json!([])
+                    };
+                    fuzzy.upsert_from_value(&pf);
                     // An empty result still writes [] so the row leaves the
                     // IS NONE candidate set (self-limiting sweep).
                     if let Err(e) = db_fps
-                        .query("UPDATE type::record($rid) SET pii_fingerprints = $fps RETURN NONE")
+                        .query("UPDATE type::record($rid) SET pii_fingerprints = $fps, pii_fuzzy = $pf RETURN NONE")
                         .bind(("rid", format!("document:`{}`", id)))
                         .bind(("fps", fps))
+                        .bind(("pf", pf))
                         .await
                     {
                         warn!("pii_fingerprints self-heal write failed for {}: {}", id, e);
@@ -570,13 +829,81 @@ async fn async_main() {
         });
     }
 
+    // pii_fuzzy backfill (`.eck/PPRL_FUZZY.md` §B): rows that ALREADY carry
+    // `pii_fingerprints` (derived by an older binary, or self-healed above)
+    // but have no `pii_fuzzy` yet. Rate-limited pass, batches of 200, deriving
+    // the Channel-B signatures from the stored fingerprints + meta. Rows where
+    // nothing is derivable get `pii_fuzzy = []` so they leave the candidate set
+    // and are not re-scanned forever. Only meaningful with a pepper.
+    {
+        let db_pf = db.clone();
+        let fuzzy = fuzzy_index.clone();
+        tokio::spawn(async move {
+            if eck_core::keyring::pepper().is_none() {
+                return; // no pepper → cannot derive signatures at all
+            }
+            loop {
+                let rows: Vec<serde_json::Value> = match db_pf
+                    .query(
+                        "SELECT record::id(id) AS id, meta, pii_fingerprints FROM document \
+                         WHERE type = 'support_ticket' \
+                           AND pii_fingerprints != NONE AND pii_fuzzy IS NONE \
+                         LIMIT 200",
+                    )
+                    .await
+                    .and_then(|mut r| r.take(0))
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!("pii_fuzzy backfill query failed: {}", e);
+                        Vec::new()
+                    }
+                };
+                let n = rows.len();
+                for row in &rows {
+                    let Some(id) = row.get("id").and_then(|v| v.as_str()) else { continue };
+                    let meta = row.get("meta").cloned().unwrap_or_default();
+                    let fps: Vec<String> = row
+                        .get("pii_fingerprints")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+                    let pf = crate::ai::pii_policy::derive_pii_fuzzy(&meta, &fps);
+                    fuzzy.upsert_from_value(&pf);
+                    if let Err(e) = db_pf
+                        .query("UPDATE type::record($rid) SET pii_fuzzy = $pf RETURN NONE")
+                        .bind(("rid", format!("document:`{}`", id)))
+                        .bind(("pf", pf))
+                        .await
+                    {
+                        warn!("pii_fuzzy backfill write failed for {}: {}", id, e);
+                    }
+                }
+                if n > 0 {
+                    info!("pii_fuzzy backfill: derived for {} document(s)", n);
+                }
+                if n == 200 {
+                    continue; // more batches pending
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
+            }
+        });
+    }
+
     // Mesh Sync
-    use eck_core::utils::identity::{ensure_uuid_instance_id, compute_mesh_id};
-    let raw_id = std::env::var("INSTANCE_ID").unwrap_or_default();
-    let instance_id = ensure_uuid_instance_id(&raw_id);
+    use eck_core::utils::identity::compute_mesh_id;
+    // `instance_id`, the process-global key ring (PPRL pepper / mesh data key /
+    // vault key / data-volume key) and the boot-time vault enrolment are all set
+    // up in **boot phase 0** at the top of `async_main` — they have to precede
+    // both the encrypted-data-volume mount and the DB connect. See
+    // .eck/PII_VAULT.md §6 P0#2 and .eck/DATA_AT_REST.md.
     // Let the geocoder's free-function writers stamp the local node's vector
     // clock so resolved coordinates win mesh convergence (no HQ-revert).
     services::geocoder::set_instance_id(instance_id.clone());
+    // Stamp every managed AI usage report with THIS node's id (same instance
+    // UUID the sync engine uses) so the token authority's usage_ledger says which
+    // node produced each row.
+    eck_core::ai::set_ai_node_id(&instance_id);
 
     // One-time (idempotent) migration of pre-existing local accounts from the
     // old node-local users_db into the mesh `user` table (setup-admin excluded).
@@ -702,6 +1029,42 @@ async fn async_main() {
         }
     }
 
+    // Hourly cleanup of the node-local personal MCP session table: drop expired
+    // or revoked rows once they are past the grace window. Cheap, node-local
+    // (users_db is never meshed), so it runs unconditionally on every node.
+    {
+        let sweep_users_db = users_db.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                mcp::session::sweep_expired(&sweep_users_db).await;
+            }
+        });
+    }
+
+    // Hourly retention sweep of the node-local Brain-Chat transcript tables
+    // (ECK_CHAT_RETENTION_DAYS, default 90; <=0 disables). Node-local, never
+    // meshed — see ai::chat_log.
+    {
+        let sweep_db = db.clone();
+        let days: i64 = std::env::var("ECK_CHAT_RETENTION_DAYS")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(90);
+        if days > 0 {
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = ai::chat_log::sweep_retention(&sweep_db, days).await {
+                        tracing::warn!("[chat-log] retention sweep failed: {e}");
+                    }
+                }
+            });
+        }
+    }
+
     // Spawn Gemini embedding worker (processes pending documents & orders).
     // Auth is dual-mode: `studio` (BYO AI Studio key, open-source default) or
     // `managed` (server-minted Vertex Bearer). See eck_core::ai::AiAuth.
@@ -714,16 +1077,17 @@ async fn async_main() {
         let cloud_ai = eck_core::ai::AiAuth::is_enabled_in_env();
         let local_embed = ai::embeddings::embed_mode() == "local";
         if cloud_ai || local_embed {
-            // PPRL anonymisation peppers PII with SYNC_SECRET. Local mode needs
-            // it too: the deterministic field masking (obfuscate_pii) runs on
-            // every embed text regardless of backend. Without the pepper the
+            // PPRL anonymisation peppers PII with the KeyRing pepper. Local mode
+            // needs it too: the deterministic field masking (obfuscate_pii) runs
+            // on every embed text regardless of backend. Without the pepper the
             // masking falls back to a public default and becomes reversible —
             // refuse to run AI rather than ship a false privacy guarantee.
             assert!(
-                sync_secret.is_some(),
-                "AI is configured (AiAuth or ECK_EMBED_MODE=local) but SYNC_SECRET is \
-                 unset — refusing to start: PPRL anonymisation would use a \
-                 publicly-known default pepper and be reversible. Set SYNC_SECRET to enable AI."
+                eck_core::keyring::pepper().is_some(),
+                "AI is configured (AiAuth or ECK_EMBED_MODE=local) but no PPRL pepper is \
+                 configured (SYNC_SECRET / ECK_VAULT_NODES / ECK_VAULT_KEYFILE) — \
+                 refusing to start: PPRL anonymisation would use a publicly-known default \
+                 pepper and be reversible. Configure a pepper to enable AI."
             );
             let emb_db = db.clone();
             // Missing GEMINI_* names are hard config errors in cloud mode (fail
@@ -748,7 +1112,7 @@ async fn async_main() {
                 .map(|v| v.trim() != "0")
                 .unwrap_or(true);
             if embed_worker_on {
-                tokio::spawn(ai::embeddings::start_embedding_worker(emb_db, gen_model, emb_model, instance_id.clone()));
+                tokio::spawn(ai::embeddings::start_embedding_worker(emb_db, gen_model, emb_model, instance_id.clone(), fuzzy_index.clone()));
             } else {
                 info!("Embedding worker disabled (ECK_EMBED_WORKER=0) — vectors arrive via mesh sync");
             }
@@ -790,6 +1154,18 @@ async fn async_main() {
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
             services::delivery::migrate_from_shipment_if_needed(&mig_db).await;
+        });
+    }
+
+    // Idempotent, every boot: the two reserved receiving zones exist as ORDINARY
+    // `location` rows (barcode ZONE-INBOUND / ZONE-OUTBOUND). They are minted
+    // here rather than by the first scan so the PDA's zone list is never empty
+    // on a fresh node, and so `location` (synced) carries them to peers.
+    {
+        let zone_db = db.clone();
+        let zone_iid = instance_id.clone();
+        tokio::spawn(async move {
+            services::receiving::ensure_zone_locations(&zone_db, &zone_iid).await;
         });
     }
 
@@ -855,6 +1231,19 @@ async fn async_main() {
         info!(
             "MESH_NODE_ROLE=cache — periodic merkle sync disabled, this node \
              serves as pull-through cache only."
+        );
+    }
+
+    // Dev escape hatch (PII_VAULT.md P0#4): a full node without MESH_DATA_KEY
+    // refuses to serve CAS file bytes as plaintext base64 over the cross-NAT
+    // relay path by default. ECK_ALLOW_PLAINTEXT_FILE_BYTES=1 restores the old
+    // plaintext-fallback behavior for local/dev setups that never set a data
+    // key — flagged loudly here since it reopens a blind-cache-adjacent leak.
+    if std::env::var("ECK_ALLOW_PLAINTEXT_FILE_BYTES").as_deref() == Ok("1") {
+        tracing::warn!(
+            "SECURITY: ECK_ALLOW_PLAINTEXT_FILE_BYTES=1 — this node will serve mesh \
+             file bytes as plaintext base64 when MESH_DATA_KEY is unset. Dev-only \
+             escape hatch; do not set this on a managed/production node."
         );
     }
 
@@ -936,8 +1325,24 @@ async fn async_main() {
         node_role,
         i18n_lang_jobs: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         pii_reveal: Arc::new(crate::mcp::reveal::PiiRevealStore::new()),
+        fuzzy_index: fuzzy_index.clone(),
         plugins,
     });
+
+    // Fuzzy PII index (`.eck/PPRL_FUZZY.md` §C): load once now (after schema
+    // init) and refresh every 10 min so mesh-synced `document.pii_fuzzy` and
+    // new `order.customer_name` rows become typo-resolvable without a restart.
+    {
+        let fuzzy = app_state.fuzzy_index.clone();
+        let db_fuzzy = app_state.db.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                interval.tick().await;
+                fuzzy.reload(&db_fuzzy).await;
+            }
+        });
+    }
 
     // On-demand content-translation queue (support-ticket summaries → the
     // viewer's language). Gated on AI being enabled; consumes db + ws_tx.
@@ -991,12 +1396,19 @@ async fn async_main() {
         });
     }
 
-    // Spawn AI Orchestrator (Central Brain — event-sourced ReAct loop, Phase 1 stub)
-    {
+    // Spawn AI Orchestrator (Central Brain — event-sourced ReAct loop).
+    // OPT-IN: it auto-triages every seeded ai_task with the ×4-priced Flash
+    // model (3–5 calls per task), so an unconditional start turns any freshly
+    // seeded backlog into a wallet drain (2026-08-27: 7.8M units in a day
+    // triaging re-imported historical tickets into 'awaiting_human'). A node
+    // must explicitly opt in; ask_brain one-shots via MCP are unaffected.
+    if std::env::var("ECK_ORCHESTRATOR_WORKER").map(|v| v == "1").unwrap_or(false) {
         let orch_state = app_state.clone();
         tokio::spawn(async move {
             ai::orchestrator::start_orchestrator(orch_state).await;
         });
+    } else {
+        tracing::info!("[Orchestrator] disabled (set ECK_ORCHESTRATOR_WORKER=1 to enable auto-triage)");
     }
 
     // Let the AI attachment ladder hydrate a blob it doesn't hold locally.
@@ -1012,6 +1424,16 @@ async fn async_main() {
         let opt_state = app_state.clone();
         tokio::spawn(async move {
             ai::image_optimizer::start_optimizer_worker(opt_state).await;
+        });
+    }
+
+    // Spawn Image-Summary Worker (vision wave, .eck/OPENROUTER_TIER.md §13).
+    // Gated by ECK_IMAGE_SUMMARY_WORKER=1 (author = kiosk; other nodes consume the
+    // vclock'd meta field via mesh sync). Returns immediately when off.
+    {
+        let img_state = app_state.clone();
+        tokio::spawn(async move {
+            ai::image_summary::start_image_summary_worker(img_state).await;
         });
     }
 
@@ -1063,6 +1485,11 @@ async fn async_main() {
                 // Let boot (summarizer, index builds) settle before the first pass.
                 tokio::time::sleep(std::time::Duration::from_secs(120)).await;
                 info!("[GeoSweep] enabled, every {secs}s (customer-db -> attachment-ocr -> vorwahl -> grounding)");
+                // ONE-SHOT (done-marker gated): stamp `meta.geo_city` onto tickets
+                // the area-code lever placed before that field existed, so the brain
+                // can find them by town. Home-node only (rides this opt-in sweep);
+                // re-derives the town locally from the phone, no geocoder call.
+                services::vorwahl::backfill_geo_city_once(&sweep_db).await;
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(secs));
                 loop {
                     interval.tick().await;
@@ -1111,8 +1538,10 @@ async fn async_main() {
     {
         let cell_db = app_state.db.clone();
         let cell_hedera = app_state.hedera.clone();
+        let cell_instance = app_state.instance_id.clone();
         tokio::spawn(async move {
-            services::cell_resolver::start_cell_resolver_worker(cell_db, cell_hedera).await;
+            services::cell_resolver::start_cell_resolver_worker(cell_db, cell_hedera, cell_instance)
+                .await;
         });
     }
 
@@ -1159,6 +1588,17 @@ async fn async_main() {
         });
     }
 
+    // Spawn the native paid-mesh AI-distribution receiver — polls
+    // /E/ai/poll/<my_uuid>, verifies each request's paid license, and serves it
+    // through the SAME serve_or_request the HTTP /ai/or path uses. No-op unless
+    // ECK_OR_SERVE=1 (the same gate that mounts the HTTP route).
+    {
+        let or_relay_state = app_state.clone();
+        tokio::spawn(async move {
+            services::or_relay_poller::start_poller(or_relay_state).await;
+        });
+    }
+
     // Cache LRU eviction worker — only meaningful on node_role=cache. Runs
     // every 5 min and trims is_cache rows down to the configured budget so
     // a busy public VPS doesn't drift toward holding the full data set.
@@ -1195,6 +1635,10 @@ async fn async_main() {
         );
         let base_url = std::env::var("BASE_URL").unwrap_or_default();
         let heartbeat_port = app_state.port;
+        // F3 strong binding: heartbeats carry our signed server-identity so the
+        // relay records our pubkey on the registry row (client-MCP channel then
+        // binds instance_id → pubkey without trust-on-first-use).
+        let heartbeat_identity = app_state.server_identity.clone();
         let node_role_owned = std::env::var("MESH_NODE_ROLE")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -1209,7 +1653,7 @@ async fn async_main() {
             // Send first heartbeat immediately
             let (ip, p, hb_base_url) = heartbeat_announce(&base_url, heartbeat_port);
             match heartbeat_relay
-                .send_heartbeat(&ip, p, None, hb_base_url.as_deref(), Some(role_str))
+                .send_heartbeat(&ip, p, None, hb_base_url.as_deref(), Some(role_str), Some(&heartbeat_identity))
                 .await
             {
                 Ok(r) => info!("Initial heartbeat OK: {}", r.status),
@@ -1228,7 +1672,7 @@ async fn async_main() {
                 interval.tick().await;
                 let (ip, p, hb_base_url) = heartbeat_announce(&base_url, heartbeat_port);
                 match heartbeat_relay
-                    .send_heartbeat(&ip, p, None, hb_base_url.as_deref(), Some(role_str))
+                    .send_heartbeat(&ip, p, None, hb_base_url.as_deref(), Some(role_str), Some(&heartbeat_identity))
                     .await
                 {
                     Ok(_) => {}
@@ -1326,6 +1770,17 @@ async fn async_main() {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
+    // Which view the dashboard lands on after login. Per-NODE deployment
+    // property (like MESH_NODE_ROLE / ECK_NAV_SITE_URL), NOT the mesh-synced
+    // system_config:kiosk row — so a kiosk box lands on the full-bleed map
+    // while a plain server drops the operator straight into the Chat. Values:
+    // "chat" (default) | "dashboard". The kiosk deploy sets "dashboard".
+    let default_view = std::env::var("ECK_DEFAULT_VIEW")
+        .ok()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| s == "dashboard" || s == "chat")
+        .unwrap_or_else(|| "chat".to_string());
+
     // Protected API routes
     let protected_routes = Router::new()
         // Items CRUD
@@ -1369,6 +1824,9 @@ async fn async_main() {
         .route("/internal/pairing-qr", get(handlers::device::generate_pairing_qr))
         // Print / Labels
         .route("/print/labels", post(handlers::print::generate_labels))
+        // Physical printing (CUPS) — list queues + send a PDF/label job
+        .route("/print/printers", get(handlers::print::list_printers))
+        .route("/print/send", post(handlers::print::print_and_send))
         // Action Proofs
         .route("/proofs", post(handlers::proofs::submit_proof))
         // Tamper-evident audit chain (9eck:wms:<instance_id>)
@@ -1397,6 +1855,10 @@ async fn async_main() {
         // AI orchestrator — operator inbox + replies to paused tasks
         .route("/ai/tasks", get(handlers::ai::list_tasks))
         .route("/ai/tasks/:id/reply", post(handlers::ai::reply_to_task))
+        // Dashboard free-form Brain Chat (per-request engine override: glm/gemini)
+        .route("/ai/chat", post(handlers::ai::chat))
+        // Same brain, streamed loop progress over SSE (turn/tool/done/error)
+        .route("/ai/chat/stream", post(handlers::ai::chat_stream))
         // AI batch CSV enrichment (Analysis dashboard)
         .route("/ai/enrich-csv", post(handlers::ai::enrich_csv))
         // AI token-spend gauge (last 24h, local estimate from ai_telemetry)
@@ -1426,6 +1888,19 @@ async fn async_main() {
         .route("/scan", post(handlers::pda::handle_scan))
         .route("/repair/event", post(handlers::pda::repair_event))
         .route("/repair/consume", post(handlers::pda::consume))
+        // Receiving (Eingang/Ausgang) — receipt header + the units it became
+        .route("/receiving/receipts", post(handlers::receiving::create_receipt))
+        .route("/receiving/units", get(handlers::receiving::list_units))
+        .route("/receiving/units/:unit_id/move", post(handlers::receiving::move_unit))
+        // The ACTIVE receipt (Beleg): point operations on one receipt the
+        // receiver has open — read its context, add a unit the camera found,
+        // append a note/OCR page, put a device into repair or take it back out
+        .route("/receiving/receipts/:receipt_id", get(handlers::receiving::get_receipt))
+        .route("/receiving/receipts/:receipt_id/units", post(handlers::receiving::add_unit))
+        .route("/receiving/receipts/:receipt_id/note", post(handlers::receiving::append_note))
+        .route("/receiving/receipts/:receipt_id/repair", post(handlers::receiving::set_repair))
+        // Walk-in intake: find the Zoho ticket behind an OCR'd Reparaturauftrag
+        .route("/receiving/tickets/lookup", get(handlers::receiving::lookup_tickets))
         .route("/upload/image", post(handlers::files::upload))
         .route("/users/active", get(handlers::pda::active_users))
         .route("/users/verify-pin", post(handlers::pda::verify_pin))
@@ -1443,6 +1918,9 @@ async fn async_main() {
         // Trips (PDA Fahrtenbuch — cell-tower tracks + odometer)
         .route("/trips", post(handlers::trips::upload_trip).get(handlers::trips::list_trips))
         .route("/trips/export", get(handlers::trips::export_trips))
+        // Monthly expense report + "forgotten items" gap detection
+        .route("/reports/expense", get(services::expense_report::get_expense_report))
+        .route("/reports/expense/:month/filed", post(services::expense_report::set_filed).delete(services::expense_report::clear_filed))
         .route("/trips/purpose-candidates", get(handlers::trips::purpose_candidates))
         .route("/trips/destinations", get(handlers::trips::destinations))
         // Ephemeral live position of an in-progress trip → TRIP_LIVE WS event
@@ -1463,9 +1941,20 @@ async fn async_main() {
         .route("/odoo/sync", post(handlers::odoo::sync))
         // Bridge the odoo_product mirror into 9eck's native product catalog
         .route("/odoo/bridge-products", post(handlers::odoo::bridge_products))
+        // Bridge the odoo_partner mirror into 9eck's native partner table
+        .route("/odoo/bridge-partners", post(handlers::odoo::bridge_partners))
+        // Claimlist legacy bridge (tenant weekly-report xlsx over MS Graph) —
+        // reader/exporter, dormant unless CLAIMLIST_TOKEN_FILE is set.
+        .route("/claimlist/status", get(handlers::claimlist::status))
+        .route("/claimlist/check", post(handlers::claimlist::check))
+        .route("/claimlist/diff", get(handlers::claimlist::diff))
+        .route("/claimlist/assign/:order_id", post(handlers::claimlist::assign))
+        .route("/claimlist/export", get(handlers::claimlist::export))
+        .route("/claimlist/from-receipt/:receipt_id", post(handlers::claimlist::from_receipt))
         // Stubs (not yet ported from the legacy system)
         .route("/odoo/pickings", get(handlers::stubs::odoo_pickings))
         .route("/delivery/shipments", get(handlers::stubs::list_shipments).post(handlers::stubs::create_shipment))
+        .route("/delivery/shipments/lookup", get(handlers::stubs::lookup_shipments))
         .route("/delivery/config", get(handlers::stubs::delivery_config))
         .route("/delivery/shipments/:id/cancel", post(handlers::stubs::cancel_shipment))
         .route("/delivery/shipments/:id/resolve", post(handlers::stubs::resolve_shipment))
@@ -1509,6 +1998,22 @@ async fn async_main() {
         // operator can mint themselves an admin account)
         .route("/admin/users", get(handlers::users::list).post(handlers::users::create))
         .route("/admin/users/:id", put(handlers::users::update).delete(handlers::users::delete))
+        // PII vault (.eck/PII_VAULT.md §2/§6-P0.5): tenant key lifecycle driven
+        // from a full node. bootstrap = first node; enroll/join = add a node;
+        // revoke = cut one off; recover = re-key a lost home; status = ring state.
+        // Each verifies the node's own paid license (412) and signs its safe
+        // writes with the node identity.
+        .route("/admin/vault/bootstrap", post(handlers::vault_admin::bootstrap))
+        .route("/admin/vault/enroll", post(handlers::vault_admin::enroll))
+        .route("/admin/vault/join", post(handlers::vault_admin::join))
+        .route("/admin/vault/revoke", post(handlers::vault_admin::revoke))
+        .route("/admin/vault/recover", post(handlers::vault_admin::recover))
+        .route("/admin/vault/status", get(handlers::vault_admin::status))
+        // P0.7 key rotation: bump MDK/VK epochs (pp stays at 0 until P1b), then
+        // the re-envelope sweep that rewrites the cache nodes' stored epoch-0
+        // ciphertext, then {"finalize":true} to retire the old epochs.
+        .route("/admin/vault/rotate", post(handlers::vault_admin::rotate))
+        .route("/admin/vault/sweep", post(handlers::vault_admin::sweep))
         // Devices
         .route("/admin/pair-code", post(handlers::device::mint_pair_code))
         .route("/admin/devices", get(handlers::device::list_devices))
@@ -1551,10 +2056,37 @@ async fn async_main() {
         // shim.env (this node's base URL + tier bearer) + README. Admin-only —
         // it mints a live token into the download.
         .route("/admin/mcp-connector", get(mcp::connector::mcp_connector))
+        // Personal browser MCP sessions: list active ones + revoke by id/prefix
+        // (lost-laptop cut-off). Admin-gated by the route_layer below.
+        .route("/admin/mcp-sessions", get(mcp::session::admin_list_sessions))
+        .route("/admin/mcp-sessions/:id", delete(mcp::session::admin_revoke_session))
+        // Brain-Chat transcript telemetry (node-local, admin-only): list/detail/
+        // markdown export + per-model stats + delete. PII stays on the node
+        // (master answers carry clear names) — see ai::chat_log module docs.
+        .route("/admin/chat-sessions", get(handlers::ai::admin_chat_sessions))
+        .route("/admin/chat-sessions/:id", get(handlers::ai::admin_chat_session).delete(handlers::ai::admin_chat_session_delete))
+        .route("/admin/chat-sessions/:id/export.md", get(handlers::ai::admin_chat_session_export))
+        .route("/admin/chat-stats", get(handlers::ai::admin_chat_stats))
+        // Brain tool-loop benchmark (.eck/BRAIN_LOOP_BENCH.md). DEV-GATED: the
+        // handler 404s unless ECK_BRAIN_BENCH=1, so it is inert in normal
+        // deployments; admin-only via the require_admin layer below.
+        .route("/ai/bench/brain", post(handlers::ai::bench_brain))
         // Customer-addable UI languages: machine-translate the English label set
         // into a new language at runtime (background job + poll-able status).
         .route("/admin/i18n/languages", post(handlers::i18n::add_language))
         .route("/admin/i18n/languages/:lang/status", get(handlers::i18n::add_language_status))
+        // Stage-A OpenRouter shadow soak (.eck/OPENROUTER_TIER.md §7). READ-ONLY:
+        // recomputes summaries via the OR route and logs [or-shadow]/[or-soak-done]
+        // — never persists/vclock/meshes (would re-arm a re-summarization burn).
+        .route("/admin/or-soak", post(handlers::ops::or_soak))
+        // Vision-wave sibling (.eck/OPENROUTER_TIER.md §13). READ-ONLY: shadow-runs
+        // the two-pass image pipeline on N attachments, logs [img-shadow]/
+        // [img-soak-done] — never persists/vclock/meshes.
+        .route("/admin/img-soak", post(handlers::ops::img_soak))
+        // NAS repair-tree ingester (.eck/REPAIR_LIFECYCLE.md §7). Kiosk-lane
+        // only: 404s unless ECK_NAS_INGEST_ROOT points at the year folder.
+        // DRY-RUN is the default (body `dry_run` absent ⇒ true).
+        .route("/admin/nas-ingest", post(handlers::ops::nas_ingest))
         // Layer order: tower wraps outer→inner with the LAST declared call
         // outermost, so auth (validates JWT, inserts Claims) runs first, then
         // require_admin reads the Claims extension.
@@ -1564,6 +2096,11 @@ async fn async_main() {
     // Public routes (no JWT required)
     let public_routes = Router::new()
         .route("/auth/login", post(handlers::auth::login))
+        // Personal browser MCP session: verify WMS creds (same path as /auth/login)
+        // and mint a client-bound MCP bearer; logout revokes it. No JWT required
+        // (the bearer/credentials authenticate themselves).
+        .route("/auth/mcp-session", post(mcp::session::mcp_session_login))
+        .route("/auth/mcp-session/logout", post(mcp::session::mcp_session_logout))
         .route("/auth/setup-status", get(handlers::auth::setup_status))
         .route("/auth/kiosk-token", get(handlers::auth::kiosk_token))
         // Single-use nonce for replay-proof device auth (signed into register-device)
@@ -1590,6 +2127,9 @@ async fn async_main() {
                 "license_reason": pos_license_reason,
                 "nav_site_url": nav_site_url,
                 "demo_login_hint": demo_login_hint,
+                // Which view the dashboard lands on after login for THIS node:
+                // "dashboard" (kiosk → full-bleed map) or "chat" (default).
+                "default_view": default_view,
             }))
         }));
 
@@ -1601,6 +2141,11 @@ async fn async_main() {
         .route("/mesh/sync/push", post(handlers::mesh::sync_push))
         .route("/mesh/file/:hash", get(handlers::mesh::serve_mesh_file))
         .route("/mesh/raw-docs/:ticket_id", get(handlers::mesh::raw_docs))
+        // Re-envelope (P0.7): a cache node hands back the envelopes it holds and
+        // accepts the same plaintext re-sealed under the rotated mesh data key.
+        // Never creates rows — see handlers::mesh::re_envelope_apply.
+        .route("/mesh/re-envelope/ids", get(handlers::mesh::re_envelope_ids))
+        .route("/mesh/re-envelope", post(handlers::mesh::re_envelope_apply))
         .route("/mesh/tasks", get(handlers::mesh::get_tasks))
         .route("/mesh/tasks/nudge", post(handlers::mesh::nudge_tasks))
         .route("/mesh/tasks/:id", delete(handlers::mesh::delete_task))
@@ -1635,6 +2180,8 @@ async fn async_main() {
     let xelixir_internal_routes = Router::new()
         .route("/internal/dispatch", post(handlers::xelixir::internal_dispatch))
         .route("/internal/result/:task_id", get(handlers::xelixir::internal_result))
+        // Forum purchase-claim verification for the shared tri-site service.
+        .route("/internal/purchase-check", post(handlers::xelixir::internal_purchase_check))
         .route_layer(axum_mw::from_fn(middleware::service_token::require_service_token));
 
     // Extended ops vocabulary — xelixir's autonomous ops loop calls these.
@@ -1675,7 +2222,58 @@ async fn async_main() {
         .merge(xelixir_internal_routes)
         .merge(xelixir_ops_routes);
 
+    // Remote PII masker serving endpoint (.eck/PII_REMOTE_MASKING.md slice 2).
+    // Opt-in per node via ECK_PII_SPANS_SERVE=1 (never public). The handler
+    // serves LOCAL NER only and 503s otherwise, so it can never proxy raw text
+    // to Gemini. AUTH accepts EITHER a dashboard JWT OR a weak node's PAID mesh
+    // license (Authorization: Bearer) — verified on the same or_proxy seam as
+    // /api/ai/or — so the kiosk can call it without a dashboard account.
+    let pii_spans_routes = Router::new();
+    let pii_spans_routes = if std::env::var("ECK_PII_SPANS_SERVE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        pii_spans_routes
+            .route("/pii/spans", post(handlers::pii_spans::spans))
+            .route_layer(axum_mw::from_fn_with_state(
+                app_state.clone(),
+                middleware::spans_auth::spans_auth_middleware,
+            ))
+    } else {
+        pii_spans_routes
+    };
+
+    // Managed OpenRouter proxy — the AI-distribution / commerce seam (owner
+    // decision 2026-08-30: billing lives in 9eck). Opt-in per node via
+    // ECK_OR_SERVE=1; the route does not exist otherwise. NOT behind the JWT
+    // auth layer — the handler authenticates the CLIENT's paid mesh license
+    // (Authorization: Bearer) itself via the relay-paidgate seam, then meters.
+    let or_serve_routes = Router::new();
+    let or_serve_routes = if std::env::var("ECK_OR_SERVE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        or_serve_routes.route("/ai/or", post(handlers::or_proxy::serve))
+    } else {
+        or_serve_routes
+    };
+
+    // Vault-safe share-holder surface (`.eck/PII_VAULT.md` §2). Registered
+    // unconditionally so `/vault/health` can report state; every other handler
+    // returns 404 unless `ECK_VAULT_SERVE=1`. NOT behind the JWT auth layer —
+    // each handler authenticates the tenant's paid mesh license itself
+    // (Authorization: Bearer) via the same seam as the OpenRouter proxy.
+    let vault_routes = Router::new()
+        .route("/vault/share",
+            post(handlers::vault_safe::fetch_share).put(handlers::vault_safe::put_share))
+        .route("/vault/node", post(handlers::vault_safe::node_action))
+        .route("/vault/nodes", get(handlers::vault_safe::list_nodes))
+        .route("/vault/health", get(handlers::vault_safe::health));
+
     let api_router = public_routes.merge(protected_routes).merge(admin_routes).merge(p2p_routes)
+        .merge(pii_spans_routes)
+        .merge(or_serve_routes)
+        .merge(vault_routes)
         .fallback(|| async {
             (
                 axum::http::StatusCode::NOT_FOUND,
@@ -1754,7 +2352,63 @@ async fn async_main() {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     info!("eckWMS listening on {}", addr);
+
+    // Self-watchdog: an OS thread (off the runtime) that probes our own /E/health
+    // and `abort()`s if the tokio runtime goes unresponsive, so systemd's
+    // `Restart=` recovers the node. Guards against runtime-wide stalls that a
+    // tokio-hosted health check could never observe (kiosk incident 2026-09-03:
+    // 23 min silent, accept backlog full, swap-thrash). Disabled with
+    // ECK_SELF_WATCHDOG_INTERVAL_SECS=0. The listener is already bound here, and
+    // the watchdog waits out its own grace window before the first probe.
+    services::self_watchdog::spawn(port, tokio::runtime::Handle::current());
+
+    // Release the encrypted data volume on a graceful stop, but ONLY when the
+    // operator asked for it (ECK_DATAFS_UNMOUNT_ON_EXIT=1). Default off: leaving
+    // the gocryptfs daemon mounted is what lets `Restart=always` re-attach in
+    // milliseconds without another eck1/2/3 round-trip — and a box that is
+    // powered off has no live mount anyway. Only armed when the volume is
+    // configured, so SIGTERM handling is untouched on every other node.
+    if eck_core::vault::datafs::is_configured() {
+        tokio::spawn(async {
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{signal, SignalKind};
+                let Ok(mut term) = signal(SignalKind::terminate()) else { return };
+                tokio::select! {
+                    _ = term.recv() => {}
+                    _ = tokio::signal::ctrl_c() => {}
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+            eck_core::vault::datafs::unmount_on_exit_if_requested();
+            std::process::exit(0);
+        });
+    }
+
     axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap();
+}
+
+/// `prctl(PR_SET_DUMPABLE, 0)` — no core dump of a process whose RAM holds the
+/// tenant master key, the PPRL pepper and the data-volume key, and
+/// `/proc/<pid>/{mem,environ,maps,fd}` re-owned to `root:root` so nothing
+/// running as the service uid (or sharing it) can scrape them. A no-op
+/// everywhere but Linux. Complemented by `LimitCORE=0` in
+/// `scripts/systemd/9eck-wms-datafs.conf` (the kernel still honours a
+/// `core_pattern` pipe for dumpable processes, so both belt and braces).
+fn harden_process() {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        // PR_SET_DUMPABLE = 4, SUID_DUMP_DISABLE = 0.
+        if libc::prctl(4, 0, 0, 0, 0) != 0 {
+            eprintln!(
+                "warning: prctl(PR_SET_DUMPABLE, 0) failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
 }
 
 async fn health_check() -> Json<HealthResponse> {

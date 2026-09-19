@@ -138,6 +138,10 @@ pub async fn log_telemetry(
     let prompt_tokens = usage.get("promptTokenCount").and_then(|v| v.as_i64()).unwrap_or(0);
     let candidates_tokens = usage.get("candidatesTokenCount").and_then(|v| v.as_i64()).unwrap_or(0);
     let total_tokens = usage.get("totalTokenCount").and_then(|v| v.as_i64()).unwrap_or(0);
+    // Set by callers (e.g. local-mode embeds, which the provider never metered)
+    // when `total_tokens` above is a len/4 estimate rather than a real billed
+    // usage — so spend audits can tell the two apart.
+    let estimated = usage.get("estimated").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let result = db
         .query(
@@ -148,7 +152,8 @@ pub async fn log_telemetry(
                 entity_id: $entity_id,
                 prompt_tokens: $prompt_tokens,
                 candidates_tokens: $candidates_tokens,
-                total_tokens: $total_tokens
+                total_tokens: $total_tokens,
+                estimated: $estimated
             }",
         )
         .bind(("module", module.to_string()))
@@ -157,6 +162,7 @@ pub async fn log_telemetry(
         .bind(("prompt_tokens", prompt_tokens))
         .bind(("candidates_tokens", candidates_tokens))
         .bind(("total_tokens", total_tokens))
+        .bind(("estimated", estimated))
         .await;
 
     if let Err(e) = result {

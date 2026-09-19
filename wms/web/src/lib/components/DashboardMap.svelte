@@ -185,9 +185,9 @@ onMount(async () => {
     currentMapStyle = 'dark';   // map is always dark (style switch removed)
 
     try {
-        const [rmas, tickets, shipmentsRes, slaCfg] = await Promise.all([
+        const [rmas, ticketsRes, shipmentsRes, slaCfg] = await Promise.all([
             api.get('/api/rma?type=repair'),
-            api.get('/api/support/tickets'),
+            api.get('/api/support/tickets?open_only=1&limit=5000'),
             api.get('/api/delivery/shipments'),
             api.get('/api/admin/config/dashboard_sla').catch(() => null),
         ]);
@@ -217,6 +217,7 @@ onMount(async () => {
                 addressInfo: { address: r.metadata?.address, zip: r.metadata?.zip, city: r.metadata?.city, country: r.metadata?.country || 'Germany' }
             }));
 
+        const tickets = ticketsRes?.tickets || [];
         const mappedTickets = (tickets || [])
             .filter(t => {
                 if (!isClosedStatus(t.status)) return true;

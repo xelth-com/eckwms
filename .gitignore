@@ -35,3 +35,6 @@ scraper/*.log
 tmp_threads.json
 opencode.json
 antigravity
+
+# runtime log directory (dated suffixes dodge *.log)
+logs/

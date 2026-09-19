@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 use std::path::{Component, Path as StdPath, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -23,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::process::Command;
 use tokio::sync::{Mutex, Semaphore};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::AppState;
 
@@ -583,6 +584,21 @@ const ZONE_1_TABLES: &[&str] = &[
     "stock_picking_delivery",
     "shipment_raw",
     "shipment",
+    // Node-local PII-leak quarantine: holds CLEAR unmasked-PII strings the LLM
+    // self-reported (spec .eck/PII_REMOTE_MASKING.md §7). Local-only (never in
+    // SYNC_ENTITY_TYPES); the ops/MCP surrealql_read plane must not read it.
+    "pii_leak_quarantine",
+    // Warehouse receiving: the receipt header carries client_name /
+    // client_address off the parcel label (and the raw OCR of it), and the
+    // units point back at it. Meshes, but the ops control plane can't read it.
+    "receipt",
+    "receipt_unit",
+    // The PII vault (.eck/PII_VAULT.md §3.1). The rows are ciphertext, but the
+    // ops plane has no business enumerating WHICH tokens a tenant holds (that
+    // alone is a customer-count / linkage signal), and `fuzzy` is a search
+    // property over real names. Clear only ever comes out through the audited
+    // reveal path, never through surrealql_read.
+    "pii_vault",
 ];
 
 /// Whether the query mentions a Zone 1 table as a standalone word; returns the
@@ -1538,4 +1554,628 @@ async fn finish_with_error(id: &str, msg: &str) {
         t.finished_at = Some(chrono::Utc::now().to_rfc3339());
     })
     .await;
+}
+
+// ─── POST /admin/or-soak ───────────────────────────────────────────────────
+//
+// Stage A of the OpenRouter cheap-tier rollout (`.eck/OPENROUTER_TIER.md` §7).
+// Admin-gated (mounted in the require_admin router). Spawns a STRICTLY
+// READ-ONLY background soak: for up to `limit` recent already-summarized docs
+// it recomputes the summary via the OpenRouter shadow route and logs the result
+// — it NEVER persists, bumps a vclock, meshes, or writes telemetry to the DB.
+//
+// CRITICAL (why read-only, not a real re-summarization): this dev node is NOT
+// the summary author — the kiosk has been since 2026-08-26. A real
+// re-summarization here would persist + vclock-bump + mesh-sync and re-arm a
+// fleet-wide re-summarization burn (the 2026-08-26 incident cost 8.2M units).
+// So the soak calls ONLY `or_soak_summarize` (build masked input via SELECTs +
+// one OR chat call) and emits logs. On this node the usage-report seam is a
+// no-op too (no `ECK_VERTEX_USAGE_URL`), so there isn't even a wallet debit.
+//
+// Safety: OR route forced directly (independent of ECK_AI_TASK_ROUTES /
+// ECK_AI_SHADOW), concurrency 4, one retry per doc on a transient OR failure,
+// and a hard cumulative-cost cap ($0.50) that aborts the whole run.
+
+/// Hard ceiling on how many docs a single soak may touch (defense against a
+/// fat `limit`). Requested `limit` is clamped to this.
+const OR_SOAK_HARD_CAP: usize = 500;
+/// Base-URL-aware default OR model for BOTH soaks, used when the request omits
+/// `model` (an explicit body `model` always wins). On a Z.ai-direct / bigmodel
+/// base URL the OpenRouter-prefixed `z-ai/glm-5.3-flash` 404s — that dialect
+/// wants the UNprefixed name; on OpenRouter proper the prefix is required. Pure
+/// (takes the base URL string), so it is unit-tested without env.
+fn default_soak_model(or_base_url: &str) -> &'static str {
+    let b = or_base_url.to_ascii_lowercase();
+    if b.contains("z.ai") || b.contains("bigmodel") {
+        "glm-5.3-flash"
+    } else {
+        "z-ai/glm-5.3-flash"
+    }
+}
+/// Abort the whole run once cumulative OR cost crosses this (USD).
+const OR_SOAK_COST_ABORT_USD: f64 = 0.50;
+/// Parallel OR calls in flight.
+const OR_SOAK_CONCURRENCY: usize = 4;
+
+#[derive(Deserialize)]
+pub struct OrSoakRequest {
+    /// How many recent summarized docs to shadow (clamped to `OR_SOAK_HARD_CAP`).
+    #[serde(default = "default_or_soak_limit")]
+    pub limit: usize,
+    /// OpenRouter model override; defaults via `default_soak_model` (base-URL-aware).
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+fn default_or_soak_limit() -> usize {
+    200
+}
+
+/// The or-soak selection SQL, extracted so the mem-Surreal test executes the
+/// EXACT query the handler runs (the shape that catches the v3 "ORDER BY field
+/// must be projected" parse error). `updated_at` IS in the projection.
+fn or_soak_select_sql(limit: usize) -> String {
+    format!(
+        "SELECT record::id(id) AS id, type, updated_at FROM document \n         WHERE ai_summary IS NOT NONE AND ai_summary != '' \n         AND type IN ['support_ticket', 'invoice'] \n         ORDER BY updated_at DESC LIMIT {limit}"
+    )
+}
+
+/// The img-soak selection SQL, extracted for the same executed-query test.
+/// `created_at` MUST be in the projection or SurrealDB v3 rejects the ORDER BY.
+fn img_soak_select_sql(limit: usize) -> String {
+    format!(
+        "SELECT cas_uuid, created_at FROM file_resource \n         WHERE replaced_by IS NONE AND storage_path IS NOT NONE \n         AND mime_type IN ['image/jpeg', 'image/png', 'image/webp', 'image/avif'] \n         AND (optimization_level IS NONE OR optimization_level >= 0) \n         ORDER BY created_at DESC LIMIT {limit}"
+    )
+}
+
+pub async fn or_soak(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<OrSoakRequest>,
+) -> (StatusCode, Json<Value>) {
+    let limit = body.limit.clamp(1, OR_SOAK_HARD_CAP);
+    let model = body
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            default_soak_model(&std::env::var("ECK_OR_BASE_URL").unwrap_or_default()).to_string()
+        });
+
+    // Force the OR auth directly — do NOT depend on the global route/shadow env.
+    let key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
+    if key.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": "OPENROUTER_API_KEY is empty — cannot run the OR soak",
+            })),
+        );
+    }
+
+    let db = state.db.clone();
+    info!(
+        target: "ops_audit",
+        verb = "or_soak", limit, model = %model,
+        "ops verb dispatched (read-only OR shadow soak)"
+    );
+
+    let model_for_spawn = model.clone();
+    tokio::spawn(async move {
+        run_or_soak(db, key, model_for_spawn, limit).await;
+    });
+
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "success": true,
+            "verb": "or-soak",
+            "limit": limit,
+            "model": model,
+            "note": "read-only OR shadow soak started; watch logs for [or-shadow] per doc and the final [or-soak-done] line",
+        })),
+    )
+}
+
+/// The background soak body. Read-only: selection SELECT + per-doc masked-input
+/// build (SELECTs) + one OR chat call; logs only.
+async fn run_or_soak(db: eck_core::db::SurrealDb, api_key: String, model: String, limit: usize) {
+    let http = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("[or-soak] failed to build HTTP client: {e}");
+            return;
+        }
+    };
+    let or_auth = Arc::new(eck_core::ai::AiAuth::OpenRouter {
+        api_key,
+        model: model.clone(),
+        // Shadow soak uses the node-local OPENROUTER_API_KEY directly (BYOK).
+        proxied: false,
+        serve_node: None,
+        base_url: None,
+    });
+
+    // Selection: recent docs that already carry a summary (the re-summarize
+    // sweep of §7). Raw-availability is enforced per-doc by `or_soak_summarize`
+    // returning None (skipped) — the same input-build the live path uses.
+    let docs: Vec<Value> = match db
+        .query(or_soak_select_sql(limit))
+        .await
+        .and_then(|mut r| r.take(0))
+    {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("[or-soak] selection query failed: {e}");
+            return;
+        }
+    };
+    let requested = docs.len();
+    info!("[or-soak] starting: requested={requested} model={model} concurrency={OR_SOAK_CONCURRENCY}");
+
+    let sem = Arc::new(Semaphore::new(OR_SOAK_CONCURRENCY));
+    let processed = Arc::new(AtomicUsize::new(0));
+    let skipped = Arc::new(AtomicUsize::new(0));
+    let errors = Arc::new(AtomicUsize::new(0));
+    let cjk_hits = Arc::new(AtomicUsize::new(0));
+    let empty_hits = Arc::new(AtomicUsize::new(0));
+    let cost_micro = Arc::new(AtomicU64::new(0)); // Σ cost_usd × 1e6
+    let latency_sum_ms = Arc::new(AtomicU64::new(0));
+    let aborted = Arc::new(AtomicBool::new(false));
+
+    let mut handles = Vec::new();
+    for doc in docs {
+        if aborted.load(Ordering::Relaxed) {
+            break;
+        }
+        let id = match doc.get("id").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let permit = match sem.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => break, // semaphore closed
+        };
+        // Re-check after acquiring (an in-flight task may have tripped the cap).
+        if aborted.load(Ordering::Relaxed) {
+            drop(permit);
+            break;
+        }
+
+        let db = db.clone();
+        let http = http.clone();
+        let or_auth = or_auth.clone();
+        let (processed, skipped, errors) = (processed.clone(), skipped.clone(), errors.clone());
+        let (cjk_hits, empty_hits) = (cjk_hits.clone(), empty_hits.clone());
+        let (cost_micro, latency_sum_ms, aborted) =
+            (cost_micro.clone(), latency_sum_ms.clone(), aborted.clone());
+
+        handles.push(tokio::spawn(async move {
+            let _permit = permit;
+            if aborted.load(Ordering::Relaxed) {
+                return;
+            }
+            let started = Instant::now();
+            // One retry on a transient OR failure. An empty-content-with-
+            // reasoning error is a GUARD trip, not transient — never retried.
+            let mut res = crate::ai::summarization::or_soak_summarize(&db, &http, &or_auth, &doc, &id).await;
+            if let Err(ref e) = res {
+                if !e.to_string().contains("empty content") {
+                    res = crate::ai::summarization::or_soak_summarize(&db, &http, &or_auth, &doc, &id).await;
+                }
+            }
+
+            match res {
+                Ok(None) => {
+                    skipped.fetch_add(1, Ordering::Relaxed);
+                }
+                Ok(Some((summary, usage))) => {
+                    let latency_ms = started.elapsed().as_millis() as u64;
+                    let cost = usage
+                        .get("openrouterCostUsd")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let provider = usage
+                        .get("openrouterProvider")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let cjk = crate::ai::summarization::contains_cjk(&summary);
+                    let or_model = or_auth.or_model().unwrap_or("");
+                    processed.fetch_add(1, Ordering::Relaxed);
+                    latency_sum_ms.fetch_add(latency_ms, Ordering::Relaxed);
+                    if cjk {
+                        cjk_hits.fetch_add(1, Ordering::Relaxed);
+                    }
+                    // The existing [or-shadow] line, per doc (provider added for
+                    // the soak so a grep shows which upstream served each call).
+                    info!(
+                        "[or-shadow] task=summarization model={or_model} provider={provider} doc={id} latency_ms={latency_ms} cost_usd={cost:.6} cjk_bleed={cjk} chars={}",
+                        summary.len()
+                    );
+                    // Accumulate cost and trip the safety cap if crossed.
+                    let micro = (cost.max(0.0) * 1_000_000.0) as u64;
+                    let total_micro = cost_micro.fetch_add(micro, Ordering::Relaxed) + micro;
+                    if total_micro as f64 / 1e6 > OR_SOAK_COST_ABORT_USD
+                        && !aborted.swap(true, Ordering::Relaxed)
+                    {
+                        warn!(
+                            "[or-soak-abort] cumulative cost ${:.4} exceeded ${:.2} safety cap — aborting run",
+                            total_micro as f64 / 1e6,
+                            OR_SOAK_COST_ABORT_USD
+                        );
+                    }
+                }
+                Err(e) => {
+                    // Empty-content-with-reasoning is the §3.2 guard trip; count
+                    // it separately from genuine call errors.
+                    if e.to_string().contains("empty content") {
+                        empty_hits.fetch_add(1, Ordering::Relaxed);
+                    } else {
+                        errors.fetch_add(1, Ordering::Relaxed);
+                    }
+                    warn!("[or-soak] doc={id} error: {e}");
+                }
+            }
+        }));
+    }
+
+    for h in handles {
+        let _ = h.await;
+    }
+
+    let processed_n = processed.load(Ordering::Relaxed);
+    let errors_n = errors.load(Ordering::Relaxed);
+    let cjk_n = cjk_hits.load(Ordering::Relaxed);
+    let empty_n = empty_hits.load(Ordering::Relaxed);
+    let skipped_n = skipped.load(Ordering::Relaxed);
+    let total_cost = cost_micro.load(Ordering::Relaxed) as f64 / 1e6;
+    let avg_latency = if processed_n > 0 {
+        latency_sum_ms.load(Ordering::Relaxed) / processed_n as u64
+    } else {
+        0
+    };
+    if aborted.load(Ordering::Relaxed) {
+        warn!("[or-soak] run ended early via the ${:.2} cost cap", OR_SOAK_COST_ABORT_USD);
+    }
+    info!("[or-soak] skipped(raw-unavailable/unknown)={skipped_n}");
+    info!(
+        "[or-soak-done] requested={requested} processed={processed_n} errors={errors_n} cjk_hits={cjk_n} empty_hits={empty_n} total_cost_usd={total_cost:.4} avg_latency_ms={avg_latency}"
+    );
+}
+
+// ─── POST /admin/img-soak ───────────────────────────────────────────────────
+//
+// Vision-wave sibling of or-soak (.eck/OPENROUTER_TIER.md §13). Admin-gated,
+// STRICTLY READ-ONLY: shadow-runs the two-pass image pipeline
+// (`ai::image_summary::run_image_pipeline`) on up to `limit` recent image
+// attachments and logs the result — it NEVER persists, bumps a vclock, meshes,
+// or writes DB telemetry. Forces the OR (glm) vision route directly from the
+// node-local OPENROUTER_API_KEY (independent of ECK_AI_TASK_ROUTES /
+// ECK_AI_IMAGE_POLICY), so it exercises the paid tier the wave will flip to.
+// Same $0.50 cumulative-cost abort as or-soak; hard cap 200 attachments.
+
+const IMG_SOAK_HARD_CAP: usize = 200;
+const IMG_SOAK_CONCURRENCY: usize = 2; // Z.ai latency spikes under concurrency (bench)
+
+#[derive(Deserialize)]
+pub struct ImgSoakRequest {
+    #[serde(default = "default_img_soak_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+fn default_img_soak_limit() -> usize {
+    50
+}
+
+pub async fn img_soak(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ImgSoakRequest>,
+) -> (StatusCode, Json<Value>) {
+    let limit = body.limit.clamp(1, IMG_SOAK_HARD_CAP);
+    let model = body
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            default_soak_model(&std::env::var("ECK_OR_BASE_URL").unwrap_or_default()).to_string()
+        });
+
+    let key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
+    if key.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": "OPENROUTER_API_KEY is empty — cannot run the image soak",
+            })),
+        );
+    }
+
+    let db = state.db.clone();
+    info!(
+        target: "ops_audit",
+        verb = "img_soak", limit, model = %model,
+        "ops verb dispatched (read-only image vision shadow soak)"
+    );
+
+    let model_for_spawn = model.clone();
+    tokio::spawn(async move {
+        run_img_soak(db, key, model_for_spawn, limit).await;
+    });
+
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "success": true,
+            "verb": "img-soak",
+            "limit": limit,
+            "model": model,
+            "note": "read-only image vision shadow soak started; watch logs for [img-shadow] per attachment and the final [img-soak-done] line",
+        })),
+    )
+}
+
+/// The background image soak body. Read-only: selection SELECT + per-attachment
+/// two-pass pipeline (no persist). Logs only.
+async fn run_img_soak(db: eck_core::db::SurrealDb, api_key: String, model: String, limit: usize) {
+    let http = match reqwest::Client::builder().timeout(Duration::from_secs(90)).build() {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("[img-soak] failed to build HTTP client: {e}");
+            return;
+        }
+    };
+    let or_auth = Arc::new(eck_core::ai::AiAuth::OpenRouter {
+        api_key,
+        model: model.clone(),
+        proxied: false,
+        serve_node: None,
+        base_url: None,
+    });
+
+    // Live (byte-owning) image rows, newest first. Same decodable-mime + non-
+    // failed filter as the worker; the pipeline returns None for anything it
+    // cannot decode (counted as skipped).
+    let rows: Vec<Value> = match db
+        .query(img_soak_select_sql(limit))
+        .await
+        .and_then(|mut r| r.take(0))
+    {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("[img-soak] selection query failed: {e}");
+            return;
+        }
+    };
+    let requested = rows.len();
+    info!("[img-soak] starting: requested={requested} model={model} concurrency={IMG_SOAK_CONCURRENCY}");
+
+    let sem = Arc::new(Semaphore::new(IMG_SOAK_CONCURRENCY));
+    let processed = Arc::new(AtomicUsize::new(0));
+    let skipped = Arc::new(AtomicUsize::new(0));
+    let errors = Arc::new(AtomicUsize::new(0));
+    let zoom_hits = Arc::new(AtomicUsize::new(0));
+    let cost_micro = Arc::new(AtomicU64::new(0));
+    let latency_sum_ms = Arc::new(AtomicU64::new(0));
+    let aborted = Arc::new(AtomicBool::new(false));
+
+    let mut handles = Vec::new();
+    for row in rows {
+        if aborted.load(Ordering::Relaxed) {
+            break;
+        }
+        let cas = match row.get("cas_uuid").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let permit = match sem.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        if aborted.load(Ordering::Relaxed) {
+            drop(permit);
+            break;
+        }
+        let db = db.clone();
+        let http = http.clone();
+        let or_auth = or_auth.clone();
+        let (processed, skipped, errors, zoom_hits) =
+            (processed.clone(), skipped.clone(), errors.clone(), zoom_hits.clone());
+        let (cost_micro, latency_sum_ms, aborted) =
+            (cost_micro.clone(), latency_sum_ms.clone(), aborted.clone());
+
+        handles.push(tokio::spawn(async move {
+            let _permit = permit;
+            if aborted.load(Ordering::Relaxed) {
+                return;
+            }
+            let started = Instant::now();
+            match crate::ai::image_summary::run_image_pipeline(&db, &http, &or_auth, &cas).await {
+                Ok(None) => {
+                    skipped.fetch_add(1, Ordering::Relaxed);
+                }
+                Ok(Some(res)) => {
+                    let latency_ms = started.elapsed().as_millis() as u64;
+                    processed.fetch_add(1, Ordering::Relaxed);
+                    latency_sum_ms.fetch_add(latency_ms, Ordering::Relaxed);
+                    if res.zoom_used {
+                        zoom_hits.fetch_add(1, Ordering::Relaxed);
+                    }
+                    info!(
+                        "[img-shadow] cas={cas} model={} tier_prompt_tokens={} zoom={} calls={} cost_usd={:.6} latency_ms={latency_ms} chars={}",
+                        res.model, res.tier_prompt_tokens, res.zoom_used, res.calls, res.cost_usd, res.summary.len()
+                    );
+                    let micro = (res.cost_usd.max(0.0) * 1_000_000.0) as u64;
+                    let total_micro = cost_micro.fetch_add(micro, Ordering::Relaxed) + micro;
+                    if total_micro as f64 / 1e6 > OR_SOAK_COST_ABORT_USD
+                        && !aborted.swap(true, Ordering::Relaxed)
+                    {
+                        warn!(
+                            "[img-soak-abort] cumulative cost ${:.4} exceeded ${:.2} safety cap — aborting run",
+                            total_micro as f64 / 1e6,
+                            OR_SOAK_COST_ABORT_USD
+                        );
+                    }
+                }
+                Err(e) => {
+                    errors.fetch_add(1, Ordering::Relaxed);
+                    warn!("[img-soak] cas={cas} error: {e}");
+                }
+            }
+        }));
+    }
+
+    for h in handles {
+        let _ = h.await;
+    }
+
+    let processed_n = processed.load(Ordering::Relaxed);
+    let errors_n = errors.load(Ordering::Relaxed);
+    let zoom_n = zoom_hits.load(Ordering::Relaxed);
+    let skipped_n = skipped.load(Ordering::Relaxed);
+    let total_cost = cost_micro.load(Ordering::Relaxed) as f64 / 1e6;
+    let avg_latency = if processed_n > 0 {
+        latency_sum_ms.load(Ordering::Relaxed) / processed_n as u64
+    } else {
+        0
+    };
+    if aborted.load(Ordering::Relaxed) {
+        warn!("[img-soak] run ended early via the ${:.2} cost cap", OR_SOAK_COST_ABORT_USD);
+    }
+    info!("[img-soak] skipped(undecodable/not-found)={skipped_n}");
+    info!(
+        "[img-soak-done] requested={requested} processed={processed_n} errors={errors_n} zoom_hits={zoom_n} total_cost_usd={total_cost:.4} avg_latency_ms={avg_latency}"
+    );
+}
+
+// ── NAS repair-tree ingester (.eck/REPAIR_LIFECYCLE.md §7) ──────────────────
+//
+// Admin-gated. Walks the year folder under `ECK_NAS_INGEST_ROOT` and lands each
+// file into CAS + a `repair_case`/`has_evidence` graph. DRY-RUN IS THE DEFAULT
+// (`dry_run` absent ⇒ true): it hashes + reports and writes nothing. The endpoint
+// 404s when `ECK_NAS_INGEST_ROOT` is unset (kiosk-lane only, like the scrapers).
+
+#[derive(Deserialize)]
+pub struct NasIngestRequest {
+    /// Year folder to ingest (e.g. "2026"). Resolved under `ECK_NAS_INGEST_ROOT`.
+    #[serde(default = "default_nas_year")]
+    pub year: String,
+    /// Defaults TRUE — a real run must opt in explicitly with `"dry_run": false`.
+    #[serde(default = "default_true")]
+    pub dry_run: bool,
+    /// Optional cap on the number of case folders processed (soak / smoke runs).
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+fn default_nas_year() -> String {
+    "2026".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+
+/// `POST /api/admin/nas-ingest` — see module comment. Runs synchronously and
+/// returns the JSON report; use `limit` on the real NAS to bound a first run.
+pub async fn nas_ingest(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<NasIngestRequest>,
+) -> (StatusCode, Json<Value>) {
+    let root = match std::env::var("ECK_NAS_INGEST_ROOT") {
+        Ok(s) if !s.trim().is_empty() => s,
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": "ECK_NAS_INGEST_ROOT is unset — NAS ingester disabled on this node",
+                })),
+            );
+        }
+    };
+
+    info!(
+        target: "ops_audit",
+        verb = "nas_ingest", year = %body.year, dry_run = body.dry_run,
+        limit = ?body.limit, "ops verb dispatched (NAS repair-tree ingest)"
+    );
+
+    let iid = state.sync_engine.instance_id().to_string();
+    let report = crate::services::nas_ingest::run_ingest(
+        &state.db,
+        Some(&iid),
+        StdPath::new(&root),
+        &body.year,
+        body.dry_run,
+        body.limit,
+        ".",
+    )
+    .await;
+
+    let payload = serde_json::to_value(&report).unwrap_or_else(|_| json!({}));
+    (StatusCode::OK, Json(json!({ "success": true, "report": payload })))
+}
+
+#[cfg(test)]
+mod soak_tests {
+    use super::{default_soak_model, img_soak_select_sql, or_soak_select_sql};
+
+    /// The base-URL-aware default model: OR-prefixed for OpenRouter proper,
+    /// UNprefixed for the Z.ai-direct / bigmodel dialect (the prefixed name 404s
+    /// there). Empty/unknown base URL keeps the OR-prefixed default.
+    #[test]
+    fn default_soak_model_is_base_url_aware() {
+        assert_eq!(default_soak_model(""), "z-ai/glm-5.3-flash");
+        assert_eq!(default_soak_model("https://openrouter.ai/api/v1"), "z-ai/glm-5.3-flash");
+        assert_eq!(default_soak_model("https://api.z.ai/api/paas/v4"), "glm-5.3-flash");
+        assert_eq!(default_soak_model("https://open.bigmodel.cn/api/paas/v4"), "glm-5.3-flash");
+        // Case-insensitive host match.
+        assert_eq!(default_soak_model("HTTPS://API.Z.AI/v1"), "glm-5.3-flash");
+    }
+
+    /// Both soak selection queries must actually PARSE + EXECUTE on SurrealDB v3.
+    /// This is the shape that catches the "ORDER BY field must be projected"
+    /// parse error (the img-soak bug): a `.take(0)` here fails if the query does
+    /// not parse, regardless of whether any rows exist.
+    #[tokio::test]
+    async fn soak_selection_queries_execute_on_mem_surreal() {
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::Mem>(())
+            .await
+            .unwrap();
+        db.use_ns("test").use_db("test").await.unwrap();
+
+        // Seed one matching row per table (also creates the tables; the mem
+        // engine errors on a SELECT from a table that never existed). The ORDER
+        // BY on a PROJECTED field must then parse + sort + return the row — a
+        // non-projected ORDER BY field is a v3 parse error, which is exactly what
+        // this executed query guards against.
+        db.query("CREATE document CONTENT { type: 'support_ticket', ai_summary: 'x', updated_at: time::now() }")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        db.query("CREATE file_resource CONTENT { cas_uuid: 'c1', storage_path: 'p', mime_type: 'image/jpeg', created_at: time::now() }")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+
+        let docs: Vec<serde_json::Value> =
+            db.query(or_soak_select_sql(200)).await.unwrap().take(0).unwrap();
+        assert_eq!(docs.len(), 1, "or-soak selection parses and returns the seeded ticket");
+
+        let imgs: Vec<serde_json::Value> =
+            db.query(img_soak_select_sql(50)).await.unwrap().take(0).unwrap();
+        assert_eq!(imgs.len(), 1, "img-soak selection parses and returns the seeded image");
+        assert_eq!(imgs[0].get("cas_uuid").and_then(|v| v.as_str()), Some("c1"));
+    }
 }

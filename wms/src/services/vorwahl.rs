@@ -92,19 +92,45 @@ pub fn vorwahl_city(phone: &str) -> Option<&'static str> {
 pub async fn try_place_by_vorwahl(db: &SurrealDb, id: &str, phone: &str) -> Option<&'static str> {
     let city = vorwahl_city(phone)?;
     let (lat, lng) = crate::services::geocoder::resolve_zip_city_cached(db, None, Some(city)).await?;
+    if persist_vorwahl_placement(db, id, city, lat, lng).await {
+        Some(city)
+    } else {
+        None
+    }
+}
+
+/// Write the area-code placement: the coarse pin PLUS the DERIVED town name in
+/// `meta.geo_city` (never the authoritative Zoho `meta.city`, which we don't
+/// touch), then advance the geo vclock so it survives a mesh merge. `geo_city`
+/// lets the brain's ticket tools find a place-less ticket by town — the geocoder
+/// had the town all along and was keeping only the pin. It rides the same geo
+/// block and is NOT a summary-seed field, so it never re-arms summarization or
+/// flips a sync digest beyond the geo change. Split out so the persistence is
+/// unit-testable without the network geocoder. Returns whether the write stuck.
+async fn persist_vorwahl_placement(db: &SurrealDb, id: &str, city: &str, lat: f64, lng: f64) -> bool {
     let q = "UPDATE document SET \
         meta.geo = { lat: $lat, lng: $lng }, \
+        meta.geo_city = $city, \
         meta.geo_fallback = NONE, meta.geo_failed = NONE, \
         meta.geo_source = 'vorwahl', meta.geo_coarse = true, \
         updated_at = time::now() \
      WHERE record::id(id) = $id RETURN NONE";
-    match db.query(q).bind(("id", id.to_string())).bind(("lat", lat)).bind(("lng", lng)).await {
+    match db
+        .query(q)
+        .bind(("id", id.to_string()))
+        .bind(("lat", lat))
+        .bind(("lng", lng))
+        .bind(("city", city.to_string()))
+        .await
+    {
         Ok(_) => {
-            // Advance causality so the area-code placement survives mesh merge.
             crate::services::geocoder::bump_geo_vclock(db, "document", id).await;
-            Some(city)
+            true
         }
-        Err(e) => { error!("[Vorwahl] {id}: db update failed: {e}"); None }
+        Err(e) => {
+            error!("[Vorwahl] {id}: db update failed: {e}");
+            false
+        }
     }
 }
 
@@ -144,6 +170,62 @@ pub async fn vorwahl_fill_batch(db: SurrealDb, limit: usize) {
     info!("[Vorwahl] Done: scanned={scanned} resolved={resolved} no_match={no_match}");
 }
 
+/// ONE-SHOT backfill (system_config done-marker) of `meta.geo_city` onto rows
+/// the area-code lever ALREADY placed (`geo_source = 'vorwahl'`) before this
+/// field existed. The town name is re-derived locally from `meta.phone` via
+/// `vorwahl_city` — no geocoder call, no network — and only the derived town
+/// name (public) is written. Bumps the geo vclock like `try_place_by_vorwahl`
+/// so the tag propagates. Home-node only (called from the geo sweep), and the
+/// marker makes a converged run a single near-empty select. `meta.geo` and the
+/// coords are already present, so this touches nothing else.
+pub async fn backfill_geo_city_once(db: &SurrealDb) {
+    // Done-marker gate (same pattern as main.rs's one-shot heals).
+    let healed: Vec<bool> = db
+        .query("SELECT VALUE done FROM system_config:geo_city_backfill_20260910")
+        .await
+        .and_then(|mut r| r.take(0))
+        .unwrap_or_default();
+    if healed.first().copied().unwrap_or(false) {
+        return;
+    }
+
+    let sql = "SELECT record::id(id) AS id, meta.phone AS phone FROM document \
+               WHERE type = 'support_ticket' AND meta.geo_source = 'vorwahl' \
+                 AND (meta.geo_city IS NONE OR meta.geo_city = '') \
+                 AND meta.phone != NONE AND meta.phone != '' LIMIT 5000";
+    let rows: Vec<serde_json::Value> = match db.query(sql).await.and_then(|mut r| r.take(0)) {
+        Ok(r) => r,
+        Err(e) => {
+            error!("[Vorwahl] geo_city backfill select failed: {e}");
+            return;
+        }
+    };
+
+    let mut filled = 0usize;
+    for row in &rows {
+        let id = row.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        let phone = row.get("phone").and_then(|v| v.as_str()).unwrap_or("");
+        let Some(city) = vorwahl_city(phone) else { continue };
+        let q = "UPDATE document SET meta.geo_city = $city, updated_at = time::now() \
+                 WHERE record::id(id) = $id RETURN NONE";
+        match db.query(q).bind(("id", id.clone())).bind(("city", city.to_string())).await {
+            Ok(_) => {
+                crate::services::geocoder::bump_geo_vclock(db, "document", &id).await;
+                filled += 1;
+            }
+            Err(e) => error!("[Vorwahl] geo_city backfill {id}: {e}"),
+        }
+    }
+
+    if let Err(e) = db
+        .query("UPSERT system_config:geo_city_backfill_20260910 SET done = true, at = time::now()")
+        .await
+    {
+        error!("[Vorwahl] geo_city backfill marker write failed: {e}");
+    }
+    info!("[Vorwahl] geo_city backfill: scanned={} filled={filled}", rows.len());
+}
+
 #[cfg(test)]
 mod tests {
     use super::{national_digits, vorwahl_city};
@@ -163,6 +245,52 @@ mod tests {
         // Toll-free 0800 passes the format filter but has no geographic code,
         // so the table lookup yields nothing.
         assert_eq!(vorwahl_city("0800 1234567"), None);
+    }
+
+    // The area-code lever must persist the DERIVED town into `meta.geo_city`
+    // (the fallback the brain searches by) and tag geo_source, WITHOUT touching
+    // the authoritative Zoho `meta.city`. Hermetic: exercises the real DB write
+    // helper directly with the town `vorwahl_city` resolves + fixed coords, so
+    // no Nominatim / geo_cache round-trip is involved.
+    #[tokio::test]
+    async fn persists_geo_city_from_area_code() {
+        use eck_core::db::SurrealDb;
+        let db: SurrealDb = surrealdb::engine::any::connect("mem://").await.unwrap();
+        db.use_ns("test").use_db("test").await.unwrap();
+        db.query("DEFINE TABLE IF NOT EXISTS document SCHEMALESS;")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+
+        // #32030-shaped: office-pinned, no city, only a Konstanz landline.
+        db.query(
+            "CREATE document:t32030 SET type = 'support_ticket', \
+             meta = { phone: '07531 123456', city: '', zip: '' }",
+        )
+        .await
+        .unwrap()
+        .check()
+        .unwrap();
+
+        // The town the phone area code resolves to (07531 → Konstanz).
+        let city = super::vorwahl_city("07531 123456").expect("07531 maps to Konstanz");
+        assert_eq!(city, "Konstanz");
+
+        // Coords stand in for the geocoder result (exercised elsewhere).
+        assert!(super::persist_vorwahl_placement(&db, "t32030", city, 47.659, 9.175).await);
+
+        let got: Vec<serde_json::Value> = db
+            .query("SELECT meta.geo_city AS geo_city, meta.geo_source AS geo_source, meta.city AS city FROM document:t32030")
+            .await
+            .unwrap()
+            .take(0)
+            .unwrap();
+        let row = &got[0];
+        assert_eq!(row.get("geo_city").and_then(|v| v.as_str()), Some("Konstanz"));
+        assert_eq!(row.get("geo_source").and_then(|v| v.as_str()), Some("vorwahl"));
+        // The authoritative Zoho `meta.city` is left empty — never overwritten.
+        assert_eq!(row.get("city").and_then(|v| v.as_str()), Some(""));
     }
 
     #[test]

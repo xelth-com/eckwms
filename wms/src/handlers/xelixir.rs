@@ -24,6 +24,10 @@
 //!       [`xelixir_router::dispatch`] — the WMS signs with *its own*
 //!       identity, so the target's `XELIXIR_ADMIN_PUBKEYS` doesn't need
 //!       to know about xelixir.service at all.
+//! * `POST /X/internal/purchase-check`
+//!     — the shared forum service asks whether a serial / RMA code / order
+//!       number exists in our records, to auto-verify a forum author's
+//!       purchase claim. Same service-token gate as `/internal/dispatch`.
 
 use std::sync::Arc;
 
@@ -391,6 +395,155 @@ pub async fn internal_dispatch(
     }
 }
 
+// ─── POST /X/internal/purchase-check ───────────────────────────────────────
+// The shared tri-site forum service (xelixir) asks whether a forum author's
+// purchase claim matches anything in our records, so the post can carry a
+// "verified purchase" badge instead of sitting in the operator queue.
+//
+// The keys are relayed from a PUBLIC site, so they are attacker-influenced
+// even though the transport is service-token authed: every field is shape-
+// checked (<= 64 chars, `[A-Za-z0-9-_]` only) BEFORE it reaches a query.
+//
+// Where the data lives:
+//   * `serial` — `order.serial_number` (RMA/repair intake) and the support
+//     tickets in `document` (`type = 'support_ticket'`, `meta.serial_number`).
+//   * `rma` / `order` — `order.order_number`. RMA codes from the pda.repair
+//     gateway (`POST /api/rma`) land in that same column.
+
+#[derive(Deserialize)]
+pub struct PurchaseCheckRequest {
+    #[serde(default)]
+    pub serial: Option<String>,
+    #[serde(default)]
+    pub rma: Option<String>,
+    #[serde(default)]
+    pub order: Option<String>,
+}
+
+/// Length ceiling for every lookup key. Longer than any serial or order
+/// number we issue, short enough that no query ever carries a payload.
+const PURCHASE_KEY_MAX_LEN: usize = 64;
+
+/// Shape rule for one lookup key: trim, empty → `None`, otherwise enforce the
+/// length cap and the `[A-Za-z0-9-_]` alphabet. `Err` carries the 400 message.
+fn normalize_purchase_key(field: &str, raw: Option<&str>) -> Result<Option<String>, String> {
+    let trimmed = raw.map(str::trim).unwrap_or("");
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.len() > PURCHASE_KEY_MAX_LEN {
+        return Err(format!(
+            "`{}` exceeds {} characters",
+            field, PURCHASE_KEY_MAX_LEN
+        ));
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!(
+            "`{}` contains characters outside [A-Za-z0-9-_]",
+            field
+        ));
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+/// Case-insensitive existence probe. `sql` must bind exactly `$key`.
+async fn purchase_key_exists(
+    state: &Arc<AppState>,
+    sql: &str,
+    key: &str,
+) -> Result<bool, String> {
+    let rows: Vec<Value> = state
+        .db
+        .query(sql)
+        .bind(("key", key.to_string()))
+        .await
+        .and_then(|mut r| r.take(0))
+        .map_err(|e| e.to_string())?;
+    Ok(!rows.is_empty())
+}
+
+pub async fn internal_purchase_check(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<PurchaseCheckRequest>,
+) -> (StatusCode, Json<Value>) {
+    let keys = [
+        ("serial", body.serial.as_deref()),
+        ("rma", body.rma.as_deref()),
+        ("order", body.order.as_deref()),
+    ];
+
+    let mut lookups: Vec<(&str, String)> = Vec::new();
+    for (field, raw) in keys {
+        match normalize_purchase_key(field, raw) {
+            Ok(Some(k)) => lookups.push((field, k)),
+            Ok(None) => {}
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "success": false, "error": e })),
+                );
+            }
+        }
+    }
+
+    if lookups.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": "at least one of `serial`, `rma`, `order` must be non-empty"
+            })),
+        );
+    }
+
+    // First hit wins, in request-field order (serial → rma → order).
+    for (field, key) in &lookups {
+        let queries: &[&str] = match *field {
+            "serial" => &[
+                "SELECT id FROM order \
+                 WHERE string::lowercase(serial_number ?? '') = string::lowercase($key) LIMIT 1",
+                "SELECT id FROM document \
+                 WHERE type = 'support_ticket' \
+                   AND string::lowercase(meta.serial_number ?? '') = string::lowercase($key) \
+                 LIMIT 1",
+            ],
+            // RMA codes and plain order numbers share `order.order_number`.
+            _ => &[
+                "SELECT id FROM order \
+                 WHERE string::lowercase(order_number ?? '') = string::lowercase($key) LIMIT 1",
+            ],
+        };
+
+        for sql in queries {
+            match purchase_key_exists(&state, sql, key).await {
+                Ok(true) => {
+                    return (
+                        StatusCode::OK,
+                        Json(json!({ "found": true, "matched": field })),
+                    );
+                }
+                Ok(false) => {}
+                // A DB failure must NOT read as "no such purchase" — the
+                // caller queues the post for an operator on a non-200.
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "success": false, "error": e })),
+                    );
+                }
+            }
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({ "found": false, "matched": Value::Null })),
+    )
+}
+
 // ─── GET /X/internal/result/:task_id ───────────────────────────────────────
 // Proxy to the relay's /E/x/result/<task_id>. Lets xelixir.service poll
 // for the outcome of a queued cross-mesh dispatch without holding a token
@@ -437,5 +590,51 @@ pub async fn internal_result(
             StatusCode::BAD_GATEWAY,
             Json(json!({ "success": false, "error": format!("relay reach: {}", e) })),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_purchase_key, PURCHASE_KEY_MAX_LEN};
+
+    #[test]
+    fn empty_and_whitespace_are_absent() {
+        assert_eq!(normalize_purchase_key("serial", None), Ok(None));
+        assert_eq!(normalize_purchase_key("serial", Some("")), Ok(None));
+        assert_eq!(normalize_purchase_key("serial", Some("   ")), Ok(None));
+    }
+
+    #[test]
+    fn trims_and_keeps_case() {
+        assert_eq!(
+            normalize_purchase_key("rma", Some("  RMA-20260824-0042 ")),
+            Ok(Some("RMA-20260824-0042".to_string()))
+        );
+        assert_eq!(
+            normalize_purchase_key("serial", Some("ab_c-1")),
+            Ok(Some("ab_c-1".to_string()))
+        );
+    }
+
+    #[test]
+    fn rejects_characters_outside_the_alphabet() {
+        for bad in ["a b", "a'b", "a;b", "a*b", "a/b", "a.b", "über"] {
+            assert!(
+                normalize_purchase_key("serial", Some(bad)).is_err(),
+                "expected {bad:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_overlong_keys() {
+        let ok = "A".repeat(PURCHASE_KEY_MAX_LEN);
+        assert_eq!(
+            normalize_purchase_key("order", Some(ok.as_str())),
+            Ok(Some(ok.clone()))
+        );
+
+        let too_long = "A".repeat(PURCHASE_KEY_MAX_LEN + 1);
+        assert!(normalize_purchase_key("order", Some(too_long.as_str())).is_err());
     }
 }

@@ -227,6 +227,12 @@ const IGNORED_FIELDS: &[&str] = &[
     // agrees. Hashing it would only add a mixed-fleet divergence window
     // while old binaries lack the field — for zero content value.
     "pii_fingerprints",
+    // Channel-B fuzzy name index (`.eck/PPRL_FUZZY.md`): per-Name-token Bloom +
+    // keyed phonetic signature stored next to `pii_fingerprints`. DERIVED the
+    // same way (from meshed clear meta / the mint log), self-heals per node, and
+    // is never authored with a `_vclock` bump — so ignore it for the identical
+    // reason `pii_fingerprints` is ignored, right beside it.
+    "pii_fuzzy",
     // NOTE (2026-07-09): `ai_summary` is deliberately NOT ignored anymore.
     // Only the raw-holding node can author a summary (peers skip on empty
     // text), so it is CONTENT, not a per-node derivative — ignoring it froze
@@ -239,6 +245,15 @@ const IGNORED_FIELDS: &[&str] = &[
     // self-converges because the tokens are deterministic over the summary.
     "pii_fingerprints",
     "last_accessed_at",
+    // Per-ticket count of imported thread shells, stamped by `import_thread`
+    // on the importing node WITHOUT a `_vclock` bump (2026-09-05, ingest
+    // review P0). It is DERIVED: thread shells (`type='support_thread'`)
+    // sync as rows of their own, so any node can recompute the count from
+    // them — `list_tickets` falls back to a page-scoped GROUP BY when the
+    // field is NONE. Hashing it would flag every ticket row as drifted on
+    // each new thread for zero content value (a vclock-less write to a
+    // hashed field is exactly the d4c8559 non-convergence class).
+    "thread_count",
     // Per-node repair-distiller job state: set by the node that distilled a
     // resolved ticket into the xelixir KB. A node that hasn't run the distiller
     // (or can't — e.g. no AI) legitimately lacks these, so hashing them would
@@ -266,6 +281,26 @@ const IGNORED_FIELDS: &[&str] = &[
     "resolved_at",
     "optimized_at",
     "storage_path",
+    // `vision_analysis.question_embedding`: DERIVED per node from the row's masked
+    // `question` (which IS hashed and meshes) via `embed_query`. A node without AI
+    // legitimately lacks it, and two nodes may embed with different local/remote
+    // models, so hashing it would block convergence between an embedded copy and a
+    // received one — same reasoning as `embedding_status`/`pii_fingerprints`. The
+    // vector self-heals per node and is only ever used for the node-local semantic
+    // cache, so it need not be identical across the mesh.
+    "question_embedding",
+    // `pii_vault.enc` / `.dek_wrapped` (`.eck/PII_VAULT.md` §3.1): AEAD
+    // ciphertext with a FRESH random 24-byte nonce per seal, so two nodes
+    // holding the identical person produce different bytes forever — hashing
+    // them would make the vault table permanently divergent (the classic
+    // "every node re-derives its own copy" non-convergence, but unfixable at
+    // the write side because the nonce MUST be fresh). Content identity of a
+    // vault row is defined by what IS hashed: `kind` + `vk_epoch` + `pp_epoch`
+    // + `fuzzy`, all deterministic — and the row ID is the token, which is a
+    // deterministic function of the plaintext, so equal ids ⇒ equal plaintext.
+    // A rewrap (VK rotation) moves `vk_epoch` and therefore still syncs.
+    "enc",
+    "dek_wrapped",
 ];
 
 /// Compute a deterministic SHA-256 content hash from any serde_json::Value.
@@ -1189,17 +1224,22 @@ mod tests {
         // hashes. This is the version-independence guarantee: the tie-break
         // field-set is frozen and never tracks IGNORED_FIELDS.
         assert!(IGNORED_FIELDS.contains(&"pii_fingerprints"));
+        // Channel-B fuzzy index is derived + self-healing, ignored beside it.
+        assert!(IGNORED_FIELDS.contains(&"pii_fuzzy"));
         assert!(IGNORED_FIELDS.contains(&"embedding_status"));
         let base = serde_json::json!({"id": 1, "name": "t"});
         let with_pii = serde_json::json!({"id": 1, "name": "t", "pii_fingerprints": ["Name_ab"]});
         let with_status = serde_json::json!({"id": 1, "name": "t", "embedding_status": "pending"});
+        let with_fuzzy = serde_json::json!({"id": 1, "name": "t", "pii_fuzzy": [{"t": "Name_ab", "s": {"k": "Name", "w": []}}]});
         // Sanity: the merkle content hash DOES ignore these (proves they are
         // genuinely ignored there, so tiebreak's inclusion is the divergence).
         assert_eq!(compute_content_hash(&base), compute_content_hash(&with_pii));
         assert_eq!(compute_content_hash(&base), compute_content_hash(&with_status));
+        assert_eq!(compute_content_hash(&base), compute_content_hash(&with_fuzzy));
         // The frozen tie-break comparator counts them.
         assert_ne!(tiebreak_hash(&base), tiebreak_hash(&with_pii));
         assert_ne!(tiebreak_hash(&base), tiebreak_hash(&with_status));
+        assert_ne!(tiebreak_hash(&base), tiebreak_hash(&with_fuzzy));
     }
 
     #[test]

@@ -37,6 +37,11 @@ in-handler credential check found by reading the handler:
 - `mesh-secret` — `middleware::mesh_auth::mesh_auth_middleware`: a shared bearer compared
   against `state.sync_secret` (from `SYNC_SECRET`); if `SYNC_SECRET` is unset, this gate
   is **open** (dev-mode passthrough — verify on any hardened deployment).
+- `paid-license` — an `Authorization: Bearer <token>` verified **in-handler** against the
+  tenant/client paid mesh-license via the relay-paidgate seam (the same seam as
+  `/api/ai/or`); no router-level layer. Used by `vault_routes` and `or_serve_routes`, and
+  accepted as one of two credentials by `pii_spans_routes` (see below). These groups are
+  merged into `api_router` and are NOT wrapped by `auth_middleware`.
 - `verify` — used only where the brief requires it; none of the routes below needed it —
   every gate was resolvable from router layering or a direct in-handler check.
 
@@ -49,39 +54,47 @@ read `public` as `LAN-only` for those rows.
 
 ```
 node (wms/src/main.rs), declared routes:
-  api_router (mounted at BOTH /api and /E/api — see note below): 174
-    public_routes:      10
-    protected_routes:  119
-    admin_routes:       36
-    p2p_routes:          9
-  /X xelixir_routes (mounted once at /X):                         24
-    xelixir_jwt_routes:       4
-    xelixir_self_routes:      2
-    xelixir_internal_routes:  2
+  api_router (mounted at BOTH /api and /E/api — see note below): 227
+    public_routes:      12
+    protected_routes:  141
+    admin_routes:       57
+    p2p_routes:         11
+    (subtotal of the four core groups above):                    221
+    vault_routes:        4  (share-holder surface; /vault/health always
+                            live, the other 3 behind ECK_VAULT_SERVE=1)
+    pii_spans_routes:    1  (conditional: ECK_PII_SPANS_SERVE=1)
+    or_serve_routes:     1  (conditional: ECK_OR_SERVE=1)
+  /X xelixir_routes (mounted once at /X):                         27
+    xelixir_jwt_routes:       5
+    xelixir_self_routes:      3
+    xelixir_internal_routes:  3
     xelixir_ops_routes:      16
   top-level app routes (/E/health, /E/ws, /mcp, /mcp/signed,
     /E/auth/setup-status, /E/auth/login, /S, /S/*path):            8
   static/UI fallback (web::static_handler):                        1
-  NODE TOTAL (declared, unique):                                 207
-  (api_router's 174 routes are additionally reachable at /E/api/*,
+  NODE TOTAL (declared, unique):                                 263
+  (api_router's 227 routes are additionally reachable at /E/api/*,
    a legacy alias for movFast PDA clients whose base URL ends in
-   "/E" — same handlers, same auth, not double-counted above.)
+   "/E" — same handlers, same auth, not double-counted above.
+   vault/pii-spans/or-serve are merged into api_router too, so they are
+   mirrored at /E/api/* as well; the two conditional groups contribute a
+   route only when their env flag is set.)
 
-relay (relay/src/main.rs), declared routes:                        22
+relay (relay/src/main.rs), declared routes:                        26
 
 commercial edition only — pos crate, /K router (pos/src/lib.rs):
   protected_routes: 24, public_routes: 5, top-level (ws+SPA): 4
   POS TOTAL:                                                       33
 
-GRAND TOTAL open-source (node + relay):                           229
-GRAND TOTAL incl. commercial /K:                                  262
+GRAND TOTAL open-source (node + relay):                           289
+GRAND TOTAL incl. commercial /K:                                  322
 
 (Counts above are DECLARED axum `.route()` call sites — verified against
 `grep -c '\.route('` per router block. Several declarations bundle more than one
 HTTP method on the same path, e.g. `.route("/items", get(...).post(...))` is ONE
 declared route but TWO distinct method+path pairs from an HTTP client's point of
 view. The final YAML inventory below enumerates every method+path pair separately
-— 298 rows — which is the larger, and equally correct, count for that finer unit.)
+— 362 rows — which is the larger, and equally correct, count for that finer unit.)
 ```
 
 ---
@@ -89,10 +102,14 @@ view. The final YAML inventory below enumerates every method+path pair separatel
 ## 1. `/api` business REST (node)
 
 Built from `public_routes.merge(protected_routes).merge(admin_routes).merge(p2p_routes)`
-into `api_router`, then `.nest("/api", api_router.clone())` and `.nest("/E/api", api_router)`
+into `api_router`, then further `.merge(pii_spans_routes).merge(or_serve_routes).merge(vault_routes)`,
+then `.nest("/api", api_router.clone())` and `.nest("/E/api", api_router)`
 — identical route set at both mount points. `admin_routes` is documented separately in
-section 2 for clarity even though it is physically merged into the same router. A JSON
-404 fallback and a 50 MiB body-size layer apply to the whole `api_router`.
+section 2 for clarity even though it is physically merged into the same router. The three
+extra groups carry their own in-handler `paid-license` gate (not `auth_middleware`) and are
+documented in sections 1d–1f; two of them (`pii_spans_routes`, `or_serve_routes`) contribute
+a route only when an env flag is set, so a live node may expose fewer than the declared 227.
+A JSON 404 fallback and a 50 MiB body-size layer apply to the whole `api_router`.
 
 ### 1a. `public_routes` — auth: `public` (10 routes)
 
@@ -109,7 +126,7 @@ section 2 for clarity even though it is physically merged into the same router. 
 | GET | /api/i18n/dict/:lang | handlers::i18n::dict | UI label dictionary for one language |
 | GET | /api/pos/status | inline closure | Reports whether POS_ENABLED is set (for UI) |
 
-### 1b. `protected_routes` — auth: `user-JWT` (119 routes)
+### 1b. `protected_routes` — auth: `user-JWT` (141 routes)
 
 Resource CRUD groups (method verbs shown per row where a path takes more than one):
 
@@ -147,6 +164,8 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | GET | /api/mesh/nodes | handlers::mesh::nodes | Relay-known peer nodes (JWT view) |
 | GET | /api/internal/pairing-qr | handlers::device::generate_pairing_qr | Generate a device-pairing QR payload |
 | POST | /api/print/labels | handlers::print::generate_labels | Generate warehouse label print job (embeds ECK_QR_HOSTS URLs) |
+| GET | /api/print/printers | handlers::print::list_printers | List available CUPS print queues |
+| POST | /api/print/send | handlers::print::print_and_send | Generate + send a label sheet to a CUPS queue |
 | POST | /api/proofs | handlers::proofs::submit_proof | Submit an action proof (photo/signature) |
 | GET | /api/audit/verify | handlers::audit::verify | Verify the tamper-evident audit chain |
 | GET | /api/audit/chain | handlers::audit::chain | Read the audit chain |
@@ -161,7 +180,7 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | POST | /api/support/import-ticket | handlers::support::import_ticket | Import one support ticket (Zoho Desk shape) |
 | POST | /api/support/import-tickets | handlers::support::import_tickets | Bulk-import support tickets |
 | POST | /api/support/import-thread | handlers::support::import_thread | Import a ticket thread/message |
-| GET | /api/support/tickets | handlers::support::list_tickets | List support tickets |
+| GET | /api/support/tickets | handlers::support::list_tickets | List support tickets. Query: `limit` (default 300, max 1000, or 5000 with `open_only`), `before` (updated_at cursor), `open_only` (bool, excludes closed). Response: `{tickets: [...], next_before}` |
 | GET | /api/support/debug/:ticket_id | handlers::support::debug_ticket | Debug view of a ticket's raw state |
 | GET | /api/support/tickets/:ticket_id/threads | handlers::support::get_ticket_threads | List a ticket's threads |
 | GET | /api/support/tickets/:ticket_id/threads/:thread_id/payload | handlers::support::get_thread_payload | Read one thread's raw payload |
@@ -171,6 +190,8 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | POST | /api/ai/tasks/:id/reply | handlers::ai::reply_to_task | Operator reply to a paused AI task |
 | POST | /api/ai/enrich-csv | handlers::ai::enrich_csv | Batch AI enrichment of an uploaded CSV |
 | GET | /api/ai/usage | handlers::ai::get_ai_usage | Local 24h AI token-spend estimate |
+| POST | /api/ai/chat | handlers::ai::chat | Brain-Chat conversational turn |
+| POST | /api/ai/chat/stream | handlers::ai::chat_stream | Streaming Brain-Chat turn |
 | POST | /api/voice/resolve | handlers::voice::resolve_voice | Resolve a voice command (movFast), local-first with a Gemini fallback |
 | POST | /api/geo/fix | handlers::geo::fix_location | Operator manual geo override |
 | POST | /api/geo/regeocode-fallback | handlers::geo::regeocode_fallback | Re-geocode the HQ-fallback pile from summaries |
@@ -188,6 +209,14 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | POST | /api/scan | handlers::pda::handle_scan | movFast barcode/QR scan event |
 | POST | /api/repair/event | handlers::pda::repair_event | movFast repair-workflow event |
 | POST | /api/repair/consume | handlers::pda::consume | movFast repair parts-consumption event |
+| POST | /api/receiving/receipts | handlers::receiving::create_receipt | Open an intake receipt for returned units |
+| GET | /api/receiving/units | handlers::receiving::list_units | List received units |
+| POST | /api/receiving/units/:unit_id/move | handlers::receiving::move_unit | Move a received unit to another location |
+| GET | /api/receiving/receipts/:receipt_id | handlers::receiving::get_receipt | Read one intake receipt |
+| POST | /api/receiving/receipts/:receipt_id/units | handlers::receiving::add_unit | Add a unit to a receipt |
+| POST | /api/receiving/receipts/:receipt_id/note | handlers::receiving::append_note | Append a note to a receipt |
+| POST | /api/receiving/receipts/:receipt_id/repair | handlers::receiving::set_repair | Flag a receipt/unit for repair |
+| GET | /api/receiving/tickets/lookup | handlers::receiving::lookup_tickets | Look up tickets to link to an intake |
 | POST | /api/upload/image | handlers::files::upload | Same upload handler, PDA-facing alias path |
 | GET | /api/users/active | handlers::pda::active_users | Active operator users for PDA login list |
 | POST | /api/users/verify-pin | handlers::pda::verify_pin | PDA PIN verification |
@@ -204,6 +233,9 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | GET | /api/crm/:entity_type/:id | handlers::pda::crm_get | PDA CRM record read |
 | GET/POST | /api/trips | handlers::trips::list_trips / upload_trip | Fahrtenbuch trip list/upload |
 | GET | /api/trips/export | handlers::trips::export_trips | Export trips (GoBD Z3 DTD) |
+| GET | /api/reports/expense | services::expense_report::get_expense_report | Monthly expense report |
+| POST | /api/reports/expense/:month/filed | services::expense_report::set_filed | Mark a month's expense report filed |
+| DELETE | /api/reports/expense/:month/filed | services::expense_report::clear_filed | Clear a month's filed flag |
 | GET | /api/trips/purpose-candidates | handlers::trips::purpose_candidates | Candidate trip-purpose suggestions |
 | GET | /api/trips/destinations | handlers::trips::destinations | Known trip destinations |
 | POST | /api/trips/live | handlers::trips::trip_live | Live trip-tracking ingest |
@@ -218,8 +250,16 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | GET | /api/odoo/ping | handlers::odoo::ping | Odoo connectivity check |
 | POST | /api/odoo/sync | handlers::odoo::sync | Trigger Odoo sync |
 | POST | /api/odoo/bridge-products | handlers::odoo::bridge_products | Bridge/map products against Odoo |
+| POST | /api/odoo/bridge-partners | handlers::odoo::bridge_partners | Bridge/map partners against Odoo |
+| GET | /api/claimlist/status | handlers::claimlist::status | Status of the partner claim-list workbook sync |
+| POST | /api/claimlist/check | handlers::claimlist::check | Re-check the partner claim-list workbook |
+| GET | /api/claimlist/diff | handlers::claimlist::diff | Diff local repair claims against the partner workbook |
+| POST | /api/claimlist/assign/:order_id | handlers::claimlist::assign | Assign a claim row to a repair order |
+| GET | /api/claimlist/export | handlers::claimlist::export | Export the partner-facing claim list |
+| POST | /api/claimlist/from-receipt/:receipt_id | handlers::claimlist::from_receipt | Draft claim rows from an intake receipt |
 | GET | /api/odoo/pickings | handlers::stubs::odoo_pickings | Stub — always returns empty array |
 | GET/POST | /api/delivery/shipments | handlers::stubs::list_shipments / create_shipment | Delivery shipment list/create (reads meshed stock_picking_delivery) |
+| GET | /api/delivery/shipments/lookup | handlers::stubs::lookup_shipments | Look up delivery shipments |
 | GET | /api/delivery/config | handlers::stubs::delivery_config | Delivery module config |
 | POST | /api/delivery/shipments/:id/cancel | handlers::stubs::cancel_shipment | Cancel a shipment |
 | POST | /api/delivery/shipments/:id/resolve | handlers::stubs::resolve_shipment | Resolve a shipment match |
@@ -235,7 +275,7 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | GET/POST | /api/admin/config/kiosk | handlers::auth::get_kiosk_config / set_kiosk_config | Kiosk UI config (NOTE: despite the `/admin/` path, this is gated only by `user-JWT`, not `admin-JWT` — it lives in `protected_routes`, not `admin_routes`) |
 | GET/POST | /api/admin/config/dashboard_sla | handlers::auth::get_dashboard_sla / set_dashboard_sla | Dashboard SLA config (same note as above) |
 
-### 1c. `p2p_routes` — auth: `mesh-secret` (9 routes)
+### 1c. `p2p_routes` — auth: `mesh-secret` (11 routes)
 
 Server-to-server mesh sync between nodes; open/dev-mode when `SYNC_SECRET` is unset.
 
@@ -247,13 +287,53 @@ Server-to-server mesh sync between nodes; open/dev-mode when `SYNC_SECRET` is un
 | POST | /api/mesh/sync/push | handlers::mesh::sync_push | Peer pushes an entity upsert (schemaless) |
 | GET | /api/mesh/file/:hash | handlers::mesh::serve_mesh_file | Serve file bytes to hydrate a peer's FileStore |
 | GET | /api/mesh/raw-docs/:ticket_id | handlers::mesh::raw_docs | Raw document_raw records for a ticket (thin-node lazy-load) |
+| GET | /api/mesh/re-envelope/ids | handlers::mesh::re_envelope_ids | List envelope ids a cache node holds (mesh-key rotation) |
+| POST | /api/mesh/re-envelope | handlers::mesh::re_envelope_apply | Re-seal synced payloads under a rotated mesh key |
 | GET | /api/mesh/tasks | handlers::mesh::get_tasks | Pending mesh tasks for the calling node |
 | POST | /api/mesh/tasks/nudge | handlers::mesh::nudge_tasks | Nudge/trigger processing of pending tasks |
 | DELETE | /api/mesh/tasks/:id | handlers::mesh::delete_task | Mark a mesh task completed |
 
+### 1d. `vault_routes` — auth: `paid-license` (4 routes)
+
+The node's zero-knowledge PII-vault share-holder surface (`.eck/PII_VAULT.md` §2).
+Registered unconditionally, but every handler except `/vault/health` returns 404 unless
+`ECK_VAULT_SERVE=1`. No `.route_layer` — each handler authenticates the tenant's paid
+mesh-license bearer in-handler (the same relay-paidgate seam as `/api/ai/or`).
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| POST | /api/vault/share | handlers::vault_safe::fetch_share | Fetch this node's held Shamir share |
+| PUT | /api/vault/share | handlers::vault_safe::put_share | Store a Shamir share on this node |
+| POST | /api/vault/node | handlers::vault_safe::node_action | Node lifecycle action against the share ring |
+| GET | /api/vault/nodes | handlers::vault_safe::list_nodes | List share-holder nodes in the ring |
+| GET | /api/vault/health | handlers::vault_safe::health | Share-holder health/state (always live) |
+
+### 1e. `pii_spans_routes` — auth: `user-JWT` OR `paid-license` (1 route, conditional)
+
+Exists ONLY when `ECK_PII_SPANS_SERVE=1`; otherwise the group is empty and the path is a
+JSON 404. Serves local candle-NER PII-span detection to peer nodes and 503s if the local
+NER is unavailable (it can never proxy raw text onward). Wrapped by
+`middleware::spans_auth::spans_auth_middleware`, which accepts EITHER a dashboard JWT OR a
+weak node's paid mesh-license bearer.
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| POST | /api/pii/spans | handlers::pii_spans::spans | Detect PII spans locally for a peer node |
+
+### 1f. `or_serve_routes` — auth: `paid-license` (1 route, conditional)
+
+Exists ONLY when `ECK_OR_SERVE=1`; the route does not exist otherwise. The AI-distribution
+/ commerce seam — serves OpenRouter/cheap-tier requests to peer nodes. No `.route_layer` —
+the handler authenticates the client's paid mesh-license bearer itself via the
+relay-paidgate seam, then meters.
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| POST | /api/ai/or | handlers::or_proxy::serve | Serve an OpenRouter/cheap-tier request for a peer node |
+
 ---
 
-## 2. `/api/admin` (node) — auth: `admin-JWT` (36 routes)
+## 2. `/api/admin` (node) — auth: `admin-JWT` (57 routes)
 
 `admin_routes`, merged into the same `api_router` as section 1, but layered with
 `require_admin_middleware` (outer) over `auth_middleware` (inner) — both must pass.
@@ -269,6 +349,14 @@ Server-to-server mesh sync between nodes; open/dev-mode when `SYNC_SECRET` is un
 | GET | /api/admin/known-nodes | handlers::mesh::known_nodes | Cross-mesh node registry (all kiosks, any mesh) |
 | GET/POST | /api/admin/users | handlers::users::list / create | List/create operator users (incl. role assignment) |
 | PUT/DELETE | /api/admin/users/:id | handlers::users::update / delete | Update/delete a user |
+| POST | /api/admin/vault/bootstrap | handlers::vault_admin::bootstrap | Bootstrap the mesh PII vault (first node) |
+| POST | /api/admin/vault/enroll | handlers::vault_admin::enroll | Enroll a node into the vault ring |
+| POST | /api/admin/vault/join | handlers::vault_admin::join | Join this node to an existing vault ring |
+| POST | /api/admin/vault/revoke | handlers::vault_admin::revoke | Cut a node out of the vault ring |
+| POST | /api/admin/vault/recover | handlers::vault_admin::recover | Re-key a lost home node |
+| GET | /api/admin/vault/status | handlers::vault_admin::status | Vault ring state |
+| POST | /api/admin/vault/rotate | handlers::vault_admin::rotate | Bump vault key epochs |
+| POST | /api/admin/vault/sweep | handlers::vault_admin::sweep | Run the re-envelope back-fill sweep |
 | POST | /api/admin/pair-code | handlers::device::mint_pair_code | Mint a device pairing code |
 | GET | /api/admin/devices | handlers::device::list_devices | List paired devices |
 | PUT | /api/admin/devices/:id/status | handlers::device::update_device_status | Update device status |
@@ -276,6 +364,9 @@ Server-to-server mesh sync between nodes; open/dev-mode when `SYNC_SECRET` is un
 | POST | /api/admin/devices/:id/restore | handlers::device::restore_device | Restore a soft-deleted device |
 | DELETE | /api/admin/devices/:id | handlers::device::delete_device | Delete a device |
 | POST | /api/admin/mesh/master | handlers::mesh::set_master | Transfer mesh master/home designation |
+| GET/POST | /api/admin/plugins | handlers::plugins::list / install | List / register WASM plugins (inert JSON 404 when ECK_PLUGIN_RUNTIME is off) |
+| POST | /api/admin/plugins/:name/enable | handlers::plugins::enable | Enable a registered WASM plugin |
+| POST | /api/admin/plugins/:name/disable | handlers::plugins::disable | Disable a registered WASM plugin |
 | POST | /api/admin/query | handlers::admin::query | Arbitrary SurrealQL diagnostics (double-checks admin in-handler too) |
 | POST | /api/support/backfill-assignees | handlers::support::backfill_assignees | One-shot backfill: ticket assignees |
 | POST | /api/support/backfill-customfields | handlers::support::backfill_customfields | One-shot backfill: ticket custom fields |
@@ -294,8 +385,18 @@ Server-to-server mesh sync between nodes; open/dev-mode when `SYNC_SECRET` is un
 | POST | /api/odoo/project/run | handlers::odoo::project_run | Run Odoo projection job |
 | POST | /api/scraper/start | handlers::scraper_proxy::start_scraper | Spawn the local Node.js scraper process |
 | GET | /api/admin/mcp-connector | mcp::connector::mcp_connector | Download a ready-to-run MCP connector bundle (mints a live token into the zip) |
+| GET | /api/admin/mcp-sessions | mcp::session::admin_list_sessions | List active browser MCP sessions |
+| DELETE | /api/admin/mcp-sessions/:id | mcp::session::admin_revoke_session | Revoke a browser MCP session by id/prefix |
+| GET | /api/admin/chat-sessions | handlers::ai::admin_chat_sessions | List Brain-Chat transcripts (node-local) |
+| GET/DELETE | /api/admin/chat-sessions/:id | handlers::ai::admin_chat_session / admin_chat_session_delete | Read/delete one Brain-Chat transcript |
+| GET | /api/admin/chat-sessions/:id/export.md | handlers::ai::admin_chat_session_export | Markdown export of a transcript |
+| GET | /api/admin/chat-stats | handlers::ai::admin_chat_stats | Per-model Brain-Chat stats |
+| POST | /api/ai/bench/brain | handlers::ai::bench_brain | Brain tool-loop benchmark (dev-gated by ECK_BRAIN_BENCH; 404 otherwise) |
 | POST | /api/admin/i18n/languages | handlers::i18n::add_language | Machine-translate UI labels into a new language |
 | GET | /api/admin/i18n/languages/:lang/status | handlers::i18n::add_language_status | Poll status of an in-progress language add |
+| POST | /api/admin/or-soak | handlers::ops::or_soak | One-shot read-only OpenRouter shadow soak (never persists/meshes) |
+| POST | /api/admin/img-soak | handlers::ops::img_soak | One-shot read-only image-pipeline shadow soak (never persists/meshes) |
+| POST | /api/admin/nas-ingest | handlers::ops::nas_ingest | One-shot repair-tree ingest job (dry-run default; env-gated) |
 
 ---
 
@@ -317,12 +418,12 @@ Master-tier only, available on both transports.
 
 ---
 
-## 4. `/X` ops/service (node) — 24 routes
+## 4. `/X` ops/service (node) — 27 routes
 
 Nested once at `/X` (`.nest("/X", xelixir_routes)`), NOT under `/api`. Built from four
 sub-routers merged together; each sub-router carries its own gate.
 
-### 4a. `xelixir_jwt_routes` — auth: `user-JWT` (4 routes)
+### 4a. `xelixir_jwt_routes` — auth: `user-JWT` (5 routes)
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
@@ -330,8 +431,9 @@ sub-routers merged together; each sub-router carries its own gate.
 | POST | /X/approve | handlers::xelixir::approve | Operator approves an inbound xelixir session request (observer role explicitly allowed here) |
 | POST | /X/devices/:id/start | handlers::xelixir::start_device | Start a paired device's agent |
 | POST | /X/devices/:id/stop | handlers::xelixir::stop_device | Stop a paired device's agent |
+| POST | /X/devices/:id/restart | handlers::xelixir::restart_device | Restart a paired device's agent |
 
-### 4b. `xelixir_self_routes` — auth: `cert-signed` (2 routes)
+### 4b. `xelixir_self_routes` — auth: `cert-signed` (3 routes)
 
 No `.route_layer` at all — public at the router level; the handler itself requires the
 body to be an Ed25519-signed envelope whose signer is in `XELIXIR_ADMIN_PUBKEYS` (or
@@ -341,13 +443,15 @@ chains to `ECK_FLEET_ROOT_PUBKEY`), so effective auth is `cert-signed`, not `pub
 |---|---|---|---|
 | POST | /X/self/start | handlers::xelixir::self_start | Server-initiated self start (signed envelope, command="start") |
 | POST | /X/self/stop | handlers::xelixir::self_stop | Server-initiated self stop (signed envelope, command="stop") |
+| POST | /X/self/restart | handlers::xelixir::self_restart | Server-initiated self restart (signed envelope; agent-binary upgrade) |
 
-### 4c. `xelixir_internal_routes` — auth: `service-token` (2 routes)
+### 4c. `xelixir_internal_routes` — auth: `service-token` (3 routes)
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
 | POST | /X/internal/dispatch | handlers::xelixir::internal_dispatch | Sibling-service dispatch of a start/stop command |
 | GET | /X/internal/result/:task_id | handlers::xelixir::internal_result | Poll result of a dispatched command |
+| POST | /X/internal/purchase-check | handlers::xelixir::internal_purchase_check | Purchase-claim verification for the shared tri-site service |
 
 ### 4d. `xelixir_ops_routes` — auth: `service-token` + audit-logged (16 routes)
 
@@ -394,7 +498,7 @@ needs to know which binary owns it.
 | GET | /E/auth/setup-status | public | handlers::auth::setup_status | Same handler as /api/auth/setup-status, top-level alias |
 | POST | /E/auth/login | public | handlers::auth::login | Same handler as /api/auth/login, top-level alias |
 
-### 5b. Relay `/E/*` (relay/src/main.rs, `fn build_router`) — 22 routes
+### 5b. Relay `/E/*` (relay/src/main.rs, `fn build_router`) — 26 routes
 
 The relay is a dumb queue/board: it stores and forwards; per its own code comments it
 does **not** verify envelope signatures for the `/E/x/*` and `/E/m/*` families ("the
@@ -424,6 +528,10 @@ every gate below is an in-handler check or its absence.
 | GET | /E/c/poll/{self_uuid} | public (long-poll; only pre-admitted tasks exist here) | handlers::c_poll (client_mcp::poll) | Target node long-polls pending client-MCP tasks |
 | POST | /E/c/ack/{task_id} | public | handlers::c_ack (client_mcp::ack) | Target posts the MCP result body (first-ack-wins) |
 | GET | /E/c/result/{task_id} | public | handlers::c_result (client_mcp::result) | Subscriber polls until the node acks |
+| POST | /E/ai/dispatch/{target_uuid} | public (dumb queue; serving node meters + authorizes) | handlers::ai_dispatch (ai_relay::dispatch) | Queue an AI/OpenRouter request for a serving node |
+| GET | /E/ai/poll/{self_uuid} | public | handlers::ai_poll (ai_relay::poll) | Serving node polls pending AI-request tasks |
+| POST | /E/ai/ack/{task_id} | public | handlers::ai_ack (ai_relay::ack) | Serving node acks an AI task with a result |
+| GET | /E/ai/result/{task_id} | public | handlers::ai_result (ai_relay::result) | Requester polls the ack'd AI result |
 | POST | /E/pair/announce | public (bogus entries are harmless — pairing still needs a valid master-signed invite token) | handlers::pair_announce (pair::announce) | Master publishes a short-code pairing rendezvous entry (TTL ~10 min) |
 | POST | /E/pair/code | public | handlers::pair_resolve (pair::resolve_code) | Resolve a typed short code into the full ECK$ pairing string |
 
@@ -548,6 +656,8 @@ routes:
   - {method: POST, path: /api/public/agreement/:token/sign, auth: public, purpose: "customer signs RMA agreement", service: node, edition: open-source}
   - {method: GET, path: /api/i18n/dict/:lang, auth: public, purpose: "UI label dictionary for one language", service: node, edition: open-source}
   - {method: GET, path: /api/pos/status, auth: public, purpose: "whether POS_ENABLED is set", service: node, edition: open-source}
+  - {method: POST, path: /api/auth/mcp-session, auth: public, purpose: "mint a browser MCP session (verify creds, mint client-bound bearer)", service: node, edition: open-source}
+  - {method: POST, path: /api/auth/mcp-session/logout, auth: public, purpose: "revoke a browser MCP session", service: node, edition: open-source}
   # --- node: protected_routes (auth: user-JWT) ---
   - {method: GET, path: /api/items, auth: user-JWT, purpose: "list items", service: node, edition: open-source}
   - {method: POST, path: /api/items, auth: user-JWT, purpose: "create item", service: node, edition: open-source}
@@ -621,7 +731,7 @@ routes:
   - {method: POST, path: /api/support/import-ticket, auth: user-JWT, purpose: "import one support ticket", service: node, edition: open-source}
   - {method: POST, path: /api/support/import-tickets, auth: user-JWT, purpose: "bulk-import support tickets", service: node, edition: open-source}
   - {method: POST, path: /api/support/import-thread, auth: user-JWT, purpose: "import ticket thread/message", service: node, edition: open-source}
-  - {method: GET, path: /api/support/tickets, auth: user-JWT, purpose: "list support tickets", service: node, edition: open-source}
+  - {method: GET, path: /api/support/tickets, auth: user-JWT, purpose: "list support tickets (query: limit default 300 max 1000/5000 with open_only, before=updated_at cursor, open_only=bool; response: {tickets, next_before})", service: node, edition: open-source}
   - {method: GET, path: /api/support/debug/:ticket_id, auth: user-JWT, purpose: "debug view of ticket raw state", service: node, edition: open-source}
   - {method: GET, path: /api/support/tickets/:ticket_id/threads, auth: user-JWT, purpose: "list ticket threads", service: node, edition: open-source}
   - {method: GET, path: /api/support/tickets/:ticket_id/threads/:thread_id/payload, auth: user-JWT, purpose: "read raw thread payload", service: node, edition: open-source}
@@ -701,6 +811,29 @@ routes:
   - {method: POST, path: /api/admin/config/kiosk, auth: user-JWT, purpose: "write kiosk UI config (NOTE: not admin-JWT despite path)", service: node, edition: open-source}
   - {method: GET, path: /api/admin/config/dashboard_sla, auth: user-JWT, purpose: "read dashboard SLA config (NOTE: not admin-JWT despite path)", service: node, edition: open-source}
   - {method: POST, path: /api/admin/config/dashboard_sla, auth: user-JWT, purpose: "write dashboard SLA config (NOTE: not admin-JWT despite path)", service: node, edition: open-source}
+  - {method: GET, path: /api/print/printers, auth: user-JWT, purpose: "list available CUPS print queues", service: node, edition: open-source}
+  - {method: POST, path: /api/print/send, auth: user-JWT, purpose: "generate + send a label sheet to a CUPS queue", service: node, edition: open-source}
+  - {method: POST, path: /api/ai/chat, auth: user-JWT, purpose: "Brain-Chat conversational turn", service: node, edition: open-source}
+  - {method: POST, path: /api/ai/chat/stream, auth: user-JWT, purpose: "streaming Brain-Chat turn", service: node, edition: open-source}
+  - {method: POST, path: /api/receiving/receipts, auth: user-JWT, purpose: "open an intake receipt for returned units", service: node, edition: open-source}
+  - {method: GET, path: /api/receiving/units, auth: user-JWT, purpose: "list received units", service: node, edition: open-source}
+  - {method: POST, path: /api/receiving/units/:unit_id/move, auth: user-JWT, purpose: "move a received unit to another location", service: node, edition: open-source}
+  - {method: GET, path: /api/receiving/receipts/:receipt_id, auth: user-JWT, purpose: "read one intake receipt", service: node, edition: open-source}
+  - {method: POST, path: /api/receiving/receipts/:receipt_id/units, auth: user-JWT, purpose: "add a unit to a receipt", service: node, edition: open-source}
+  - {method: POST, path: /api/receiving/receipts/:receipt_id/note, auth: user-JWT, purpose: "append a note to a receipt", service: node, edition: open-source}
+  - {method: POST, path: /api/receiving/receipts/:receipt_id/repair, auth: user-JWT, purpose: "flag a receipt/unit for repair", service: node, edition: open-source}
+  - {method: GET, path: /api/receiving/tickets/lookup, auth: user-JWT, purpose: "look up tickets to link to an intake", service: node, edition: open-source}
+  - {method: GET, path: /api/reports/expense, auth: user-JWT, purpose: "monthly expense report", service: node, edition: open-source}
+  - {method: POST, path: /api/reports/expense/:month/filed, auth: user-JWT, purpose: "mark a month's expense report filed", service: node, edition: open-source}
+  - {method: DELETE, path: /api/reports/expense/:month/filed, auth: user-JWT, purpose: "clear a month's filed flag", service: node, edition: open-source}
+  - {method: GET, path: /api/claimlist/status, auth: user-JWT, purpose: "status of the partner claim-list workbook sync", service: node, edition: open-source}
+  - {method: POST, path: /api/claimlist/check, auth: user-JWT, purpose: "re-check the partner claim-list workbook", service: node, edition: open-source}
+  - {method: GET, path: /api/claimlist/diff, auth: user-JWT, purpose: "diff local repair claims against the partner workbook", service: node, edition: open-source}
+  - {method: POST, path: /api/claimlist/assign/:order_id, auth: user-JWT, purpose: "assign a claim row to a repair order", service: node, edition: open-source}
+  - {method: GET, path: /api/claimlist/export, auth: user-JWT, purpose: "export the partner-facing claim list", service: node, edition: open-source}
+  - {method: POST, path: /api/claimlist/from-receipt/:receipt_id, auth: user-JWT, purpose: "draft claim rows from an intake receipt", service: node, edition: open-source}
+  - {method: POST, path: /api/odoo/bridge-partners, auth: user-JWT, purpose: "bridge/map partners against Odoo", service: node, edition: open-source}
+  - {method: GET, path: /api/delivery/shipments/lookup, auth: user-JWT, purpose: "look up delivery shipments", service: node, edition: open-source}
   # --- node: p2p_routes (auth: mesh-secret) ---
   - {method: GET, path: /api/mesh/merkle/state, auth: mesh-secret, purpose: "this node's Merkle-tree state for an entity type", service: node, edition: open-source}
   - {method: GET, path: /api/mesh/parity, auth: mesh-secret, purpose: "cross-node parity/drift check", service: node, edition: open-source}
@@ -708,6 +841,8 @@ routes:
   - {method: POST, path: /api/mesh/sync/push, auth: mesh-secret, purpose: "peer pushes an entity upsert", service: node, edition: open-source}
   - {method: GET, path: /api/mesh/file/:hash, auth: mesh-secret, purpose: "serve file bytes to hydrate peer FileStore", service: node, edition: open-source}
   - {method: GET, path: /api/mesh/raw-docs/:ticket_id, auth: mesh-secret, purpose: "raw document_raw records for a ticket", service: node, edition: open-source}
+  - {method: GET, path: /api/mesh/re-envelope/ids, auth: mesh-secret, purpose: "list envelope ids a cache node holds (mesh-key rotation)", service: node, edition: open-source}
+  - {method: POST, path: /api/mesh/re-envelope, auth: mesh-secret, purpose: "re-seal synced payloads under a rotated mesh key", service: node, edition: open-source}
   - {method: GET, path: /api/mesh/tasks, auth: mesh-secret, purpose: "pending mesh tasks for calling node", service: node, edition: open-source}
   - {method: POST, path: /api/mesh/tasks/nudge, auth: mesh-secret, purpose: "nudge processing of pending tasks", service: node, edition: open-source}
   - {method: DELETE, path: /api/mesh/tasks/:id, auth: mesh-secret, purpose: "mark mesh task completed", service: node, edition: open-source}
@@ -750,6 +885,37 @@ routes:
   - {method: GET, path: /api/admin/mcp-connector, auth: admin-JWT, purpose: "download ready-to-run MCP connector bundle", service: node, edition: open-source}
   - {method: POST, path: /api/admin/i18n/languages, auth: admin-JWT, purpose: "machine-translate UI labels into new language", service: node, edition: open-source}
   - {method: GET, path: /api/admin/i18n/languages/:lang/status, auth: admin-JWT, purpose: "poll status of in-progress language add", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/vault/bootstrap, auth: admin-JWT, purpose: "bootstrap the mesh PII vault (first node)", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/vault/enroll, auth: admin-JWT, purpose: "enroll a node into the vault ring", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/vault/join, auth: admin-JWT, purpose: "join this node to an existing vault ring", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/vault/revoke, auth: admin-JWT, purpose: "cut a node out of the vault ring", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/vault/recover, auth: admin-JWT, purpose: "re-key a lost home node", service: node, edition: open-source}
+  - {method: GET, path: /api/admin/vault/status, auth: admin-JWT, purpose: "vault ring state", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/vault/rotate, auth: admin-JWT, purpose: "bump vault key epochs", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/vault/sweep, auth: admin-JWT, purpose: "run the re-envelope back-fill sweep", service: node, edition: open-source}
+  - {method: GET, path: /api/admin/plugins, auth: admin-JWT, purpose: "list WASM plugins", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/plugins, auth: admin-JWT, purpose: "register a WASM plugin", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/plugins/:name/enable, auth: admin-JWT, purpose: "enable a registered WASM plugin", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/plugins/:name/disable, auth: admin-JWT, purpose: "disable a registered WASM plugin", service: node, edition: open-source}
+  - {method: GET, path: /api/admin/mcp-sessions, auth: admin-JWT, purpose: "list active browser MCP sessions", service: node, edition: open-source}
+  - {method: DELETE, path: /api/admin/mcp-sessions/:id, auth: admin-JWT, purpose: "revoke a browser MCP session by id/prefix", service: node, edition: open-source}
+  - {method: GET, path: /api/admin/chat-sessions, auth: admin-JWT, purpose: "list Brain-Chat transcripts (node-local)", service: node, edition: open-source}
+  - {method: GET, path: /api/admin/chat-sessions/:id, auth: admin-JWT, purpose: "read one Brain-Chat transcript", service: node, edition: open-source}
+  - {method: DELETE, path: /api/admin/chat-sessions/:id, auth: admin-JWT, purpose: "delete one Brain-Chat transcript", service: node, edition: open-source}
+  - {method: GET, path: /api/admin/chat-sessions/:id/export.md, auth: admin-JWT, purpose: "markdown export of a transcript", service: node, edition: open-source}
+  - {method: GET, path: /api/admin/chat-stats, auth: admin-JWT, purpose: "per-model Brain-Chat stats", service: node, edition: open-source}
+  - {method: POST, path: /api/ai/bench/brain, auth: admin-JWT, purpose: "brain tool-loop benchmark (dev-gated by ECK_BRAIN_BENCH; 404 otherwise)", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/or-soak, auth: admin-JWT, purpose: "one-shot read-only OpenRouter shadow soak (never persists/meshes)", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/img-soak, auth: admin-JWT, purpose: "one-shot read-only image-pipeline shadow soak (never persists/meshes)", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/nas-ingest, auth: admin-JWT, purpose: "one-shot repair-tree ingest job (dry-run default; env-gated)", service: node, edition: open-source}
+  # --- node: api_router extra merges (auth: paid-license; two conditional) ---
+  - {method: POST, path: /api/vault/share, auth: paid-license, purpose: "fetch this node's held Shamir share (ECK_VAULT_SERVE=1)", service: node, edition: open-source}
+  - {method: PUT, path: /api/vault/share, auth: paid-license, purpose: "store a Shamir share on this node (ECK_VAULT_SERVE=1)", service: node, edition: open-source}
+  - {method: POST, path: /api/vault/node, auth: paid-license, purpose: "node lifecycle action against the share ring (ECK_VAULT_SERVE=1)", service: node, edition: open-source}
+  - {method: GET, path: /api/vault/nodes, auth: paid-license, purpose: "list share-holder nodes in the ring (ECK_VAULT_SERVE=1)", service: node, edition: open-source}
+  - {method: GET, path: /api/vault/health, auth: paid-license, purpose: "share-holder health/state (always live)", service: node, edition: open-source}
+  - {method: POST, path: /api/pii/spans, auth: "user-JWT|paid-license", purpose: "detect PII spans locally for a peer node (only when ECK_PII_SPANS_SERVE=1)", service: node, edition: open-source}
+  - {method: POST, path: /api/ai/or, auth: paid-license, purpose: "serve an OpenRouter/cheap-tier request for a peer node (only when ECK_OR_SERVE=1)", service: node, edition: open-source}
   # --- node: /mcp top-level ---
   - {method: POST, path: /mcp, auth: MCP-bearer, purpose: "direct/LAN MCP JSON-RPC transport", service: node, edition: open-source}
   - {method: POST, path: /mcp/signed, auth: cert-signed, purpose: "cert-signed MCP request, no relay hop", service: node, edition: open-source}
@@ -759,12 +925,15 @@ routes:
   - {method: POST, path: /X/approve, auth: user-JWT, purpose: "operator approves inbound xelixir session request", service: node, edition: open-source}
   - {method: POST, path: /X/devices/:id/start, auth: user-JWT, purpose: "start paired device's agent", service: node, edition: open-source}
   - {method: POST, path: /X/devices/:id/stop, auth: user-JWT, purpose: "stop paired device's agent", service: node, edition: open-source}
+  - {method: POST, path: /X/devices/:id/restart, auth: user-JWT, purpose: "restart paired device's agent", service: node, edition: open-source}
   # --- node: /X xelixir_self_routes (auth: cert-signed) ---
   - {method: POST, path: /X/self/start, auth: cert-signed, purpose: "server-initiated self start via signed envelope", service: node, edition: open-source}
   - {method: POST, path: /X/self/stop, auth: cert-signed, purpose: "server-initiated self stop via signed envelope", service: node, edition: open-source}
+  - {method: POST, path: /X/self/restart, auth: cert-signed, purpose: "server-initiated self restart via signed envelope", service: node, edition: open-source}
   # --- node: /X xelixir_internal_routes (auth: service-token) ---
   - {method: POST, path: /X/internal/dispatch, auth: service-token, purpose: "sibling-service dispatch of start/stop command", service: node, edition: open-source}
   - {method: GET, path: /X/internal/result/:task_id, auth: service-token, purpose: "poll dispatched command result", service: node, edition: open-source}
+  - {method: POST, path: /X/internal/purchase-check, auth: service-token, purpose: "purchase-claim verification for the shared tri-site service", service: node, edition: open-source}
   # --- node: /X xelixir_ops_routes (auth: service-token, audit-logged) ---
   - {method: GET, path: /X/ops/journal, auth: service-token, purpose: "read ops journal", service: node, edition: open-source}
   - {method: GET, path: /X/ops/service_status, auth: service-token, purpose: "systemd/service status", service: node, edition: open-source}
@@ -812,6 +981,10 @@ routes:
   - {method: GET, path: "/E/c/poll/{self_uuid}", auth: public, purpose: "target long-polls pending client-MCP tasks (already pre-admitted)", service: relay, edition: open-source}
   - {method: POST, path: "/E/c/ack/{task_id}", auth: public, purpose: "target posts MCP result body, first-ack-wins", service: relay, edition: open-source}
   - {method: GET, path: "/E/c/result/{task_id}", auth: public, purpose: "subscriber polls until node acks", service: relay, edition: open-source}
+  - {method: POST, path: "/E/ai/dispatch/{target_uuid}", auth: public, purpose: "queue an AI/OpenRouter request for a serving node (dumb queue; node meters + authorizes)", service: relay, edition: open-source}
+  - {method: GET, path: "/E/ai/poll/{self_uuid}", auth: public, purpose: "serving node polls pending AI-request tasks", service: relay, edition: open-source}
+  - {method: POST, path: "/E/ai/ack/{task_id}", auth: public, purpose: "serving node acks an AI task with a result", service: relay, edition: open-source}
+  - {method: GET, path: "/E/ai/result/{task_id}", auth: public, purpose: "requester polls the ack'd AI result", service: relay, edition: open-source}
   - {method: POST, path: /E/pair/announce, auth: public, purpose: "master publishes short-code pairing rendezvous (TTL ~10min)", service: relay, edition: open-source}
   - {method: POST, path: /E/pair/code, auth: public, purpose: "resolve typed short code into full ECK$ pairing string", service: relay, edition: open-source}
   # --- pos (commercial edition, feature-gated): protected_routes (auth: user-JWT, POS realm) ---

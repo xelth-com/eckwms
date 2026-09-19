@@ -3,6 +3,7 @@
 export default {
   // Sidebar / nav
   connected_servers: 'Connected Servers:',
+  nav_chat: 'Chat',
   nav_dashboard: 'Dashboard',
   nav_inventory: 'Inventory',
   nav_warehouse: 'Warehouse',

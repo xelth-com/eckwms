@@ -39,7 +39,12 @@ Extract the information into the following strict structure:
 **Gerät / Modell:** (Extract device model or serial number, e.g., "Model 770", "SN: 12345").
 **Hauptproblem (Symptom):** (Briefly describe the technical failure in 1-2 sentences).
 **Durchgeführte Schritte:** (Troubleshooting steps already taken).
-**Lösung / Status:** (Current status, e.g., "RMA needed", "Waiting for customer", "Resolved")."#;
+**Lösung / Status:** (Current status, e.g., "RMA needed", "Waiting for customer", "Resolved").
+
+=== PII SELF-CHECK (do this LAST) ===
+The INPUT above was pseudonymized: real personal data of private individuals should appear ONLY as tokens (Name_…, Email_…, Phone_…, Address_…). If — and only if — you notice UNMASKED personal data of a real person in the INPUT (a real person's name, an email address, a phone number, or a postal address written in the clear instead of as a token), report it so it can be masked next time. Company, clinic, practice, dealer, and brand names in the clear are BY DESIGN — never report those. When (and only when) you have something to report, append as the VERY LAST line of your output a single line that starts with the exact marker ⟦PII_LEAKS⟧ immediately followed by a compact JSON array, e.g.:
+⟦PII_LEAKS⟧[{"quote":"Hans Müller","kind":"PER"},{"quote":"hans@example.com","kind":"EMAIL"}]
+"kind" is one of PER, EMAIL, PHONE, ADDR, OTHER. "quote" is the exact clear substring copied verbatim from the INPUT. If you noticed no unmasked personal data, do NOT output the marker or that line at all — omit it entirely."#;
 
 /// The ticket summarization system prompt, with the tenant's device phrase
 /// spliced in (env `ECK_TENANT_BRAND`; neutral "the company's devices" when
@@ -62,7 +67,12 @@ Extract the information into the following strict structure in German:
 
 === POSITIONEN & SERIENNUMMERN ===
 **Gekaufte Artikel:** (List the models/products purchased)
-**Seriennummern:** (Extract ALL serial numbers mentioned in the invoice. This is CRITICAL for warranty tracking)."#;
+**Seriennummern:** (Extract ALL serial numbers mentioned in the invoice. This is CRITICAL for warranty tracking).
+
+=== PII SELF-CHECK (do this LAST) ===
+The INPUT above was pseudonymized: real personal data of private individuals should appear ONLY as tokens (Name_…, Email_…, Phone_…, Address_…). If — and only if — you notice UNMASKED personal data of a real person in the INPUT (a real person's name, an email address, a phone number, or a postal address written in the clear instead of as a token), report it so it can be masked next time. Company, clinic, practice, dealer, and brand names in the clear are BY DESIGN — never report those. When (and only when) you have something to report, append as the VERY LAST line of your output a single line that starts with the exact marker ⟦PII_LEAKS⟧ immediately followed by a compact JSON array, e.g.:
+⟦PII_LEAKS⟧[{"quote":"Hans Müller","kind":"PER"},{"quote":"hans@example.com","kind":"EMAIL"}]
+"kind" is one of PER, EMAIL, PHONE, ADDR, OTHER. "quote" is the exact clear substring copied verbatim from the INPUT. If you noticed no unmasked personal data, do NOT output the marker or that line at all — omit it entirely."#;
 
 // ── PII Masking ─────────────────────────────────────────────────────────────
 
@@ -114,6 +124,441 @@ impl PiiMask {
             result = result.replace(token.as_str(), real_value);
         }
         result
+    }
+}
+
+/// Register one person-name span (whole + its >2-char parts) into `pii` so the
+/// final `mask_text` tokenises it. Parts are registered like the structured
+/// contact path (`build_ticket_text`) so a lone signature token or an inflected
+/// mention that carries only one part still masks.
+fn register_name_span(pii: &mut PiiMask, span: &str) {
+    let span = span.trim();
+    if span.chars().count() < 2 {
+        return;
+    }
+    pii.mask("Name", span);
+    if span.contains(' ') {
+        for part in span.split_whitespace() {
+            if part.len() > 2 {
+                pii.mask("Name", part);
+            }
+        }
+    }
+}
+
+/// Blank each `span` (case-insensitive) out of `text`, replacing it with a
+/// single space. Used to hide NER-ORG (brand) regions from the lexicon
+/// heuristic so a person-shaped brand ("John Harris Fitness") is never harvested
+/// as a name. Positions are irrelevant — the heuristic returns span *strings*,
+/// which stay verbatim substrings of the original text for every non-org name.
+fn blank_spans(text: &str, spans: &[String]) -> String {
+    let mut out = text.to_string();
+    let mut spans: Vec<&String> = spans.iter().collect();
+    spans.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    for span in spans {
+        if span.chars().count() < 2 {
+            continue;
+        }
+        if let Ok(re) = regex::Regex::new(&format!("(?i){}", regex::escape(span))) {
+            out = re.replace_all(&out, " ").into_owned();
+        }
+    }
+    out
+}
+
+/// Egress person-name ladder over the ASSEMBLED outbound text (subject + all
+/// thread prose), registering every third-party person name into `pii` so the
+/// final `mask_text` tokenises it before the text reaches Gemini. This closes
+/// the free-text NER gap: the structured from/to/cc/author path only catches
+/// names that appear in a header, not a person named only inside a sentence or
+/// signature line.
+///
+/// Two layers, mirroring the subject masker (`services::support::mask_subject`)
+/// and the doc-classify chain (`ai::doc_classify::mask_extracted_text`):
+///   (a) on-device NER PER spans — passed in as `ner = Some((persons, orgs))`
+///       when `ECK_PII_NER=local` — each gated by `plausible_person_name` and
+///       dropped when it lies inside an NER-ORG span (a person-shaped brand like
+///       "Emil Krause Fitness" is a company and stays clear — policy + search);
+///   (b) the lexicon/title heuristic (`mask_person_names_heuristic`), ALWAYS —
+///       the model-less backstop — run over a copy with the NER-ORG spans
+///       blanked so a brand is never harvested as a name.
+/// Every span is registered whole AND split into its >2-char parts. Pure and
+/// deterministic over `(text, ner)` so it is unit-testable with `ner = None`;
+/// the single NER inference over the whole text is done once by the caller.
+fn register_prose_person_names(pii: &mut PiiMask, text: &str, ner: Option<(&[String], &[String])>) {
+    let orgs: Vec<String> = ner.map(|(_, o)| o.to_vec()).unwrap_or_default();
+    let in_org = |name: &str| {
+        let n = name.trim().to_lowercase();
+        orgs.iter().any(|o| {
+            let o = o.to_lowercase();
+            o == n || o.contains(&n)
+        })
+    };
+
+    // (a) NER PER spans — gated + org-excluded.
+    if let Some((persons, _)) = ner {
+        for name in persons {
+            let name = name.trim();
+            if name.chars().count() < 2 {
+                continue;
+            }
+            if !eck_core::utils::anonymizer::plausible_person_name(name) {
+                continue;
+            }
+            if in_org(name) {
+                continue;
+            }
+            register_name_span(pii, name);
+        }
+    }
+
+    // (b) Lexicon/title heuristic over a copy with NER-ORG spans blanked. We only
+    // consume the emitted (token, span) pairs to learn WHICH spans to register —
+    // the tokenisation itself happens in the final `mask_text` over the raw text.
+    let scratch = blank_spans(text, &orgs);
+    let (_masked, pairs) = eck_core::utils::anonymizer::mask_person_names_heuristic(&scratch);
+    for (_token, span) in pairs {
+        register_name_span(pii, &span);
+    }
+}
+
+/// One on-device NER pass over the whole outbound text — `Some((persons, orgs))`
+/// only when `ECK_PII_NER=local` and the model loads, else `None` (heuristic-only,
+/// the exact pre-NER behavior). The model windows long input internally
+/// (450-token windows, 50 overlap), so a single call covers the full ~28 KB
+/// body; NER is NEVER run per-thread.
+/// One PII-NER pass over the whole outbound text via the ungated routing facade
+/// `crate::ai::pii_mode`. Returns `Some((persons, orgs))` when the configured
+/// backend produced spans, else `None` (heuristic-only masking — the exact
+/// pre-NER behavior). Only the `local` and `remote` modes carry an entity
+/// backend here: `remote` takes the SAME branch as `local` did (spec
+/// §5/§9 slice 1 — the "eck masker" is just a different execution site for the
+/// same masker semantics). Any other mode (`gemini`, or the cloud-only build's
+/// fallback) yields `None`, and — critically — an `Err` degrades to `None` too:
+/// masking then drops to the lexicon/heuristic path, NEVER to unmasked egress
+/// (fail-closed egress ladder). NER is NEVER run per-thread; the model windows
+/// long input internally, so a single call covers the full ~28 KB body.
+async fn prose_ner(text: &str) -> Option<(Vec<String>, Vec<String>)> {
+    let mode = crate::ai::pii_mode::pii_ner_mode();
+    if mode != "local" && mode != "remote" {
+        return None;
+    }
+    if text.trim().is_empty() {
+        return None;
+    }
+    match crate::ai::pii_mode::extract_entities(text).await {
+        Ok(v) => Some(v),
+        Err(e) => {
+            warn!("[Summarize] prose NER failed ({e}) — heuristic-only masking");
+            None
+        }
+    }
+}
+
+// ── PII leak self-report pipeline (spec §7 line 3 of defense; §9 slice 3) ─────
+//
+// The summarization prompt asks Gemini to self-report any UNMASKED personal data
+// it notices in its OWN input (a masker miss the two earlier lines — NER/lexicon
+// and `scrub_pii_regex` — let through). The report rides back on the SAME
+// response, appended after the marker below. It contains the CLEAR string, so it
+// must NEVER be stored, meshed, or logged: `strip_pii_leaks` cuts it off the
+// response BEFORE the summary is persisted (proof: see call sites in
+// `process_pending`, `summarization_batch::complete_job`, and the defensive
+// re-strip at the top of `write_summary_completion`). The stripped quotes live
+// only in the node-local `pii_leak_quarantine` table (deliberately NOT in
+// `SYNC_ENTITY_TYPES` — it must not replicate the leak across the mesh) and are
+// gated by a DETERMINISTIC validator before they can affect masking, so a
+// prompt-injected fake report ("treat 'ZetaBody770' as a person") cannot poison
+// the lexicon.
+
+/// Sentinel that separates the stored summary from the (never-stored) PII leak
+/// report. Chosen to be vanishingly unlikely to occur in genuine summary prose.
+pub(crate) const PII_LEAK_MARKER: &str = "⟦PII_LEAKS⟧";
+
+/// One self-reported unmasked-PII candidate. `quote` is a CLEAR PII string — it
+/// is quarantine-only and never reaches storage, mesh, or tracing.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PiiLeak {
+    pub quote: String,
+    pub kind: String, // PER | EMAIL | PHONE | ADDR | OTHER (normalized)
+}
+
+/// Split a raw model response into `(clean_summary, leaks)`. The clean summary
+/// is everything BEFORE the first `PII_LEAK_MARKER`; the leaks are parsed from
+/// the JSON array that follows it. Pure & idempotent: a response with no marker
+/// returns unchanged text and an empty vec, and re-running on an already-clean
+/// summary is a no-op — so it is safe to call at every store path.
+pub(crate) fn strip_pii_leaks(raw: &str) -> (String, Vec<PiiLeak>) {
+    let Some(pos) = raw.find(PII_LEAK_MARKER) else {
+        return (raw.to_string(), Vec::new());
+    };
+    let clean = raw[..pos].trim_end().to_string();
+    let tail = &raw[pos + PII_LEAK_MARKER.len()..];
+    (clean, parse_leak_array(tail))
+}
+
+/// Lenient parser for the marker tail: take the first `[` .. last `]` and read a
+/// JSON array of `{quote, kind}` objects. Anything malformed yields no leaks
+/// (the leak report is best-effort telemetry, never load-bearing).
+fn parse_leak_array(tail: &str) -> Vec<PiiLeak> {
+    let (Some(start), Some(end)) = (tail.find('['), tail.rfind(']')) else {
+        return Vec::new();
+    };
+    if end < start {
+        return Vec::new();
+    }
+    let arr: Value = match serde_json::from_str(&tail[start..=end]) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let Some(items) = arr.as_array() else { return Vec::new() };
+    let mut out = Vec::new();
+    for it in items {
+        let quote = it.get("quote").and_then(|v| v.as_str()).unwrap_or("").trim();
+        if quote.is_empty() {
+            continue;
+        }
+        let kind = normalize_leak_kind(it.get("kind").and_then(|v| v.as_str()).unwrap_or(""));
+        out.push(PiiLeak { quote: quote.to_string(), kind });
+    }
+    out
+}
+
+fn normalize_leak_kind(raw: &str) -> String {
+    match raw.trim().to_uppercase().as_str() {
+        "PER" | "EMAIL" | "PHONE" | "ADDR" => raw.trim().to_uppercase(),
+        _ => "OTHER".to_string(),
+    }
+}
+
+/// Deterministic validator verdict for one quarantined leak. The LLM never
+/// writes masking config directly (prompt-injection defense) — a leak only
+/// becomes actionable after passing THIS gate.
+#[derive(Debug, PartialEq)]
+enum LeakDecision {
+    /// PER that passes the person-name gate → lexicon hotfix (status "applied").
+    Apply,
+    /// Shape-valid but not auto-actionable (non-PER, or OTHER) → status
+    /// "pending", left for the Operator Inbox to confirm.
+    Park(String),
+    /// Fails the gate (brand/ORG/German phrase-name, or wrong shape) → "rejected".
+    Reject(String),
+}
+
+fn email_shape(s: &str) -> bool {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$").unwrap()
+    })
+    .is_match(s.trim())
+}
+
+fn phone_shape(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() {
+        return false;
+    }
+    let digits = s.chars().filter(|c| c.is_ascii_digit()).count();
+    let ok_chars = s
+        .chars()
+        .all(|c| c.is_ascii_digit() || c.is_whitespace() || "+()-/.".contains(c));
+    digits >= 6 && digits <= 15 && ok_chars
+}
+
+fn addr_shape(s: &str) -> bool {
+    let s = s.trim();
+    // A postal address carries at least a house/ZIP number and enough letters
+    // for a street/city name.
+    s.chars().count() >= 6
+        && s.chars().any(|c| c.is_ascii_digit())
+        && s.chars().filter(|c| c.is_alphabetic()).count() >= 3
+}
+
+/// Deterministic validation. PER reuses the existing `plausible_person_name`
+/// gate (core anonymizer) — the same one built to stop German phrase-"names"
+/// and, per-word, to reject brand-stoplist and org-marker tokens — so a
+/// person-shaped brand or a "noun + verb" fragment is rejected without any LLM
+/// involvement. EMAIL/PHONE/ADDR are shape-checked. Pure → unit-testable.
+fn validate_leak(leak: &PiiLeak) -> LeakDecision {
+    match leak.kind.as_str() {
+        "PER" => {
+            if eck_core::utils::anonymizer::plausible_person_name(&leak.quote) {
+                LeakDecision::Apply
+            } else {
+                LeakDecision::Reject(
+                    "not a plausible person name (brand/org marker or German phrase-name)".into(),
+                )
+            }
+        }
+        "EMAIL" => {
+            if email_shape(&leak.quote) {
+                LeakDecision::Park("email shape valid; awaiting operator confirmation".into())
+            } else {
+                LeakDecision::Reject("not email-shaped".into())
+            }
+        }
+        "PHONE" => {
+            if phone_shape(&leak.quote) {
+                LeakDecision::Park("phone shape valid; awaiting operator confirmation".into())
+            } else {
+                LeakDecision::Reject("not phone-shaped".into())
+            }
+        }
+        "ADDR" => {
+            if addr_shape(&leak.quote) {
+                LeakDecision::Park("address shape valid; awaiting operator confirmation".into())
+            } else {
+                LeakDecision::Reject("not address-shaped".into())
+            }
+        }
+        // OTHER: no deterministic shape to trust; never auto-applied, parked for
+        // a human. (Also the confirmed→synthetic-example seam — see below.)
+        _ => LeakDecision::Park("kind OTHER; awaiting operator confirmation".into()),
+    }
+}
+
+/// Persist stripped leaks into the node-local quarantine, validate each, and —
+/// for a validated PER — apply the lexicon hotfix (the row itself, once
+/// `status = 'applied'`, is what `register_lexicon_overlay` masks from the next
+/// document on) and file an Operator Inbox item for human confirmation.
+///
+/// Best-effort: any DB error is logged and swallowed — a leak-report hiccup must
+/// never fail or retry the summary write that already succeeded. `source_entity`
+/// is the clear record id string (e.g. `document:abc`). Skipped entirely under
+/// an effective-clear LLM policy, where PII is clear in the summary BY DECISION
+/// and a "leak" report is meaningless.
+pub(crate) async fn process_pii_leaks(db: &SurrealDb, source_entity: &str, leaks: Vec<PiiLeak>) {
+    if leaks.is_empty() {
+        return;
+    }
+    if crate::ai::pii_policy::effective_clear(crate::ai::pii_policy::Surface::Llm) {
+        return;
+    }
+    for leak in leaks {
+        // Dedup: one row per (source_entity, quote) — a doc summarized N times on
+        // retry must not spawn N identical quarantine rows.
+        let existing: Result<Option<Value>, _> = async {
+            db.query(
+                "SELECT record::id(id) AS id FROM pii_leak_quarantine \
+                 WHERE source_entity = $se AND quote = $q LIMIT 1",
+            )
+            .bind(("se", source_entity.to_string()))
+            .bind(("q", leak.quote.clone()))
+            .await?
+            .take(0)
+        }
+        .await;
+        match existing {
+            Ok(Some(_)) => continue, // already quarantined
+            Ok(None) => {}
+            Err(e) => {
+                warn!("[PiiLeak] quarantine dedup query failed: {e}");
+                continue;
+            }
+        }
+
+        let decision = validate_leak(&leak);
+        let (status, verdict) = match &decision {
+            LeakDecision::Apply => ("applied", "validated PER; lexicon hotfix applied".to_string()),
+            LeakDecision::Park(v) => ("pending", v.clone()),
+            LeakDecision::Reject(v) => ("rejected", v.clone()),
+        };
+
+        let insert = db
+            .query(
+                "INSERT INTO pii_leak_quarantine { \
+                    source_entity: $se, \
+                    quote: $q, \
+                    kind: $k, \
+                    detected_at: time::now(), \
+                    status: $status, \
+                    validator_verdict: $verdict \
+                 }",
+            )
+            .bind(("se", source_entity.to_string()))
+            .bind(("q", leak.quote.clone()))
+            .bind(("k", leak.kind.clone()))
+            .bind(("status", status.to_string()))
+            .bind(("verdict", verdict))
+            .await;
+        if let Err(e) = insert.and_then(|mut r| r.check()) {
+            warn!("[PiiLeak] quarantine insert failed: {e}");
+            continue;
+        }
+
+        // NEVER log the quote — only the shape/decision.
+        match decision {
+            LeakDecision::Apply => {
+                info!("[PiiLeak] validated {} leak from {source_entity} → lexicon hotfix", leak.kind);
+                file_operator_inbox_item(db, source_entity, &leak.kind, status).await;
+            }
+            LeakDecision::Park(_) => {
+                info!("[PiiLeak] parked {} leak from {source_entity} for operator review", leak.kind);
+                file_operator_inbox_item(db, source_entity, &leak.kind, status).await;
+            }
+            LeakDecision::Reject(_) => {
+                info!("[PiiLeak] rejected {} leak from {source_entity} (validator)", leak.kind);
+            }
+        }
+
+        // TODO(spec §7.1 confirmed→synthetic): OUT OF SCOPE here (needs a
+        // locale gazetteer). When an operator flips a row to `status='confirmed'`,
+        // a downstream job should emit a SYNTHETIC training example — the
+        // sentence pattern with a substituted gazetteer name of the SAME shape —
+        // so the real string never enters the training corpus. Seam lives here.
+    }
+}
+
+/// Operator Inbox filing — STUB. The existing Operator Inbox (orchestrator
+/// triage) is task-centric: it is the paused-`ai_task` dashboard fed by the
+/// `ai_inbox` table, and each item resumes a specific ReAct task by `task_id`
+/// (see `handlers::ai::reply_to_task`). A standalone "confirm this PII leak"
+/// item has no `ai_task` to attach to, so wiring it through `ai_inbox` would
+/// force a fake task. Instead the `pii_leak_quarantine` rows ARE the review
+/// queue: an operator surface lists `status IN ['applied','pending']` and flips
+/// a confirmed row to `status='confirmed'`. This stub records intent; the real
+/// operator-facing surface is deferred to §9 slice 4.
+async fn file_operator_inbox_item(_db: &SurrealDb, source_entity: &str, kind: &str, status: &str) {
+    // TODO(spec §9 slice 4): surface pii_leak_quarantine (status applied/pending)
+    // in the Operator Inbox for human confirm/reject. No quote in this log line.
+    info!("[PiiLeak] operator-inbox item (stub): {kind} leak on {source_entity} status={status}");
+}
+
+/// Runtime-extensible lexicon overlay for the summarization egress masker.
+///
+/// The compile-time lexicon (`mask_person_names_heuristic` / `first_name_lexicon`
+/// in core anonymizer) cannot learn new names at runtime. This overlay closes
+/// that gap deterministically: every `pii_leak_quarantine` row with a VALIDATED
+/// PER quote (`status='applied'`) is registered into `pii` as a `Name` span, so
+/// the same string is tokenised from the NEXT document on — the immediate,
+/// no-retrain "lexicon hotfix" of spec §7.1. Kept local to the summarization
+/// path (the leak's own egress path); broader maskers (e.g. `mask_subject`) can
+/// consult the same table later if needed. Best-effort: a query error just skips
+/// the overlay (heuristic masking still runs — fail-open toward the earlier
+/// masking lines, never toward unmasked egress, which the final `scrub_pii_regex`
+/// still backstops).
+async fn register_lexicon_overlay(db: &SurrealDb, pii: &mut PiiMask, text: &str) {
+    let rows: Result<Vec<Value>, _> = async {
+        db.query(
+            "SELECT quote FROM pii_leak_quarantine WHERE status = 'applied' AND kind = 'PER'",
+        )
+        .await?
+        .take(0)
+    }
+    .await;
+    let rows = match rows {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("[PiiLeak] lexicon overlay query failed: {e}");
+            return;
+        }
+    };
+    for row in &rows {
+        if let Some(q) = row.get("quote").and_then(|v| v.as_str()) {
+            if text.contains(q) {
+                register_name_span(pii, q);
+            }
+        }
     }
 }
 
@@ -189,15 +634,37 @@ pub async fn start_summarization_worker(db: SurrealDb, model: String, instance_i
             last_rescue = std::time::Instant::now();
         }
 
-        // Resolve auth each cycle (managed mode re-mints the Vertex bearer
-        // transparently before expiry; studio returns the static key).
-        let auth = match eck_core::ai::AiAuth::resolve(&http).await {
+        // Route resolution (spec §2/§7 — `.eck/OPENROUTER_TIER.md`). In SHADOW
+        // mode the LIVE path stays on the default auth (managed Vertex re-mints
+        // transparently; studio returns the static key) and the OR route is
+        // computed separately, per doc, for logging only — it never persists.
+        // Otherwise `resolve_for_task` returns the OpenRouter auth when
+        // `summarization` is in ECK_AI_TASK_ROUTES (fail-open to default on an
+        // empty key), else the same default auth as before.
+        let shadow = std::env::var("ECK_AI_SHADOW").map(|v| v.trim() == "1").unwrap_or(false);
+        let resolved = if shadow {
+            eck_core::ai::AiAuth::resolve(&http).await
+        } else {
+            eck_core::ai::AiAuth::resolve_for_task(&http, "summarization").await
+        };
+        let auth = match resolved {
             Ok(a) if a.is_configured() => a,
             Ok(_) => continue,
             Err(e) => {
                 warn!("[Summarization] token resolve failed: {e}");
                 continue;
             }
+        };
+        let route_is_or = auth.or_model().is_some();
+        // Shadow OR auth — Some only when ECK_AI_SHADOW=1 AND a usable OR route
+        // exists; the per-doc shadow computation runs against this.
+        let shadow_or_auth = if shadow {
+            match eck_core::ai::AiAuth::resolve_for_task(&http, "summarization").await {
+                Ok(a) if a.or_model().is_some() && a.is_configured() => Some(a),
+                _ => None,
+            }
+        } else {
+            None
         };
 
         // Batch path (Vertex/managed only): service in-flight jobs, orphan-guard
@@ -206,23 +673,26 @@ pub async fn start_summarization_worker(db: SurrealDb, model: String, instance_i
         // than live calls). Returns Ok(true) when a batch was submitted this tick
         // (the claimed docs left the 'pending' pool, so skip the live path); Ok(false)
         // to fall through to the per-doc live path for whatever trickle remains.
-        // Studio auth, batch disabled, or any error → falls through untouched.
-        let handled_by_batch = match super::summarization_batch::batch_tick(
-            &db, &http, &auth, &model, &instance_id,
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                warn!("[Summarization] batch tick error: {e}");
-                false
+        // Studio auth, batch disabled, or any error → falls through untouched. An
+        // OR route short-circuits the whole batch path to live (spec §6): OR live
+        // glm is ~7× cheaper than Vertex batch flash-lite, and glm's :batch tier
+        // currently prices ABOVE its live tier.
+        let handled_by_batch = if route_is_or {
+            false
+        } else {
+            match super::summarization_batch::batch_tick(&db, &http, &auth, &model, &instance_id).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("[Summarization] batch tick error: {e}");
+                    false
+                }
             }
         };
         if handled_by_batch {
             continue;
         }
 
-        if let Err(e) = process_pending(&db, &http, &auth, &model, &guard, &instance_id).await {
+        if let Err(e) = process_pending(&db, &http, &auth, &model, &guard, &instance_id, shadow_or_auth.as_ref()).await {
             warn!("[Summarization] cycle error: {e}");
         }
     }
@@ -351,10 +821,25 @@ pub(crate) async fn write_summary_completion(
     masked_summary: &str,
     instance_id: &str,
 ) -> Result<bool, anyhow::Error> {
+    // Defensive last-line guard on EVERY store path: no summary may carry a PII
+    // self-report into `ai_summary` (which meshes and exits via /mcp) or the
+    // fingerprint index. Live and batch callers already strip + process the
+    // leaks with their source-entity context; this idempotent re-strip (a
+    // no-op on already-clean text) makes it structurally impossible for the
+    // marker+quote to be persisted even if a future caller forgets. Leaks are
+    // discarded here — already handled upstream.
+    let (masked_summary, _stripped_leaks) = strip_pii_leaks(masked_summary);
+    let masked_summary = masked_summary.as_str();
     // Token index of the masked fields — powers exact `search_database` lookup
     // by pseudonym token. Derived, merkle-IGNORED; peer nodes re-derive their
     // own copy via the main.rs self-heal when the summary arrives over mesh.
     let fps = eck_core::utils::anonymizer::extract_pii_tokens(&format!("{subject_masked}\n{masked_summary}"));
+    // Channel-B fuzzy signatures for the Name/Address tokens in this summary
+    // (`.eck/PPRL_FUZZY.md` §B). `meta` is not in scope here, so this resolves
+    // from the process mint log (the names were just masked); tokens it cannot
+    // resolve are filled in by the embedding worker's re-derive (this write nulls
+    // `embedding`, re-queuing it) or the main.rs backfill sweep.
+    let pii_fuzzy = crate::ai::pii_policy::derive_pii_fuzzy(&serde_json::json!({}), &fps);
     // A fresh summary normally re-queues the embedding — but NOT if embeddings
     // are parked 'unavailable' (backend has no embedding model): reviving those
     // into 'pending' just recreates the loop the Observer flags as "stuck".
@@ -364,7 +849,7 @@ pub(crate) async fn write_summary_completion(
         .query(
             "UPDATE type::record($rid) SET ai_summary = $summary, summary_status = 'completed', \
                  summary_error = NONE, \
-                 pii_fingerprints = $fps, \
+                 pii_fingerprints = $fps, pii_fuzzy = $pf, \
                  embedding = NONE, embedding_model = NONE, \
                  embedding_status = IF embedding_status = 'unavailable' THEN 'unavailable' ELSE 'pending' END, \
                  embedding_retries = 0, embedding_error = NONE \
@@ -373,6 +858,7 @@ pub(crate) async fn write_summary_completion(
         .bind(("rid", format!("document:`{}`", id)))
         .bind(("summary", masked_summary.to_string()))
         .bind(("fps", fps))
+        .bind(("pf", pii_fuzzy))
         .await?
         .take(0)?;
 
@@ -412,7 +898,7 @@ pub(crate) async fn write_summary_completion(
     Ok(true)
 }
 
-async fn process_pending(db: &SurrealDb, http: &HttpClient, auth: &eck_core::ai::AiAuth, model: &str, guard: &LoopGuard, instance_id: &str) -> Result<(), anyhow::Error> {
+async fn process_pending(db: &SurrealDb, http: &HttpClient, auth: &eck_core::ai::AiAuth, model: &str, guard: &LoopGuard, instance_id: &str, shadow_or_auth: Option<&eck_core::ai::AiAuth>) -> Result<(), anyhow::Error> {
     // ── Circuit breaker check ──
     match current_budget_level() {
         BudgetLevel::Halt => return Ok(()), // complete stop
@@ -443,11 +929,35 @@ async fn process_pending(db: &SurrealDb, http: &HttpClient, auth: &eck_core::ai:
     }
 
     let mut count = 0u32;
+    let mut index_rebuilt = false;
     for doc in &docs {
         let id = match doc.get("id").and_then(|v| v.as_str()) {
             Some(s) => s.to_string(),
             None => continue,
         };
+
+        // STALE-INDEX GUARD (2026-09-10 kiosk): the planner answers the
+        // `summary_status = 'pending'` predicate from `document_sumstatus_idx`
+        // and does NOT re-check the row, so an index entry left behind by a
+        // failed commit (SurrealKV "Memtable arena is full") returned a
+        // 'completed' doc as pending every 10 s — one paid re-summary per
+        // cycle, ~2-6 phantom summaries per hour for weeks. The row itself
+        // carries the truth: refuse anything not actually pending and rebuild
+        // the index once per cycle so the phantom disappears.
+        let row_status = doc.get("summary_status").and_then(|v| v.as_str()).unwrap_or("");
+        if row_status != "pending" {
+            warn!(
+                "[Summarization] stale index: {id} came back from document_sumstatus_idx as pending but the row says {row_status:?} — skipping{}",
+                if index_rebuilt { "" } else { ", rebuilding document_sumstatus_idx" }
+            );
+            if !index_rebuilt {
+                index_rebuilt = true;
+                if let Err(e) = db.query("REBUILD INDEX IF EXISTS document_sumstatus_idx ON document").await {
+                    warn!("[Summarization] index rebuild failed: {e}");
+                }
+            }
+            continue;
+        }
 
         // In-memory loop guard — independent of DB-side exponential backoff.
         // Protects against the case where summary_retries fails to increment
@@ -479,8 +989,72 @@ async fn process_pending(db: &SurrealDb, http: &HttpClient, auth: &eck_core::ai:
             continue;
         }
 
-        match summarize(http, auth, model, prompt, &raw_text).await {
-            Ok((masked_summary, usage)) => {
+        // Shadow soak (spec §7 Stage A): with ECK_AI_SHADOW=1 and an OR route
+        // set, compute the OR summary alongside the real one, log task/model/
+        // latency/cost/guard-hits under [or-shadow], and DISCARD it — the normal
+        // path below runs on the default auth exactly as if the route didn't
+        // exist. Never persists, never touches summary_status.
+        if let Some(or_auth) = shadow_or_auth {
+            let or_model = or_auth.or_model().unwrap_or("");
+            let t0 = std::time::Instant::now();
+            match eck_core::ai::with_ai_task("bench", summarize(http, or_auth, model, prompt, &raw_text)).await {
+                Ok((or_summary, or_usage)) => {
+                    let latency_ms = t0.elapsed().as_millis();
+                    let cost = or_usage.get("openrouterCostUsd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let cjk = contains_cjk(&or_summary);
+                    info!(
+                        "[or-shadow] task=summarization model={or_model} doc={id} latency_ms={latency_ms} cost_usd={cost:.6} cjk_bleed={cjk} chars={}",
+                        or_summary.len()
+                    );
+                }
+                Err(e) => warn!("[or-shadow] task=summarization model={or_model} doc={id} error: {e}"),
+            }
+        }
+
+        // Time the LIVE call so an OR-routed (non-shadow) summarization emits a
+        // greppable one-liner for the Stage B kiosk-flip watch (journald log-grep;
+        // usageMetadata alone isn't greppable). Same no-content rule as pii_remote.
+        let live_is_or = auth.or_model().is_some();
+        let live_t0 = std::time::Instant::now();
+        // OR-first with a Gemini fallback ON ERROR (spec: GLM first, Gemini
+        // fallback). A routed (OR/glm) summarize that fails is retried ONCE on
+        // the default auth before the doc is marked errored, so an OpenRouter
+        // outage can't wedge the mesh's summarization. (No hedge here — this is
+        // a background task; latency is fine, only a hard OR error escalates.)
+        let mut served_is_or = live_is_or;
+        let primary = eck_core::ai::with_ai_task("summarization", summarize_with_guards(http, auth, model, prompt, &raw_text, &id)).await;
+        let outcome = match primary {
+            Ok(v) => Ok(v),
+            Err(e) if live_is_or => {
+                warn!("[ai-fallback] task=summarization glm→gemini doc={id}: {e}");
+                match eck_core::ai::AiAuth::resolve(http).await {
+                    Ok(def) if def.is_configured() => {
+                        served_is_or = false;
+                        eck_core::ai::with_ai_task("summarization", summarize_with_guards(http, &def, model, prompt, &raw_text, &id)).await
+                    }
+                    _ => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        };
+        match outcome {
+            Ok((raw_summary, usage)) => {
+                if served_is_or {
+                    let latency_ms = live_t0.elapsed().as_millis();
+                    let provider = usage.get("openrouterProvider").and_then(|v| v.as_str()).unwrap_or("");
+                    let cost = usage.get("openrouterCostUsd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let or_model = auth.or_model().unwrap_or("");
+                    info!(
+                        "[or-live] task=summarization model={or_model} provider={provider} doc={id} latency_ms={latency_ms} cost_usd={cost:.6}"
+                    );
+                }
+                // Split the (never-stored) PII self-report off the response BEFORE
+                // anything is logged, stored, or sent for address grounding. Every
+                // use of `masked_summary` below sees the CLEAN text; the leak
+                // quotes funnel into the local quarantine + deterministic
+                // validator + lexicon hotfix and never leave this node.
+                let (masked_summary, leaks) = strip_pii_leaks(&raw_summary);
+                process_pii_leaks(db, &format!("document:{id}"), leaks).await;
                 // Store the masked summary in DB — real PII never touches the database.
                 // Unmask happens on-the-fly in the API handler using deterministic PPRL tokens.
                 let subject_masked = doc
@@ -489,9 +1063,17 @@ async fn process_pending(db: &SurrealDb, http: &HttpClient, auth: &eck_core::ai:
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
-                // Telemetry always logs — Gemini was called either way.
+                // Telemetry logs the model that ACTUALLY served the call: the OR
+                // route model (glm) when the OR path served it, else the Gemini
+                // model. `model` alone was the configured Gemini name even when an
+                // OR route served the request (kiosk showed 237 mislabelled rows).
                 if !usage.is_null() {
-                    log_telemetry(db, "summarization", model, &id, &usage).await;
+                    let served_model = if served_is_or {
+                        auth.or_model().unwrap_or(model)
+                    } else {
+                        model
+                    };
+                    log_telemetry(db, "summarization", served_model, &id, &usage).await;
                 }
 
                 // Shared completion write (fingerprints + embedding reset +
@@ -697,10 +1279,22 @@ async fn build_ticket_text(
         .await?
         .take(0)?;
 
-    // N-gram history for rolling deduplication — seed with ticket metadata
-    let mut history_text = parts.join("\n\n");
+    // Rolling n-gram history for deduplication — seed with ticket metadata.
+    // A single incrementally-updated set (never rebuilt per thread) plus a hard
+    // char budget keep assembly O(kept chars). A monster ticket with thousands
+    // of near-duplicate threads therefore can NOT materialize an O(threads²)
+    // n-gram set and silently abort the process on heap exhaustion (seen at
+    // ~doc 96 of a 4-concurrent OpenRouter soak). Dedup quality degrades
+    // gracefully past the budget; normal tickets (a handful of threads) are
+    // byte-for-byte unaffected.
+    let mut deduper = RollingDeduper::new(&parts.join("\n\n"));
+    let mut truncated = false;
 
-    for thread in &threads {
+    for (i, thread) in threads.iter().enumerate() {
+        if i >= MAX_TICKET_THREADS {
+            truncated = true;
+            break;
+        }
         if let Some(payload) = thread.get("payload") {
             // Every participant's signature name + email. Zoho's
             // from/to/cc are `"Display Name"<email>` lists, and `author` is a
@@ -734,18 +1328,40 @@ async fn build_ticket_text(
             if let Some(content) = payload.get("content").and_then(|v| v.as_str()) {
                 let plain = strip_html(content);
                 if plain.is_empty() { continue; }
-                // N-gram dedup: strip lines that are already present in history
-                let deduped = deduplicate_email(&plain, &history_text);
-                if !deduped.is_empty() {
-                    parts.push(deduped.clone());
-                    history_text.push_str("\n\n");
-                    history_text.push_str(&deduped);
+                // N-gram dedup against the rolling history. `push` returns None
+                // once the assembly char budget is exhausted — stop BEFORE doing
+                // any more dedup/allocation work on a monster ticket.
+                match deduper.push(&plain) {
+                    Some(deduped) if !deduped.is_empty() => parts.push(deduped),
+                    Some(_) => {}
+                    None => {
+                        truncated = true;
+                        break;
+                    }
                 }
             }
         }
     }
+    if truncated {
+        parts.push("[... additional threads truncated ...]".to_string());
+    }
 
     let full = parts.join("\n\n");
+    // Egress person-name ladder over the WHOLE outbound text: register third-party
+    // names that appear only in free-text prose / signatures (not in a structured
+    // from/to/cc/author header — those are handled above) so `mask_text` tokenises
+    // them before the text reaches Gemini. ONE NER inference over `full` (the model
+    // windows internally); the lexicon heuristic always runs as the model-less
+    // backstop. Skipped under the clear LLM policy, where `mask_text` is skipped too.
+    if !clear {
+        let ner_spans = prose_ner(&full).await;
+        let ner_ref = ner_spans.as_ref().map(|(p, o)| (p.as_slice(), o.as_slice()));
+        register_prose_person_names(&mut pii, &full, ner_ref);
+        // Runtime lexicon hotfix: register any previously-validated PER leak
+        // (pii_leak_quarantine status='applied') that appears in this text, so a
+        // name a past summary reported unmasked is tokenised from here on.
+        register_lexicon_overlay(db, &mut pii, &full).await;
+    }
     // Apply PII masking to the entire text (catches PII in thread bodies, signatures, etc.)
     // Under the clear LLM policy both passes are skipped — that IS the policy:
     // raw text to the model, clear summary at rest, mesh-wide by decision.
@@ -821,8 +1437,120 @@ fn build_invoice_text(doc: &Value) -> (String, PiiMask) {
     (result, pii)
 }
 
-/// Call Gemini via direct HTTP to summarize document text.
+/// True when `text` contains any CJK ideograph, Hiragana, or Katakana. The
+/// OpenRouter glm model occasionally drops a Chinese fragment into an otherwise
+/// German summary (the LLM judge missed it in the bench; this deterministic
+/// check won't) — see `summarize_with_guards`.
+pub(crate) fn contains_cjk(text: &str) -> bool {
+    text.chars().any(|c| {
+        matches!(c,
+            '\u{4e00}'..='\u{9fff}'   // CJK Unified Ideographs
+            | '\u{3040}'..='\u{309f}' // Hiragana
+            | '\u{30a0}'..='\u{30ff}' // Katakana
+        )
+    })
+}
+
+/// True for a single CJK ideograph / Hiragana / Katakana char.
+fn is_cjk_char(c: char) -> bool {
+    matches!(c,
+        '\u{4e00}'..='\u{9fff}'   // CJK Unified Ideographs
+        | '\u{3040}'..='\u{309f}' // Hiragana
+        | '\u{30a0}'..='\u{30ff}' // Katakana
+    )
+}
+
+/// VISION-scoped CJK guard (`.eck/OPENROUTER_TIER.md` §5.1, scoped per
+/// `VISION_BENCH.md` finding #2). The strict [`contains_cjk`] used for text
+/// summaries would false-positive on legitimate image summaries: the tenant's
+/// devices carry a physically-printed multilingual "No Pacemaker" warning (CJK) that the
+/// model faithfully transcribes. So for image-summary output we do NOT reject on
+/// the mere presence of CJK — we reject only genuine *bleed*, using a simple,
+/// robust two-part heuristic:
+///
+///   1. Strip explicit citation/transcription spans — text inside straight
+///      quotes `"…"`, German quotes `„…"`, guillemets `«…»`/`»…«`, and CJK
+///      corner brackets `「…」`/`『…』`. Printed foreign-language labels legitimately
+///      live inside these, so they don't count against the model.
+///   2. On the REMAINING German prose, reject if CJK chars make up **> 15 %** of
+///      the non-whitespace characters. A few inline CJK chars (a transcribed
+///      label word) stay well under the threshold; a model that drops into a
+///      full Chinese sentence mid-summary blows past it.
+///
+/// Returns `true` when the output should be treated as bleeding (rejected).
+pub(crate) fn cjk_bleed_in_image_summary(text: &str) -> bool {
+    // 1) Drop quoted / bracketed transcription spans. Non-nesting: any recognized
+    //    opener turns citation-mode ON, its matching closer turns it OFF. Straight
+    //    quote `"` toggles (open == close). Good enough to exempt printed-label
+    //    citations without a full grammar.
+    let mut prose = String::with_capacity(text.len());
+    let mut in_cite = false;
+    for c in text.chars() {
+        match c {
+            '"' => in_cite = !in_cite, // U+0022 straight quote toggles
+            '„' | '«' | '「' | '『' if !in_cite => in_cite = true, // openers
+            '"' | '»' | '」' | '』' if in_cite => in_cite = false, // closers
+            _ if in_cite => { /* inside a citation span: skip */ }
+            _ => prose.push(c),
+        }
+    }
+    // 2) Fraction of CJK among non-whitespace prose chars.
+    let mut non_ws = 0usize;
+    let mut cjk = 0usize;
+    for c in prose.chars() {
+        if c.is_whitespace() {
+            continue;
+        }
+        non_ws += 1;
+        if is_cjk_char(c) {
+            cjk += 1;
+        }
+    }
+    if non_ws == 0 {
+        return false;
+    }
+    (cjk as f64) / (non_ws as f64) > 0.15
+}
+
+/// Call the AI to summarize document text (`summarize`), then apply the
+/// OpenRouter-only output guards from spec §5:
+///   1. CJK-bleed: if an OR summary carries CJK, reject and retry once on the
+///      SAME OR auth; if it still bleeds, fall back to the default auth
+///      (`AiAuth::resolve`) for THIS document and log the guard trip.
+/// Non-OR auth is returned verbatim (the guards are OR-specific — Gemini doesn't
+/// bleed CJK). Returns `(summary_text, usageMetadata)`.
+async fn summarize_with_guards(
+    http: &HttpClient,
+    auth: &eck_core::ai::AiAuth,
+    model: &str,
+    system_prompt: &str,
+    raw_text: &str,
+    id: &str,
+) -> Result<(String, Value), anyhow::Error> {
+    let (summary, usage) = summarize(http, auth, model, system_prompt, raw_text).await?;
+    if auth.or_model().is_none() || !contains_cjk(&summary) {
+        return Ok((summary, usage));
+    }
+    // CJK bleed on an OR result — one retry on the same OR auth.
+    warn!("[or-guard] cjk_bleed doc={id} — retrying once on OR");
+    let (retry, retry_usage) = summarize(http, auth, model, system_prompt, raw_text).await?;
+    if !contains_cjk(&retry) {
+        return Ok((retry, retry_usage));
+    }
+    // Still bleeding — fall back to the default auth for this document.
+    warn!("[or-guard] cjk_bleed doc={id} persisted after retry — falling back to default auth");
+    let default_auth = eck_core::ai::AiAuth::resolve(http).await?;
+    summarize(http, &default_auth, model, system_prompt, raw_text).await
+}
+
+/// Call the AI via direct HTTP to summarize document text.
 /// Returns (summary_text, usageMetadata) for telemetry logging.
+///
+/// For an OpenRouter route (spec §5.2/§6): the Google-Search grounding tool is
+/// dropped (OR has no web access, and the shim bails on any `tools`), and one
+/// system-prompt line is appended forbidding invented/"looked-up" addresses —
+/// the ungrounded models otherwise roleplay a search and fabricate street
+/// addresses. Gemini keeps its grounding tool unchanged.
 async fn summarize(
     http: &HttpClient,
     auth: &eck_core::ai::AiAuth,
@@ -831,35 +1559,137 @@ async fn summarize(
     raw_text: &str,
 ) -> Result<(String, Value), anyhow::Error> {
     let user_msg = summary_user_message(raw_text);
+    let is_or = auth.or_model().is_some();
 
-    let payload = serde_json::json!({
+    let system_prompt_owned;
+    let system_prompt = if is_or {
+        system_prompt_owned = format!(
+            "{system_prompt}\n\nYou have NO web access. Address candidates come only from the ticket text; never invent or 'look up' an address."
+        );
+        system_prompt_owned.as_str()
+    } else {
+        system_prompt
+    };
+
+    let mut payload = serde_json::json!({
         "systemInstruction": { "parts": [{ "text": system_prompt }] },
         "contents": [{ "parts": [{ "text": user_msg }] }],
-        "tools": [{ "googleSearch": {} }],
         "generationConfig": {
             "temperature": 0.2,
             "maxOutputTokens": 4096,
         }
     });
+    if !is_or {
+        payload["tools"] = serde_json::json!([{ "googleSearch": {} }]);
+    }
 
     auth.generate_content(http, model, payload).await
 }
 
+/// One READ-ONLY OpenRouter shadow computation for the admin soak
+/// (`/api/admin/or-soak`, spec §7 Stage A). Builds the masked input EXACTLY as
+/// the live path would (`build_doc_masked_text` — SELECTs only, no writes), then
+/// runs ONLY the OR summarize call. Returns `Ok(Some((summary, usageMetadata)))`,
+/// or `Ok(None)` when the doc has no usable local text (unknown type /
+/// raw-unavailable / empty) — the caller counts those as skipped. NEVER writes:
+/// no persist, no vclock, no mesh, no DB telemetry. `or_auth` MUST be the
+/// OpenRouter variant (its route model is used; the `model` arg is ignored on
+/// the OR path). On this node the usage-report seam is a no-op (no
+/// `ECK_VERTEX_USAGE_URL`), so not even a wallet debit occurs.
+pub(crate) async fn or_soak_summarize(
+    db: &SurrealDb,
+    http: &HttpClient,
+    or_auth: &eck_core::ai::AiAuth,
+    doc: &Value,
+    id: &str,
+) -> Result<Option<(String, Value)>, anyhow::Error> {
+    let (raw_text, prompt) = match build_doc_masked_text(db, doc, id).await? {
+        Some(t) => t,
+        None => return Ok(None), // unknown type
+    };
+    if raw_text.trim().is_empty() {
+        return Ok(None); // raw-unavailable / empty local source
+    }
+    let (summary, usage) = eck_core::ai::with_ai_task("bench", summarize(http, or_auth, "", prompt, &raw_text)).await?;
+    Ok(Some((summary, usage)))
+}
+
 /// N-gram (shingling) deduplication for email threads.
 ///
-/// Splits `history` into 7-word shingles stored in a HashSet, then walks each
-/// line of `content` and drops it when >60% of its shingles already exist in
-/// history. Lines shorter than the window size are always kept — they're
-/// typically short replies or signatures that would otherwise false-positive.
+/// A thread body is split into 7-word shingles; a line is dropped when >60% of
+/// its shingles already exist in the rolling history. Lines shorter than the
+/// window size are always kept — they're typically short replies or signatures
+/// that would otherwise false-positive. See `RollingDeduper` for the bounded
+/// per-ticket driver.
 const NGRAM_WINDOW: usize = 7;
 const DUP_THRESHOLD: f64 = 0.60;
 
-fn deduplicate_email(content: &str, history: &str) -> String {
-    let history_ngrams = build_ngram_set(history);
-    if history_ngrams.is_empty() {
-        return content.to_string();
+/// Assembly bounds. These cap the WORK done before the dedup n-gram set can grow,
+/// so a pathological ticket (thousands of threads) can never materialize an
+/// O(threads²) shingle set and abort the process on heap exhaustion.
+///
+/// - `MAX_ASSEMBLED_CHARS` — stop appending thread bodies once the kept text
+///   reaches this budget (matches the downstream ~28k Gemini-context cap, so a
+///   normal ticket that never approaches it is unaffected).
+/// - `MAX_TICKET_THREADS` — hard ceiling on threads inspected, a belt-and-suspenders
+///   bound for the fully-duplicate case where the char budget never advances.
+/// - `MAX_HISTORY_NGRAMS` — cap on the rolling history set; past it, new shingles
+///   stop being learned (dedup degrades gracefully, memory stays bounded).
+const MAX_ASSEMBLED_CHARS: usize = 28_000;
+const MAX_TICKET_THREADS: usize = 2_000;
+const MAX_HISTORY_NGRAMS: usize = 60_000;
+
+/// Rolling-window n-gram deduplicator for email threads.
+///
+/// Holds the accumulated history shingles in a SINGLE incrementally-updated set
+/// (never rebuilt per thread — that was the O(threads²) soak bug) and enforces a
+/// hard char budget, so assembling a ticket is O(total kept chars) regardless of
+/// thread count.
+struct RollingDeduper {
+    history: HashSet<String>,
+    assembled_chars: usize,
+}
+
+impl RollingDeduper {
+    /// Seed the history with the ticket metadata block.
+    fn new(seed: &str) -> Self {
+        let mut history = HashSet::new();
+        add_ngrams(&mut history, seed);
+        Self {
+            history,
+            assembled_chars: seed.chars().count(),
+        }
     }
 
+    /// Dedup one thread body against the rolling history and fold the kept text
+    /// back into it. Returns:
+    /// - `None` once the char budget is exhausted (caller should stop),
+    /// - `Some("")` when the whole body was a duplicate,
+    /// - `Some(kept)` otherwise.
+    fn push(&mut self, content: &str) -> Option<String> {
+        if self.assembled_chars >= MAX_ASSEMBLED_CHARS {
+            return None;
+        }
+        let deduped = dedup_lines(content, &self.history);
+        if deduped.is_empty() {
+            return Some(String::new());
+        }
+        self.assembled_chars += deduped.chars().count();
+        // Learn the new shingles — but stop once the set is saturated so memory
+        // stays bounded even under a flood of distinct-but-huge threads.
+        if self.history.len() < MAX_HISTORY_NGRAMS {
+            add_ngrams(&mut self.history, &deduped);
+        }
+        Some(deduped)
+    }
+}
+
+/// Drop lines of `content` whose 7-word shingles already appear in `history`
+/// above `DUP_THRESHOLD`. Lines shorter than the window are always kept.
+fn dedup_lines(content: &str, history: &HashSet<String>) -> String {
+    if history.is_empty() {
+        return content.to_string();
+    }
     let mut kept = Vec::new();
     for line in content.lines() {
         let words: Vec<&str> = line.split_whitespace().collect();
@@ -872,7 +1702,7 @@ fn deduplicate_email(content: &str, history: &str) -> String {
         let mut hits = 0usize;
         for w in words.windows(NGRAM_WINDOW) {
             let shingle: String = w.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>().join(" ");
-            if history_ngrams.contains(&shingle) {
+            if history.contains(&shingle) {
                 hits += 1;
             }
         }
@@ -880,22 +1710,18 @@ fn deduplicate_email(content: &str, history: &str) -> String {
             kept.push(line);
         }
     }
-
-    let result = kept.join("\n").trim().to_string();
-    result
+    kept.join("\n").trim().to_string()
 }
 
-/// Build a set of lowercase 7-word shingles from text.
-fn build_ngram_set(text: &str) -> HashSet<String> {
+/// Insert the lowercase 7-word shingles of `text` into `set`.
+fn add_ngrams(set: &mut HashSet<String>, text: &str) {
     let words: Vec<String> = text.split_whitespace().map(|w| w.to_lowercase()).collect();
-    let mut set = HashSet::new();
     if words.len() < NGRAM_WINDOW {
-        return set;
+        return;
     }
     for w in words.windows(NGRAM_WINDOW) {
         set.insert(w.join(" "));
     }
-    set
 }
 
 /// HTML → plain text converter.
@@ -939,7 +1765,254 @@ pub(crate) fn strip_html(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_cf_key_map, parse_cf_key_map};
+    use super::{
+        cjk_bleed_in_image_summary, contains_cjk, default_cf_key_map, email_shape,
+        parse_cf_key_map, phone_shape, register_prose_person_names, strip_pii_leaks,
+        validate_leak, LeakDecision, PiiLeak, PiiMask, RollingDeduper, MAX_ASSEMBLED_CHARS,
+        PII_LEAK_MARKER,
+    };
+
+    fn per(q: &str) -> PiiLeak { PiiLeak { quote: q.into(), kind: "PER".into() } }
+
+    // ── Vision-scoped CJK guard (VISION_BENCH finding #2) ───────────────────────
+
+    /// (a) A legit image summary that transcribes the printed multilingual "No
+    /// Pacemaker" label must NOT be rejected: the strict text-guard trips on any
+    /// CJK, but the scoped image guard tolerates a few inline/quoted CJK chars.
+    #[test]
+    fn cjk_image_guard_passes_legit_label_transcription() {
+        let s = "Foto eines ZetaBody-Analysators, Frontansicht. Auf dem Gehäuse ist ein \
+                 mehrsprachiger Warnaufkleber „无心脏起搏器\" (kein Herzschrittmacher) sichtbar. \
+                 Das Display zeigt einen Messfehler. Seriennummer nicht im Bild. UNLESBAR: keine.";
+        // Strict guard (text path) would reject this…
+        assert!(contains_cjk(s));
+        // …but the scoped image guard must accept it (few CJK chars, and quoted).
+        assert!(!cjk_bleed_in_image_summary(s));
+    }
+
+    /// (b) A genuinely bleeding output — a long unquoted Chinese run mid-summary —
+    /// must be rejected (CJK fraction of the German prose exceeds 15 %).
+    #[test]
+    fn cjk_image_guard_rejects_genuine_bleed() {
+        let s = "Foto eines Geräts. 这是一个身体成分分析仪它可以测量体脂率和肌肉量并且显示在屏幕上\
+                 用户需要赤脚站立在电极上以获得准确的测量结果。 Ende.";
+        assert!(cjk_bleed_in_image_summary(s));
+    }
+
+    /// Pure-German output is never a bleed.
+    #[test]
+    fn cjk_image_guard_passes_pure_german() {
+        assert!(!cjk_bleed_in_image_summary(
+            "Reines deutsches Reparatur-Summary ohne jegliche CJK-Zeichen. UNLESBAR: keine."
+        ));
+    }
+
+    // ── Monster-ticket dedup is bounded (OpenRouter soak regression) ────────
+
+    /// A ticket with thousands of distinct-but-repetitive threads must assemble
+    /// in bounded time and memory. Before the fix, `build_ticket_text` rebuilt
+    /// the full n-gram set per thread over an ever-growing history (O(threads²))
+    /// and the process silently died (heap exhaustion) at ~doc 96 of a
+    /// 4-concurrent soak. The rolling deduper caps the work by an assembly char
+    /// budget, so this completes in well under 5s and yields a non-empty, capped
+    /// body instead of aborting.
+    #[test]
+    fn monster_ticket_dedup_is_bounded() {
+        let start = std::time::Instant::now();
+        // Each thread shares a repeated boilerplate greeting/signature (the part
+        // real dedup should collapse) plus a unique sentence (so the history set
+        // WOULD grow unbounded under the old per-thread rebuild).
+        let boiler = "Sehr geehrte Damen und Herren wir haben leider erneut ein Problem \
+                      mit dem gelieferten Gerät festgestellt und bitten um Rueckmeldung. \
+                      Mit freundlichen Gruessen das Support Team der Firma Muster GmbH.";
+        let mut deduper = RollingDeduper::new("Subject: Sammelticket\n\nStatus: Open");
+        let mut assembled = String::new();
+        let mut stopped_on_budget = false;
+        let mut processed = 0usize;
+        for i in 0..5_000usize {
+            let content = format!(
+                "{boiler}\nEindeutige Nachricht Nummer {i} mit zusaetzlichem Freitext Inhalt hier."
+            );
+            match deduper.push(&content) {
+                Some(kept) => {
+                    if !kept.is_empty() {
+                        assembled.push_str(&kept);
+                        assembled.push('\n');
+                    }
+                }
+                None => {
+                    stopped_on_budget = true;
+                    break;
+                }
+            }
+            processed += 1;
+        }
+        let elapsed = start.elapsed();
+        assert!(elapsed.as_secs() < 5, "assembly took too long: {elapsed:?}");
+        assert!(!assembled.is_empty(), "expected a non-empty assembled body");
+        // The char budget must have halted assembly well before all 5000 threads.
+        assert!(stopped_on_budget, "expected the char budget to stop assembly");
+        assert!(processed < 5_000, "budget should stop before every thread is read");
+        // Bounded output: at most the budget plus one final (partial) thread body.
+        assert!(
+            assembled.chars().count() <= MAX_ASSEMBLED_CHARS + 4_000,
+            "assembled body exceeded the bound: {} chars",
+            assembled.chars().count()
+        );
+    }
+
+    // ── OpenRouter CJK-bleed guard (spec §5.1) ──────────────────────────────
+
+    /// The CJK detector fires on Chinese/Japanese script and stays quiet on
+    /// German prose (incl. umlauts/ß) that an OR glm summary normally contains —
+    /// so it only trips the reject-retry-fallback on a genuine bleed.
+    #[test]
+    fn cjk_guard_detects_bleed_but_not_german() {
+        assert!(!contains_cjk("=== TECHNISCHE DETAILS ===\nGerät defekt, Messungen brechen ab. Größe/Maß."));
+        assert!(!contains_cjk("Name_8E5F3A1B00000000 meldet einen Ausfall."));
+        assert!(contains_cjk("Gerät defekt 设备故障 RMA nötig")); // Chinese fragment mid-German
+        assert!(contains_cjk("概要")); // pure CJK
+        assert!(contains_cjk("これはテストです")); // Hiragana/Katakana
+    }
+
+    // ── PII leak self-report: strip-before-store ────────────────────────────
+
+    /// A model response carrying a PII self-report is split so the stored summary
+    /// contains NEITHER the marker NOR the clear quote — only the leak vec does.
+    #[test]
+    fn strip_removes_marker_and_quote_from_stored_summary() {
+        let raw = "Zusammenfassung: Gerät defekt, RMA nötig.\n\
+                   ⟦PII_LEAKS⟧[{\"quote\":\"Hans Müller\",\"kind\":\"PER\"},\
+                   {\"quote\":\"hans@example.com\",\"kind\":\"email\"}]";
+        let (clean, leaks) = strip_pii_leaks(raw);
+        assert_eq!(clean, "Zusammenfassung: Gerät defekt, RMA nötig.");
+        assert!(!clean.contains("Hans Müller"), "quote leaked into summary: {clean}");
+        assert!(!clean.contains("hans@example.com"), "email leaked into summary: {clean}");
+        assert!(!clean.contains(PII_LEAK_MARKER), "marker leaked into summary: {clean}");
+        assert_eq!(leaks.len(), 2);
+        assert_eq!(leaks[0].quote, "Hans Müller");
+        assert_eq!(leaks[0].kind, "PER");
+        assert_eq!(leaks[1].kind, "EMAIL"); // normalized to uppercase
+    }
+
+    /// No marker → text passes through unchanged, and re-stripping an already
+    /// clean summary is a no-op (idempotent — safe at the defensive store guard).
+    #[test]
+    fn strip_is_idempotent_and_noop_without_marker() {
+        let plain = "Nur eine saubere Zusammenfassung ohne Leaks.";
+        let (clean, leaks) = strip_pii_leaks(plain);
+        assert_eq!(clean, plain);
+        assert!(leaks.is_empty());
+        let (again, none) = strip_pii_leaks(&clean);
+        assert_eq!(again, plain);
+        assert!(none.is_empty());
+    }
+
+    /// Malformed JSON after the marker still strips the summary clean (leaks are
+    /// best-effort) — a store must never carry the quote regardless.
+    #[test]
+    fn strip_handles_malformed_leak_json() {
+        let raw = "Summary body.\n⟦PII_LEAKS⟧ not-json-at-all Hans Müller";
+        let (clean, leaks) = strip_pii_leaks(raw);
+        assert_eq!(clean, "Summary body.");
+        assert!(!clean.contains("Hans Müller"));
+        assert!(leaks.is_empty());
+    }
+
+    // ── PII leak self-report: deterministic validator ───────────────────────
+
+    #[test]
+    fn validator_accepts_real_person_name() {
+        assert_eq!(validate_leak(&per("Hans Müller")), LeakDecision::Apply);
+    }
+
+    #[test]
+    fn validator_rejects_person_shaped_brand() {
+        // "Fitness" is an org marker → the person-name gate rejects it, so a
+        // prompt-injected "unmask this brand" report cannot poison the lexicon.
+        assert!(matches!(validate_leak(&per("Anytime Fitness")), LeakDecision::Reject(_)));
+    }
+
+    #[test]
+    fn validator_rejects_german_phrase_name() {
+        // "Messungen brechen" — noun + lowercase verb — the classic false PER.
+        assert!(matches!(validate_leak(&per("Messungen brechen")), LeakDecision::Reject(_)));
+    }
+
+    #[test]
+    fn validator_email_shapes() {
+        assert!(email_shape("hans@example.com"));
+        assert!(!email_shape("not an email"));
+        assert_eq!(
+            validate_leak(&PiiLeak { quote: "hans@example.com".into(), kind: "EMAIL".into() }),
+            LeakDecision::Park("email shape valid; awaiting operator confirmation".into())
+        );
+        assert!(matches!(
+            validate_leak(&PiiLeak { quote: "nope".into(), kind: "EMAIL".into() }),
+            LeakDecision::Reject(_)
+        ));
+    }
+
+    #[test]
+    fn validator_phone_shapes() {
+        assert!(phone_shape("+49 30 1234567"));
+        assert!(!phone_shape("call me"));
+        assert!(!phone_shape("12345")); // too few digits
+        assert!(matches!(
+            validate_leak(&PiiLeak { quote: "+49 30 1234567".into(), kind: "PHONE".into() }),
+            LeakDecision::Park(_)
+        ));
+        assert!(matches!(
+            validate_leak(&PiiLeak { quote: "call me".into(), kind: "PHONE".into() }),
+            LeakDecision::Reject(_)
+        ));
+    }
+
+    /// (a) A third-party name that appears ONLY in free-text prose — not in any
+    /// structured header — is caught by the lexicon/title heuristic and
+    /// tokenised by the egress pass (NER = None, so this exercises the
+    /// model-less backstop that ALWAYS runs).
+    #[test]
+    fn prose_lexicon_third_party_name_tokenised() {
+        std::env::set_var("SYNC_SECRET", "test_secret");
+        let mut pii = PiiMask::new();
+        let text = "Frau Erika Musterfrau schrieb am Montag, dass das Gerät defekt ist.";
+        register_prose_person_names(&mut pii, text, None);
+        let masked = pii.mask_text(text);
+        assert!(!masked.contains("Erika"), "first name must be tokenised: {masked}");
+        assert!(!masked.contains("Musterfrau"), "surname must be tokenised: {masked}");
+        assert!(masked.contains("Name_"), "a Name token must appear: {masked}");
+    }
+
+    /// (b) An org-marker-protected brand ("John Harris Fitness") stays clear —
+    /// the heuristic's own org-marker veto keeps a person-shaped brand out of
+    /// the Name slot even with NER = None.
+    #[test]
+    fn prose_org_marker_brand_stays_clear() {
+        std::env::set_var("SYNC_SECRET", "test_secret");
+        let mut pii = PiiMask::new();
+        let text = "Das Studio John Harris Fitness meldet einen Ausfall.";
+        register_prose_person_names(&mut pii, text, None);
+        let masked = pii.mask_text(text);
+        assert!(masked.contains("John Harris Fitness"), "brand must stay clear: {masked}");
+        assert!(!masked.contains("Name_"), "no name should be registered: {masked}");
+    }
+
+    /// (c) NER-ORG protection is honored when spans are provided: a PER span
+    /// equal-to/inside an ORG span is NOT registered (brand stays clear), while
+    /// a genuine person named alongside it IS tokenised.
+    #[test]
+    fn prose_ner_org_protection_honored() {
+        std::env::set_var("SYNC_SECRET", "test_secret");
+        let mut pii = PiiMask::new();
+        let text = "John Harris Fitness beschäftigt Julia Weber als Technikerin.";
+        let persons = vec!["John Harris".to_string(), "Julia Weber".to_string()];
+        let orgs = vec!["John Harris Fitness".to_string()];
+        register_prose_person_names(&mut pii, text, Some((&persons, &orgs)));
+        let masked = pii.mask_text(text);
+        assert!(masked.contains("John Harris Fitness"), "NER-ORG brand must stay clear: {masked}");
+        assert!(!masked.contains("Julia Weber"), "the real person must be tokenised: {masked}");
+    }
 
     #[test]
     fn parses_full_mapping() {

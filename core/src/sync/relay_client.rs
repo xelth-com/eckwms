@@ -47,6 +47,25 @@ struct RelayRegisterRequest {
     /// `base_url`. Co-located peers prefer this fast path (B3). Omitted when unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lan_url: Option<String>,
+    /// Base64 Ed25519 server-identity public key (F3 strong binding). Sent every
+    /// heartbeat so the relay can bind our instance_id → pubkey from registration
+    /// rather than trust-on-first-use on the client-MCP channel. Omitted when we
+    /// have no identity to sign with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_pubkey: Option<String>,
+    /// Unix timestamp we signed for this registration (freshness bound). Part of
+    /// the canonical string `eck-register:{instance_id}:{ts}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_ts: Option<i64>,
+    /// Base64 detached signature over `eck-register:{instance_id}:{ts}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_sig: Option<String>,
+}
+
+/// The canonical string a node signs to prove its identity on `/E/register`.
+/// Kept next to the sender so the wms sender and the relay verifier can't drift.
+pub fn register_canonical(instance_id: &str, ts: i64) -> String {
+    format!("eck-register:{instance_id}:{ts}")
 }
 
 #[derive(Debug, Deserialize)]
@@ -312,7 +331,28 @@ impl RelayClient {
         status: Option<&str>,
         base_url: Option<&str>,
         node_role: Option<&str>,
+        identity: Option<&crate::utils::identity::ServerIdentity>,
     ) -> Result<RelayRegisterResponse, RelayError> {
+        // F3 strong binding: sign `eck-register:{instance_id}:{ts}` with our
+        // server-identity key so the relay records our pubkey on the registry
+        // row. Signing failure is non-fatal — we heartbeat unsigned (a relay
+        // then falls back to TOFU on the MCP channel), so a key hiccup never
+        // takes the node off the mesh board.
+        let (node_pubkey, node_ts, node_sig) = match identity {
+            Some(id) => {
+                let ts = chrono::Utc::now().timestamp();
+                let canonical = register_canonical(&self.instance_id, ts);
+                match crate::utils::identity::sign_message(&id.private_key, &canonical) {
+                    Ok(sig) => (Some(id.public_key.clone()), Some(ts), Some(sig)),
+                    Err(e) => {
+                        warn!("heartbeat: could not sign registration: {e}");
+                        (None, None, None)
+                    }
+                }
+            }
+            None => (None, None, None),
+        };
+
         let payload = RelayRegisterRequest {
             instance_id: self.instance_id.clone(),
             mesh_id: self.mesh_id.clone(),
@@ -329,6 +369,9 @@ impl RelayClient {
                 .ok()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
+            node_pubkey,
+            node_ts,
+            node_sig,
         };
 
         let futs = self
@@ -810,21 +853,20 @@ impl RelayClient {
                     .cloned()
                     .unwrap_or_default();
                 // Blind-cache: the fulfiller encrypted each entity. A node that
-                // holds MESH_DATA_KEY decrypts here; a cache node (no key) keeps
-                // the ciphertext envelopes and stores/serves them as-is.
-                let entities = match crate::utils::crypto::data_key() {
-                    Some(key) => entities
-                        .into_iter()
-                        .map(|e| {
-                            if crate::utils::crypto::is_encrypted(&e) {
-                                crate::utils::crypto::decrypt_json(&key, &e).unwrap_or(e)
-                            } else {
-                                e
-                            }
-                        })
-                        .collect(),
-                    None => entities,
-                };
+                // holds a mesh data key decrypts here — under ANY epoch it still
+                // knows, so a peer that has already rotated (or not yet) is read
+                // either way; a cache node (no key) keeps the ciphertext
+                // envelopes and stores/serves them as-is.
+                let entities: Vec<serde_json::Value> = entities
+                    .into_iter()
+                    .map(|e| {
+                        if crate::utils::crypto::is_encrypted(&e) {
+                            crate::utils::crypto::decrypt_json_any(&e).unwrap_or(e)
+                        } else {
+                            e
+                        }
+                    })
+                    .collect();
                 return Ok(entities);
             }
         }
@@ -881,15 +923,8 @@ impl RelayClient {
             }
             // Owner encrypted the blob under MESH_DATA_KEY; decrypt if we hold it.
             if let Some(enc) = result.get("enc") {
-                let key = crate::utils::crypto::data_key().ok_or_else(|| {
-                    warn!(
-                        "file_fetch {}: target returned an encrypted blob but this node holds no MESH_DATA_KEY to decrypt",
-                        hash
-                    );
-                    RelayError::StatusError(StatusCode::BAD_GATEWAY)
-                })?;
-                let bytes = crate::utils::crypto::decrypt_bytes(&key, enc).map_err(|e| {
-                    warn!("file_fetch {}: decrypt failed: {}", hash, e);
+                let bytes = crate::utils::crypto::decrypt_bytes_any(enc).map_err(|e| {
+                    warn!("file_fetch {}: decrypt failed ({}) — no mesh data key epoch on this node opens it", hash, e);
                     RelayError::StatusError(StatusCode::BAD_GATEWAY)
                 })?;
                 return Ok(Some(bytes));

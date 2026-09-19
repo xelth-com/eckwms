@@ -2,6 +2,7 @@
 // Betriebs-Toasts und die öffentliche Landingpage. Deutsch.
 export default {
   connected_servers: 'Verbundene Server:',
+  nav_chat: 'Chat',
   nav_dashboard: 'Dashboard',
   nav_inventory: 'Bestand',
   nav_warehouse: 'Lager',

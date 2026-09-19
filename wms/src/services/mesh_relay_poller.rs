@@ -301,6 +301,11 @@ async fn handle_image_upload(state: &Arc<AppState>, payload: &Value) -> Value {
         barcode_data: s("barcode_data"),
         order_id: s("order_id"),
         user_id: s("user_id"),
+        ttl_days: payload
+            .get("ttl_days")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32),
+        recognized: s("recognized"),
     };
     match crate::handlers::files::upload_image_core(state, params).await {
         Ok(v) => {
@@ -523,8 +528,12 @@ async fn handle_file_fetch(state: &Arc<AppState>, payload: &Value) -> Value {
 /// - `bytes = None`          → `{found:false}` (not held here / not on disk).
 /// - `size > FILE_FETCH_MAX_BYTES` → `{found:false, reason:"too_large", size}`.
 /// - key present → `{found:true, size, enc:<envelope>}` (encrypted).
-/// - key absent  → `{found:true, size, bytes:<base64>}` (plaintext; WARNs — a
-///   full node is expected to hold `MESH_DATA_KEY`).
+/// - key absent  → refuses like "not available" (`{found:false}`), UNLESS
+///   `ECK_ALLOW_PLAINTEXT_FILE_BYTES=1` (dev escape hatch, logged loudly at
+///   startup) — then falls back to `{found:true, size, bytes:<base64>}` as
+///   before. Either way this WARNs once per process (a full node is expected
+///   to hold `MESH_DATA_KEY`; repeating the warning on every poll cycle would
+///   just be noise once the operator has seen it).
 fn build_file_fetch_ack(
     node_role: &str,
     hash: &str,
@@ -560,13 +569,41 @@ fn build_file_fetch_ack(
             }
         },
         None => {
-            warn!(
-                "[mesh_relay_poller] file_fetch {} served as PLAINTEXT base64 — this full node holds no MESH_DATA_KEY",
-                hash
-            );
-            json!({"found": true, "size": size, "bytes": STANDARD.encode(&bytes)})
+            let allow_plaintext = std::env::var("ECK_ALLOW_PLAINTEXT_FILE_BYTES")
+                .as_deref()
+                == Ok("1");
+            warn_no_mesh_data_key_once(allow_plaintext);
+            if allow_plaintext {
+                json!({"found": true, "size": size, "bytes": STANDARD.encode(&bytes)})
+            } else {
+                // Same refusal shape as "not available" — a keyless full node
+                // must not leak readable PII (odometer/Kennzeichen photos etc.)
+                // to whatever dialed it over the relay.
+                json!({"found": false})
+            }
         }
     }
+}
+
+/// WARNs the "no MESH_DATA_KEY" condition exactly once per process instead of
+/// once per `file_fetch` (which would otherwise fire on every poll cycle a
+/// peer asks this node for a blob).
+fn warn_no_mesh_data_key_once(allow_plaintext: bool) {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        if allow_plaintext {
+            warn!(
+                "[mesh_relay_poller] file_fetch: no MESH_DATA_KEY, but \
+                 ECK_ALLOW_PLAINTEXT_FILE_BYTES=1 — serving file bytes as PLAINTEXT base64."
+            );
+        } else {
+            warn!(
+                "[mesh_relay_poller] file_fetch: no MESH_DATA_KEY — refusing to serve \
+                 file bytes as plaintext (set ECK_ALLOW_PLAINTEXT_FILE_BYTES=1 for a dev \
+                 escape hatch)."
+            );
+        }
+    });
 }
 
 /// Serialized-bytes budget for one `pull_request` ack. Defaults to 1.5 MB —
@@ -688,6 +725,35 @@ mod tests {
         assert!(ack.get("bytes").is_none());
         let round = eck_core::utils::crypto::decrypt_bytes(&key, enc).unwrap();
         assert_eq!(round, blob);
+    }
+
+    // Serializes the two tests below since they mutate the process-wide
+    // ECK_ALLOW_PLAINTEXT_FILE_BYTES env var.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn file_fetch_no_key_refuses_by_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("ECK_ALLOW_PLAINTEXT_FILE_BYTES");
+        let blob = b"odometer photo bytes".to_vec();
+        let ack = build_file_fetch_ack("full", "deadbeef", Some(blob), None);
+        // Same shape as "not available" — no plaintext bytes, no tell-tale reason.
+        assert_eq!(ack.get("found").and_then(|v| v.as_bool()), Some(false));
+        assert!(ack.get("bytes").is_none());
+    }
+
+    #[test]
+    fn file_fetch_no_key_serves_plaintext_with_dev_escape_hatch() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("ECK_ALLOW_PLAINTEXT_FILE_BYTES", "1");
+        let blob = b"odometer photo bytes".to_vec();
+        let ack = build_file_fetch_ack("full", "deadbeef", Some(blob.clone()), None);
+        std::env::remove_var("ECK_ALLOW_PLAINTEXT_FILE_BYTES");
+        assert_eq!(ack.get("found").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            ack.get("bytes").and_then(|v| v.as_str()),
+            Some(STANDARD.encode(&blob)).as_deref()
+        );
     }
 }
 

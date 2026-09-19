@@ -17,14 +17,15 @@ You analyze a single completed task that required human intervention and distill
 
 STRICT OUTPUT RULES:
 - Respond with ONLY a valid minified JSON object — no prose, no code fences, no explanation.
-- Schema: {"title": "<short label, <=80 chars>", "trigger_context": "<abstract description of WHEN this SOP should fire, in <=400 chars>", "rule": "<the generalized procedure the Orchestrator should follow, <=1200 chars>"}
+- Schema: {"title": "<short label, <=80 chars>", "trigger_context": "<abstract description of WHEN this SOP should fire, in <=400 chars>", "rule": "<the generalized procedure the Orchestrator should follow, <=1200 chars>", "outcome": "good" | "bad" | "unclear", "outcome_reason": "<one short sentence explaining the outcome judgment>"}
 - The "rule" MUST be a generalized, reusable procedure — not a retelling of the specific incident.
 - The "trigger_context" MUST describe the class of situation (e.g. "QC report is missing a serial number"), not the specific instance.
+- The "outcome" judges whether the brain's own plan/result was validated by the human intervention: "good" if the human confirmed or simply used the brain's plan/output; "bad" if the human contradicted, corrected, or had to redo the brain's work; "unclear" if the bundle doesn't let you tell.
 
 PII SAFETY — HARD REQUIREMENT:
 - NEVER include specific names, email addresses, phone numbers, street addresses, customer identifiers, ticket numbers, order numbers, or device serial numbers in any field.
 - Replace any concrete identifier with an abstract placeholder ("the customer", "the device", "the QC report").
-- If the only way to describe the situation is via specific PII, return {"title":"SKIP","trigger_context":"SKIP","rule":"SKIP"} and nothing else.
+- If the only way to describe the situation is via specific PII, return {"title":"SKIP","trigger_context":"SKIP","rule":"SKIP","outcome":"unclear","outcome_reason":"PII"} and nothing else.
 
 If the interaction is not generalizable (one-off, trivial, or dominated by PII), also return the SKIP sentinel."#;
 
@@ -149,7 +150,7 @@ async fn run_extraction_cycle(state: &Arc<AppState>, http: &HttpClient) -> anyho
         let tasks: Vec<Value> = state
             .db
             .query(
-                "SELECT record::id(id) AS id, state, context, sop_analyzed \
+                "SELECT record::id(id) AS id, state, context, sop_analyzed, result, error \
                  FROM type::record($rid)",
             )
             .bind(("rid", task_rid.clone()))
@@ -165,6 +166,33 @@ async fn run_extraction_cycle(state: &Arc<AppState>, http: &HttpClient) -> anyho
             continue;
         }
         if task.get("sop_analyzed").and_then(|v| v.as_bool()) == Some(true) {
+            continue;
+        }
+
+        // Hard pre-gate before spending any tokens: a task with no result (or
+        // an explicit error) tells us nothing usable about the brain's plan.
+        let result_is_empty = match task.get("result") {
+            None | Some(Value::Null) => true,
+            Some(Value::String(s)) => s.is_empty(),
+            Some(Value::Object(m)) => m.is_empty(),
+            Some(Value::Array(a)) => a.is_empty(),
+            _ => false,
+        };
+        let has_error = !matches!(task.get("error"), None | Some(Value::Null));
+        if result_is_empty || has_error {
+            info!(
+                "[Optimizer] Task {} has no usable result (empty={} error={}); marking unclear",
+                task_rid, result_is_empty, has_error
+            );
+            let _ = state
+                .db
+                .query(
+                    "UPDATE type::record($rid) SET sop_analyzed = true, \
+                     sop_analyzed_at = time::now(), sop_outcome = 'unclear', \
+                     sop_outcome_reason = 'no result'",
+                )
+                .bind(("rid", task_rid.clone()))
+                .await;
             continue;
         }
 
@@ -257,9 +285,13 @@ async fn process_task(
             "maxOutputTokens": 2048,
         }
     });
-    let (response_text, usage) = auth.generate_content(http, gen_model, payload).await?;
+    let _ = &auth; // resolved above only to gate on is_configured()
+    let gen =
+        eck_core::ai::AiAuth::generate_for_task(http, "optimizer", gen_model, payload, None).await?;
+    tracing::info!("[ai] task=optimizer path={} model={}", gen.path, gen.model);
+    let (response_text, served_model, usage) = (gen.text, gen.model, gen.usage);
 
-    log_telemetry(&state.db, "optimizer", gen_model, task_rid, &usage).await;
+    log_telemetry(&state.db, "optimizer", &served_model, task_rid, &usage).await;
 
     let parsed: Value = serde_json::from_str(&response_text).map_err(|e| {
         anyhow::anyhow!("Optimizer LLM returned non-JSON: {e} (body: {response_text})")
@@ -271,6 +303,14 @@ async fn process_task(
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let rule = parsed.get("rule").and_then(|v| v.as_str()).unwrap_or("");
+    let outcome = parsed
+        .get("outcome")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unclear");
+    let outcome_reason = parsed
+        .get("outcome_reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     // Mark the task as analyzed regardless of outcome — we don't want to burn
     // tokens on it again.
@@ -278,10 +318,17 @@ async fn process_task(
         .db
         .query(
             "UPDATE type::record($rid) SET sop_analyzed = true, \
-             sop_analyzed_at = time::now()",
+             sop_analyzed_at = time::now(), sop_outcome = $outcome, \
+             sop_outcome_reason = $reason",
         )
         .bind(("rid", task_rid.to_string()))
+        .bind(("outcome", outcome.to_string()))
+        .bind(("reason", outcome_reason.to_string()))
         .await;
+
+    // Best-effort seed of the learning-loop feedback table regardless of
+    // whether we end up inserting an SOP.
+    record_feedback(state, task_rid, outcome, outcome_reason).await;
 
     if title == "SKIP" || trigger_context == "SKIP" || rule == "SKIP" {
         debug!("[Optimizer] Task {} skipped by LLM (not generalizable)", task_rid);
@@ -291,6 +338,18 @@ async fn process_task(
         warn!(
             "[Optimizer] Task {} produced empty SOP fields; skipping insert",
             task_rid
+        );
+        return Ok(());
+    }
+
+    // Good-outcome gate: only a confirmed-good brain plan is worth
+    // generalizing into an SOP. A `bad` outcome means the human had to
+    // correct the brain — distilling that into a "rule" would teach the
+    // orchestrator the wrong lesson. `unclear` means we simply don't know.
+    if outcome != "good" {
+        info!(
+            "[Optimizer] Task {} outcome={} ({}); not inserting SOP",
+            task_rid, outcome, outcome_reason
         );
         return Ok(());
     }
@@ -305,6 +364,46 @@ async fn process_task(
         }
     };
 
+    // De-dup by embedding distance against existing (non-deprecated) SOPs.
+    // Same HNSW-backed KNN syntax the orchestrator uses for retrieval.
+    let dedup_rows: Vec<Value> = state
+        .db
+        .query(
+            "SELECT record::id(id) AS id, title, \
+                vector::similarity::cosine(embedding, $emb) AS sim \
+             FROM ai_sop WHERE deprecated = false AND embedding <|3, 100|> $emb \
+             LIMIT 3",
+        )
+        .bind(("emb", embedding.clone()))
+        .await?
+        .take(0)?;
+
+    let top = dedup_rows.first();
+    let top_sim = top.and_then(|r| r.get("sim")).and_then(|v| v.as_f64());
+    let threshold = sop_dedup_threshold();
+
+    if dedup_verdict(top_sim, threshold) {
+        if let Some(row) = top {
+            let dup_id = row.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let dup_title = row.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            let _ = state
+                .db
+                .query(
+                    "UPDATE type::record($rid) SET duplicate_hits += 1, \
+                     updated_at = time::now()",
+                )
+                .bind(("rid", dup_id.to_string()))
+                .await;
+            info!(
+                "[Optimizer] SOP \"{}\" deduped against {} (sim={:.4})",
+                dup_title,
+                dup_id,
+                top_sim.unwrap_or_default()
+            );
+        }
+        return Ok(());
+    }
+
     let inserted: Vec<Value> = state
         .db
         .query(
@@ -316,6 +415,7 @@ async fn process_task(
                 success_count: 0, \
                 failure_count: 0, \
                 usage_count: 0, \
+                duplicate_hits: 0, \
                 deprecated: false, \
                 source_task_id: $src, \
                 created_at: time::now(), \
@@ -342,5 +442,105 @@ async fn process_task(
     }
 
     Ok(())
+}
+
+/// Best-effort seed row for the learning loop's `ai_feedback` table. The
+/// table has no schema yet — a plain schemaless INSERT is fine.
+async fn record_feedback(state: &Arc<AppState>, task_rid: &str, outcome: &str, reason: &str) {
+    let res = state
+        .db
+        .query(
+            "INSERT INTO ai_feedback { \
+                task_id: $tid, \
+                source: 'optimizer', \
+                outcome: $outcome, \
+                reason: $reason, \
+                created_at: time::now() \
+             } RETURN NONE",
+        )
+        .bind(("tid", task_rid.to_string()))
+        .bind(("outcome", outcome.to_string()))
+        .bind(("reason", reason.to_string()))
+        .await;
+    if let Err(e) = res {
+        warn!("[Optimizer] Failed to record ai_feedback for {task_rid}: {e}");
+    }
+}
+
+/// Env-configurable cosine-similarity threshold for SOP de-dup
+/// (`ECK_SOP_DEDUP_COS`, default 0.92). Any unset/unparsable value falls
+/// back to the default.
+fn sop_dedup_threshold() -> f64 {
+    parse_dedup_threshold(std::env::var("ECK_SOP_DEDUP_COS").ok().as_deref())
+}
+
+/// Pure parsing helper for `ECK_SOP_DEDUP_COS` — unset or unparsable falls
+/// back to 0.92. Split out from `sop_dedup_threshold` so it's testable
+/// without touching process env vars.
+fn parse_dedup_threshold(raw: Option<&str>) -> f64 {
+    raw.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.92)
+}
+
+/// Pure de-dup decision: true means "treat as a duplicate, don't insert".
+fn dedup_verdict(top_sim: Option<f64>, threshold: f64) -> bool {
+    match top_sim {
+        Some(sim) => sim >= threshold,
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dedup_verdict_none_is_not_duplicate() {
+        assert!(!dedup_verdict(None, 0.92));
+    }
+
+    #[test]
+    fn dedup_verdict_below_threshold_is_not_duplicate() {
+        assert!(!dedup_verdict(Some(0.91), 0.92));
+    }
+
+    #[test]
+    fn dedup_verdict_at_threshold_is_duplicate() {
+        assert!(dedup_verdict(Some(0.92), 0.92));
+    }
+
+    #[test]
+    fn dedup_verdict_above_threshold_is_duplicate() {
+        assert!(dedup_verdict(Some(0.99), 0.92));
+    }
+
+    #[test]
+    fn parse_dedup_threshold_unset_defaults() {
+        assert_eq!(parse_dedup_threshold(None), 0.92);
+    }
+
+    #[test]
+    fn parse_dedup_threshold_garbage_defaults() {
+        assert_eq!(parse_dedup_threshold(Some("not-a-number")), 0.92);
+        assert_eq!(parse_dedup_threshold(Some("")), 0.92);
+    }
+
+    #[test]
+    fn parse_dedup_threshold_valid_value_parses() {
+        assert_eq!(parse_dedup_threshold(Some("0.85")), 0.85);
+    }
+
+    #[test]
+    fn bad_outcome_parses_with_no_insert_path() {
+        // Simulates the LLM response parse in process_task: a "bad" outcome
+        // must be distinguishable from "good" so the good-outcome gate can
+        // route it away from the ai_sop insert.
+        let parsed: Value = serde_json::from_str(
+            r#"{"title":"Some SOP","trigger_context":"ctx","rule":"do X","outcome":"bad","outcome_reason":"human corrected the plan"}"#,
+        )
+        .unwrap();
+        let outcome = parsed.get("outcome").and_then(|v| v.as_str()).unwrap_or("unclear");
+        assert_eq!(outcome, "bad");
+        assert_ne!(outcome, "good");
+    }
 }
 

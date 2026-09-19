@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 use std::time::Duration;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Shared HTTP client for on-demand geocoding (the background worker builds its
 /// own). Single UA-identified client, reused across requests.
@@ -111,18 +111,12 @@ pub async fn resolve_zip_city_cc_cached(
         key.push('|');
         key.push_str(cc);
     }
-    // Sanitize to a safe record id (umlauts/spaces/pipe → '-'); collisions are
-    // harmless (same city → same coords) and zip disambiguates.
-    let slug: String = key
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
-    let rid = format!("geo_cache:{}", slug);
+    let slug = geo_cache_slug(zip_n.as_deref(), city_n.as_deref(), cc);
 
     // 1. cache hit (positive or negative)
     if let Ok(mut res) = db
-        .query("SELECT lat, lng, not_found FROM type::record($rid)")
-        .bind(("rid", rid.clone()))
+        .query("SELECT lat, lng, not_found FROM type::record('geo_cache', $slug)")
+        .bind(("slug", slug.clone()))
         .await
     {
         let rows: Vec<Value> = res.take(0).unwrap_or_default();
@@ -144,26 +138,83 @@ pub async fn resolve_zip_city_cc_cached(
     let now = chrono::Utc::now().to_rfc3339();
     match result {
         Some((lat, lng)) => {
-            let _ = db
-                .query("UPSERT type::record($rid) SET key=$key, lat=$lat, lng=$lng, not_found=false, resolved_at=$now")
-                .bind(("rid", rid))
+            if let Err(e) = db
+                .query("UPSERT type::record('geo_cache', $slug) SET key=$key, lat=$lat, lng=$lng, not_found=false, resolved_at=$now")
+                .bind(("slug", slug))
                 .bind(("key", key))
                 .bind(("lat", lat))
                 .bind(("lng", lng))
                 .bind(("now", now))
-                .await;
+                .await
+            {
+                warn!("[Geocoder] geo_cache write failed: {e}");
+            }
             Some((lat, lng))
         }
         None => {
-            let _ = db
-                .query("UPSERT type::record($rid) SET key=$key, not_found=true, resolved_at=$now")
-                .bind(("rid", rid))
+            if let Err(e) = db
+                .query("UPSERT type::record('geo_cache', $slug) SET key=$key, not_found=true, resolved_at=$now")
+                .bind(("slug", slug))
                 .bind(("key", key))
                 .bind(("now", now))
-                .await;
+                .await
+            {
+                warn!("[Geocoder] geo_cache negative-result write failed: {e}");
+            }
             None
         }
     }
+}
+
+/// Build a safe `geo_cache` record id slug from the zip/city/countrycodes
+/// inputs. Never starts/ends with `-`, never has doubled `-`: a city-only
+/// lookup (the Vorwahl lever's `Some(city)`/`None` zip) used to slug to a
+/// leading `-` (e.g. `-konstanz`), which SurrealDB 3 refuses as a record id
+/// (`Could not cast into record using input 'geo_cache:-konstanz'`) — every
+/// city-only cache read/write silently failed and fell through to Nominatim
+/// on every call. `zip` present → `<zip>[-<city>]`; `zip` absent → `city-<city>`
+/// so it's still disambiguated from a bare zip-only key. Umlauts are
+/// ASCII-folded (ü→ue, etc.) via the same folder the ticket-lookup matcher
+/// uses, so "Köln" and "Koeln" collide into one cache entry.
+pub(crate) fn geo_cache_slug(zip: Option<&str>, city: Option<&str>, cc: &str) -> String {
+    let zip_part = zip.map(slug_part).filter(|s| !s.is_empty());
+    let city_part = city.map(slug_part).filter(|s| !s.is_empty());
+
+    let mut parts: Vec<String> = Vec::new();
+    match (zip_part, city_part) {
+        (Some(z), Some(c)) => {
+            parts.push(z);
+            parts.push(c);
+        }
+        (Some(z), None) => parts.push(z),
+        (None, Some(c)) => {
+            parts.push("city".to_string());
+            parts.push(c);
+        }
+        (None, None) => parts.push("unknown".to_string()),
+    }
+    if cc != DEFAULT_COUNTRYCODES {
+        parts.push(slug_part(cc));
+    }
+    parts.join("-")
+}
+
+/// Fold one slug component: lowercase, ASCII-fold umlauts/diacritics, replace
+/// every non-alphanumeric run with a single `-`, trim leading/trailing `-`.
+fn slug_part(s: &str) -> String {
+    let folded = crate::services::ticket_lookup::fold_word(s);
+    let mut out = String::with_capacity(folded.len());
+    let mut last_dash = false;
+    for c in folded.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
 }
 
 pub async fn start_geocoder_worker(db: SurrealDb) {
@@ -731,7 +782,12 @@ async fn mark_geo_failed(db: &SurrealDb, table: &str, id: &str, meta_field: &str
 
 #[cfg(test)]
 mod tests {
-    use super::{find_plz_ort, parse_hq_fallback, parse_summary_address, parse_summary_address_with, strip_address_tokens};
+    use super::{
+        find_plz_ort, geo_cache_slug, parse_hq_fallback, parse_summary_address,
+        parse_summary_address_with, resolve_zip_city_cc_cached, strip_address_tokens,
+        DEFAULT_COUNTRYCODES,
+    };
+    use eck_core::db::SurrealDb;
 
     fn adr(body: &str) -> String {
         format!("=== LOGISTIK & KONTAKTE ===\n**Adressen:** {body}\n=== TECHNISCHE DETAILS ===\n")
@@ -829,5 +885,99 @@ mod tests {
     fn hq_fallback_none_when_unparseable() {
         assert_eq!(parse_hq_fallback(Some("not-a-number"), Some("8.5721")), None);
         assert_eq!(parse_hq_fallback(Some("50.1407"), Some("")), None);
+    }
+
+    // --- geo_cache_slug -----------------------------------------------------
+
+    #[test]
+    fn slug_city_only_never_leads_with_dash() {
+        // The regression: zip=None, city=Some("Konstanz") used to slug to
+        // "-konstanz", a record id SurrealDB 3 refuses.
+        let slug = geo_cache_slug(None, Some("Konstanz"), DEFAULT_COUNTRYCODES);
+        assert_eq!(slug, "city-konstanz");
+        assert!(!slug.starts_with('-') && !slug.ends_with('-'));
+    }
+
+    #[test]
+    fn slug_zip_and_city() {
+        let slug = geo_cache_slug(Some("78467"), Some("Konstanz"), DEFAULT_COUNTRYCODES);
+        assert_eq!(slug, "78467-konstanz");
+    }
+
+    #[test]
+    fn slug_folds_umlauts() {
+        let slug = geo_cache_slug(Some("50667"), Some("Köln"), DEFAULT_COUNTRYCODES);
+        assert_eq!(slug, "50667-koeln");
+    }
+
+    #[test]
+    fn slug_trims_leading_trailing_and_collapses_doubled_dashes() {
+        let slug = geo_cache_slug(None, Some("  -- Sankt Gallen -- "), DEFAULT_COUNTRYCODES);
+        assert!(!slug.starts_with('-') && !slug.ends_with('-'));
+        assert!(!slug.contains("--"));
+        assert_eq!(slug, "city-sankt-gallen");
+    }
+
+    #[test]
+    fn slug_zip_only_has_no_city_marker() {
+        let slug = geo_cache_slug(Some("78467"), None, DEFAULT_COUNTRYCODES);
+        assert_eq!(slug, "78467");
+    }
+
+    #[test]
+    fn slug_appends_non_default_countrycode() {
+        let slug = geo_cache_slug(None, Some("Malmö"), "se");
+        assert_eq!(slug, "city-malmoe-se");
+    }
+
+    // --- geo_cache round trip (kv-mem, no network) --------------------------
+    // Pattern follows `mem_db_for_ingest` in support.rs: a fresh in-memory
+    // `Any` engine carrying only the table this test touches.
+
+    async fn mem_db_for_geo() -> SurrealDb {
+        let db = surrealdb::engine::any::connect("mem://")
+            .await
+            .expect("in-memory Any DB");
+        db.use_ns("test").use_db("test").await.unwrap();
+        db.query("DEFINE TABLE IF NOT EXISTS geo_cache SCHEMALESS;")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn city_only_cache_round_trip_hits_cache_without_network() {
+        let db = mem_db_for_geo().await;
+
+        // Pre-seed the cache exactly as a successful resolve's write would —
+        // proves the write-side slug is readable by the read-side slug.
+        let slug = geo_cache_slug(None, Some("Konstanz"), DEFAULT_COUNTRYCODES);
+        db.query(
+            "UPSERT type::record('geo_cache', $slug) \
+             SET key=$key, lat=$lat, lng=$lng, not_found=false, resolved_at=$now",
+        )
+        .bind(("slug", slug))
+        .bind(("key", "|konstanz".to_string()))
+        .bind(("lat", 47.66))
+        .bind(("lng", 9.17))
+        .bind(("now", chrono::Utc::now().to_rfc3339()))
+        .await
+        .unwrap()
+        .check()
+        .unwrap();
+
+        // Bounded by a short timeout: a cache hit returns immediately; if the
+        // slug regresses, the code falls through to a real Nominatim call and
+        // either hangs or errors in this offline test environment.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            resolve_zip_city_cc_cached(&db, None, Some("Konstanz"), DEFAULT_COUNTRYCODES),
+        )
+        .await
+        .expect("cache hit must return promptly without touching the network");
+
+        assert_eq!(result, Some((47.66, 9.17)));
     }
 }

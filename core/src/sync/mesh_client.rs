@@ -201,22 +201,20 @@ impl MeshClient {
         match result.get("entities") {
             Some(Value::Array(arr)) => {
                 // Blind-cache: the fulfiller encrypted each entity if it holds
-                // MESH_DATA_KEY. A node with the key decrypts here; a cache node
-                // (no key) keeps the ciphertext envelopes and stores them as-is.
+                // a mesh data key. A node with a key decrypts here under ANY
+                // epoch it still knows (rotation window); a cache node (no key)
+                // keeps the ciphertext envelopes and stores them as-is.
                 // Mirrors relay_client::pull_entities_via_relay.
-                let entities = match crate::utils::crypto::data_key() {
-                    Some(key) => arr
-                        .iter()
-                        .map(|e| {
-                            if crate::utils::crypto::is_encrypted(e) {
-                                crate::utils::crypto::decrypt_json(&key, e).unwrap_or_else(|_| e.clone())
-                            } else {
-                                e.clone()
-                            }
-                        })
-                        .collect(),
-                    None => arr.clone(),
-                };
+                let entities: Vec<Value> = arr
+                    .iter()
+                    .map(|e| {
+                        if crate::utils::crypto::is_encrypted(e) {
+                            crate::utils::crypto::decrypt_json_any(e).unwrap_or_else(|_| e.clone())
+                        } else {
+                            e.clone()
+                        }
+                    })
+                    .collect();
                 Ok(entities)
             }
             _ => Ok(vec![]),
@@ -360,9 +358,26 @@ impl MeshClient {
             return Err(format!("Raw docs GET {} returned {}", url, resp.status()));
         }
 
-        resp.json::<Value>()
+        let body: Value = resp
+            .json()
             .await
-            .map_err(|e| format!("Raw docs response parse failed: {}", e))
+            .map_err(|e| format!("Raw docs response parse failed: {}", e))?;
+
+        // PII_VAULT.md P0#4: the peer envelope-encrypts `payload` when it holds
+        // a mesh data key (or refuses and sends an empty array when it
+        // doesn't) — decrypt each row back to plaintext for local storage, or
+        // drop rows we can't open (no local data key). Legacy plaintext rows
+        // from a peer mid-rollout pass through unchanged.
+        match body {
+            Value::Array(rows) => {
+                let decrypted: Vec<Value> = rows
+                    .into_iter()
+                    .filter_map(crate::utils::crypto::decrypt_raw_doc_payload)
+                    .collect();
+                Ok(Value::Array(decrypted))
+            }
+            other => Ok(other),
+        }
     }
 }
 

@@ -133,6 +133,11 @@
     // warning banner below. Grace = the register still runs on borrowed time.
     let posLicense = "";
     let graceBannerDismissed = false;
+    // Per-node landing view: "chat" (default) or "dashboard" (kiosk → map).
+    // Set from /api/pos/status (server env ECK_DEFAULT_VIEW). On a plain server
+    // we bounce the dashboard index straight into the Chat; the kiosk keeps the
+    // full-bleed map as its landing.
+    let defaultView = "chat";
 
     async function loadPosStatus() {
         try {
@@ -143,8 +148,24 @@
                 navSiteUrl = typeof status.nav_site_url === "string" ? status.nav_site_url : "";
                 demoLoginHint = typeof status.demo_login_hint === "string" ? status.demo_login_hint : "";
                 posLicense = typeof status.license === "string" ? status.license : "";
+                if (status.default_view === "dashboard" || status.default_view === "chat") {
+                    defaultView = status.default_view;
+                }
+                maybeLandOnDefaultView();
             }
         } catch { /* older server without the endpoint — keep hidden */ }
+    }
+
+    // Fire once, on the initial load: if this node lands on Chat and we arrived
+    // at the dashboard index (the full-bleed map), redirect into the Chat.
+    // Only at the index — a deliberate click on Dashboard later is respected.
+    let didInitialLanding = false;
+    function maybeLandOnDefaultView() {
+        if (didInitialLanding) return;
+        didInitialLanding = true;
+        if (defaultView === "chat" && relPath === "/dashboard") {
+            goto(`${base}/dashboard/ai`, { replaceState: true });
+        }
     }
 
     $: showGraceBanner =
@@ -559,92 +580,96 @@
                     🧾 {$t('shell.nav_pos')}
                 </button>
             {/if}
+            <!-- Chat = the headline entry (top). It hosts the Brain Chat plus
+                 the AI Operator Inbox; on a plain server it's the default
+                 landing view (see default_view below), on the kiosk the map is.
+                 Visible to kiosk observers too — read-only there. -->
+            <a
+                href="{base}/dashboard/ai"
+                class:active={$page.url.pathname.includes("/dashboard/ai")}
+            >
+                💬 {$t('shell.nav_chat')}
+            </a>
             <a
                 href="{base}/dashboard"
                 class:active={$page.url.pathname === `${base}/dashboard` ||
                     $page.url.pathname === "/dashboard"}
             >
-                {$t('shell.nav_dashboard')}
+                🗺️ {$t('shell.nav_dashboard')}
             </a>
             <a
                 href="{base}/dashboard/inventory"
                 class:active={$page.url.pathname.includes("/dashboard/inventory") ||
                     $page.url.pathname.includes("/items")}
             >
-                {$t('shell.nav_inventory')}
+                📦 {$t('shell.nav_inventory')}
             </a>
             <a
                 href="{base}/dashboard/warehouse"
                 class:active={$page.url.pathname.includes("/warehouse")}
             >
-                {$t('shell.nav_warehouse')}
+                🏭 {$t('shell.nav_warehouse')}
             </a>
             <a
                 href="{base}/dashboard/shipping"
                 class:active={$page.url.pathname.includes("/shipping")}
             >
-                {$t('shell.nav_shipping')}
+                🚚 {$t('shell.nav_shipping')}
             </a>
             <a
                 href="{base}/dashboard/rma"
                 class:active={$page.url.pathname.includes("/rma")}
             >
-                {$t('shell.nav_rma')}
+                ↩️ {$t('shell.nav_rma')}
             </a>
             <a
                 href="{base}/dashboard/repairs"
                 class:active={$page.url.pathname.includes("/repairs")}
             >
-                {$t('shell.nav_repairs')}
+                🔧 {$t('shell.nav_repairs')}
             </a>
             <a
                 href="{base}/dashboard/support"
                 class:active={$page.url.pathname.includes("/support")}
             >
-                {$t('shell.nav_support')}
+                🎧 {$t('shell.nav_support')}
             </a>
             <a
                 href="{base}/dashboard/print"
                 class:active={$page.url.pathname.includes("/print")}
             >
-                {$t('shell.nav_printing')}
+                🖨️ {$t('shell.nav_printing')}
             </a>
             <a
                 href="{base}/dashboard/devices"
                 class:active={$page.url.pathname.includes("/devices")}
             >
-                {$t('shell.nav_devices')}
+                📱 {$t('shell.nav_devices')}
             </a>
             <a
                 href="{base}/dashboard/users"
                 class:active={$page.url.pathname.includes("/users")}
             >
-                {$t('shell.nav_users')}
+                👥 {$t('shell.nav_users')}
             </a>
             <a
                 href="{base}/dashboard/connector"
                 class:active={$page.url.pathname.includes("/connector")}
             >
-                {$t('shell.nav_connector')}
+                🔌 {$t('shell.nav_connector')}
             </a>
             <a
                 href="{base}/dashboard/scrapers"
                 class:active={$page.url.pathname.includes("/scrapers")}
             >
-                {$t('shell.nav_scrapers')}
-            </a>
-            <a
-                href="{base}/dashboard/ai"
-                class:active={$page.url.pathname.includes("/dashboard/ai")}
-            >
-                {$t('shell.nav_ai_inbox')}
+                🕷️ {$t('shell.nav_scrapers')}
             </a>
             <a
                 href="{base}/dashboard/analysis"
                 class:active={$page.url.pathname.includes("/analysis")}
                 style="margin-top: 1rem; border-top: 1px solid #333; padding-top: 1rem;"
             >
-                {$t('shell.nav_analysis')}
+                📈 {$t('shell.nav_analysis')}
             </a>
 
 
