@@ -6,6 +6,8 @@ export default {
     all_repairs_title: "Все ремонты",
     new_order_title: "Новый заказ на ремонт",
     order_title: "Ремонт {number}",
+    title_fallback: "Ремонт",
+    edit_section: "Редактировать",
     geocoding_btn: "Геокодирование…",
     view_route_btn: "Показать маршрут и окрестности",
     delete: "Удалить",

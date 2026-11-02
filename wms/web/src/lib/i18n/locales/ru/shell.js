@@ -25,6 +25,11 @@ export default {
   site_features: 'eckWMS — все возможности',
   site_developers: 'Для разработчиков',
 change_language: 'Сменить язык',
+// Scan-mirror screen name (PDA scan tray target)
+screen_label: 'Экран',
+screen_rename: 'Переименовать этот экран',
+  // Индикатор встроенного метода ввода (раскладка по клавишам)
+  ime_hint: 'Язык ввода: {lang}. Нажмите или используйте Shift+Space, чтобы переключаться между {lang} и английским (Alt+Shift / Ctrl+Shift тоже работают).',
   lang_other: 'Другие',
   change_password: 'Сменить пароль',
   current_password: 'Текущий пароль',
@@ -50,6 +55,7 @@ change_language: 'Сменить язык',
   copied_with_prompt: 'Скопировано с промптом!',
   alert_report_sent: 'Зашифрованный отчёт автоматически отправлен в удалённую поддержку {date}',
   acknowledge_dismiss: 'Подтвердить и закрыть',
+  toast_alert_resolved: 'Recovered: {title}',
 
   ambiguous_title: 'Найдено несколько совпадений',
   ambiguous_hint: 'Этот штрихкод соответствует нескольким записям. Выберите нужную:',

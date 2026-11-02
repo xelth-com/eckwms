@@ -399,7 +399,7 @@ mod tests {
         let db = surrealdb::engine::any::connect("mem://").await.unwrap();
         db.use_ns("test").use_db("test").await.unwrap();
         db.query(
-            "DEFINE TABLE delivery_carrier SCHEMALESS; \n             DEFINE TABLE stock_picking_delivery SCHEMALESS; \n             DEFINE TABLE delivery_tracking SCHEMALESS; \n             DEFINE TABLE shipment_raw SCHEMALESS;",
+            "DEFINE TABLE IF NOT EXISTS delivery_carrier SCHEMALESS; \n             DEFINE TABLE IF NOT EXISTS stock_picking_delivery SCHEMALESS; \n             DEFINE TABLE IF NOT EXISTS delivery_tracking SCHEMALESS; \n             DEFINE TABLE IF NOT EXISTS shipment_raw SCHEMALESS;",
         )
         .await
         .unwrap()

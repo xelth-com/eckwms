@@ -1282,6 +1282,76 @@ pub async fn finalize_ticket_ingest(
     Ok(!flipped.is_empty())
 }
 
+/// Best-effort mime from a filename extension. Only the types downstream
+/// consumers key on matter: the AVIF optimizer (image/jpeg, image/png), the
+/// attachment tools (application/pdf) and the examination-bundle files
+/// (protocol html, manifests json, tester payload b64, qc reports txt/csv);
+/// everything else stays octet-stream.
+pub(crate) fn mime_from_name(name: &str) -> &'static str {
+    match name.rsplit('.').next().map(str::to_ascii_lowercase).as_deref() {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("pdf") => "application/pdf",
+        Some("html") | Some("htm") => "text/html",
+        Some("json") => "application/json",
+        Some("txt") | Some("b64") => "text/plain",
+        Some("csv") => "text/csv",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Result of [`import_bytes`]: the CAS save plus whether a `file_resource` row
+/// for that content already existed (i.e. the blob was deduplicated).
+pub(crate) struct ImportedBytes {
+    pub saved: eck_core::utils::filestore::SavedFile,
+    pub deduped: bool,
+}
+
+/// Write `content` to the CAS file store under `base_dir` and make sure ONE
+/// `file_resource` row (global blob facts only: cas_uuid, hash, mime, size,
+/// path) exists for it — dedup by `cas_uuid`, so the same bytes uploaded for
+/// several tickets/bundles share a row. Attachment CONTEXT (which ticket,
+/// bundle, role) belongs on the `has_attachment` edge, not here.
+pub(crate) async fn import_bytes(
+    db: &SurrealDb,
+    base_dir: &str,
+    content: &[u8],
+    name: &str,
+    mime: &str,
+    context: &str,
+) -> Result<ImportedBytes, anyhow::Error> {
+    let filestore = FileStore::new(base_dir);
+    let saved = filestore
+        .save(content, name, None, None)
+        .await
+        .map_err(|e| anyhow::anyhow!("filestore.save: {e}"))?;
+    let cas_id = saved.cas_uuid.to_string();
+
+    // INSERT file_resource only if a row with the same cas_uuid doesn't
+    // already exist. Without this guard, duplicate uploads (same QC report
+    // on multiple tickets) would create parallel file_resource rows with
+    // different SurrealDB IDs and break the RELATE dedup downstream.
+    let avatar_b64: Option<String> = saved.avatar_data.as_ref().map(|a| B64.encode(a));
+    let mut resp = db
+        .query(
+            "LET $exists = (SELECT id FROM file_resource WHERE cas_uuid = $cas LIMIT 1);              IF array::len($exists) == 0 {                  INSERT INTO file_resource {                      cas_uuid: $cas,                      hash: $hash,                      original_name: $name,                      mime_type: $mime,                      size_bytes: $size,                      avatar_b64: $avatar,                      storage_path: $path,                      context: $ctx,                      created_at: time::now(),                      updated_at: time::now()                  };              };              RETURN array::len($exists) > 0;",
+        )
+        .bind(("cas", cas_id))
+        .bind(("hash", saved.sha256.clone()))
+        .bind(("name", name.to_string()))
+        .bind(("mime", mime.to_string()))
+        .bind(("size", saved.size_bytes))
+        .bind(("avatar", avatar_b64))
+        .bind(("path", saved.storage_path.clone()))
+        .bind(("ctx", context.to_string()))
+        .await?
+        .check()?;
+    let deduped: Option<bool> = resp.take(2).unwrap_or(None);
+    Ok(ImportedBytes { saved, deduped: deduped.unwrap_or(false) })
+}
+
 /// Persist a Zoho thread attachment: decode base64, write to CAS filestore,
 /// INSERT into file_resource (dedup by cas_uuid), RELATE document:$ticket_id
 /// -> has_attachment -> file_resource.
@@ -1289,19 +1359,6 @@ pub async fn finalize_ticket_ingest(
 /// Skips silently when `content_base64` is absent — the scraper only bundles
 /// binaries when asked via `includeAttachmentContent` on full sync, so the
 /// hourly incremental path naturally no-ops here.
-/// Best-effort mime from a filename extension. Only the types downstream
-/// consumers key on matter: the AVIF optimizer (image/jpeg, image/png) and
-/// the attachment tools (application/pdf); everything else stays octet-stream.
-fn mime_from_name(name: &str) -> &'static str {
-    match name.rsplit('.').next().map(str::to_ascii_lowercase).as_deref() {
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("png") => "image/png",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("pdf") => "application/pdf",
-        _ => "application/octet-stream",
-    }
-}
 
 pub async fn import_attachment(
     db: &SurrealDb,
@@ -1329,45 +1386,8 @@ pub async fn import_attachment(
         .map(str::to_string)
         .unwrap_or_else(|| mime_from_name(&name).to_string());
 
-    let filestore = FileStore::new(".");
-    let saved = filestore
-        .save(&content, &name, None, None)
-        .await
-        .map_err(|e| anyhow::anyhow!("filestore.save: {e}"))?;
-    let cas_id = saved.cas_uuid.to_string();
-
-    // INSERT file_resource only if a row with the same cas_uuid doesn't
-    // already exist. Without this guard, duplicate uploads (same QC report
-    // on multiple tickets) would create parallel file_resource rows with
-    // different SurrealDB IDs and break the RELATE dedup below.
-    let avatar_b64: Option<String> = saved.avatar_data.as_ref().map(|a| B64.encode(a));
-    let _: Option<Value> = db
-        .query(
-            "LET $exists = (SELECT id FROM file_resource WHERE cas_uuid = $cas LIMIT 1); \
-             IF array::len($exists) == 0 { \
-                 INSERT INTO file_resource { \
-                     cas_uuid: $cas, \
-                     hash: $hash, \
-                     original_name: $name, \
-                     mime_type: $mime, \
-                     size_bytes: $size, \
-                     avatar_b64: $avatar, \
-                     storage_path: $path, \
-                     context: 'zoho_attachment', \
-                     created_at: time::now(), \
-                     updated_at: time::now() \
-                 }; \
-             };",
-        )
-        .bind(("cas", cas_id.clone()))
-        .bind(("hash", saved.sha256.clone()))
-        .bind(("name", name.clone()))
-        .bind(("mime", mime.clone()))
-        .bind(("size", saved.size_bytes))
-        .bind(("avatar", avatar_b64))
-        .bind(("path", saved.storage_path.clone()))
-        .await?
-        .take(0)?;
+    let imported = import_bytes(db, ".", &content, &name, &mime, "zoho_attachment").await?;
+    let cas_id = imported.saved.cas_uuid.to_string();
 
     // RELATE document:$ticket_id -> has_attachment -> file_resource:$cas_uuid.
     // Idempotent: if the edge already exists (same ticket, same CAS), the
@@ -1751,7 +1771,7 @@ mod tests {
         registry.enable(&db, "demo-ingest").await.expect("enable should succeed");
 
         let engine = PluginEngine::with_default_limits(HostIdentity::new("test-node", "dev"));
-        let runtime = PluginRuntime { engine, registry };
+        let runtime = PluginRuntime { engine, registry: std::sync::Arc::new(registry) };
 
         let ticket = synthetic_ticket("90001");
         let result = import_ticket(&db, "TICKET-SEAM-1", &ticket, "test-node", Some(&runtime))
@@ -1807,7 +1827,7 @@ mod tests {
         registry.enable(&db, "trap-plugin").await.expect("enable should succeed");
 
         let engine = PluginEngine::with_default_limits(HostIdentity::new("test-node", "dev"));
-        let runtime = PluginRuntime { engine, registry };
+        let runtime = PluginRuntime { engine, registry: std::sync::Arc::new(registry) };
 
         // Three consecutive imports (three distinct tickets, so the built-in
         // hash-unchanged short-circuit never skips the hook) trip the

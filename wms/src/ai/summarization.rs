@@ -19,6 +19,23 @@ const MAX_RETRIES: i64 = 5;
 /// loop). Must exceed the per-ticket ingest burst incl. a 429 backoff (~3 min).
 const SETTLE_MINS: i64 = 10;
 
+/// The grounded Adressen slot. Gemini routes keep Google-Search grounding, so
+/// the model MAY look up an incomplete address and note the source. Spliced into
+/// `TICKET_PROMPT_TEMPLATE` via `{{ADDRESS_RULE}}` and swapped out on ungrounded
+/// (OpenRouter) routes — see [`or_system_prompt`].
+pub(crate) const ADDRESS_RULE_GROUNDED: &str = "**Adressen:** (Extract the physical street address, ZIP code, and city. IF the address is incomplete, USE GOOGLE SEARCH to look up the company name, email domain, or phone number and find their official physical address. IMPORTANT: Output the clean, raw address on the FIRST line. If you used Google Search to find it, add your explanation, warning, or thoughts on a NEW LINE below the address and enclose the entire explanation in parentheses).";
+
+/// The ungrounded Adressen slot for web-less (OpenRouter) routes: no lookups, no
+/// guessing, no "keine Recherche möglich" note — cheap models otherwise write a
+/// missing-data apology INTO the stored summary. Replaces [`ADDRESS_RULE_GROUNDED`]
+/// in [`or_system_prompt`].
+const ADDRESS_RULE_UNGROUNDED: &str = "**Adressen:** (Extract the physical street address, ZIP code, and city exactly as they appear in the text. If the address is incomplete, output only what the text contains: never look anything up, never guess, and do not add any note about missing data, tools, or web access.)";
+
+/// Shared PPRL token-semantics rule injected into every summariser/brain prompt
+/// so the model treats tokens as opaque and never invents a "masking" apology.
+/// One source of truth — also spliced into the orchestrator brain prompts.
+pub(crate) const PPRL_TOKEN_RULE: &str = "PPRL tokens represent names, emails, phones, addresses, companies, IBANs, VAT IDs, or payment cards, as indicated by their prefixes (Name_…, Email_…, Phone_…, Address_…, Company_…, Iban_…, VatId_…, Card_…). Treat them as opaque identifiers: never decode, guess, alter, or invent them. When you keep a fact, copy its tokens exactly and preserve their associations. City, postal code, and country may appear separately in the clear; that is allowed, not missing address data or a privacy leak. Do not add commentary about masking or unavailable tools to your output.";
+
 const TICKET_PROMPT_TEMPLATE: &str = r#"You are an expert Level 3 Technical Support Engineer and Logistics Coordinator for {{DEVICES}}.
 Your task is to analyze a raw, noisy customer support email thread and extract the core technical facts AND all logistics/contact footprints.
 
@@ -26,14 +43,14 @@ CRITICAL INSTRUCTIONS:
 - Ignore greetings and emotional complaints.
 - Synthesize the entire thread into a single, cohesive summary.
 - Output the result in German.
-- The text contains anonymized PPRL tokens like Name_8E5F3A1B00000000, Email_A1B2C3D400000000, Phone_1234ABCD00000000, Address_DEADBEEF00000000. You MUST preserve these tokens EXACTLY as they appear in your output — do NOT replace, translate, summarize, or remove them. They will be decoded after you respond.
+- {{PPRL_TOKEN_RULE}} You MUST preserve these tokens EXACTLY as they appear in your output — do NOT replace, translate, summarize, or remove them.
 
 Extract the information into the following strict structure:
 
 === LOGISTIK & KONTAKTE ===
 **Firma / Einrichtung:** (Extract company names, clinic names, or practices. If multiple, list them).
 **Kontaktpersonen:** (List ALL distinct names, emails, and phone numbers found in the text and email signatures. This is crucial for matching future physical packages).
-**Adressen:** (Extract the physical street address, ZIP code, and city. IF the address is incomplete, USE GOOGLE SEARCH to look up the company name, email domain, or phone number and find their official physical address. IMPORTANT: Output the clean, raw address on the FIRST line. If you used Google Search to find it, add your explanation, warning, or thoughts on a NEW LINE below the address and enclose the entire explanation in parentheses).
+{{ADDRESS_RULE}}
 
 === TECHNISCHE DETAILS ===
 **Gerät / Modell:** (Extract device model or serial number, e.g., "Model 770", "SN: 12345").
@@ -42,7 +59,7 @@ Extract the information into the following strict structure:
 **Lösung / Status:** (Current status, e.g., "RMA needed", "Waiting for customer", "Resolved").
 
 === PII SELF-CHECK (do this LAST) ===
-The INPUT above was pseudonymized: real personal data of private individuals should appear ONLY as tokens (Name_…, Email_…, Phone_…, Address_…). If — and only if — you notice UNMASKED personal data of a real person in the INPUT (a real person's name, an email address, a phone number, or a postal address written in the clear instead of as a token), report it so it can be masked next time. Company, clinic, practice, dealer, and brand names in the clear are BY DESIGN — never report those. When (and only when) you have something to report, append as the VERY LAST line of your output a single line that starts with the exact marker ⟦PII_LEAKS⟧ immediately followed by a compact JSON array, e.g.:
+The INPUT above was pseudonymized: real personal data of private individuals should appear ONLY as tokens (Name_…, Email_…, Phone_…, Address_…). If — and only if — you notice UNMASKED personal data of a real person in the INPUT (a real person's name, an email address, a phone number, or a postal address written in the clear instead of as a token), report it so it can be masked next time. Company, clinic, practice, dealer, and brand names in the clear are BY DESIGN — never report those. City, postal code, and country in the clear are allowed too — never report those. When (and only when) you have something to report, append as the VERY LAST line of your output a single line that starts with the exact marker ⟦PII_LEAKS⟧ immediately followed by a compact JSON array, e.g.:
 ⟦PII_LEAKS⟧[{"quote":"Hans Müller","kind":"PER"},{"quote":"hans@example.com","kind":"EMAIL"}]
 "kind" is one of PER, EMAIL, PHONE, ADDR, OTHER. "quote" is the exact clear substring copied verbatim from the INPUT. If you noticed no unmasked personal data, do NOT output the marker or that line at all — omit it entirely."#;
 
@@ -51,12 +68,24 @@ The INPUT above was pseudonymized: real personal data of private individuals sho
 /// unset). Everything except that one phrase is byte-identical to the template.
 pub(crate) fn ticket_prompt() -> &'static str {
     static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    P.get_or_init(|| TICKET_PROMPT_TEMPLATE.replace("{{DEVICES}}", &super::branding::devices_phrase()))
+    P.get_or_init(|| {
+        TICKET_PROMPT_TEMPLATE
+            .replace("{{DEVICES}}", &super::branding::devices_phrase())
+            .replace("{{ADDRESS_RULE}}", ADDRESS_RULE_GROUNDED)
+            .replace("{{PPRL_TOKEN_RULE}}", PPRL_TOKEN_RULE)
+    })
 }
 
-pub(crate) const INVOICE_PROMPT: &str = r#"You are an expert AI assistant for an ERP and Warehouse Management System.
+/// The invoice summarization system prompt with the shared PPRL token rule
+/// spliced in (env-free; everything except `{{PPRL_TOKEN_RULE}}` is the template).
+pub(crate) fn invoice_prompt() -> &'static str {
+    static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    P.get_or_init(|| INVOICE_PROMPT_TEMPLATE.replace("{{PPRL_TOKEN_RULE}}", PPRL_TOKEN_RULE))
+}
+
+const INVOICE_PROMPT_TEMPLATE: &str = r#"You are an expert AI assistant for an ERP and Warehouse Management System.
 Your task is to analyze a raw invoice (Rechnung) document and extract the core logistical and product data.
-- The text contains anonymized PPRL tokens like Name_8E5F3A1B00000000, Email_A1B2C3D400000000. You MUST preserve these tokens EXACTLY as they appear.
+- {{PPRL_TOKEN_RULE}} You MUST preserve these tokens EXACTLY as they appear.
 
 Extract the information into the following strict structure in German:
 
@@ -70,7 +99,7 @@ Extract the information into the following strict structure in German:
 **Seriennummern:** (Extract ALL serial numbers mentioned in the invoice. This is CRITICAL for warranty tracking).
 
 === PII SELF-CHECK (do this LAST) ===
-The INPUT above was pseudonymized: real personal data of private individuals should appear ONLY as tokens (Name_…, Email_…, Phone_…, Address_…). If — and only if — you notice UNMASKED personal data of a real person in the INPUT (a real person's name, an email address, a phone number, or a postal address written in the clear instead of as a token), report it so it can be masked next time. Company, clinic, practice, dealer, and brand names in the clear are BY DESIGN — never report those. When (and only when) you have something to report, append as the VERY LAST line of your output a single line that starts with the exact marker ⟦PII_LEAKS⟧ immediately followed by a compact JSON array, e.g.:
+The INPUT above was pseudonymized: real personal data of private individuals should appear ONLY as tokens (Name_…, Email_…, Phone_…, Address_…). If — and only if — you notice UNMASKED personal data of a real person in the INPUT (a real person's name, an email address, a phone number, or a postal address written in the clear instead of as a token), report it so it can be masked next time. Company, clinic, practice, dealer, and brand names in the clear are BY DESIGN — never report those. City, postal code, and country in the clear are allowed too — never report those. When (and only when) you have something to report, append as the VERY LAST line of your output a single line that starts with the exact marker ⟦PII_LEAKS⟧ immediately followed by a compact JSON array, e.g.:
 ⟦PII_LEAKS⟧[{"quote":"Hans Müller","kind":"PER"},{"quote":"hans@example.com","kind":"EMAIL"}]
 "kind" is one of PER, EMAIL, PHONE, ADDR, OTHER. "quote" is the exact clear substring copied verbatim from the INPUT. If you noticed no unmasked personal data, do NOT output the marker or that line at all — omit it entirely."#;
 
@@ -595,7 +624,7 @@ pub async fn start_summarization_worker(db: SurrealDb, model: String, instance_i
     }
 
     let http = HttpClient::builder()
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(180))
         .build()
         .expect("failed to build summarization HTTP client");
     let guard = Arc::new(LoopGuard::new());
@@ -799,7 +828,7 @@ pub(crate) async fn build_doc_masked_text(
         "invoice" => {
             let merged = merge_payload(doc, &raw_doc);
             let (text, _mask) = build_invoice_text(&merged);
-            Some((text, INVOICE_PROMPT))
+            Some((text, invoice_prompt()))
         }
         _ => None,
     };
@@ -1551,6 +1580,18 @@ async fn summarize_with_guards(
 /// system-prompt line is appended forbidding invented/"looked-up" addresses —
 /// the ungrounded models otherwise roleplay a search and fabricate street
 /// addresses. Gemini keeps its grounding tool unchanged.
+/// Adapt a grounded system prompt for a web-less (OpenRouter) route: swap the
+/// grounded Adressen rule for the ungrounded one (so ungrounded models don't
+/// roleplay a lookup or write a "keine Recherche möglich" apology into the
+/// summary), then append the no-web-access line. Pure/HTTP-free so it can be
+/// unit-tested; Gemini routes never call this and keep their grounding tool.
+pub(crate) fn or_system_prompt(system_prompt: &str) -> String {
+    let ungrounded = system_prompt.replace(ADDRESS_RULE_GROUNDED, ADDRESS_RULE_UNGROUNDED);
+    format!(
+        "{ungrounded}\n\nYou have NO web access. Address candidates come only from the ticket text; never invent or 'look up' an address."
+    )
+}
+
 async fn summarize(
     http: &HttpClient,
     auth: &eck_core::ai::AiAuth,
@@ -1563,9 +1604,7 @@ async fn summarize(
 
     let system_prompt_owned;
     let system_prompt = if is_or {
-        system_prompt_owned = format!(
-            "{system_prompt}\n\nYou have NO web access. Address candidates come only from the ticket text; never invent or 'look up' an address."
-        );
+        system_prompt_owned = or_system_prompt(system_prompt);
         system_prompt_owned.as_str()
     } else {
         system_prompt
@@ -1589,20 +1628,22 @@ async fn summarize(
 /// One READ-ONLY OpenRouter shadow computation for the admin soak
 /// (`/api/admin/or-soak`, spec §7 Stage A). Builds the masked input EXACTLY as
 /// the live path would (`build_doc_masked_text` — SELECTs only, no writes), then
-/// runs ONLY the OR summarize call. Returns `Ok(Some((summary, usageMetadata)))`,
-/// or `Ok(None)` when the doc has no usable local text (unknown type /
-/// raw-unavailable / empty) — the caller counts those as skipped. NEVER writes:
-/// no persist, no vclock, no mesh, no DB telemetry. `or_auth` MUST be the
-/// OpenRouter variant (its route model is used; the `model` arg is ignored on
-/// the OR path). On this node the usage-report seam is a no-op (no
-/// `ECK_VERTEX_USAGE_URL`), so not even a wallet debit occurs.
+/// runs ONLY the OR summarize call. Returns
+/// `Ok(Some((summary, usageMetadata, masked_input_chars)))` — `masked_input_chars`
+/// is `raw_text.chars().count()` of the PPRL-MASKED prompt text, so the A/B
+/// collector can report input size without leaking the text — or `Ok(None)` when
+/// the doc has no usable local text (unknown type / raw-unavailable / empty), the
+/// caller counts those as skipped. NEVER writes: no persist, no vclock, no mesh,
+/// no DB telemetry. `or_auth` MUST be the OpenRouter variant (its route model is
+/// used; the `model` arg is ignored on the OR path). On this node the usage-report
+/// seam is a no-op (no `ECK_VERTEX_USAGE_URL`), so not even a wallet debit occurs.
 pub(crate) async fn or_soak_summarize(
     db: &SurrealDb,
     http: &HttpClient,
     or_auth: &eck_core::ai::AiAuth,
     doc: &Value,
     id: &str,
-) -> Result<Option<(String, Value)>, anyhow::Error> {
+) -> Result<Option<(String, Value, usize)>, anyhow::Error> {
     let (raw_text, prompt) = match build_doc_masked_text(db, doc, id).await? {
         Some(t) => t,
         None => return Ok(None), // unknown type
@@ -1610,8 +1651,9 @@ pub(crate) async fn or_soak_summarize(
     if raw_text.trim().is_empty() {
         return Ok(None); // raw-unavailable / empty local source
     }
+    let masked_input_chars = raw_text.chars().count();
     let (summary, usage) = eck_core::ai::with_ai_task("bench", summarize(http, or_auth, "", prompt, &raw_text)).await?;
-    Ok(Some((summary, usage)))
+    Ok(Some((summary, usage, masked_input_chars)))
 }
 
 /// N-gram (shingling) deduplication for email threads.
@@ -1767,12 +1809,47 @@ pub(crate) fn strip_html(s: &str) -> String {
 mod tests {
     use super::{
         cjk_bleed_in_image_summary, contains_cjk, default_cf_key_map, email_shape,
-        parse_cf_key_map, phone_shape, register_prose_person_names, strip_pii_leaks,
-        validate_leak, LeakDecision, PiiLeak, PiiMask, RollingDeduper, MAX_ASSEMBLED_CHARS,
-        PII_LEAK_MARKER,
+        or_system_prompt, parse_cf_key_map, phone_shape, register_prose_person_names,
+        strip_pii_leaks, ticket_prompt, validate_leak, LeakDecision, PiiLeak, PiiMask,
+        RollingDeduper, ADDRESS_RULE_GROUNDED, ADDRESS_RULE_UNGROUNDED, MAX_ASSEMBLED_CHARS,
+        PII_LEAK_MARKER, PPRL_TOKEN_RULE,
     };
 
     fn per(q: &str) -> PiiLeak { PiiLeak { quote: q.into(), kind: "PER".into() } }
+
+    #[test]
+    fn ticket_prompt_keeps_grounded_rule_and_token_rule() {
+        let p = ticket_prompt();
+        assert!(
+            p.contains(ADDRESS_RULE_GROUNDED),
+            "grounded Adressen rule missing from ticket prompt"
+        );
+        assert!(
+            p.contains(PPRL_TOKEN_RULE),
+            "shared PPRL token rule missing from ticket prompt"
+        );
+    }
+
+    #[test]
+    fn or_prompt_drops_grounding_adds_ungrounded_rule() {
+        let or = or_system_prompt(ticket_prompt());
+        assert!(
+            !or.contains("GOOGLE SEARCH"),
+            "OR prompt still tells the model to use Google Search:\n{or}"
+        );
+        assert!(
+            !or.contains(ADDRESS_RULE_GROUNDED),
+            "grounded rule survived into the OR prompt"
+        );
+        assert!(
+            or.contains(ADDRESS_RULE_UNGROUNDED),
+            "ungrounded Adressen rule missing from OR prompt"
+        );
+        assert!(
+            or.contains("You have NO web access"),
+            "no-web-access line dropped from OR prompt"
+        );
+    }
 
     // ── Vision-scoped CJK guard (VISION_BENCH finding #2) ───────────────────────
 

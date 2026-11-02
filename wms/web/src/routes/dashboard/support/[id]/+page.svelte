@@ -8,8 +8,27 @@
     import { toastStore } from '$lib/stores/toastStore.js';
     import { wsStore } from '$lib/stores/wsStore.js';
     import { t, tr, locale, localeName } from '$lib/i18n';
+    import AuthImg, { authedObjectURL } from '$lib/components/AuthImg.svelte';
 
     const ticketId = $page.params.id;
+
+    // /api/files is auth-gated (Bearer header), so a plain <a href>/<img src>
+    // gets a 401. Thumbnails render via AuthImg; opening/downloading the full
+    // file fetches it with the token first, then hands the browser a blob URL.
+    async function openAttachment(att) {
+        try {
+            const url = await authedObjectURL(`${base}/api/files/${att.id}`);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = att.original_name || att.id;
+            a.rel = 'noopener noreferrer';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } catch (e) {
+            toastStore.add(tr('support.attachment_open_failed', { error: e.message }), 'error');
+        }
+    }
 
     // Remember where we arrived from (map, ticket list, or a related ticket) so
     // "← Back" returns there instead of always dumping to the list root. null on
@@ -758,24 +777,25 @@
                             {#if attachments[thread.id]?.length}
                                 <div class="attachment-list">
                                     {#each attachments[thread.id] as att}
-                                        <a
+                                        <button
+                                            type="button"
                                             class="attachment-item"
-                                            href="{base}/api/files/{att.file_id}"
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            title={att.file_id}
+                                            title={att.original_name || att.id}
+                                            on:click|stopPropagation={() => openAttachment(att)}
                                         >
                                             {#if isImage(att.mime_type)}
-                                                <img
+                                                <AuthImg
                                                     class="att-thumb"
-                                                    src="{base}/api/files/{att.file_id}"
+                                                    src="{base}/api/files/{att.id}"
                                                     alt={$t('support.attachment_alt')}
-                                                />
+                                                >
+                                                    <span slot="fallback" class="att-icon">{fileIcon(att.mime_type)}</span>
+                                                </AuthImg>
                                             {:else}
                                                 <span class="att-icon">{fileIcon(att.mime_type)}</span>
                                             {/if}
                                             <span class="att-label">{att.mime_type}</span>
-                                        </a>
+                                        </button>
                                     {/each}
                                 </div>
                             {/if}
@@ -1044,10 +1064,12 @@
         text-decoration: none;
         color: #ccc;
         font-size: 0.8rem;
+        font-family: inherit;
+        cursor: pointer;
         transition: background 0.15s, border-color 0.15s;
     }
     .attachment-item:hover { background: #2a2a2a; border-color: #4a69bd; color: #93c5fd; }
-    .att-thumb {
+    .attachment-item :global(.att-thumb) {
         width: 40px;
         height: 40px;
         object-fit: cover;

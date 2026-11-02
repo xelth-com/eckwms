@@ -96,10 +96,50 @@ async fn handle_task(state: &Arc<AppState>, task: Value) {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let payload = envelope
-        .and_then(|e| e.get("payload"))
-        .cloned()
-        .unwrap_or(Value::Null);
+
+    // Sync-engine kinds are EXECUTED against this node's database, and the
+    // relay queue authenticates nobody — so they must carry the mesh-secret
+    // HMAC `RelayClient::mesh_dispatch` adds (`SIGNED_MESH_KINDS`). Verified
+    // against THIS node's uuid, a one-hour window and the exact payload text;
+    // a failure is acked with the reason and never executed. A node without
+    // `SYNC_SECRET` runs in the same dev mode as `mesh_auth` (unsigned accepted).
+    let payload = if eck_core::sync::relay_client::SIGNED_MESH_KINDS.contains(&kind.as_str()) {
+        match state.sync_secret.as_deref() {
+            Some(secret) => {
+                let key = eck_core::sync::relay_client::envelope_key_from_secret(secret);
+                let now = chrono::Utc::now().timestamp();
+                match envelope.ok_or_else(|| "task has no envelope".to_string()).and_then(|e| {
+                    eck_core::sync::relay_client::verify_envelope(&key, &state.instance_id, e, now)
+                }) {
+                    Ok(p) => p,
+                    Err(reason) => {
+                        warn!(
+                            "[mesh_relay_poller] task={} kind={} from '{}' REJECTED: {}",
+                            task_id, kind, sender, reason
+                        );
+                        let body = json!({"ok": false, "error": format!("unauthenticated envelope: {reason}")});
+                        if let Err(e) = state.sync_engine.relay().mesh_ack(&task_id, body).await {
+                            warn!("[mesh_relay_poller] ack task={} failed: {}", task_id, e);
+                        }
+                        return;
+                    }
+                }
+            }
+            None => envelope
+                .and_then(|e| e.get("payload"))
+                .map(|p| match p {
+                    // A signed sender talking to a dev-mode receiver.
+                    Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
+                    other => other.clone(),
+                })
+                .unwrap_or(Value::Null),
+        }
+    } else {
+        envelope
+            .and_then(|e| e.get("payload"))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
 
     let ack_body = match kind.as_str() {
         "pull_request" => handle_pull_request(state, &payload).await,
@@ -109,6 +149,7 @@ async fn handle_task(state: &Arc<AppState>, task: Value) {
         "device_register" => handle_device_register(state, &payload).await,
         "trip_upload" => handle_trip_upload(state, &payload).await,
         "image_upload" => handle_image_upload(state, &payload).await,
+        "api_call" => handle_api_call(state, &payload).await,
         "users_active" => handle_users_active(state, &payload).await,
         "users_verify_pin" => handle_users_verify_pin(state, &payload).await,
         "merkle_state" => handle_merkle_state(state, &payload).await,
@@ -178,6 +219,34 @@ async fn handle_merkle_state(state: &Arc<AppState>, payload: &Value) -> Value {
         Ok(node) => json!({ "ok": true, "node": node }),
         Err(e) => json!({ "ok": false, "error": e }),
     }
+}
+
+/// Relay-forwarded generic HTTP call (`.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md`
+/// §12). An off-LAN PDA cannot reach its home node's `/api/*` surface directly,
+/// so instead of one mesh-task kind per endpoint it tunnels a whole request:
+/// `{token, method, path, query?, body?, request_id}`. The call is authenticated
+/// by the device JWT in `token` (same contract as every other device-origin
+/// kind — the relay authenticates nobody), then routed through THIS node's own
+/// axum Router with a synthetic loopback-origin request, so the inner route's
+/// auth + active-device middleware run exactly as over the LAN. Least-privilege
+/// allow-list + path normalisation + size/time caps live in `services::api_tunnel`.
+async fn handle_api_call(state: &Arc<AppState>, payload: &Value) -> Value {
+    let Some(router) = state.tunnel_router.get() else {
+        // Boot window: the router hasn't been published yet. Transport-level
+        // failure so the relay redelivers and the PDA retries shortly.
+        warn!("[mesh_relay_poller] api_call before router ready");
+        return match payload.get("request_id").and_then(|v| v.as_str()) {
+            Some(id) => json!({"ok": false, "error": "tunnel not ready", "request_id": id}),
+            None => json!({"ok": false, "error": "tunnel not ready"}),
+        };
+    };
+    crate::services::api_tunnel::tunnel_call(
+        router,
+        crate::services::api_tunnel::global_cache(),
+        &state.jwt_secret,
+        payload,
+    )
+    .await
 }
 
 /// Relay-forwarded roster fetch — the phone is usually OFF the master's LAN
@@ -306,6 +375,10 @@ async fn handle_image_upload(state: &Arc<AppState>, payload: &Value) -> Value {
             .and_then(|v| v.as_u64())
             .map(|n| n as u32),
         recognized: s("recognized"),
+        evidence_type: {
+            let et = s("evidence_type");
+            if et.trim().is_empty() { None } else { Some(et) }
+        },
     };
     match crate::handlers::files::upload_image_core(state, params).await {
         Ok(v) => {
@@ -374,6 +447,16 @@ async fn handle_pull_request(state: &Arc<AppState>, payload: &Value) -> Value {
 
     if entity_type.is_empty() || ids.is_empty() {
         return json!({"ok": false, "error": "missing entity_type or ids", "entities": []});
+    }
+    // Same allowlist as the direct `sync_pull` handler: the table name is
+    // interpolated into SurrealQL below, so anything outside the mesh entity
+    // set (or carrying statement separators) must stop here (F02-1).
+    if !eck_core::sync::engine::is_mesh_entity_type(entity_type) {
+        warn!(
+            "[mesh_relay_poller] pull_request for non-mesh entity type '{}' refused",
+            entity_type
+        );
+        return json!({"ok": false, "error": "entity_type is not a mesh entity", "entities": []});
     }
 
     let query = format!(
@@ -611,7 +694,7 @@ fn warn_no_mesh_data_key_once(allow_plaintext: bool) {
 /// relays that haven't been redeployed with the raised 32 MiB limit yet.
 /// Overridable via `RELAY_ACK_MAX_BYTES` (raise once the relay fleet is
 /// upgraded; keep comfortably under the relay's limit).
-fn relay_ack_byte_budget() -> usize {
+pub(crate) fn relay_ack_byte_budget() -> usize {
     std::env::var("RELAY_ACK_MAX_BYTES")
         .ok()
         .and_then(|v| v.parse().ok())

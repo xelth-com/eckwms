@@ -1676,6 +1676,7 @@ Analyze this error and suggest a fix. Be concise.
                         <div class="threads-row">
                             <input
                                 type="text"
+                                data-ime="off"
                                 bind:value={zohoThreadTicketId}
                                 placeholder={$t('scrapers.placeholder_ticket_id')}
                                 disabled={zohoThreadRunning}
@@ -1759,11 +1760,11 @@ Analyze this error and suggest a fix. Be concise.
                     <div class="excel-paths">
                         <div class="excel-path-row">
                             <label class="path-label">{$t('scrapers.source_file')}</label>
-                            <input class="path-input" type="text" bind:value={excelSourcePath} placeholder={$t('scrapers.placeholder_xlsm')} />
+                            <input class="path-input" type="text" data-ime="off" bind:value={excelSourcePath} placeholder={$t('scrapers.placeholder_xlsm')} />
                         </div>
                         <div class="excel-path-row">
                             <label class="path-label">{$t('scrapers.export_file')}</label>
-                            <input class="path-input" type="text" bind:value={excelExportPath} placeholder={$t('scrapers.placeholder_export')} />
+                            <input class="path-input" type="text" data-ime="off" bind:value={excelExportPath} placeholder={$t('scrapers.placeholder_export')} />
                         </div>
                         <button class="run-btn excel-save-paths" on:click={saveExcelConfig} disabled={excelConfigSaving}>
                             {excelConfigSaving ? '...' : '💾'} {$t('scrapers.save_paths')}

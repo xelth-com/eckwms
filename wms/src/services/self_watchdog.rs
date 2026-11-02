@@ -27,6 +27,9 @@
 //! - `ECK_SELF_WATCHDOG_PATH` (default `/E/health`).
 //! - `ECK_SELF_WATCHDOG_PROBE_PORT` (debug/test only) — probe THIS port instead of
 //!   the real one, to force failures and verify the abort path.
+//! - `ECK_ALLOC_STATS_SECS` (default 300; `0` disables) — interval for the
+//!   allocator-stats thread, see `spawn_alloc_stats`. Legacy alias:
+//!   `ECK_MALLOC_TRIM_SECS` is honoured if `ECK_ALLOC_STATS_SECS` is unset.
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -220,6 +223,159 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
         .unwrap_or(default)
+}
+
+/// Interval (seconds) for the allocator-stats thread, honouring the legacy
+/// `ECK_MALLOC_TRIM_SECS` alias when `ECK_ALLOC_STATS_SECS` is unset.
+fn alloc_stats_interval_secs() -> u64 {
+    if std::env::var("ECK_ALLOC_STATS_SECS").is_ok() {
+        env_u64("ECK_ALLOC_STATS_SECS", 300)
+    } else if std::env::var("ECK_MALLOC_TRIM_SECS").is_ok() {
+        env_u64("ECK_MALLOC_TRIM_SECS", 300)
+    } else {
+        300
+    }
+}
+
+/// Spawn a dedicated OS thread that periodically logs allocator memory stats.
+///
+/// Three builds, three behaviors:
+/// - **jemalloc build** (`feature = "jemalloc"`, Linux/glibc): jemalloc is the
+///   global allocator (see `main.rs`). Before spawning, log the compiled-in
+///   config actually in effect (`opt.background_thread`/`opt.narenas`/
+///   `opt.dirty_decay_ms`/`opt.muzzy_decay_ms`) once, so its absence in the
+///   journal means the binary was built without the feature or the
+///   `_rjem_malloc_conf` symbol was not picked up. Then every tick: advance the
+///   jemalloc epoch, log `stats.{allocated,active,resident,retained,mapped,
+///   metadata}` plus `proc.anon` (RssAnon), and still call glibc's
+///   `malloc_trim(0)` — C-side code (surrealkv's C deps, if any) still
+///   allocates via glibc malloc, jemalloc only replaces Rust's global
+///   allocator.
+/// - **glibc build** (feature off, Linux/glibc): the original periodic
+///   `malloc_trim(0)` thread — walks every glibc arena and releases
+///   free-but-retained pages back to the OS (`MADV_DONTNEED`). This is what
+///   measured the gap between the kiosk's anonymous RSS (~1.25 GiB) and our
+///   accounted caches (~210 MiB) in the first place: 813→368 MiB, 445 MiB
+///   released, on the 2026-09-27 kiosk audit — the evidence that led to
+///   shipping jemalloc as the default.
+/// - **anything else** (musl, macOS, Windows): neither API exists; log once
+///   and return.
+///
+/// No-op (and logs why) if disabled via `ECK_ALLOC_STATS_SECS=0` (or the
+/// legacy `ECK_MALLOC_TRIM_SECS=0` alias).
+pub fn spawn_alloc_stats() {
+    let secs = alloc_stats_interval_secs();
+    if secs == 0 {
+        info!("[alloc-stats] disabled (ECK_ALLOC_STATS_SECS=0)");
+        return;
+    }
+
+    #[cfg(all(feature = "jemalloc", target_os = "linux", target_env = "gnu"))]
+    {
+        // One-time proof that the compiled-in `_rjem_malloc_conf` took effect.
+        let background_thread = tikv_jemalloc_ctl::opt::background_thread::read();
+        let narenas = tikv_jemalloc_ctl::opt::narenas::read();
+        let dirty_decay_ms =
+            unsafe { tikv_jemalloc_ctl::raw::read::<libc::ssize_t>(b"opt.dirty_decay_ms\0") };
+        let muzzy_decay_ms =
+            unsafe { tikv_jemalloc_ctl::raw::read::<libc::ssize_t>(b"opt.muzzy_decay_ms\0") };
+        match (background_thread, narenas, dirty_decay_ms, muzzy_decay_ms) {
+            (Ok(bg), Ok(na), Ok(dd), Ok(md)) => {
+                info!(
+                    "[jemalloc] active: background_thread={bg} narenas={na} \
+                     dirty_decay_ms={dd} muzzy_decay_ms={md}"
+                );
+            }
+            (bg, na, dd, md) => {
+                for (name, res) in [
+                    ("background_thread", bg.err()),
+                    ("narenas", na.err()),
+                    ("dirty_decay_ms", dd.err()),
+                    ("muzzy_decay_ms", md.err()),
+                ] {
+                    if let Some(e) = res {
+                        warn!("[jemalloc] opt read failed ({name}): {e}");
+                    }
+                }
+            }
+        }
+
+        let result = std::thread::Builder::new()
+            .name("alloc-stats".to_string())
+            .spawn(move || {
+                let interval = Duration::from_secs(secs);
+                loop {
+                    std::thread::sleep(interval);
+                    let _ = tikv_jemalloc_ctl::epoch::advance();
+                    let allocated = tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0);
+                    let active = tikv_jemalloc_ctl::stats::active::read().unwrap_or(0);
+                    let resident = tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0);
+                    let retained = tikv_jemalloc_ctl::stats::retained::read().unwrap_or(0);
+                    let mapped = tikv_jemalloc_ctl::stats::mapped::read().unwrap_or(0);
+                    let metadata = tikv_jemalloc_ctl::stats::metadata::read().unwrap_or(0);
+                    let anon_mib = rss_anon_kib().unwrap_or(0) / 1024;
+                    // C-side glibc allocations (if any) still need this; ignore the
+                    // return value — jemalloc is the Rust global allocator now.
+                    let _ = unsafe { libc::malloc_trim(0) };
+                    const MIB: usize = 1024 * 1024;
+                    info!(
+                        "[jemalloc] allocated={} active={} resident={} retained={} mapped={} \
+                         metadata={} MiB | proc.anon={anon_mib} MiB",
+                        allocated / MIB,
+                        active / MIB,
+                        resident / MIB,
+                        retained / MIB,
+                        mapped / MIB,
+                        metadata / MIB,
+                    );
+                }
+            });
+        if let Err(e) = result {
+            warn!("[alloc-stats] failed to spawn thread: {e}");
+        }
+    }
+
+    #[cfg(all(not(feature = "jemalloc"), target_os = "linux", target_env = "gnu"))]
+    {
+        let result = std::thread::Builder::new()
+            .name("malloc-trim".to_string())
+            .spawn(move || {
+                let interval = Duration::from_secs(secs);
+                loop {
+                    std::thread::sleep(interval);
+                    let before = rss_anon_kib().unwrap_or(0);
+                    let ret = unsafe { libc::malloc_trim(0) };
+                    let after = rss_anon_kib().unwrap_or(0);
+                    let before_mib = before / 1024;
+                    let after_mib = after / 1024;
+                    let delta_mib = before_mib.saturating_sub(after_mib);
+                    info!(
+                        "[malloc-trim] anon {before_mib}→{after_mib} MiB (released {delta_mib} MiB, ret={ret})"
+                    );
+                }
+            });
+        if let Err(e) = result {
+            warn!("[malloc-trim] failed to spawn thread: {e}");
+        }
+    }
+
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    {
+        info!("[alloc-stats] unavailable on this target (Linux/glibc only)");
+    }
+}
+
+/// `RssAnon` (kB) from `/proc/self/status` (Linux glibc only). `None` on parse
+/// failure — callers treat that as 0 rather than panicking.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn rss_anon_kib() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in s.lines() {
+        if let Some(v) = line.strip_prefix("RssAnon:") {
+            return v.trim().trim_end_matches(" kB").trim().parse::<u64>().ok();
+        }
+    }
+    None
 }
 
 #[cfg(test)]

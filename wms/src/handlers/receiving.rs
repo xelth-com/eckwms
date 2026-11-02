@@ -33,7 +33,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::services::{receiving, ticket_lookup};
+use crate::services::{plan, receiving, ticket_lookup};
 use crate::AppState;
 
 type ApiResult<T> = Result<T, (StatusCode, String)>;
@@ -108,6 +108,35 @@ pub async fn lookup_tickets(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(res))
+}
+
+/// `GET /api/receiving/plan?receipt=<id>` (also `?ticket=`, `?shipment=`,
+/// `?serial=` for the pre-receipt moment) — the DERIVED, stateless plan the PDA
+/// renders (`.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md` §8). Exactly one source is
+/// honoured, in the order receipt → ticket → shipment → serial. No source
+/// matched → HTTP 200 with empty `steps` and an empty subject title, NEVER 404.
+///
+/// Read-only, in the same device-gated group as the other `/receiving/*` reads
+/// (no `require_active_device` — matches `get_receipt` / `list_units`).
+pub async fn get_plan(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> ApiResult<Json<Value>> {
+    let pick = |k: &str| params.get(k).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let query = if let Some(r) = pick("receipt") {
+        plan::PlanQuery::Receipt(r)
+    } else if let Some(t) = pick("ticket") {
+        plan::PlanQuery::Ticket(t)
+    } else if let Some(sh) = pick("shipment") {
+        plan::PlanQuery::Shipment(sh)
+    } else if let Some(sn) = pick("serial") {
+        plan::PlanQuery::Serial(sn)
+    } else {
+        return Err(bad("one of receipt|ticket|shipment|serial is required"));
+    };
+
+    let plan = plan::load_receiving_plan(&state.db, &query).await;
+    Ok(Json(serde_json::to_value(plan).unwrap_or(Value::Null)))
 }
 
 /// `GET /api/receiving/units?zone=inbound|outbound|all&limit=200`

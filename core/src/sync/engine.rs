@@ -48,6 +48,19 @@ pub const SYNC_ENTITY_TYPES: &[&str] = &[
     "product_alias",
     "category",
     "menu_item",
+    // POS fiscal records (ecKasse, paid tier). A closed/aborted/storno'd sale
+    // and its storno decisions replicate across the customer's own mesh (the
+    // register that created the sale is its HOME node — `home_instance_id` +
+    // `_vclock` are stamped on every write in `pos::services::transaction`, so
+    // the creator stays the fiscal authority and a peer's incidental touch can
+    // never overwrite the `tse_*`/`status`/`resolution_status`/`content_hash`
+    // fields via the ownership rule in `conflict::ownership_verdict`). The
+    // CONTENT of a sale meshes; the NODE-LOCAL fiscal state tables
+    // (`pending_fiscal_operations`, `tse_state`) are deliberately NOT here —
+    // the TSE/WAL is per-register and must never replicate. On a non-POS node
+    // these tables simply stay empty (and are skipped by the sweep).
+    "transaction",
+    "storno_log",
     "ai_sop",
     // WASM plugin registry (design .eck/WASM_ARCHITECTURE.md §6). The RECORD
     // meshes — it is tiny (name, sha256, hooks, capabilities, enabled,
@@ -140,6 +153,21 @@ pub const SYNC_ENTITY_TYPES: &[&str] = &[
     // collide and LWW/vclock converges a re-edit.
     "receipt",
     "receipt_unit",
+    // Domain-event log (DOMAIN_MODEL Layer 5, `.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md`
+    // §3): one append-only row per meaningful act (move / status / photo / scan),
+    // written fire-and-forget by `services::events::record`. Rows carry
+    // `home_instance_id` + `_vclock` the house way and are never updated, so —
+    // like `has_attachment` edges — ids (random UUIDs) never collide and the
+    // merkle bootstrap keys each row by its implicit leaf id. Meshes so a
+    // PDA-side act converges to the office master's timeline.
+    "event",
+    // Examination-bundle write path (wms mcp/bundles.rs, 2026-10-28): the unit
+    // registry and its STK/MTK/repair events. Deterministic ids (murmur of the
+    // normalized serial / serial|kind|protocol_no), so the same record from two
+    // nodes converges. Staging, protocol numbering and the write audit stay
+    // node-local (one authoritative protocol writer).
+    "device",
+    "device_event",
 ];
 
 /// Sync class **`vault`** (`.eck/PII_VAULT.md` §3.1, P1 item 1) — the tables
@@ -219,6 +247,11 @@ pub fn is_mesh_entity_type(entity_type: &str) -> bool {
 /// are authored on one node and converge on the LAN). This is what makes trips
 /// (and devices/visits/docs) part of the mesh across networks, not just on-LAN.
 const RELAY_SYNC_TYPES: &[&str] = &[
+    // POS fiscal records (2026-10-06, eckasse Stage 0): a register in a shop and
+    // its back office are usually NOT on one LAN; a closed sale or storno that
+    // missed the outbox push must still converge over the relay.
+    "transaction",
+    "storno_log",
     "trip",
     "visit_task",
     "vehicle",
@@ -2196,6 +2229,34 @@ impl SyncEngine {
 
     // ─── Outbox (background retry for failed pushes) ─────────────────────────
 
+    /// Load the live record for an outbox row whose payload is empty, shaped the
+    /// way a peer's `apply_pushed_entities` expects (`id` = the bare record-id
+    /// leaf via `record::id(id)`, carrying `_vclock`/`home_instance_id`). Matched
+    /// by business `uuid` first (POS fiscal rows key the outbox on it) then by
+    /// the record-id leaf. `entity_type` is validated against the mesh table set
+    /// before it reaches the (un-bindable) table position of the query.
+    async fn load_entity_for_outbox(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+    ) -> Option<Value> {
+        if !is_mesh_entity_type(entity_type) {
+            return None;
+        }
+        let q = format!(
+            "SELECT *, record::id(id) AS id FROM {} \
+             WHERE uuid = $eid OR record::id(id) = $eid LIMIT 1",
+            entity_type
+        );
+        self.db
+            .query(q)
+            .bind(("eid", entity_id.to_string()))
+            .await
+            .ok()
+            .and_then(|mut r| r.take::<Vec<Value>>(0).ok())
+            .and_then(|rows| rows.into_iter().next())
+    }
+
     /// Process pending outbox records: for each, find a peer and push directly.
     ///
     /// On success the record is deleted. On failure `error_count` is incremented
@@ -2244,13 +2305,49 @@ impl SyncEngine {
         let mut sent = 0usize;
 
         for record in pending {
+            // Defensive payload hydration: an outbox row whose payload is empty
+            // (a legacy `{}` enqueue, or a producer that stored only the id) is
+            // useless to a peer — push_entities would apply an entity with no
+            // fields. When `entity_id` is present, load the live record and push
+            // THAT instead of the empty object. Producers should enqueue the
+            // full record (see `pos::services::transaction::enqueue_outbox`);
+            // this is the belt-and-braces path, hence warn-level.
+            let payload = if payload_is_empty(&record.payload) && !record.entity_id.is_empty() {
+                match self
+                    .load_entity_for_outbox(&record.entity_type, &record.entity_id)
+                    .await
+                {
+                    Some(v) => {
+                        warn!(
+                            "Outbox: hydrated empty payload for {}:{} from local DB",
+                            record.entity_type, record.entity_id
+                        );
+                        v
+                    }
+                    None => {
+                        warn!(
+                            "Outbox: {}:{} has an empty payload and no live record — dropping",
+                            record.entity_type, record.entity_id
+                        );
+                        let _: Option<Value> = self
+                            .db
+                            .delete(("sync_outbox", record.id.as_str()))
+                            .await
+                            .unwrap_or(None);
+                        continue;
+                    }
+                }
+            } else {
+                record.payload.clone()
+            };
+
             // Try first available peer
             let mut pushed = false;
             for peer in &peers {
                 match peer
                     .push_entities(
                         &record.entity_type,
-                        &[record.payload.clone()],
+                        &[payload.clone()],
                         &self.instance_id,
                     )
                     .await
@@ -2287,7 +2384,7 @@ impl SyncEngine {
                                     "push",
                                     serde_json::json!({
                                         "entity_type": record.entity_type,
-                                        "entities": [record.payload.clone()],
+                                        "entities": [payload.clone()],
                                         "source_instance": self.instance_id,
                                     }),
                                 )
@@ -2559,12 +2656,22 @@ impl SyncEngine {
     }
 }
 
+/// An outbox payload that carries no entity data — the legacy `{}` enqueue, a
+/// JSON null, or a non-object. Such a payload can't be applied by a peer, so
+/// `process_outbox` hydrates it from the local DB before pushing.
+fn payload_is_empty(payload: &Value) -> bool {
+    match payload {
+        Value::Null => true,
+        Value::Object(m) => m.is_empty(),
+        _ => false,
+    }
+}
+
 /// Lightweight struct for deserializing outbox rows from SurrealDB.
 #[derive(Debug, Clone, serde::Deserialize, surrealdb::types::SurrealValue)]
 struct OutboxRecord {
     id: String,
     entity_type: String,
-    #[allow(dead_code)]
     entity_id: String,
     payload: Value,
     error_count: u32,
@@ -2577,6 +2684,31 @@ struct OutboxRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pos_fiscal_records_are_registered_for_mesh() {
+        // POS sales and storno decisions must merkle-reconcile across the mesh.
+        assert!(SYNC_ENTITY_TYPES.contains(&"transaction"));
+        assert!(SYNC_ENTITY_TYPES.contains(&"storno_log"));
+        assert!(is_mesh_entity_type("transaction"));
+        assert!(is_mesh_entity_type("storno_log"));
+    }
+
+    #[test]
+    fn node_local_fiscal_state_never_meshes() {
+        // The TSE/WAL per-register state must NEVER replicate (node-local).
+        assert!(!SYNC_ENTITY_TYPES.contains(&"pending_fiscal_operations"));
+        assert!(!SYNC_ENTITY_TYPES.contains(&"tse_state"));
+        assert!(!is_mesh_entity_type("pending_fiscal_operations"));
+        assert!(!is_mesh_entity_type("tse_state"));
+    }
+
+    #[test]
+    fn payload_is_empty_detects_hydration_targets() {
+        assert!(payload_is_empty(&serde_json::json!({})));
+        assert!(payload_is_empty(&Value::Null));
+        assert!(!payload_is_empty(&serde_json::json!({ "uuid": "x" })));
+    }
 
     #[test]
     fn empty_root_skip_unknown_key_checks_immediately() {

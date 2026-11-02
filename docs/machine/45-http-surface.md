@@ -54,12 +54,12 @@ read `public` as `LAN-only` for those rows.
 
 ```
 node (wms/src/main.rs), declared routes:
-  api_router (mounted at BOTH /api and /E/api — see note below): 227
+  api_router (mounted at BOTH /api and /E/api — see note below): 237
     public_routes:      12
-    protected_routes:  141
-    admin_routes:       57
+    protected_routes:  150
+    admin_routes:       58
     p2p_routes:         11
-    (subtotal of the four core groups above):                    221
+    (subtotal of the four core groups above):                    231
     vault_routes:        4  (share-holder surface; /vault/health always
                             live, the other 3 behind ECK_VAULT_SERVE=1)
     pii_spans_routes:    1  (conditional: ECK_PII_SPANS_SERVE=1)
@@ -72,8 +72,8 @@ node (wms/src/main.rs), declared routes:
   top-level app routes (/E/health, /E/ws, /mcp, /mcp/signed,
     /E/auth/setup-status, /E/auth/login, /S, /S/*path):            8
   static/UI fallback (web::static_handler):                        1
-  NODE TOTAL (declared, unique):                                 263
-  (api_router's 227 routes are additionally reachable at /E/api/*,
+  NODE TOTAL (declared, unique):                                 273
+  (api_router's 237 routes are additionally reachable at /E/api/*,
    a legacy alias for movFast PDA clients whose base URL ends in
    "/E" — same handlers, same auth, not double-counted above.
    vault/pii-spans/or-serve are merged into api_router too, so they are
@@ -86,15 +86,15 @@ commercial edition only — pos crate, /K router (pos/src/lib.rs):
   protected_routes: 24, public_routes: 5, top-level (ws+SPA): 4
   POS TOTAL:                                                       33
 
-GRAND TOTAL open-source (node + relay):                           289
-GRAND TOTAL incl. commercial /K:                                  322
+GRAND TOTAL open-source (node + relay):                           299
+GRAND TOTAL incl. commercial /K:                                  332
 
 (Counts above are DECLARED axum `.route()` call sites — verified against
 `grep -c '\.route('` per router block. Several declarations bundle more than one
 HTTP method on the same path, e.g. `.route("/items", get(...).post(...))` is ONE
 declared route but TWO distinct method+path pairs from an HTTP client's point of
 view. The final YAML inventory below enumerates every method+path pair separately
-— 362 rows — which is the larger, and equally correct, count for that finer unit.)
+— 372 rows — which is the larger, and equally correct, count for that finer unit.)
 ```
 
 ---
@@ -108,14 +108,16 @@ then `.nest("/api", api_router.clone())` and `.nest("/E/api", api_router)`
 section 2 for clarity even though it is physically merged into the same router. The three
 extra groups carry their own in-handler `paid-license` gate (not `auth_middleware`) and are
 documented in sections 1d–1f; two of them (`pii_spans_routes`, `or_serve_routes`) contribute
-a route only when an env flag is set, so a live node may expose fewer than the declared 227.
+a route only when an env flag is set, so a live node may expose fewer than the declared 237.
 A JSON 404 fallback and a 50 MiB body-size layer apply to the whole `api_router`.
 
-### 1a. `public_routes` — auth: `public` (10 routes)
+### 1a. `public_routes` — auth: `public` (12 routes)
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
 | POST | /api/auth/login | handlers::auth::login | Password/PIN login, issues JWT |
+| POST | /api/auth/mcp-session | mcp::session::mcp_session_login | Verify WMS credentials (same path as `/auth/login`) and mint a personal browser-MCP bearer |
+| POST | /api/auth/mcp-session/logout | mcp::session::mcp_session_logout | Revoke the presented MCP session bearer (idempotent) |
 | GET | /api/auth/setup-status | handlers::auth::setup_status | Whether first-run admin setup is done |
 | GET | /api/auth/kiosk-token | handlers::auth::kiosk_token | Mint a scoped kiosk-role token |
 | GET | /api/auth/device-challenge | handlers::auth::device_challenge | Issue a pairing challenge nonce |
@@ -126,7 +128,7 @@ A JSON 404 fallback and a 50 MiB body-size layer apply to the whole `api_router`
 | GET | /api/i18n/dict/:lang | handlers::i18n::dict | UI label dictionary for one language |
 | GET | /api/pos/status | inline closure | Reports whether POS_ENABLED is set (for UI) |
 
-### 1b. `protected_routes` — auth: `user-JWT` (141 routes)
+### 1b. `protected_routes` — auth: `user-JWT` (150 routes)
 
 Resource CRUD groups (method verbs shown per row where a path takes more than one):
 
@@ -153,9 +155,12 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | GET | /api/warehouse/inventory | handlers::warehouse::inventory | Inventory snapshot |
 | GET | /api/warehouse/:id | handlers::warehouse::get | Single warehouse read |
 | GET/POST | /api/rma | handlers::rma::list_orders / create_order | RMA/repair-order list/create |
+| GET | /api/repairs/board | handlers::rma::board | Repairs board: repair orders plus an `awaiting` column of inbound units with no live order yet |
 | POST | /api/rma/search | handlers::rma::search_orders | RMA order search |
 | GET/PUT/DELETE | /api/rma/:id | handlers::rma::get_order/update_order/delete_order | Single RMA order CRUD |
 | POST | /api/rma/:id/generate-link | handlers::rma::generate_agreement_link | Mint the public sign-agreement link |
+| GET | /api/entity/:kind/:id | handlers::entity::get_entity | Entity read model (object page + scan tray); any logged-in role incl. observer |
+| POST | /api/entity/:kind/:id/capture | handlers::capture::capture | Attach a camera capture (photo/OCR) to an entity; enforces `require_active_device` |
 | GET/POST | /api/menu/categories | handlers::menu::list_categories / create_category | POS menu category list/create |
 | PUT/DELETE | /api/menu/categories/:id | handlers::menu::update_category / delete_category | Menu category update/delete |
 | GET/POST | /api/menu/items | handlers::menu::list_items / create_item | POS menu item list/create |
@@ -207,6 +212,8 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | POST | /api/exact/import-sales-orders | handlers::exact::import_sales_orders | Manual Exact Online sales-order import |
 | GET | /api/status | handlers::pda::status | movFast PDA heartbeat/status |
 | POST | /api/scan | handlers::pda::handle_scan | movFast barcode/QR scan event |
+| GET | /api/screens | handlers::ws::list_screens | Live set of dashboard screens a PDA can mirror scans to |
+| POST | /api/pda/mirror | handlers::pda::set_mirror | Set (or clear) the dashboard screen this PDA mirrors its scans to |
 | POST | /api/repair/event | handlers::pda::repair_event | movFast repair-workflow event |
 | POST | /api/repair/consume | handlers::pda::consume | movFast repair parts-consumption event |
 | POST | /api/receiving/receipts | handlers::receiving::create_receipt | Open an intake receipt for returned units |
@@ -217,6 +224,8 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | POST | /api/receiving/receipts/:receipt_id/note | handlers::receiving::append_note | Append a note to a receipt |
 | POST | /api/receiving/receipts/:receipt_id/repair | handlers::receiving::set_repair | Flag a receipt/unit for repair |
 | GET | /api/receiving/tickets/lookup | handlers::receiving::lookup_tickets | Look up tickets to link to an intake |
+| GET | /api/receiving/plan | handlers::receiving::get_plan | Derived, stateless plan panel (receipt/ticket/shipment/serial); never 404s |
+| POST | /api/ai/ocr-hints | handlers::ocr_hints::ocr_hints | Classify PDA-tapped OCR word boxes (serial/model/etc); device-JWT gated |
 | POST | /api/upload/image | handlers::files::upload | Same upload handler, PDA-facing alias path |
 | GET | /api/users/active | handlers::pda::active_users | Active operator users for PDA login list |
 | POST | /api/users/verify-pin | handlers::pda::verify_pin | PDA PIN verification |
@@ -234,8 +243,7 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | GET/POST | /api/trips | handlers::trips::list_trips / upload_trip | Fahrtenbuch trip list/upload |
 | GET | /api/trips/export | handlers::trips::export_trips | Export trips (GoBD Z3 DTD) |
 | GET | /api/reports/expense | services::expense_report::get_expense_report | Monthly expense report |
-| POST | /api/reports/expense/:month/filed | services::expense_report::set_filed | Mark a month's expense report filed |
-| DELETE | /api/reports/expense/:month/filed | services::expense_report::clear_filed | Clear a month's filed flag |
+| POST/DELETE | /api/reports/expense/:month/filed | services::expense_report::set_filed/clear_filed | Mark/clear a month's expense report filed flag |
 | GET | /api/trips/purpose-candidates | handlers::trips::purpose_candidates | Candidate trip-purpose suggestions |
 | GET | /api/trips/destinations | handlers::trips::destinations | Known trip destinations |
 | POST | /api/trips/live | handlers::trips::trip_live | Live trip-tracking ingest |
@@ -271,6 +279,8 @@ Resource CRUD groups (method verbs shown per row where a path takes more than on
 | GET | /api/analysis/support-dump | handlers::stubs::analysis_support_dump | Analysis-dashboard support data dump |
 | GET | /api/auth/me | handlers::auth::me | Current authenticated user/claims |
 | POST | /api/auth/change-password | handlers::auth::change_password | Self-service password change |
+| GET | /api/alerts/unread | handlers::alerts::list_unread | Up to 20 newest unread dashboard alerts; any authenticated role (observer included) |
+| POST | /api/alerts/:id/read | handlers::alerts::mark_read | Dismiss one alert (admin/operator; handler double-checks role) |
 | GET | /api/i18n/languages | handlers::i18n::languages | List configured UI languages |
 | GET/POST | /api/admin/config/kiosk | handlers::auth::get_kiosk_config / set_kiosk_config | Kiosk UI config (NOTE: despite the `/admin/` path, this is gated only by `user-JWT`, not `admin-JWT` — it lives in `protected_routes`, not `admin_routes`) |
 | GET/POST | /api/admin/config/dashboard_sla | handlers::auth::get_dashboard_sla / set_dashboard_sla | Dashboard SLA config (same note as above) |
@@ -333,7 +343,7 @@ relay-paidgate seam, then meters.
 
 ---
 
-## 2. `/api/admin` (node) — auth: `admin-JWT` (57 routes)
+## 2. `/api/admin` (node) — auth: `admin-JWT` (58 routes)
 
 `admin_routes`, merged into the same `api_router` as section 1, but layered with
 `require_admin_middleware` (outer) over `auth_middleware` (inner) — both must pass.
@@ -368,6 +378,7 @@ relay-paidgate seam, then meters.
 | POST | /api/admin/plugins/:name/enable | handlers::plugins::enable | Enable a registered WASM plugin |
 | POST | /api/admin/plugins/:name/disable | handlers::plugins::disable | Disable a registered WASM plugin |
 | POST | /api/admin/query | handlers::admin::query | Arbitrary SurrealQL diagnostics (double-checks admin in-handler too) |
+| POST | /api/admin/backfill/unit-order-links | handlers::admin::backfill_unit_order_links | One-shot backfill: link receipt units to orders by serial match (`apply=1` writes; ambiguous/unmatched never auto-linked) |
 | POST | /api/support/backfill-assignees | handlers::support::backfill_assignees | One-shot backfill: ticket assignees |
 | POST | /api/support/backfill-customfields | handlers::support::backfill_customfields | One-shot backfill: ticket custom fields |
 | POST | /api/support/backfill-meta | handlers::support::backfill_meta | One-shot backfill: ticket metadata |
@@ -700,11 +711,14 @@ routes:
   - {method: GET, path: /api/warehouse/:id, auth: user-JWT, purpose: "get warehouse", service: node, edition: open-source}
   - {method: GET, path: /api/rma, auth: user-JWT, purpose: "list RMA orders", service: node, edition: open-source}
   - {method: POST, path: /api/rma, auth: user-JWT, purpose: "create RMA order", service: node, edition: open-source}
+  - {method: GET, path: /api/repairs/board, auth: user-JWT, purpose: "repairs board: repair orders + awaiting-triage units", service: node, edition: open-source}
   - {method: POST, path: /api/rma/search, auth: user-JWT, purpose: "search RMA orders", service: node, edition: open-source}
   - {method: GET, path: /api/rma/:id, auth: user-JWT, purpose: "get RMA order", service: node, edition: open-source}
   - {method: PUT, path: /api/rma/:id, auth: user-JWT, purpose: "update RMA order", service: node, edition: open-source}
   - {method: DELETE, path: /api/rma/:id, auth: user-JWT, purpose: "delete RMA order", service: node, edition: open-source}
   - {method: POST, path: /api/rma/:id/generate-link, auth: user-JWT, purpose: "mint public sign-agreement link", service: node, edition: open-source}
+  - {method: GET, path: /api/entity/:kind/:id, auth: user-JWT, purpose: "entity read model (object page + scan tray)", service: node, edition: open-source}
+  - {method: POST, path: /api/entity/:kind/:id/capture, auth: user-JWT, purpose: "attach a camera capture to an entity", service: node, edition: open-source}
   - {method: GET, path: /api/menu/categories, auth: user-JWT, purpose: "list menu categories", service: node, edition: open-source}
   - {method: POST, path: /api/menu/categories, auth: user-JWT, purpose: "create menu category", service: node, edition: open-source}
   - {method: PUT, path: /api/menu/categories/:id, auth: user-JWT, purpose: "update menu category", service: node, edition: open-source}
@@ -757,6 +771,8 @@ routes:
   - {method: POST, path: /api/exact/import-sales-orders, auth: user-JWT, purpose: "manual Exact Online sales-order import", service: node, edition: open-source}
   - {method: GET, path: /api/status, auth: user-JWT, purpose: "movFast PDA heartbeat/status", service: node, edition: open-source}
   - {method: POST, path: /api/scan, auth: user-JWT, purpose: "movFast barcode/QR scan event", service: node, edition: open-source}
+  - {method: GET, path: /api/screens, auth: user-JWT, purpose: "live dashboard screens a PDA can mirror scans to", service: node, edition: open-source}
+  - {method: POST, path: /api/pda/mirror, auth: user-JWT, purpose: "set/clear the dashboard screen this PDA mirrors scans to", service: node, edition: open-source}
   - {method: POST, path: /api/repair/event, auth: user-JWT, purpose: "movFast repair-workflow event", service: node, edition: open-source}
   - {method: POST, path: /api/repair/consume, auth: user-JWT, purpose: "movFast repair parts-consumption event", service: node, edition: open-source}
   - {method: POST, path: /api/upload/image, auth: user-JWT, purpose: "upload image (PDA-facing alias)", service: node, edition: open-source}
@@ -806,6 +822,8 @@ routes:
   - {method: GET, path: /api/analysis/support-dump, auth: user-JWT, purpose: "analysis-dashboard support data dump", service: node, edition: open-source}
   - {method: GET, path: /api/auth/me, auth: user-JWT, purpose: "current authenticated user/claims", service: node, edition: open-source}
   - {method: POST, path: /api/auth/change-password, auth: user-JWT, purpose: "self-service password change", service: node, edition: open-source}
+  - {method: GET, path: /api/alerts/unread, auth: user-JWT, purpose: "up to 20 newest unread dashboard alerts", service: node, edition: open-source}
+  - {method: POST, path: /api/alerts/:id/read, auth: user-JWT, purpose: "dismiss one alert (admin/operator)", service: node, edition: open-source}
   - {method: GET, path: /api/i18n/languages, auth: user-JWT, purpose: "list configured UI languages", service: node, edition: open-source}
   - {method: GET, path: /api/admin/config/kiosk, auth: user-JWT, purpose: "read kiosk UI config (NOTE: not admin-JWT despite path)", service: node, edition: open-source}
   - {method: POST, path: /api/admin/config/kiosk, auth: user-JWT, purpose: "write kiosk UI config (NOTE: not admin-JWT despite path)", service: node, edition: open-source}
@@ -823,6 +841,8 @@ routes:
   - {method: POST, path: /api/receiving/receipts/:receipt_id/note, auth: user-JWT, purpose: "append a note to a receipt", service: node, edition: open-source}
   - {method: POST, path: /api/receiving/receipts/:receipt_id/repair, auth: user-JWT, purpose: "flag a receipt/unit for repair", service: node, edition: open-source}
   - {method: GET, path: /api/receiving/tickets/lookup, auth: user-JWT, purpose: "look up tickets to link to an intake", service: node, edition: open-source}
+  - {method: GET, path: /api/receiving/plan, auth: user-JWT, purpose: "derived, stateless plan panel (receipt/ticket/shipment/serial)", service: node, edition: open-source}
+  - {method: POST, path: /api/ai/ocr-hints, auth: user-JWT, purpose: "classify PDA-tapped OCR word boxes", service: node, edition: open-source}
   - {method: GET, path: /api/reports/expense, auth: user-JWT, purpose: "monthly expense report", service: node, edition: open-source}
   - {method: POST, path: /api/reports/expense/:month/filed, auth: user-JWT, purpose: "mark a month's expense report filed", service: node, edition: open-source}
   - {method: DELETE, path: /api/reports/expense/:month/filed, auth: user-JWT, purpose: "clear a month's filed flag", service: node, edition: open-source}
@@ -866,6 +886,7 @@ routes:
   - {method: DELETE, path: /api/admin/devices/:id, auth: admin-JWT, purpose: "delete device", service: node, edition: open-source}
   - {method: POST, path: /api/admin/mesh/master, auth: admin-JWT, purpose: "transfer mesh master/home designation", service: node, edition: open-source}
   - {method: POST, path: /api/admin/query, auth: admin-JWT, purpose: "arbitrary SurrealQL diagnostics", service: node, edition: open-source}
+  - {method: POST, path: /api/admin/backfill/unit-order-links, auth: admin-JWT, purpose: "one-shot backfill: link receipt units to orders by serial match", service: node, edition: open-source}
   - {method: POST, path: /api/support/backfill-assignees, auth: admin-JWT, purpose: "one-shot backfill: ticket assignees", service: node, edition: open-source}
   - {method: POST, path: /api/support/backfill-customfields, auth: admin-JWT, purpose: "one-shot backfill: ticket custom fields", service: node, edition: open-source}
   - {method: POST, path: /api/support/backfill-meta, auth: admin-JWT, purpose: "one-shot backfill: ticket metadata", service: node, edition: open-source}

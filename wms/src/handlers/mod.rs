@@ -1,7 +1,11 @@
+pub mod alerts;
 pub mod audit;
 pub mod auth;
 pub mod backup;
 pub mod device;
+pub mod entity;
+pub mod capture;
+pub mod ocr_hints;
 pub mod files;
 pub mod items;
 pub mod menu;

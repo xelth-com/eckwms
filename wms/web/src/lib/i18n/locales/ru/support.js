@@ -58,6 +58,7 @@ export default {
     fetch_from_home: "Загрузить оригинал с домашнего узла",
     no_content: "(нет содержимого)",
     attachment_alt: "вложение",
+    attachment_open_failed: "Не удалось открыть вложение: {error}",
     pii_restored_title: "Восстановлено из локальных данных",
     pii_unrestored_title: "Не удалось восстановить - источник отсутствует на этом узле",
     translating_to: "Перевод на {lang}…",

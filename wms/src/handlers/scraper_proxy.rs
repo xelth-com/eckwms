@@ -175,6 +175,12 @@ pub async fn proxy_handler(
     if claims.role == "observer" && method != Method::GET {
         return Err(StatusCode::FORBIDDEN);
     }
+    // ...and its POS rule: cashier / PIN-minted tokens get no scraper surface
+    // at all (the scraper endpoints create shipments, write Excel rows, log
+    // into supplier portals). Review 2026-09-30, F10-8.
+    if claims.role == "cashier" || claims.auth_method == "pin" {
+        return Err(StatusCode::FORBIDDEN);
+    }
 
     // Strip /S prefix
     let path = uri.path();

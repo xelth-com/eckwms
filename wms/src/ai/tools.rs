@@ -719,7 +719,18 @@ impl Tool for SearchDatabaseTool {
         if let Some(fuzzy) = &self.fuzzy {
             let cands = fuzzy.resolve_query(q, 10);
             if !cands.is_empty() {
-                return self.fuzzy_resolve(table, cands).await;
+                let res = self.fuzzy_resolve(table, cands).await?;
+                // Only short-circuit when the resolved tokens actually materialize
+                // rows. If they resolve to zero records (e.g. a name that exists in
+                // the index but has no row in THIS table), fall through to the
+                // hybrid BM25+vector search instead of returning empty (F02-8).
+                let has_rows = res
+                    .get("matches")
+                    .and_then(|m| m.as_array())
+                    .is_some_and(|a| !a.is_empty());
+                if has_rows {
+                    return Ok(res);
+                }
             }
         }
 

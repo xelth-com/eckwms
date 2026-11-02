@@ -12,4 +12,5 @@ export default {
   login: 'Anmelden',
   err_fill_fields: 'Bitte füllen Sie alle Felder aus',
   err_login_failed: 'Anmeldung fehlgeschlagen',
+  kiosk_countdown: 'Kiosk-Ansicht startet in {time}',
 };

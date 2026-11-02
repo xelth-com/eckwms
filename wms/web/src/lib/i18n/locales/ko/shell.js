@@ -25,6 +25,11 @@ export default {
   site_features: 'eckWMS — 전체 기능',
   site_developers: '개발자용',
 change_language: '언어 변경',
+// Scan-mirror screen name (PDA scan tray target)
+screen_label: '화면',
+screen_rename: '이 화면 이름 변경',
+  // 내장 입력기(물리 키보드 IME) 표시
+  ime_hint: '입력 언어: {lang}. 클릭하거나 Shift+Space를 눌러 {lang}와 영어를 전환하세요 (Alt+Shift / Ctrl+Shift도 사용 가능).',
   lang_other: '기타',
   change_password: '비밀번호 변경',
   current_password: '현재 비밀번호',
@@ -50,6 +55,7 @@ change_language: '언어 변경',
   copied_with_prompt: '프롬프트와 함께 복사됨!',
   alert_report_sent: '암호화된 보고서가 {date}에 원격 지원팀으로 자동 전송되었습니다',
   acknowledge_dismiss: '확인 후 닫기',
+  toast_alert_resolved: 'Recovered: {title}',
 
   ambiguous_title: '여러 일치 항목 발견',
   ambiguous_hint: '이 바코드가 여러 레코드와 일치합니다. 올바른 항목을 선택하세요:',

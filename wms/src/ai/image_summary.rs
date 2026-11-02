@@ -43,11 +43,13 @@
 
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use chrono::{Local, Timelike};
 use eck_core::ai::AiAuth;
 use eck_core::db::SurrealDb;
 use image::DynamicImage;
+use regex::Regex;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
@@ -86,6 +88,10 @@ const WORKER_INTERVAL_SECS: u64 = 45;
 const WORKER_BATCH: usize = 3;
 const WORKER_STARTUP_DELAY_SECS: u64 = 60;
 const WORKER_ERROR_BACKOFF_SECS: u64 = 120;
+/// Cap on the in-memory no-op skip set (see the worker loop). On overflow the set
+/// is cleared wholesale — a one-off retry storm of the dead candidates is cheaper
+/// than unbounded growth on the 3.3 GiB kiosk.
+const SKIP_SET_CAP: usize = 50_000;
 
 // ── Policy (§13) ────────────────────────────────────────────────────────────
 
@@ -156,11 +162,48 @@ const PASS1_PROMPT: &str = "Du bist ein Foto-Archivar für eine Geräte-Reparatu
 - Was ist zu sehen (Gerätetyp/-modell, Zustand, sichtbare Schäden oder Auffälligkeiten)?\n\
 - Transkribiere JEDEN im Bild sichtbaren Text EXAKT (Aufkleber, Displays, Typenschilder, Seriennummern, Fehlermeldungen, mehrsprachige Warnhinweise). Setze Transkriptionen in Anführungszeichen.\n\
 - Rate nichts, was nicht sichtbar ist. Ist etwas unlesbar oder zu klein, benenne es, statt es zu erfinden.\n\n\
-Antworte auf Deutsch. Beende deine Antwort mit GENAU einer Zeile in diesem Format:\n\
+Antworte auf Deutsch. Beende deine Antwort mit GENAU drei Zeilen in dieser Reihenfolge und diesem Format:\n\
 UNLESBAR_JSON: [{\"bbox\":[x0,y0,x1,y1],\"was\":\"...\"}]\n\
-Die Werte x0,y0,x1,y1 sind normalisierte Koordinaten von 0 bis 1000 (obere-linke bis untere-rechte Ecke) für Bildbereiche mit lesbarem Text/Seriennummer/Typenschild, die im aktuellen Bild zu klein oder unscharf zum exakten Ablesen sind. Gibt es nichts zum Nachzoomen, schreibe genau: UNLESBAR_JSON: []";
+DEVICE_SCORE: <Zahl 0-10>\n\
+DEVICE_LABEL: <kurze Vermutung oder leer>\n\
+Die Werte x0,y0,x1,y1 sind normalisierte Koordinaten von 0 bis 1000 (obere-linke bis untere-rechte Ecke) für Bildbereiche mit lesbarem Text/Seriennummer/Typenschild, die im aktuellen Bild zu klein oder unscharf zum exakten Ablesen sind. Gibt es nichts zum Nachzoomen, schreibe genau: UNLESBAR_JSON: []\n\
+DEVICE_SCORE ist eine ganze Zahl von 0 bis 10, wie gut auf DIESEM Foto ein GANZES Gerät sichtbar und erkennbar ist: 10 = das komplette Gerät ist klar sichtbar und eindeutig identifizierbar, 0 = kein Gerät sichtbar (z. B. nur Dokument, nur Aufkleber/Typenschild, unleserliche Nahaufnahme).\n\
+DEVICE_LABEL ist eine kurze Vermutung, um welches Gerät es sich handelt (z. B. \"Körperanalysegerät Modell 770\"), oder leer (nichts hinter dem Doppelpunkt), wenn kein Gerät erkennbar ist.";
 
 const PASS2_PROMPT: &str = "Transkribiere diese Ausschnitte exakt. Es sind vergrößerte Bildbereiche aus dem vorherigen Foto (Seriennummern, Typenschilder, Aufkleber, Displaytext). Gib pro Ausschnitt den exakt lesbaren Text zurück; rate nichts. Antworte auf Deutsch.";
+
+// ── DEVICE_SCORE / DEVICE_LABEL parsing (lenient) ───────────────────────────
+
+/// Extract the trailing `DEVICE_SCORE:`/`DEVICE_LABEL:` lines (any order, either
+/// one optionally missing or garbled) and strip them from the returned summary
+/// text. Tolerant: a missing/unparsable score or an absent label line yields
+/// `None` rather than failing the whole parse — the summary must stay clean of
+/// these lines either way.
+fn parse_device_fields(summary: &str) -> (String, Option<i64>, Option<String>) {
+    let score_re = Regex::new(r"(?mi)^[ \t]*DEVICE_SCORE:[ \t]*(-?\d+)[ \t]*$").unwrap();
+    let label_re = Regex::new(r"(?mi)^[ \t]*DEVICE_LABEL:[ \t]*(.*)$").unwrap();
+
+    let score = score_re
+        .captures_iter(summary)
+        .last()
+        .and_then(|c| c.get(1))
+        .and_then(|m| m.as_str().parse::<i64>().ok())
+        .map(|n| n.clamp(0, 10));
+
+    let label = label_re.captures_iter(summary).last().and_then(|c| c.get(1)).map(|m| m.as_str().trim().to_string());
+    let label = label.filter(|s| !s.is_empty());
+
+    // Strip the marker lines whatever their value (a garbled "DEVICE_SCORE:
+    // unbekannt" must not leak into the stored summary either).
+    let score_line_re = Regex::new(r"(?mi)^[ 	]*DEVICE_SCORE:.*$").unwrap();
+    let mut cleaned = score_line_re.replace_all(summary, "").into_owned();
+    cleaned = label_re.replace_all(&cleaned, "").into_owned();
+    // The matched lines' content is gone but their surrounding newlines remain
+    // (blank lines) — trim them off the end, where these markers live.
+    let cleaned = cleaned.trim_end_matches(['\n', ' ', '\t']).to_string();
+
+    (cleaned, score, label)
+}
 
 // ── UNLESBAR_JSON parsing (lenient) ─────────────────────────────────────────
 
@@ -375,6 +418,13 @@ pub(crate) struct ImageSummaryResult {
     /// sha256 of the source blob this summary was computed from (content-hash
     /// guard key). Empty when the row carried no hash.
     pub src_hash: String,
+    /// 0..10: how well this photo shows a whole, identifiable device (see
+    /// `DEVICE_SCORE` in [`PASS1_PROMPT`]). `None` when the model's answer
+    /// didn't carry a parsable score.
+    pub device_score: Option<i64>,
+    /// Short free-text guess of what the device is, or `None`/empty when none
+    /// is identifiable (see `DEVICE_LABEL` in [`PASS1_PROMPT`]).
+    pub device_label: Option<String>,
 }
 
 fn vision_model(auth: &AiAuth) -> String {
@@ -407,24 +457,49 @@ async fn vision_call(
     eck_core::ai::with_ai_task("image_summary", auth.generate_content(http, model, body)).await
 }
 
+/// Why a candidate produced no summary (file gone / unreadable / undecodable).
+/// Carried in the `Err` arm of [`run_image_pipeline`]'s `Ok` so the worker can log
+/// the reason once and park the row in its skip set (stops the silent re-selection
+/// of dead candidates every tick).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SkipReason {
+    /// `resolve_file_full` failed — no byte-owning row (not local, not on mesh).
+    Unresolved,
+    /// The resolved path could not be read from disk.
+    Unreadable,
+    /// Bytes present but not a decodable raster image.
+    Undecodable,
+}
+
+impl SkipReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            SkipReason::Unresolved => "unresolved",
+            SkipReason::Unreadable => "unreadable",
+            SkipReason::Undecodable => "undecodable",
+        }
+    }
+}
+
 /// Full two-pass pipeline for one attachment. Does NOT persist — the worker
 /// persists, the soak discards. `auth` is the already-resolved primary route;
 /// the CJK-bleed guard falls back to the default Gemini auth on persistent bleed.
-/// Returns `Ok(None)` when the row has no decodable image (skipped).
+/// The inner `Ok(Err(reason))` means the row has no usable image (skipped, with
+/// the reason); `Ok(Ok(result))` is a produced summary.
 pub(crate) async fn run_image_pipeline(
     db: &SurrealDb,
     http: &HttpClient,
     auth: &AiAuth,
     cas_uuid: &str,
-) -> Result<Option<ImageSummaryResult>> {
+) -> Result<std::result::Result<ImageSummaryResult, SkipReason>> {
     // 1. Resolve the byte-owning row (follows replaced_by; hydrates from mesh).
     let resolved = match resolve_file_full(db, cas_uuid).await {
         Ok(r) => r,
-        Err(_) => return Ok(None),
+        Err(_) => return Ok(Err(SkipReason::Unresolved)),
     };
     let bytes = match tokio::fs::read(&resolved.path).await {
         Ok(b) => b,
-        Err(_) => return Ok(None),
+        Err(_) => return Ok(Err(SkipReason::Unreadable)),
     };
     let mime = resolved.mime.clone();
     let src_hash = resolved.hash.clone();
@@ -439,7 +514,7 @@ pub(crate) async fn run_image_pipeline(
     .await
     {
         Ok(Ok(v)) => v,
-        Ok(Err(_)) | Err(_) => return Ok(None), // undecodable / not an image
+        Ok(Err(_)) | Err(_) => return Ok(Err(SkipReason::Undecodable)), // undecodable / not an image
     };
 
     let mut model = vision_model(auth);
@@ -479,8 +554,10 @@ pub(crate) async fn run_image_pipeline(
         }
     }
 
-    // 4. Parse UNLESBAR_JSON; strip the machine line from the stored summary.
-    let (mut summary_text, boxes) = parse_unlesbar(&summary);
+    // 4. Parse DEVICE_SCORE/DEVICE_LABEL (trailing, after UNLESBAR_JSON), then
+    //    UNLESBAR_JSON; strip both machine lines from the stored summary.
+    let (summary_wo_device, device_score, device_label) = parse_device_fields(&summary);
+    let (mut summary_text, boxes) = parse_unlesbar(&summary_wo_device);
     let mut zoom_used = false;
 
     // Two-pass zoom: ONE follow-up call transcribing up to MAX_CROPS crops from
@@ -512,7 +589,7 @@ pub(crate) async fn run_image_pipeline(
         }
     }
 
-    Ok(Some(ImageSummaryResult {
+    Ok(Ok(ImageSummaryResult {
         summary: summary_text,
         model,
         zoom_used,
@@ -520,6 +597,8 @@ pub(crate) async fn run_image_pipeline(
         cost_usd: cost,
         tier_prompt_tokens,
         src_hash,
+        device_score,
+        device_label,
     }))
 }
 
@@ -556,6 +635,8 @@ async fn persist_image_summary(db: &SurrealDb, cas_uuid: &str, res: &ImageSummar
             image_summary_model: $model, \
             image_summary_zoom: $zoom, \
             image_summary_src_hash: $src, \
+            device_score: $device_score, \
+            device_label: $device_label, \
             image_summarized_at: time::now(), \
             _vclock: $vc, \
             updated_at: time::now() \
@@ -567,6 +648,8 @@ async fn persist_image_summary(db: &SurrealDb, cas_uuid: &str, res: &ImageSummar
         .bind(("model", res.model.clone()))
         .bind(("zoom", res.zoom_used))
         .bind(("src", res.src_hash.clone()))
+        .bind(("device_score", res.device_score))
+        .bind(("device_label", res.device_label.clone().unwrap_or_default()))
         .bind(("vc", next_vc))
         .bind(("cid", cas_uuid.to_string()))
         .await;
@@ -593,23 +676,36 @@ struct Candidate {
 /// are unchanged (`image_summary_src_hash == hash`). Only decodable raster mimes;
 /// only byte-owning (live, `replaced_by IS NONE`) rows; skip optimizer failures
 /// (`optimization_level` -1/-2).
-async fn select_candidates(db: &SurrealDb, batch: usize) -> Result<Vec<Candidate>> {
-    let sql = "SELECT cas_uuid, doc_class.doc_type AS doc_type FROM file_resource \
+async fn select_candidates(db: &SurrealDb, batch: usize, skip: &[String]) -> Result<Vec<Candidate>> {
+    let base = "SELECT cas_uuid, doc_class.doc_type AS doc_type FROM file_resource \
          WHERE replaced_by IS NONE \
          AND storage_path IS NOT NONE \
          AND mime_type IN ['image/jpeg', 'image/png', 'image/webp', 'image/avif'] \
          AND (optimization_level IS NONE OR optimization_level >= 0) \
          AND (image_summary_ver IS NONE OR image_summary_ver < $ver \
-              OR image_summary_src_hash != hash) \
-         LIMIT $limit";
+              OR image_summary_src_hash != hash)";
+    // Exclude this process's dead candidates. Branch on emptiness rather than
+    // rely on `NOT IN []` so the query is identical to the historical one when
+    // nothing is parked.
+    let sql = if skip.is_empty() {
+        format!("{base} LIMIT $limit")
+    } else {
+        format!("{base} AND cas_uuid NOT IN $skip LIMIT $limit")
+    };
     let rows: Vec<Value> = db
-        .query(sql)
+        .query(&sql)
         .bind(("ver", IMAGE_SUMMARY_VER))
         .bind(("limit", batch))
+        .bind(("skip", skip.to_vec()))
         .await?
         .take(0)?;
-    Ok(rows
-        .into_iter()
+    Ok(rows_to_candidates(rows))
+}
+
+/// Parse the `cas_uuid`/`doc_type` projection shared by [`select_candidates`] and
+/// [`select_rescore_candidates`] into [`Candidate`]s.
+fn rows_to_candidates(rows: Vec<Value>) -> Vec<Candidate> {
+    rows.into_iter()
         .filter_map(|r| {
             let cas_uuid = r.get("cas_uuid").and_then(|v| v.as_str())?.to_string();
             let doc_type = r
@@ -618,7 +714,153 @@ async fn select_candidates(db: &SurrealDb, batch: usize) -> Result<Vec<Candidate
                 .and_then(|s| serde_json::from_value::<DocType>(Value::String(s.to_string())).ok());
             Some(Candidate { cas_uuid, doc_type })
         })
-        .collect())
+        .collect()
+}
+
+// ── Rescore mode (device_score/device_label backfill, NO ver bump) ─────────
+
+/// `ECK_IMAGE_RESCORE` = `1` opts the worker into a SECONDARY candidate pool:
+/// rows already summarized (`image_summary_ver IS NOT NONE`) but missing
+/// `device_score` — e.g. upgraded from a build that predates the device-score
+/// fields. Deliberately NOT folded into [`IMAGE_SUMMARY_VER`]/[`select_candidates`]:
+/// bumping the ver would re-run the full pipeline fleet-wide on every already-
+/// summarized image. This mode only fills the gap, reusing the identical
+/// pipeline (one vision call, writes summary + device fields) and the worker's
+/// normal cadence/batch/backoff. It is only consulted when the normal backlog
+/// (`select_candidates`) is empty, so it never starves ver-upgrade work.
+pub(crate) fn rescore_enabled() -> bool {
+    std::env::var("ECK_IMAGE_RESCORE").map(|v| v.trim() == "1").unwrap_or(false)
+}
+
+/// Read-only count of the rescore backlog (live image rows already summarized
+/// but missing `device_score`). Used for the worker's start-of-run log; also
+/// the seam an admin/status endpoint would call if one surfaces image-summary
+/// progress (none currently does — see the image_summary.rs task notes).
+pub(crate) async fn count_rescore_backlog(db: &SurrealDb) -> Result<i64> {
+    let sql = "SELECT count() FROM file_resource \
+         WHERE replaced_by IS NONE \
+         AND storage_path IS NOT NONE \
+         AND mime_type IN ['image/jpeg', 'image/png', 'image/webp', 'image/avif'] \
+         AND image_summary_ver IS NOT NONE \
+         AND device_score IS NONE \
+         GROUP ALL";
+    let rows: Vec<Value> = db.query(sql).await?.take(0)?;
+    Ok(rows.first().and_then(|r| r.get("count")).and_then(|v| v.as_i64()).unwrap_or(0))
+}
+
+/// Select up to `batch` rescore candidates (see [`rescore_enabled`]). Same
+/// projection/shape as [`select_candidates`] so the worker loop treats both
+/// pools identically.
+async fn select_rescore_candidates(db: &SurrealDb, batch: usize, skip: &[String]) -> Result<Vec<Candidate>> {
+    let base = "SELECT cas_uuid, doc_class.doc_type AS doc_type FROM file_resource \
+         WHERE replaced_by IS NONE \
+         AND storage_path IS NOT NONE \
+         AND mime_type IN ['image/jpeg', 'image/png', 'image/webp', 'image/avif'] \
+         AND image_summary_ver IS NOT NONE \
+         AND device_score IS NONE";
+    let sql = if skip.is_empty() {
+        format!("{base} LIMIT $limit")
+    } else {
+        format!("{base} AND cas_uuid NOT IN $skip LIMIT $limit")
+    };
+    let rows: Vec<Value> = db.query(&sql).bind(("limit", batch)).bind(("skip", skip.to_vec())).await?.take(0)?;
+    Ok(rows_to_candidates(rows))
+}
+
+/// Clear the no-op skip set when it exceeds `cap` (pure, for the worker loop).
+/// Returns `true` when it cleared. Unbounded growth is the real risk on the
+/// kiosk; re-trying the parked dead candidates once is the cheaper failure mode.
+fn cap_skip_set(skip: &mut HashSet<String>, cap: usize) -> bool {
+    if skip.len() > cap {
+        skip.clear();
+        true
+    } else {
+        false
+    }
+}
+
+/// Parse an `ECK_IMAGE_WORKER_HOURS` spec (`"HH-HH"`, local time, end exclusive,
+/// may wrap past midnight) and decide whether `hour` (0..=23) is inside it.
+/// `"0-24"`, empty, or anything unparsable ⇒ always `true` (run anytime).
+/// Examples: `"19-07"` is 19:00→07:00 (hour 23 ⇒ true, 3 ⇒ true, 12 ⇒ false);
+/// `"9-17"` (12 ⇒ true, 18 ⇒ false).
+fn in_window(spec: &str, hour: u32) -> bool {
+    let spec = spec.trim();
+    let Some((a, b)) = spec.split_once('-') else {
+        return true;
+    };
+    let (Ok(start), Ok(end)) = (a.trim().parse::<u32>(), b.trim().parse::<u32>()) else {
+        return true;
+    };
+    // "0-24" (or any start==end / full-day span) ⇒ always on.
+    if start == end || (start == 0 && end >= 24) {
+        return true;
+    }
+    if start < end {
+        hour >= start && hour < end
+    } else {
+        // Wraps midnight: inside if at/after start OR before end.
+        hour >= start || hour < end
+    }
+}
+
+/// Process one batch of candidates. Persists successes, logs+parks no-op skips,
+/// backs off+parks errors, and warns once per process when vision auth is not
+/// configured. Returns the number of summaries actually produced this batch.
+#[allow(clippy::too_many_arguments)]
+async fn process_candidates(
+    db: &SurrealDb,
+    http: &HttpClient,
+    policy: ImagePolicy,
+    candidates: Vec<Candidate>,
+    skip: &mut HashSet<String>,
+    auth_warned: &mut bool,
+) -> usize {
+    let mut ran = 0usize;
+    for cand in candidates {
+        let auth = match resolve_image_auth(http, policy, cand.doc_type).await {
+            Ok(a) if a.is_configured() => a,
+            _ => {
+                // Auth is not per-candidate: warn once, do NOT park the row
+                // (auth may be configured later) and move on.
+                if !*auth_warned {
+                    warn!("[img-summary] vision auth not configured (policy={policy:?}) — worker idle");
+                    *auth_warned = true;
+                }
+                continue;
+            }
+        };
+        let started = Instant::now();
+        match run_image_pipeline(db, http, &auth, &cand.cas_uuid).await {
+            Ok(Ok(res)) => {
+                ran += 1;
+                let latency_ms = started.elapsed().as_millis() as u64;
+                persist_image_summary(db, &cand.cas_uuid, &res).await;
+                let usage = json!({
+                    "promptTokenCount": res.tier_prompt_tokens,
+                    "candidatesTokenCount": 0,
+                    "totalTokenCount": res.tier_prompt_tokens,
+                });
+                crate::ai::telemetry::log_telemetry(db, "image_summary", &res.model, &cand.cas_uuid, &usage).await;
+                info!(
+                    "[img-live] cas={} model={} tier_prompt_tokens={} zoom={} calls={} cost_usd={:.6} latency_ms={}",
+                    cand.cas_uuid, res.model, res.tier_prompt_tokens, res.zoom_used, res.calls, res.cost_usd, latency_ms
+                );
+            }
+            Ok(Err(reason)) => {
+                // Dead candidate (file gone / unreadable / undecodable): say why
+                // once and park it so the selector stops returning it every tick.
+                info!("[img-summary] skip cas={} reason={}", cand.cas_uuid, reason.as_str());
+                skip.insert(cand.cas_uuid);
+            }
+            Err(e) => {
+                warn!("[img-summary] cas={} error: {e}", cand.cas_uuid);
+                tokio::time::sleep(Duration::from_secs(WORKER_ERROR_BACKOFF_SECS)).await;
+                skip.insert(cand.cas_uuid);
+            }
+        }
+    }
+    ran
 }
 
 /// Background image-summary worker. Gated by `ECK_IMAGE_SUMMARY_WORKER=1` (like
@@ -643,15 +885,45 @@ pub async fn start_image_summary_worker(state: Arc<AppState>) {
     };
     let db = &state.db;
     let policy = image_policy();
-    info!("[img-summary] worker started (policy={policy:?}, batch={WORKER_BATCH}, interval={WORKER_INTERVAL_SECS}s)");
+    let rescore = rescore_enabled();
+    info!("[img-summary] worker started (policy={policy:?}, batch={WORKER_BATCH}, interval={WORKER_INTERVAL_SECS}s, rescore={rescore})");
+    if rescore {
+        match count_rescore_backlog(db).await {
+            Ok(n) => info!("[ImageSummary][rescore] backlog n={n}"),
+            Err(e) => warn!("[img-summary] rescore backlog count failed: {e}"),
+        }
+    }
+    let hours_spec = std::env::var("ECK_IMAGE_WORKER_HOURS").unwrap_or_default();
     let mut interval = tokio::time::interval(Duration::from_secs(WORKER_INTERVAL_SECS));
+    // Dead candidates parked for this process lifetime (file gone / unreadable /
+    // undecodable). Excluded from BOTH selectors so the backlog advances past them
+    // instead of re-selecting the same no-op rows every tick.
+    let mut skip: HashSet<String> = HashSet::new();
+    let mut auth_warned = false;
+    // Working-window edge tracking (log once on enter/leave, not every tick).
+    let mut was_idle = false;
 
     loop {
         interval.tick().await;
         if crate::ai::telemetry::current_budget_level() == crate::ai::telemetry::BudgetLevel::Halt {
             continue;
         }
-        let candidates = match select_candidates(db, WORKER_BATCH).await {
+
+        // Optional working-hours gate (local time). Outside the window: idle.
+        if !in_window(&hours_spec, Local::now().hour()) {
+            if !was_idle {
+                info!("[img-summary] outside working window {hours_spec}, idle");
+                was_idle = true;
+            }
+            continue;
+        }
+        if was_idle {
+            info!("[img-summary] entering working window {hours_spec}, resuming");
+            was_idle = false;
+        }
+
+        let skip_vec: Vec<String> = skip.iter().cloned().collect();
+        let candidates = match select_candidates(db, WORKER_BATCH, &skip_vec).await {
             Ok(c) => c,
             Err(e) => {
                 warn!("[img-summary] selection failed: {e}");
@@ -659,36 +931,33 @@ pub async fn start_image_summary_worker(state: Arc<AppState>) {
                 continue;
             }
         };
-        if candidates.is_empty() {
-            continue;
-        }
-        for cand in candidates {
-            let auth = match resolve_image_auth(&http, policy, cand.doc_type).await {
-                Ok(a) if a.is_configured() => a,
-                _ => continue,
-            };
-            let started = Instant::now();
-            match run_image_pipeline(db, &http, &auth, &cand.cas_uuid).await {
-                Ok(Some(res)) => {
-                    let latency_ms = started.elapsed().as_millis() as u64;
-                    persist_image_summary(db, &cand.cas_uuid, &res).await;
-                    let usage = json!({
-                        "promptTokenCount": res.tier_prompt_tokens,
-                        "candidatesTokenCount": 0,
-                        "totalTokenCount": res.tier_prompt_tokens,
-                    });
-                    crate::ai::telemetry::log_telemetry(db, "image_summary", &res.model, &cand.cas_uuid, &usage).await;
-                    info!(
-                        "[img-live] cas={} model={} tier_prompt_tokens={} zoom={} calls={} cost_usd={:.6} latency_ms={}",
-                        cand.cas_uuid, res.model, res.tier_prompt_tokens, res.zoom_used, res.calls, res.cost_usd, latency_ms
-                    );
+
+        // Normal (ver-upgrade) backlog takes priority; process it first.
+        let ran = process_candidates(db, &http, policy, candidates, &mut skip, &mut auth_warned).await;
+
+        // The rescore pool fills idle cycles. If the normal batch produced NO
+        // summary this tick — either the backlog is genuinely empty or every
+        // selected row was a dead candidate just parked — fall through to
+        // rescore in the SAME tick so a run of dead rows never starves it.
+        if ran == 0 && rescore {
+            let skip_vec: Vec<String> = skip.iter().cloned().collect();
+            match select_rescore_candidates(db, WORKER_BATCH, &skip_vec).await {
+                Ok(c) if !c.is_empty() => {
+                    let total = count_rescore_backlog(db).await.unwrap_or(c.len() as i64);
+                    let remaining = (total - c.len() as i64).max(0);
+                    info!("[ImageSummary][rescore] n={} remaining={}", c.len(), remaining);
+                    process_candidates(db, &http, policy, c, &mut skip, &mut auth_warned).await;
                 }
-                Ok(None) => { /* not a decodable image — leave it (won't be re-tried each cycle only if hash stable; acceptable) */ }
+                Ok(_) => {}
                 Err(e) => {
-                    warn!("[img-summary] cas={} error: {e}", cand.cas_uuid);
+                    warn!("[img-summary] rescore selection failed: {e}");
                     tokio::time::sleep(Duration::from_secs(WORKER_ERROR_BACKOFF_SECS)).await;
                 }
             }
+        }
+
+        if cap_skip_set(&mut skip, SKIP_SET_CAP) {
+            warn!("[img-summary] skip set exceeded {SKIP_SET_CAP} — cleared (will re-try parked candidates)");
         }
     }
 }
@@ -696,6 +965,39 @@ pub async fn start_image_summary_worker(state: Arc<AppState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn in_window_wraps_and_full_day() {
+        // Wrap-around night window.
+        assert!(in_window("19-07", 23));
+        assert!(in_window("19-07", 3));
+        assert!(in_window("19-07", 19));
+        assert!(!in_window("19-07", 12));
+        assert!(!in_window("19-07", 7)); // end exclusive
+        // Same-day window.
+        assert!(in_window("9-17", 12));
+        assert!(in_window("9-17", 9));
+        assert!(!in_window("9-17", 18));
+        assert!(!in_window("9-17", 17)); // end exclusive
+        // Always-on / unparsable ⇒ true.
+        assert!(in_window("0-24", 0));
+        assert!(in_window("0-24", 23));
+        assert!(in_window("", 3));
+        assert!(in_window("garbage", 3));
+        assert!(in_window("12", 3)); // no dash
+        assert!(in_window("a-b", 3)); // non-numeric
+    }
+
+    #[test]
+    fn cap_skip_set_clears_on_overflow() {
+        let mut s: HashSet<String> = (0..5).map(|i| i.to_string()).collect();
+        // Under cap: untouched.
+        assert!(!cap_skip_set(&mut s, 10));
+        assert_eq!(s.len(), 5);
+        // Over cap: cleared wholesale.
+        assert!(cap_skip_set(&mut s, 4));
+        assert!(s.is_empty());
+    }
 
     #[test]
     fn policy_parses_env_default_standard() {
@@ -769,6 +1071,87 @@ mod tests {
         let (text, boxes) = parse_unlesbar("Nur Beschreibung, kein Marker.");
         assert_eq!(text, "Nur Beschreibung, kein Marker.");
         assert!(boxes.is_empty());
+    }
+
+    #[test]
+    fn parse_device_fields_happy_path() {
+        let summary = "Ein Acme 770 Körperanalysegerät, guter Zustand.\n\
+                       UNLESBAR_JSON: []\n\
+                       DEVICE_SCORE: 9\n\
+                       DEVICE_LABEL: Acme 770 Körperanalysegerät";
+        let (text, score, label) = parse_device_fields(summary);
+        assert!(!text.contains("DEVICE_SCORE"));
+        assert!(!text.contains("DEVICE_LABEL"));
+        assert!(text.contains("UNLESBAR_JSON")); // stripped later by parse_unlesbar
+        assert_eq!(score, Some(9));
+        assert_eq!(label, Some("Acme 770 Körperanalysegerät".to_string()));
+    }
+
+    #[test]
+    fn parse_device_fields_empty_label_is_none() {
+        let summary = "Nur ein Typenschild zu sehen.\n\
+                       UNLESBAR_JSON: []\n\
+                       DEVICE_SCORE: 0\n\
+                       DEVICE_LABEL: ";
+        let (text, score, label) = parse_device_fields(summary);
+        assert!(!text.contains("DEVICE_LABEL"));
+        assert_eq!(score, Some(0));
+        assert_eq!(label, None);
+    }
+
+    #[test]
+    fn parse_device_fields_clamps_out_of_range_score() {
+        let summary = "x\nUNLESBAR_JSON: []\nDEVICE_SCORE: 15\nDEVICE_LABEL: Foo";
+        let (_t, score, label) = parse_device_fields(summary);
+        assert_eq!(score, Some(10));
+        assert_eq!(label, Some("Foo".to_string()));
+    }
+
+    #[test]
+    fn parse_device_fields_garbled_or_missing_yields_none_and_keeps_text_clean() {
+        // Missing score line entirely, garbled (non-numeric) — both must come
+        // back None without panicking or leaving marker text behind.
+        let summary1 = "Beschreibung ohne Markerzeilen.";
+        let (t1, s1, l1) = parse_device_fields(summary1);
+        assert_eq!(t1, "Beschreibung ohne Markerzeilen.");
+        assert_eq!(s1, None);
+        assert_eq!(l1, None);
+
+        let summary2 = "Beschreibung.\nUNLESBAR_JSON: []\nDEVICE_SCORE: unbekannt\nDEVICE_LABEL: Foo";
+        let (t2, s2, l2) = parse_device_fields(summary2);
+        assert!(!t2.contains("DEVICE_SCORE"));
+        assert_eq!(s2, None); // "unbekannt" doesn't parse as an int
+        assert_eq!(l2, Some("Foo".to_string()));
+    }
+
+    #[test]
+    fn parse_device_fields_then_unlesbar_full_pipeline_order() {
+        // Mirrors the real pass-1 answer shape: description, UNLESBAR_JSON,
+        // then the two device lines — both parsers compose cleanly.
+        let summary = "Ein Gerät mit Typenschild \"ABC-123\".\n\
+                       UNLESBAR_JSON: [{\"bbox\":[10,10,50,50],\"was\":\"Seriennummer\"}]\n\
+                       DEVICE_SCORE: 7\n\
+                       DEVICE_LABEL: Beispielgerät";
+        let (wo_device, score, label) = parse_device_fields(summary);
+        assert_eq!(score, Some(7));
+        assert_eq!(label, Some("Beispielgerät".to_string()));
+        let (final_text, boxes) = parse_unlesbar(&wo_device);
+        assert!(!final_text.contains("UNLESBAR_JSON"));
+        assert!(!final_text.contains("DEVICE_SCORE"));
+        assert!(final_text.contains("ABC-123"));
+        assert_eq!(boxes.len(), 1);
+    }
+
+    #[test]
+    fn rescore_enabled_reads_env_flag() {
+        // Mirrors rescore_enabled()'s parsing without racing other tests over
+        // process env (ECK_IMAGE_RESCORE is not touched by anything else here).
+        let parse = |v: Option<&str>| v.map(|s| s.trim() == "1").unwrap_or(false);
+        assert!(!parse(None));
+        assert!(!parse(Some("0")));
+        assert!(!parse(Some("")));
+        assert!(parse(Some("1")));
+        assert!(parse(Some(" 1 ")));
     }
 
     #[test]

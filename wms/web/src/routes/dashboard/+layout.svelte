@@ -3,14 +3,17 @@
     import { wsStore } from "$lib/stores/wsStore";
     import { toastStore } from "$lib/stores/toastStore";
     import ToastContainer from "$lib/components/ToastContainer.svelte";
+    import AuthImg from "$lib/components/AuthImg.svelte";
     import MeshStatus from "$lib/components/MeshStatus.svelte";
     import LanguageCycleButton from "$lib/components/LanguageCycleButton.svelte";
     import ChangePasswordModal from "$lib/components/ChangePasswordModal.svelte";
-    import { KEEP_ALIVE_VIEWS, KEEP_ALIVE_MAX, KEEP_ALIVE_TTL_MS, keepAliveEntry } from "$lib/keepAlive";
+    import { KEEP_ALIVE_VIEWS, KEEP_ALIVE_HIDDEN, KEEP_ALIVE_TTL_MS, keepAliveEntry } from "$lib/keepAlive";
+    import { docViewer, closeDocViewer } from "$lib/stores/docViewer";
     import { goto } from "$app/navigation";
     import { onMount, onDestroy } from "svelte";
     import { page } from "$app/stores";
     import { base } from "$app/paths";
+    import { browser } from "$app/environment";
     import { t, tr, locale, availableLocales, localeName, setLocale, refreshAvailableLocales } from "$lib/i18n";
 
     // Settings language switcher (visible to all authenticated users).
@@ -223,6 +226,40 @@
     let showAmbiguousModal = false;
     let ambiguousCandidates = [];
 
+    // ── Scan-mirror screen identity (header rename control, §5) ─────────────
+    let screenName = "";
+    let screenEditing = false;
+    let screenNameInput = "";
+    function startScreenEdit() {
+        screenNameInput = screenName;
+        screenEditing = true;
+    }
+    function saveScreenName() {
+        const n = (screenNameInput || "").trim();
+        if (n) {
+            wsStore.setScreenName(n); // persists + reconnects so the server re-registers
+            screenName = n;
+        }
+        screenEditing = false;
+    }
+    function cancelScreenEdit() {
+        screenEditing = false;
+    }
+    // Fold the logged-in username into the default screen name once it's known,
+    // and reconnect so the server's live set shows "<host> · <user>" (unless the
+    // operator set an explicit name).
+    let screenUserApplied = false;
+    $: if (browser && $authStore.currentUser?.username && !screenUserApplied) {
+        screenUserApplied = true;
+        try {
+            localStorage.setItem("eck_screen_user", $authStore.currentUser.username);
+            if (!localStorage.getItem("eck_screen_name")) {
+                wsStore.reconnect();
+            }
+            screenName = wsStore.getScreenName();
+        } catch {}
+    }
+
     // System Alert State
     let activeAlert = null;
     let showAlertModal = false;
@@ -261,7 +298,20 @@
     function touchCache(path) {
         const t = Date.now();
         cached = [{ path, lastUsed: t }, ...cached.filter((c) => c.path !== path)]
-            .slice(0, KEEP_ALIVE_MAX);
+            .slice(0, 1 + KEEP_ALIVE_HIDDEN);
+    }
+    // With no hidden tabs allowed, navigating to a non-cached route (or any other
+    // tab) must also drop whatever was mounted before.
+    $: pruneHidden(relPath);
+    // The document viewer belongs to the page that opened it.
+    $: if (relPath) closeDocViewer();
+    function onViewerKey(e) {
+        if ($docViewer && e.key === "Escape") closeDocViewer();
+    }
+    function pruneHidden(p) {
+        if (KEEP_ALIVE_HIDDEN > 0) return;
+        const keep = cached.filter((c) => c.path === p);
+        if (keep.length !== cached.length) cached = keep;
     }
     function compForPath(path) {
         return KEEP_ALIVE_VIEWS.find((v) => v.path === path)?.component;
@@ -347,14 +397,18 @@
             }
         });
 
-        // 2. Init WebSocket
+        // 2. Init WebSocket (registers this browser as a scan-mirror screen).
         wsStore.connect();
+        screenName = wsStore.getScreenName();
 
         // 2b. Discover customer-added languages so the picker includes them.
         refreshAvailableLocales($authStore.token);
 
         // 2c. POS module availability + (admin) kiosk boot-mode config.
         loadPosStatus();
+
+        // 2d. Restore any unread system alert (banner survives a reload).
+        loadUnreadAlerts();
         if ($authStore.currentUser?.role === 'admin') loadKioskConfig();
 
         // 3. Listen for observer forbidden events
@@ -370,6 +424,8 @@
         // Don't close WS on destroy of layout if navigating within dashboard,
         // but fine for now as +layout is persistent.
         if (addLangPoll) clearInterval(addLangPoll);
+        for (const t of trayTimers.values()) clearTimeout(t);
+        trayTimers.clear();
     });
 
     function handleLogout() {
@@ -388,13 +444,10 @@
     function resolveCandidate(candidate) {
         showAmbiguousModal = false;
         ambiguousCandidates = [];
-        const id = candidate.id;
-        if (candidate.type === "order") {
-            goto(`${base}/dashboard/repairs/${id}`);
-        } else if (candidate.type === "item") {
-            goto(`${base}/dashboard/items/${id}`);
-        } else if (candidate.type === "product") {
-            goto(`${base}/dashboard/items/${id}`);
+        // Candidates are entity summaries ({kind,id,title,subtitle}) from a
+        // mirrored ambiguous SCAN_EVENT.
+        if (candidate.kind && candidate.id) {
+            goto(entityHref(candidate.kind, candidate.id));
         }
     }
 
@@ -417,6 +470,50 @@
         });
     }
 
+    // Restore the alert banner after a reload — the WS only pushes alerts that
+    // fire while a tab is open, so a critical raised before login would be
+    // invisible otherwise. Maps the row shape to the WS shape the banner uses.
+    async function loadUnreadAlerts() {
+        try {
+            const res = await fetch("/api/alerts/unread", {
+                headers: { Authorization: `Bearer ${$authStore.token}` },
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+            const newest = (data.alerts || [])[0];
+            if (newest && !activeAlert) {
+                activeAlert = {
+                    type: "SYSTEM_ALERT",
+                    id: newest.id,
+                    key: newest.key,
+                    title: newest.title,
+                    message: newest.message,
+                    severity: newest.severity,
+                    timestamp: newest.last_seen_at ?? newest.created_at,
+                };
+            }
+        } catch (e) {
+            // Non-fatal — the banner just isn't restored this load.
+        }
+    }
+
+    // Operator dismiss: persist the read state server-side when the alert is a
+    // stored row (has an id); watchdog alerts always do, WS-only ones may not.
+    async function dismissActiveAlert() {
+        const id = activeAlert?.id;
+        activeAlert = null;
+        showAlertModal = false;
+        if (!id) return;
+        try {
+            await fetch(`/api/alerts/${id}/read`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${$authStore.token}` },
+            });
+        } catch (e) {
+            // Non-fatal — the row stays unread and can be dismissed again later.
+        }
+    }
+
     // Reactive listener for WebSocket messages
     $: if ($wsStore.lastMessage) {
         handleWsMessage($wsStore.lastMessage);
@@ -434,6 +531,17 @@
             return;
         }
 
+        // Provider/scraper outage recovered — clear the banner if it's the one
+        // we're showing, and reassure the operator.
+        if (msg.type === "SYSTEM_ALERT_RESOLVED") {
+            if (activeAlert?.key && activeAlert.key === msg.key) {
+                activeAlert = null;
+                showAlertModal = false;
+                toastStore.add(tr("shell.toast_alert_resolved", { title: msg.title }), "info", 6000);
+            }
+            return;
+        }
+
         // Xelixir remote support: cloud requested a session and this node's
         // auto_accept is off — surface a modal for the operator to allow/deny.
         if (msg.type === "XELIXIR_REQUESTED") {
@@ -443,9 +551,14 @@
             return;
         }
 
-        if (msg.barcode || (msg.data && msg.data.barcode)) {
-            const barcode = msg.barcode || msg.data.barcode;
-            processScan(barcode);
+        // PDA scan mirror (§5): a scan was broadcast for a chosen dashboard
+        // screen. Only act on events addressed to THIS browser's screen_id, and
+        // NEVER navigate — drop it into the corner scan tray instead.
+        if (msg.type === "SCAN_EVENT") {
+            const myId = wsStore.getScreenId();
+            if (myId && msg.screen_id && msg.screen_id === myId) {
+                addScanTrayEntry(msg);
+            }
             return;
         }
 
@@ -458,69 +571,92 @@
         }
     }
 
-    async function processScan(barcode) {
-        // Play sound (optional, browser policy might block)
-        // const audio = new Audio('/beep.mp3'); audio.play().catch(e=>{});
+    // ── PDA scan mirror tray (§5) ───────────────────────────────────────────
+    // A mirrored scan never interrupts work: it appears as a small round icon in
+    // the bottom-right corner. Click opens the object page (never auto-navigate);
+    // each entry expires 60 s after arrival (hovering pauses the timer). Observer
+    // screens see the tray too.
+    const SCAN_TRAY_MAX = 6;
+    const SCAN_TRAY_TTL = 60000;
+    let scanTray = [];
+    const trayTimers = new Map();
 
-        toastStore.add(tr("shell.toast_scanning"), "info", 1000);
+    const KIND_GLYPH = {
+        order: "🧾",
+        unit: "📦",
+        place: "📍",
+        item: "🔧",
+        product: "🏷️",
+        receipt: "📥",
+        partner: "🏢",
+    };
+    function kindGlyph(kind) {
+        return KIND_GLYPH[kind] || "🔱";
+    }
 
-        try {
-            const res = await fetch("/api/scan", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${$authStore.token}`,
-                },
-                body: JSON.stringify({ barcode }),
-            });
+    // Object-page link for an entity. `order` keeps its dedicated repairs page;
+    // every other kind uses the generic object page.
+    function entityHref(kind, id) {
+        if (kind === "order") return `${base}/dashboard/repairs/${id}`;
+        return `${base}/dashboard/obj/${kind}/${id}`;
+    }
 
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.error || tr("shell.scan_failed"));
-            }
+    function addScanTrayEntry(msg) {
+        const uid = `${msg.scan_id || "scan"}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        const entry = {
+            uid,
+            entity: msg.entity || null,
+            ambiguous: Array.isArray(msg.ambiguous) ? msg.ambiguous : null,
+            device_name: msg.device_name || null,
+            at: Date.now(),
+            remaining: SCAN_TRAY_TTL,
+        };
+        scanTray = [entry, ...scanTray].slice(0, SCAN_TRAY_MAX);
+        scheduleTrayExpiry(entry);
+    }
 
-            const data = await res.json();
+    function scheduleTrayExpiry(entry) {
+        clearTimeout(trayTimers.get(entry.uid));
+        trayTimers.set(
+            entry.uid,
+            setTimeout(() => removeTrayEntry(entry.uid), Math.max(0, entry.remaining)),
+        );
+    }
+    function pauseTrayExpiry(uid) {
+        const e = scanTray.find((x) => x.uid === uid);
+        if (!e) return;
+        clearTimeout(trayTimers.get(uid));
+        e.remaining = Math.max(0, SCAN_TRAY_TTL - (Date.now() - e.at));
+    }
+    function resumeTrayExpiry(uid) {
+        const e = scanTray.find((x) => x.uid === uid);
+        if (!e) return;
+        e.at = Date.now();
+        scheduleTrayExpiry(e);
+    }
+    function removeTrayEntry(uid) {
+        clearTimeout(trayTimers.get(uid));
+        trayTimers.delete(uid);
+        scanTray = scanTray.filter((x) => x.uid !== uid);
+    }
 
-            // Handle ambiguous collision — multiple matches
-            if (data.type === "ambiguous") {
-                ambiguousCandidates = data.data?.candidates || [];
-                showAmbiguousModal = true;
-                toastStore.add(tr("shell.toast_multiple_matches"), "warning");
-                return;
-            }
-
-            // Soft trust warning
-            if (data.trust === "soft") {
-                toastStore.add(tr("shell.toast_soft_trust"), "warning", 4000);
-            }
-
-            // Show result
-            toastStore.add(data.message, "success");
-
-            // Handle Navigation / Action based on type
-            if (data.type === "order" && data.data?.id) {
-                goto(`${base}/dashboard/repairs/${data.data.id}`);
-            } else if (data.type === "item" && data.data?.id) {
-                goto(`${base}/dashboard/items/${data.data.id}`);
-            } else if (data.type === "box" && data.data?.id) {
-                console.log("Box scanned:", data.data);
-                toastStore.add(
-                    tr("shell.toast_box_scanned", { name: data.data.name || data.data.id }),
-                    "success",
-                );
-            } else if (data.type === "place" && data.data?.id) {
-                goto(`${base}/dashboard/warehouse/${data.data.id}`);
-            } else if (data.type === "product" && data.data?.id) {
-                goto(`${base}/dashboard/items/${data.data.id}`);
-            } else if (data.type === "label") {
-                console.log("Label scanned:", data.data);
-            }
-        } catch (e) {
-            console.error("Scan error:", e);
-            toastStore.add(tr("shell.toast_error", { error: e.message }), "error");
+    function onTrayClick(entry) {
+        // A collision opens the picker (reusing the ambiguous modal); a single
+        // resolved entity opens its object page.
+        if (entry.ambiguous && entry.ambiguous.length) {
+            ambiguousCandidates = entry.ambiguous;
+            showAmbiguousModal = true;
+            return;
+        }
+        const e = entry.entity;
+        if (e && e.kind && e.id) {
+            removeTrayEntry(entry.uid);
+            goto(entityHref(e.kind, e.id));
         }
     }
 </script>
+
+<svelte:window on:keydown={onViewerKey} />
 
 <div class="dashboard-shell">
     {#if showGraceBanner}
@@ -758,6 +894,35 @@
                 {/if}
             </label>
 
+            <!-- Scan-mirror screen name (§5): this browser's label in the PDA's
+                 screen picker. Editable by any authenticated user; renaming
+                 reconnects the WS so the server re-registers under the new name. -->
+            <div class="screen-setting">
+                <span class="screen-setting-label">{$t('shell.screen_label')}</span>
+                {#if screenEditing}
+                    <input
+                        class="screen-name-input"
+                        type="text"
+                        maxlength="48"
+                        bind:value={screenNameInput}
+                        use:focusOnMount
+                        on:keydown={(e) => {
+                            if (e.key === 'Enter') saveScreenName();
+                            else if (e.key === 'Escape') cancelScreenEdit();
+                        }}
+                        on:blur={saveScreenName}
+                    />
+                {:else}
+                    <button
+                        class="screen-name-btn"
+                        title={$t('shell.screen_rename')}
+                        on:click={startScreenEdit}
+                    >
+                        {screenName} ✎
+                    </button>
+                {/if}
+            </div>
+
             <!-- Kiosk boot config (admin, node-local): whether this node's
                  kiosk screen auto-loads, and what it loads — the observer
                  dashboard or the POS register. -->
@@ -811,6 +976,25 @@
         {#if !currentEntry}<slot />{/if}
     </main>
 
+    <!-- In-app document viewer: sits in the same grid cell as <main>, so the
+         sidebar/header stay visible and Back returns to the page. -->
+    {#if $docViewer}
+        <div class="doc-viewer">
+            <div class="doc-viewer-bar">
+                <button type="button" class="doc-viewer-back" on:click={closeDocViewer}>{$t('entity.back')}</button>
+                <span class="doc-viewer-name">{$docViewer.name}</span>
+                <a class="doc-viewer-dl" href={$docViewer.url} download={$docViewer.name || "document"}>{$t('entity.download')}</a>
+            </div>
+            {#if $docViewer.mime.startsWith("image/")}
+                <div class="doc-viewer-img"><img src={$docViewer.url} alt={$docViewer.name} /></div>
+            {:else if $docViewer.mime === "application/pdf" || $docViewer.mime.startsWith("text/")}
+                <iframe class="doc-viewer-frame" src={$docViewer.url} title={$docViewer.name}></iframe>
+            {:else}
+                <div class="doc-viewer-nopreview">{$docViewer.name}</div>
+            {/if}
+        </div>
+    {/if}
+
     <ToastContainer />
 
     {#if showAlertModal && activeAlert}
@@ -840,7 +1024,7 @@
 
                 <div class="modal-actions-bar">
                     <button class="cancel-btn" on:click={() => showAlertModal = false}>{$t('shell.close')}</button>
-                    <button class="candidate-btn" on:click={() => { activeAlert = null; showAlertModal = false; }}>
+                    <button class="candidate-btn" on:click={dismissActiveAlert}>
                         {$t('shell.acknowledge_dismiss')}
                     </button>
                 </div>
@@ -856,7 +1040,7 @@
                 <div class="candidates-list">
                     {#each ambiguousCandidates as c}
                         <button class="candidate-btn" on:click={() => resolveCandidate(c)}>
-                            <span class="candidate-type" class:type-order={c.type === 'order'} class:type-item={c.type === 'item'}>{c.type}</span>
+                            <span class="candidate-type" class:type-order={c.kind === 'order'} class:type-item={c.kind === 'item'}>{c.kind}</span>
                             <span class="candidate-title">{c.title}</span>
                             {#if c.subtitle}<span class="candidate-sub">{c.subtitle}</span>{/if}
                         </button>
@@ -864,6 +1048,39 @@
                 </div>
                 <button class="cancel-btn" on:click={dismissAmbiguous}>{$t('shell.cancel')}</button>
             </div>
+        </div>
+    {/if}
+
+    <!-- PDA scan-mirror tray (§5): bottom-right stack of recently mirrored
+         scans. Max 6, newest on top; click opens the object page (never
+         auto-navigate); entries fade out 60 s after arrival, hover pauses. -->
+    {#if scanTray.length}
+        <div class="scan-tray" aria-label="Mirrored scans">
+            {#each scanTray as entry (entry.uid)}
+                {@const isAmb = entry.ambiguous && entry.ambiguous.length}
+                {@const e = entry.entity}
+                <button
+                    class="scan-chip"
+                    class:scan-chip-amb={isAmb}
+                    on:click={() => onTrayClick(entry)}
+                    on:mouseenter={() => pauseTrayExpiry(entry.uid)}
+                    on:mouseleave={() => resumeTrayExpiry(entry.uid)}
+                    title={isAmb
+                        ? `${entry.ambiguous.length} matches — pick one`
+                        : `${e?.title || ''}${e?.subtitle ? ' · ' + e.subtitle : ''}`}
+                >
+                    {#if isAmb}
+                        <span class="scan-chip-glyph">🗂️</span>
+                        <span class="scan-chip-badge">{entry.ambiguous.length}</span>
+                    {:else if e?.icon_file_id}
+                        <AuthImg class="scan-chip-img" src="{base}/api/files/{e.icon_file_id}" alt={e?.title || ''}>
+                            <span slot="fallback" class="scan-chip-glyph">{kindGlyph(e?.kind)}</span>
+                        </AuthImg>
+                    {:else}
+                        <span class="scan-chip-glyph">{kindGlyph(e?.kind)}</span>
+                    {/if}
+                </button>
+            {/each}
         </div>
     {/if}
 
@@ -897,7 +1114,7 @@
                 <h3 style="color: #4a69bd;">{$t('shell.escalation_title')}</h3>
                 <p class="modal-hint">{$t('shell.escalation_hint')}</p>
                 <div class="quick-login-form">
-                    <input type="text" bind:value={quickLoginUser} placeholder={$t('shell.username_or_email')} disabled={quickLoginLoading} />
+                    <input type="text" data-ime="off" autocomplete="username" bind:value={quickLoginUser} placeholder={$t('shell.username_or_email')} disabled={quickLoginLoading} />
                     <input type="password" bind:value={quickLoginPass} placeholder={$t('shell.password')} disabled={quickLoginLoading} />
                     {#if quickLoginError}<div class="quick-login-error">{quickLoginError}</div>{/if}
                     <button class="quick-login-btn" on:click={handleQuickLogin} disabled={quickLoginLoading}>
@@ -1300,6 +1517,17 @@
     .ka-host { min-height: 0; }
     .ka-host.fullbleed-host { position: absolute; inset: 0; }
 
+    /* In-app document viewer: same grid cell as <main> (column 2, row 1). */
+    .doc-viewer { grid-column: 2; grid-row: 1; z-index: 20; display: flex; flex-direction: column; min-height: 0; background: #121212; }
+    .doc-viewer-bar { display: flex; align-items: center; gap: 1rem; padding: 0.6rem 1rem; background: #1e1e1e; border-bottom: 1px solid #333; }
+    .doc-viewer-back { background: #2a6fdb; color: #fff; border: none; border-radius: 8px; padding: 0.6rem 1.4rem; font-size: 1.05rem; cursor: pointer; }
+    .doc-viewer-name { flex: 1; color: #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .doc-viewer-dl { color: #8ab4f8; font-size: 0.9rem; }
+    .doc-viewer-frame { flex: 1; width: 100%; border: 0; background: #fff; min-height: 0; }
+    .doc-viewer-img { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: center; justify-content: center; }
+    .doc-viewer-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .doc-viewer-nopreview { padding: 2rem; color: #aaa; }
+
     /* Ambiguous collision modal */
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 9999; display: flex; align-items: center; justify-content: center; }
     .modal-card { background: #1e1e1e; border: 1px solid #444; border-radius: 12px; padding: 2rem; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; }
@@ -1325,4 +1553,116 @@
     .quick-login-error { color: #ff6b6b; font-size: 0.85rem; text-align: center; }
     .xelixir-modal { border-color: #a855f7; background: #1f1a2e; }
     .xelixir-modal .modal-hint { color: #cbd5e1; }
+    /* ── Scan-mirror screen name control (header) ─────────────────────────── */
+    .screen-setting {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        margin-bottom: 1rem;
+    }
+    .screen-setting-label {
+        font-size: 0.65rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #666;
+        letter-spacing: 0.5px;
+    }
+    .screen-name-btn {
+        width: 100%;
+        text-align: left;
+        background: #2a2a2a;
+        color: #ddd;
+        border: 1px solid #333;
+        padding: 0.45rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .screen-name-btn:hover {
+        border-color: #4a69bd;
+    }
+    .screen-name-input {
+        width: 100%;
+        box-sizing: border-box;
+        background: #2a2a2a;
+        color: #ddd;
+        border: 1px solid #4a69bd;
+        border-radius: 4px;
+        padding: 0.45rem 0.5rem;
+        font-size: 0.85rem;
+    }
+    .screen-name-input:focus {
+        outline: none;
+        border-color: #4a69bd;
+    }
+
+    /* ── PDA scan-mirror tray (bottom-right corner) ───────────────────────── */
+    .scan-tray {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        display: flex;
+        flex-direction: column-reverse;
+        gap: 10px;
+        z-index: 1200;
+        pointer-events: none;
+    }
+    .scan-chip {
+        pointer-events: auto;
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        border: 2px solid #4a69bd;
+        background: #1e1e1e;
+        color: #ddd;
+        padding: 0;
+        overflow: hidden;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+        position: relative;
+        animation: scan-chip-in 0.18s ease-out;
+        transition: transform 0.12s ease;
+    }
+    .scan-chip:hover {
+        transform: scale(1.08);
+        border-color: #6c8cff;
+    }
+    .scan-chip-amb {
+        border-color: #d9a441;
+    }
+    .scan-chip :global(.scan-chip-img) {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    .scan-chip-glyph {
+        font-size: 1.3rem;
+        line-height: 1;
+    }
+    .scan-chip-badge {
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 4px;
+        border-radius: 9px;
+        background: #d9a441;
+        color: #1b1b1b;
+        font-size: 0.7rem;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    @keyframes scan-chip-in {
+        from { opacity: 0; transform: translateY(8px) scale(0.85); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+    }
 </style>

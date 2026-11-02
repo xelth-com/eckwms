@@ -6,6 +6,8 @@ export default {
     all_repairs_title: "All repairs",
     new_order_title: "New Repair Order",
     order_title: "Repair {number}",
+    title_fallback: "Repair",
+    edit_section: "Edit",
     geocoding_btn: "Geocoding...",
     view_route_btn: "View Route & Nearby",
     delete: "Delete",

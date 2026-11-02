@@ -12,4 +12,5 @@ export default {
   login: '로그인',
   err_fill_fields: '모든 필드를 입력하세요',
   err_login_failed: '로그인 실패',
+  kiosk_countdown: '키오스크 화면이 {time} 후에 시작됩니다',
 };

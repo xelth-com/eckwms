@@ -5,6 +5,7 @@
     import { base } from '$app/paths';
     import { page } from '$app/stores';
     import { t, tr } from '$lib/i18n';
+    import { RESUME_STORAGE_KEY, shouldResumeImmediately } from '$lib/idleReload';
 
     let email = '';
     let password = '';
@@ -20,6 +21,18 @@
     let posEnabled = false;
     // Exhibition nodes advertise the shared demo account (ECK_DEMO_LOGIN_HINT).
     let demoLoginHint = '';
+
+    // Kiosk auto-login countdown (set system_config.auto_login_delay_secs >
+    // 0 on this node). null = not counting down. Any keyboard/pointer/input
+    // activity resets it to the full delay — someone is using the form.
+    let remaining = null;
+    let countdownDelaySecs = 0;
+
+    function formatCountdown(secs) {
+        const m = Math.floor(secs / 60);
+        const s = secs % 60;
+        return `${m}:${String(s).padStart(2, '0')}`;
+    }
 
     async function checkPosStatus() {
         try {
@@ -42,9 +55,12 @@
                 if (data.needsSetup) {
                     needsSetup = true;
                     setupEmail = data.email;
-                    if (setupPassword !== data.password) {
-                        setupPassword = data.password;
-                        if (email === '' || email === data.email) {
+                    // The password is disclosed only on the node's own network;
+                    // a public caller gets a hint where to read it instead.
+                    const shown = data.password ?? data.hint ?? '';
+                    if (setupPassword !== shown) {
+                        setupPassword = shown;
+                        if (data.password && (email === '' || email === data.email)) {
                             email = data.email;
                             password = data.password;
                         }
@@ -66,8 +82,66 @@
         checkSetupStatus();
         checkPosStatus();
         pollInterval = setInterval(checkSetupStatus, 3000);
+
+        let countdownInterval = null;
+
+        function resetCountdown() {
+            if (remaining === null) return;
+            remaining = countdownDelaySecs;
+        }
+
+        function startCountdown(secs) {
+            countdownDelaySecs = secs;
+            remaining = secs;
+            countdownInterval = setInterval(() => {
+                remaining -= 1;
+                if (remaining <= 0) {
+                    clearInterval(countdownInterval);
+                    countdownInterval = null;
+                    remaining = null;
+                    authStore.kioskAutoLogin();
+                }
+            }, 1000);
+        }
+
+        window.addEventListener('keydown', resetCountdown);
+        window.addEventListener('pointerdown', resetCountdown);
+        window.addEventListener('input', resetCountdown);
+
+        // `?real=1` is the staff escape hatch (see the isKioskObserver guard
+        // below) — never start the countdown there, it would just fight the
+        // operator trying to reach the password form.
+        if (!$page.url.searchParams.has('real')) {
+            authStore.probeKioskAutoLogin().then((result) => {
+                if (result.available && result.delaySecs > 0) {
+                    // Resume handshake: if the root layout just reloaded us
+                    // (new deploy, user was idle), skip the 5-minute
+                    // countdown and log the observer back in immediately —
+                    // same code path the countdown itself uses at zero.
+                    let resume = false;
+                    try {
+                        const raw = sessionStorage.getItem(RESUME_STORAGE_KEY);
+                        resume = shouldResumeImmediately(raw);
+                        sessionStorage.removeItem(RESUME_STORAGE_KEY);
+                    } catch (e) {
+                        // sessionStorage unavailable — fall back to the
+                        // normal countdown, never crash the login page.
+                    }
+                    if (resume) {
+                        authStore.kioskAutoLogin();
+                    } else {
+                        startCountdown(result.delaySecs);
+                    }
+                }
+            });
+        }
+
         return () => {
             if (pollInterval) clearInterval(pollInterval);
+            if (countdownInterval) clearInterval(countdownInterval);
+            window.removeEventListener('keydown', resetCountdown);
+            window.removeEventListener('pointerdown', resetCountdown);
+            window.removeEventListener('input', resetCountdown);
         };
     });
 
@@ -182,6 +256,8 @@
                         <input
                             type="text"
                             id="email"
+                            data-ime="off"
+                            autocomplete="username"
                             bind:value={email}
                             placeholder="operator@eckwms.local"
                             disabled={isLoading}
@@ -206,6 +282,10 @@
                     <button type="submit" disabled={isLoading}>
                         {isLoading ? $t('login.authenticating') : $t('login.login')}
                     </button>
+
+                    {#if remaining !== null}
+                        <div class="kiosk-countdown">{$t('login.kiosk_countdown', { time: formatCountdown(remaining) })}</div>
+                    {/if}
                 </form>
             </div>
         </div>
@@ -480,6 +560,13 @@
         margin-bottom: 1rem;
         font-size: 0.88rem;
         text-align: center;
+    }
+
+    .kiosk-countdown {
+        margin-top: 0.8rem;
+        text-align: center;
+        font-size: 0.78rem;
+        color: #666;
     }
 
     .kiosk-toggle {

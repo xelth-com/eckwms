@@ -58,6 +58,7 @@ export default {
     fetch_from_home: "Fetch original from home node",
     no_content: "(no content)",
     attachment_alt: "attachment",
+    attachment_open_failed: "Could not open attachment: {error}",
     pii_restored_title: "Restored from local data",
     pii_unrestored_title: "Could not restore - source not on this node",
     translating_to: "Translating to {lang}…",

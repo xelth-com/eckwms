@@ -440,6 +440,31 @@ impl AiAuth {
     /// calling `resolve` and are untouched.
     pub async fn resolve_for_task(http: &HttpClient, task: &str) -> Result<Self> {
         if let Some(model) = or_route_for_task(task) {
+            return Self::resolve_or_route(http, task, model).await;
+        }
+        Self::resolve(http).await
+    }
+
+    /// Like [`resolve_for_task`] but with the OR `model` PINNED by the caller
+    /// (per-request brain engine, `.eck/OPENROUTER_TIER.md` §alt) rather than
+    /// looked up in `ECK_AI_TASK_ROUTES`. Keeps the deny-policy check and every
+    /// transport (slug upstream / BYOK / managed proxy / relay), so a pinned
+    /// alt-engine model resolves exactly as a routed one would. A denied model
+    /// falls back to the default auth just like a denied route.
+    pub async fn resolve_for_task_with_model(
+        http: &HttpClient,
+        task: &str,
+        model: &str,
+    ) -> Result<Self> {
+        Self::resolve_or_route(http, task, model.to_string()).await
+    }
+
+    /// Shared OR resolution for a KNOWN model (from a route or a pinned caller):
+    /// deny-policy → slug upstream → BYOK → managed proxy/relay → fail-open to
+    /// the default auth. `task` is used only for the once-per-task warnings.
+    async fn resolve_or_route(http: &HttpClient, task: &str, model: String) -> Result<Self> {
+        {
+            // (Every path in this block returns; the block is a scope, not a value.)
             // Node-side model policy (security setting): a route whose model is
             // denied by `ECK_AI_MODEL_DENY` (comma-separated vendor prefixes) is
             // treated as NO route — fall through to the default auth. Logged once
@@ -452,6 +477,30 @@ impl AiAuth {
                     );
                 }
                 return Self::resolve(http).await;
+            }
+
+            // Slug upstream (`.eck/OPENROUTER_TIER.md` §slug), checked BEFORE the
+            // `OPENROUTER_API_KEY`-empty/managed branch: a slug model (name
+            // contains `/`) on a node with an `ECK_OR_SLUG_API_KEY` routes to a
+            // SECOND, per-model BYOK upstream carrying its OWN key + base URL —
+            // needed where the primary upstream is a vendor-direct endpoint (e.g.
+            // Z.ai-direct) that can't serve arbitrary slugs. Checked before the
+            // key branch so even a managed/relay node with a local slug key
+            // reaches slug models BYOK. This upstream is paid in USD by the node
+            // owner, so we carry `base_url: Some(..)` — which (as on the bench
+            // leg) SUPPRESSES the managed-wallet report in `openrouter_generate`;
+            // reporting would double-charge at the unknown-model ×10 multiplier.
+            // Local telemetry (chat_turn cost, `[brain]` log) is unaffected — it
+            // reads the returned usage, not the wallet seam. Unprefixed model or
+            // no slug key ⇒ `None`, and everything below is BYTE-IDENTICAL.
+            if let Some((base, slug_key)) = slug_upstream(&model) {
+                return Ok(AiAuth::OpenRouter {
+                    api_key: slug_key,
+                    model,
+                    proxied: false,
+                    serve_node: None,
+                    base_url: Some(base),
+                });
             }
 
             let key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
@@ -514,7 +563,6 @@ impl AiAuth {
                 base_url: None,
             });
         }
-        Self::resolve(http).await
     }
 
     /// The OpenRouter shim: translate a Gemini-shaped request into an OpenAI
@@ -1606,6 +1654,39 @@ pub async fn resolve_for_task(http: &HttpClient, task: &str) -> Result<AiAuth> {
     AiAuth::resolve_for_task(http, task).await
 }
 
+/// Module-level shorthand for [`AiAuth::resolve_for_task_with_model`] — resolve
+/// auth for a NAMED task with the OR `model` PINNED by the caller (the alt brain
+/// engine), keeping the deny-policy check and every transport.
+pub async fn resolve_for_task_with_model(
+    http: &HttpClient,
+    task: &str,
+    model: &str,
+) -> Result<AiAuth> {
+    AiAuth::resolve_for_task_with_model(http, task, model).await
+}
+
+/// Build a BYOK OpenRouter auth for a SHADOW/soak call — slug-aware, but NEVER
+/// managed/relay and NEVER deny-policy-gated (the soak is BYOK by construction,
+/// independent of `ECK_AI_TASK_ROUTES`). A slug model (name contains `/`) with
+/// `ECK_OR_SLUG_API_KEY` set takes the per-model slug upstream (`base_url: Some`
+/// ⇒ carried its own key + base, and — like the bench leg — NOT reported to the
+/// managed wallet); every other model uses `byok_key` on the node's primary
+/// upstream, byte-identical to a hand-built `OpenRouter { proxied:false,
+/// serve_node:None, base_url:None }`.
+pub fn openrouter_byok_for_model(model: &str, byok_key: &str) -> AiAuth {
+    let (api_key, base_url) = match slug_upstream(model) {
+        Some((base, slug_key)) => (slug_key, Some(base)),
+        None => (byok_key.to_string(), None),
+    };
+    AiAuth::OpenRouter {
+        api_key,
+        model: model.to_string(),
+        proxied: false,
+        serve_node: None,
+        base_url,
+    }
+}
+
 /// Fire-and-forget usage report to the metering authority (`ECK_VERTEX_USAGE_URL`,
 /// authed by `ECK_LICENSE_TOKEN`). No-op when either env is unset. `usage` is a
 /// Gemini/Vertex `usageMetadata` (or estimate) Value.
@@ -1751,6 +1832,36 @@ fn model_denied_by_policy(model: &str, denied: &[String]) -> bool {
         .map(|p| p.trim())
         .filter(|p| !p.is_empty())
         .any(|p| model.starts_with(p))
+}
+
+/// Pure "slug upstream" decision (`.eck/OPENROUTER_TIER.md` §slug). A model name
+/// containing `/` is an OpenRouter *slug* (`vendor/model`); an unprefixed name is
+/// vendor-direct. On a node whose primary OpenAI-compatible upstream is a
+/// vendor-direct endpoint that can't serve arbitrary slugs (e.g. Z.ai-direct,
+/// where `OPENROUTER_API_KEY` is the Z.ai key and `*=glm-5.3-flash`), a slug
+/// model needs a SECOND, per-model upstream. Given the model plus the slug env
+/// values, return `Some((base_url, api_key))` for that upstream, or `None` for
+/// "unchanged — resolve as today". `None` unless the model contains `/` AND the
+/// slug key is non-empty, so an unprefixed name, or a node with no slug key, is
+/// BYTE-IDENTICAL to before. Empty base ⇒ the public OpenRouter host.
+fn slug_upstream_for(model: &str, slug_key: &str, slug_base: &str) -> Option<(String, String)> {
+    if !model.contains('/') || slug_key.trim().is_empty() {
+        return None;
+    }
+    let base = if slug_base.trim().is_empty() {
+        "https://openrouter.ai/api/v1".to_string()
+    } else {
+        slug_base.trim().to_string()
+    };
+    Some((base, slug_key.trim().to_string()))
+}
+
+/// Env wrapper over [`slug_upstream_for`]: read `ECK_OR_SLUG_API_KEY` /
+/// `ECK_OR_SLUG_BASE_URL` and decide the slug upstream for `model`.
+fn slug_upstream(model: &str) -> Option<(String, String)> {
+    let key = std::env::var("ECK_OR_SLUG_API_KEY").unwrap_or_default();
+    let base = std::env::var("ECK_OR_SLUG_BASE_URL").unwrap_or_default();
+    slug_upstream_for(model, &key, &base)
 }
 
 /// Build the TRANSPORT-NEUTRAL relay AI envelope (`.eck/OPENROUTER_TIER.md`
@@ -1997,6 +2108,7 @@ fn or_reasoning_field(model: &str) -> OrReasoning {
 /// Per-model reasoning config (`.eck/OPENROUTER_TIER.md` §3.3), bench-verified:
 ///   - `qwen/`               → `{"enabled":false}` (accepts off; else burns budget on thinking)
 ///   - `z-ai/`,`google/`,`stepfun/` → `{"effort":"low"}` (`enabled:false` → HTTP 400)
+///   - `deepseek/`           → `{"enabled":false}`, retry-once-without on 400 (accepts off; owner-verified live on v4.1-flash)
 ///   - `anthropic/`          → omit (thinking off by default)
 ///   - unknown               → `{"effort":"low"}`, retry-once-without on 400
 /// `override_str` (`ECK_OR_REASONING="<prefix>=<mode>,…"`) wins when a prefix
@@ -2041,6 +2153,11 @@ fn or_reasoning_for(model: &str, override_str: Option<&str>) -> OrReasoning {
         || model.starts_with("stepfun/")
     {
         OrReasoning::Field(json!({ "effort": "low" }), false)
+    } else if model.starts_with("deepseek/") {
+        // DeepSeek (OpenRouter slug): accepts `{"enabled":false}` to turn thinking
+        // off (owner-verified live on deepseek-v4.1-flash). Keep the 400-retry so
+        // an upstream that rejects the field degrades to a plain call.
+        OrReasoning::Field(json!({ "enabled": false }), true)
     } else if model.starts_with("anthropic/") {
         OrReasoning::Omit
     } else {
@@ -2126,6 +2243,28 @@ fn take_pending_id(pending: &mut std::collections::VecDeque<(String, String)>, n
 /// Providers whose OpenAI-compatible endpoint accepts only `tool_choice:"auto"`
 /// (Meta's Muse Spark family on OpenRouter, verified 2026-09-07). Matched on
 /// the OpenRouter model id prefix.
+/// The `max_tokens` floor for an OpenRouter model: an `ECK_OR_MAX_TOKENS`
+/// entry whose prefix matches wins, else 12000 for MiMo (`xiaomi/`, whose
+/// thinking counts against the same budget), else 3000. Pure.
+fn or_max_tokens_floor(model: &str, override_str: Option<&str>) -> u64 {
+    if let Some(s) = override_str {
+        for pair in s.split(',') {
+            if let Some((prefix, n)) = pair.split_once('=') {
+                if model.starts_with(prefix.trim()) {
+                    if let Ok(n) = n.trim().parse::<u64>() {
+                        return n;
+                    }
+                }
+            }
+        }
+    }
+    if model.starts_with("xiaomi/") {
+        12000
+    } else {
+        3000
+    }
+}
+
 fn or_tool_choice_auto_only(model: &str) -> bool {
     let m = model.trim().trim_start_matches("openrouter:").to_ascii_lowercase();
     m.starts_with("meta/")
@@ -2292,13 +2431,16 @@ fn or_build_request(model: &str, body: &Value) -> Result<Value> {
     }
 
     let gc = body.get("generationConfig");
-    // maxOutputTokens → max_tokens, floored at 3000 (512 truncated ~60% of our
-    // German-format outputs in the bench).
+    // maxOutputTokens → max_tokens, floored per model (3000 by default: 512
+    // truncated ~60% of our German-format outputs in the bench). Reasoning
+    // models spend the same budget on thinking first — MiMo-V2.6 answered a
+    // 98k-token chat turn with empty content + reasoning at 3000 (2026-10-01),
+    // so its floor is higher; `ECK_OR_MAX_TOKENS="<prefix>=<n>,…"` overrides.
     let max_tokens = gc
         .and_then(|g| g.get("maxOutputTokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0)
-        .max(3000);
+        .max(or_max_tokens_floor(model, std::env::var("ECK_OR_MAX_TOKENS").ok().as_deref()));
     req["max_tokens"] = json!(max_tokens);
     if let Some(t) = gc.and_then(|g| g.get("temperature")) {
         req["temperature"] = t.clone();
@@ -2639,6 +2781,19 @@ mod tests {
         assert_eq!(none["max_tokens"], 3000);
     }
 
+    /// Reasoning models get a higher floor (their thinking eats the budget);
+    /// an `ECK_OR_MAX_TOKENS` prefix entry overrides either default.
+    #[test]
+    fn or_max_tokens_floor_per_model() {
+        assert_eq!(or_max_tokens_floor("xiaomi/mimo-v2.6-flash", None), 12000);
+        assert_eq!(or_max_tokens_floor("deepseek/deepseek-v4.1-flash", None), 3000);
+        assert_eq!(or_max_tokens_floor("xiaomi/mimo-v2.6-pro", Some("xiaomi/=20000,deepseek/=6000")), 20000);
+        assert_eq!(or_max_tokens_floor("deepseek/deepseek-v4.1-flash", Some("xiaomi/=20000,deepseek/=6000")), 6000);
+        assert_eq!(or_max_tokens_floor("glm-5.3-flash", Some("xiaomi/=x")), 3000);
+        let mimo = or_build_request("xiaomi/mimo-v2.6-flash", &json!({ "contents": [] })).unwrap();
+        assert_eq!(mimo["max_tokens"], 12000);
+    }
+
     /// A non-functionDeclarations tool (e.g. googleSearch) has nothing to
     /// translate ⇒ no OpenAI `tools` field (no longer a hard bail).
     #[test]
@@ -2924,6 +3079,11 @@ mod tests {
             OrReasoning::Field(json!({ "effort": "low" }), false),
             "OR path (z-ai/ prefix) unchanged: still the nested reasoning object"
         );
+        assert_eq!(
+            or_reasoning_for("deepseek/deepseek-v4.1-flash", None),
+            OrReasoning::Field(json!({ "enabled": false }), true),
+            "deepseek/ slug: thinking off, keep the 400-retry"
+        );
         // Z.ai-direct glm (unprefixed) → TOP-LEVEL reasoning_effort, not the object.
         assert_eq!(
             or_reasoning_for("glm-5.3-flash", None),
@@ -2984,6 +3144,8 @@ mod tests {
             "ECK_OR_PROXY_URL",
             "ECK_OR_SERVE_NODE",
             "ECK_OR_BASE_URL",
+            "ECK_OR_SLUG_API_KEY",
+            "ECK_OR_SLUG_BASE_URL",
             "ECK_LICENSE_TOKEN",
             "ECK_VERTEX_MINT_URL",
             "ECK_VERTEX_BEARER",
@@ -3061,6 +3223,26 @@ mod tests {
         assert!(or_error_is_retryable("OpenRouter chat error (500, model=glm)"));
         assert!(or_error_is_retryable("error sending request: operation timed out"));
         assert!(or_error_is_retryable("OpenRouter returned empty content"));
+    }
+
+    /// Slug upstream (§slug) pure decision: only a slug model (name with `/`) AND
+    /// a non-empty slug key select the second upstream; empty base ⇒ public host.
+    #[test]
+    fn slug_upstream_split() {
+        // Unprefixed model ⇒ never (byte-identical to today, even with a key).
+        assert_eq!(slug_upstream_for("glm-5.3-flash", "sk-slug", ""), None);
+        // Slug model but no slug key ⇒ never.
+        assert_eq!(slug_upstream_for("deepseek/deepseek-v4.1-flash", "  ", "x"), None);
+        // Slug model + key, empty base ⇒ public OpenRouter host.
+        assert_eq!(
+            slug_upstream_for("deepseek/deepseek-v4.1-flash", "sk-slug", ""),
+            Some(("https://openrouter.ai/api/v1".to_string(), "sk-slug".to_string()))
+        );
+        // Explicit base is trimmed and carried through with the key.
+        assert_eq!(
+            slug_upstream_for("deepseek/deepseek-v4.1-flash", " sk-slug ", " https://or.example/api "),
+            Some(("https://or.example/api".to_string(), "sk-slug".to_string()))
+        );
     }
 
     /// OR backoff schedule: 2s, 5s, 10s, then 20s cap.
@@ -3163,6 +3345,54 @@ mod tests {
             byok.generate_url("ignored"),
             "http://127.0.0.1:9099/api/v1/chat/completions"
         );
+        clear_ai_env();
+    }
+
+    /// Slug upstream resolution (§slug): a slug model wins the second upstream
+    /// (own key + base, `base_url: Some`) EVEN when `OPENROUTER_API_KEY` holds a
+    /// vendor-direct (Z.ai) key; an unprefixed model on the same node stays BYOK
+    /// on the primary key, byte-identical to before.
+    #[tokio::test]
+    async fn resolve_slug_upstream_second_key() {
+        let _g = env_guard();
+        clear_ai_env();
+        let http = reqwest::Client::new();
+        // Z.ai-direct node: primary key + base, wildcard glm, plus a slug key.
+        std::env::set_var("ECK_AI_TASK_ROUTES", "*=glm-5.3-flash");
+        std::env::set_var("OPENROUTER_API_KEY", "zai-key");
+        std::env::set_var("ECK_OR_BASE_URL", "https://api.z.ai/api/paas/v4");
+        std::env::set_var("ECK_OR_SLUG_API_KEY", "sk-or-slug");
+
+        // Pinned slug model → slug upstream (second key, base_url:Some, direct).
+        let a = AiAuth::resolve_for_task_with_model(&http, "brain", "deepseek/deepseek-v4.1-flash")
+            .await
+            .unwrap();
+        match a {
+            AiAuth::OpenRouter { ref api_key, ref model, proxied, ref serve_node, ref base_url } => {
+                assert_eq!(api_key, "sk-or-slug", "slug model carries its OWN key, not the Z.ai key");
+                assert_eq!(model, "deepseek/deepseek-v4.1-flash");
+                assert!(!proxied && serve_node.is_none(), "slug upstream is BYOK-direct");
+                assert_eq!(
+                    base_url.as_deref(),
+                    Some("https://openrouter.ai/api/v1"),
+                    "default slug base = public OpenRouter; base_url:Some ⇒ unreported to wallet"
+                );
+            }
+            other => panic!("expected slug OpenRouter, got {other:?}"),
+        }
+
+        // Wildcard-routed unprefixed model on the SAME node → primary BYOK,
+        // base_url:None (byte-identical to today; Z.ai key + host).
+        let a = AiAuth::resolve_for_task(&http, "summarization").await.unwrap();
+        match a {
+            AiAuth::OpenRouter { ref api_key, ref model, proxied, ref serve_node, ref base_url } => {
+                assert_eq!(api_key, "zai-key");
+                assert_eq!(model, "glm-5.3-flash");
+                assert!(!proxied && serve_node.is_none());
+                assert!(base_url.is_none(), "unprefixed model untouched by the slug split");
+            }
+            other => panic!("expected primary BYOK OpenRouter, got {other:?}"),
+        }
         clear_ai_env();
     }
 

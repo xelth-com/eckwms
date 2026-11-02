@@ -26,6 +26,11 @@ export default {
   site_features: 'eckWMS — alle Funktionen',
   site_developers: 'Für Entwickler',
 change_language: 'Sprache ändern',
+// Scan-mirror screen name (PDA scan tray target)
+screen_label: 'Bildschirm',
+screen_rename: 'Diesen Bildschirm umbenennen',
+  // In-App-Eingabemethode (Tastatur-IME) Anzeige
+  ime_hint: 'Eingabesprache: {lang}. Zum Umschalten zwischen {lang} und Englisch klicken oder Umschalt+Leertaste drücken (Alt+Umschalt / Strg+Umschalt funktionieren ebenfalls).',
   lang_other: 'Andere',
   change_password: 'Passwort ändern',
   current_password: 'Aktuelles Passwort',
@@ -51,6 +56,7 @@ change_language: 'Sprache ändern',
   copied_with_prompt: 'Mit Prompt kopiert!',
   alert_report_sent: 'Verschlüsselter Bericht automatisch an den Remote-Support gesendet am {date}',
   acknowledge_dismiss: 'Bestätigen & schließen',
+  toast_alert_resolved: 'Recovered: {title}',
 
   ambiguous_title: 'Mehrere Treffer gefunden',
   ambiguous_hint: 'Dieser Barcode entspricht mehreren Datensätzen. Bitte wählen Sie den richtigen aus:',

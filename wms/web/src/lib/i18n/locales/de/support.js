@@ -58,6 +58,7 @@ export default {
     fetch_from_home: "Original vom Heimatknoten laden",
     no_content: "(kein Inhalt)",
     attachment_alt: "Anhang",
+    attachment_open_failed: "Anhang konnte nicht geöffnet werden: {error}",
     pii_restored_title: "Aus lokalen Daten wiederhergestellt",
     pii_unrestored_title: "Konnte nicht wiederhergestellt werden - Quelle nicht auf diesem Knoten",
     translating_to: "Übersetze nach {lang}…",

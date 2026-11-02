@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::info;
 use uuid::Uuid;
@@ -148,9 +148,27 @@ impl FileStore {
         })
     }
 
+    /// Resolve a `storage_path` to disk, confined to the CAS layout. The path
+    /// rides on the mesh-synced `file_resource` row, so a peer can influence
+    /// it: an absolute or `..`-traversing value would otherwise let `read`
+    /// serve — and `write_verified` overwrite — any file the WMS user can reach
+    /// (review finding F02-12, 2026-09-30). Every disk access goes through
+    /// here; the only accepted shape is the one `save` produces:
+    /// `data/filestore/<aa>/<bb>/<sha>[.ext]`, plain components only.
+    fn confined(&self, storage_path: &str) -> Result<PathBuf, String> {
+        use std::path::Component;
+        let rel = Path::new(storage_path);
+        let plain = rel.components().all(|c| matches!(c, Component::Normal(_)));
+        if !plain || !storage_path.starts_with("data/filestore/") || storage_path.contains('\\') {
+            return Err(format!("storage path '{storage_path}' is outside the file store"));
+        }
+        Ok(PathBuf::from(&self.base_dir).join(rel))
+    }
+
     /// Check whether a file exists on disk given a relative storage path.
+    /// A path outside the CAS layout is simply "not here".
     pub fn exists(&self, storage_path: &str) -> bool {
-        PathBuf::from(&self.base_dir).join(storage_path).exists()
+        self.confined(storage_path).map(|p| p.exists()).unwrap_or(false)
     }
 
     /// Land bytes fetched FROM A MESH PEER at the storage path the synced
@@ -178,7 +196,7 @@ impl FileStore {
                 content.len()
             ));
         }
-        let abs_path = PathBuf::from(&self.base_dir).join(storage_path);
+        let abs_path = self.confined(storage_path)?;
         if let Some(parent) = abs_path.parent() {
             fs::create_dir_all(parent)
                 .await
@@ -197,7 +215,7 @@ impl FileStore {
 
     /// Read file bytes from disk given a relative storage path.
     pub async fn read(&self, storage_path: &str) -> Result<Vec<u8>, String> {
-        let abs_path = PathBuf::from(&self.base_dir).join(storage_path);
+        let abs_path = self.confined(storage_path)?;
         fs::read(&abs_path)
             .await
             .map_err(|e| format!("Failed to read file: {}", e))
@@ -207,6 +225,35 @@ impl FileStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_paths_are_confined_to_the_cas_layout() {
+        let store = FileStore::new("base");
+        assert!(store.confined("data/filestore/aa/bb/aabb.pdf").is_ok());
+        assert!(store.confined("data/filestore/aa/bb/aabb").is_ok());
+        for bad in [
+            "/etc/passwd",
+            "../.env",
+            "data/filestore/../../.env",
+            "data/filestore/aa/../../../.env",
+            "data/other/x.bin",
+            "C:\\Windows\\win.ini",
+            "data/filestore/aa\\..\\..\\x",
+            "",
+        ] {
+            assert!(store.confined(bad).is_err(), "{bad} must be refused");
+            assert!(!store.exists(bad));
+        }
+    }
+
+    #[tokio::test]
+    async fn read_and_write_refuse_paths_outside_the_store() {
+        let dir = std::env::temp_dir().join(format!("eck-filestore-{}", uuid::Uuid::new_v4()));
+        let store = FileStore::new(dir.to_str().unwrap());
+        assert!(store.write_verified("../escape.txt", b"x", "").await.is_err());
+        assert!(store.read("/etc/hostname").await.is_err());
+        assert!(!dir.join("..").join("escape.txt").exists());
+    }
 
     #[test]
     fn test_content_hash_uuid_vectors() {

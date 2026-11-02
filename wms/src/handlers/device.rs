@@ -86,6 +86,12 @@ pub struct DeviceRecord {
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
+    /// Scan-mirror preference (.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md §5): the
+    /// dashboard `screen_id` this PDA mirrors its scans to (set via
+    /// `POST /api/pda/mirror`). `None` = not mirroring. A per-scan `screenId`
+    /// in the scan body overrides this for that one scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror_screen_id: Option<String>,
     // ─── Xelixir C2 control plane (replicated via mesh sync) ───
     // Cloud admin writes `xelixir_command` ("start" | "stop"); edge node's
     // AgentController catches the propagated update via LIVE SELECT and
@@ -376,6 +382,8 @@ pub async fn register_device_core(
             created_at: existing_device.created_at,
             updated_at: now,
             deleted_at: if was_deleted { None } else { existing_device.deleted_at },
+            // Re-registration preserves the scan-mirror preference.
+            mirror_screen_id: existing_device.mirror_screen_id,
             // Re-registration preserves any in-flight xelixir state.
             xelixir_command: existing_device.xelixir_command,
             xelixir_status: existing_device.xelixir_status,
@@ -404,6 +412,7 @@ pub async fn register_device_core(
             created_at: now.clone(),
             updated_at: now,
             deleted_at: None,
+            mirror_screen_id: None,
             xelixir_command: None,
             xelixir_status: None,
             xelixir_token: None,

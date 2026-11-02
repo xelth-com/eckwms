@@ -23,6 +23,11 @@ fn brand() -> &'static str {
     })
 }
 
+/// The configured `ECK_TENANT_BRAND`, or an empty string when unset.
+pub fn tenant_brand() -> &'static str {
+    brand()
+}
+
 fn vertical() -> &'static str {
     static V: OnceLock<String> = OnceLock::new();
     V.get_or_init(|| {

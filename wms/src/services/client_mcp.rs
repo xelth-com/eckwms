@@ -141,7 +141,14 @@ pub(crate) async fn serve_signed(state: &Arc<AppState>, payload: Value) -> Signe
 
     // over_relay = TRUE even on the direct ingress — see the doc comment above:
     // capability follows the credential, not the transport.
-    match handle_jsonrpc(state, tier, &signed.request.mcp, true).await {
+    // Verified caller identity (cert subject + key prefix) for the write-path
+    // audit and `recorded_by` (mcp::bundles).
+    let caller = format!(
+        "cert:{}:{}",
+        cert.subject,
+        cert.client_pubkey.chars().take(12).collect::<String>()
+    );
+    match crate::mcp::bundles::with_caller(caller, handle_jsonrpc(state, tier, &signed.request.mcp, true)).await {
         // Notifications produce no response; return an explicit accepted marker.
         None => SignedMcpOutcome::Served(json!({"jsonrpc": "2.0", "accepted": true})),
         Some(resp) => SignedMcpOutcome::Served(resp),

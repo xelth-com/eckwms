@@ -39,17 +39,24 @@ pub async fn start_orchestrator(state: Arc<AppState>) {
     tokio::time::sleep(Duration::from_secs(25)).await;
 
     let worker_id = format!("orch-{}", Uuid::new_v4());
-    info!("[Orchestrator] Central Brain starting (worker_id={})", worker_id);
+    info!(
+        "[Orchestrator] Central Brain starting (worker_id={})",
+        worker_id
+    );
 
     {
         let s = state.clone();
         let wid = worker_id.clone();
-        tokio::spawn(async move { watch_tasks_live(s, wid).await; });
+        tokio::spawn(async move {
+            watch_tasks_live(s, wid).await;
+        });
     }
     {
         let s = state.clone();
         let wid = worker_id.clone();
-        tokio::spawn(async move { watch_inbox_live(s, wid).await; });
+        tokio::spawn(async move {
+            watch_inbox_live(s, wid).await;
+        });
     }
 
     let mut interval = tokio::time::interval(Duration::from_secs(30));
@@ -126,14 +133,12 @@ async fn watch_inbox_live(state: Arc<AppState>, _worker_id: String) {
                                 if notification.action.to_string() != "Create" {
                                     continue;
                                 }
-                                let task_id_full = match notification
-                                    .data
-                                    .get("task_id")
-                                    .and_then(|v| v.as_str())
-                                {
-                                    Some(s) if !s.is_empty() => s.to_string(),
-                                    _ => continue,
-                                };
+                                let task_id_full =
+                                    match notification.data.get("task_id").and_then(|v| v.as_str())
+                                    {
+                                        Some(s) if !s.is_empty() => s.to_string(),
+                                        _ => continue,
+                                    };
                                 let res = state
                                     .db
                                     .query(
@@ -201,7 +206,12 @@ async fn poll_ready_tasks(state: &Arc<AppState>, worker_id: &str) -> anyhow::Res
     for task in tasks {
         if let Some(task_id) = task.get("id").and_then(|v| v.as_str()) {
             eck_core::metrics::tick(eck_core::metrics::M::OrchestratorTask);
-            if let Err(e) = eck_core::ai::with_ai_task("orchestrator", try_claim_and_execute(state.clone(), task_id.to_string(), worker_id.to_string())).await {
+            if let Err(e) = eck_core::ai::with_ai_task(
+                "orchestrator",
+                try_claim_and_execute(state.clone(), task_id.to_string(), worker_id.to_string()),
+            )
+            .await
+            {
                 error!("[Orchestrator] Exec error for {}: {}", task_id, e);
             }
         }
@@ -344,10 +354,7 @@ async fn try_claim_and_execute(
                             }
                         }
                     }
-                    Err(e) => warn!(
-                        "[Orchestrator] Failed to fetch SOPs for {}: {}",
-                        rid, e
-                    ),
+                    Err(e) => warn!("[Orchestrator] Failed to fetch SOPs for {}: {}", rid, e),
                 }
             }
             Err(e) => warn!(
@@ -394,7 +401,9 @@ async fn try_claim_and_execute(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let symptom = mask_free_text(&http, subject_raw).await;
-            match crate::ai::kb_client::kb_brief(&http, &device_model, &symptom, &error_code, 20).await {
+            match crate::ai::kb_client::kb_brief(&http, &device_model, &symptom, &error_code, 20)
+                .await
+            {
                 Ok(Some(raw)) => {
                     if let Some(brief) = crate::ai::kb_client::extract_brief(&raw) {
                         system_prompt.push_str(
@@ -403,9 +412,8 @@ async fn try_claim_and_execute(
                         system_prompt.push_str(&brief);
                         let details = crate::ai::kb_client::extract_details(&raw, 5, 700);
                         if !details.is_empty() {
-                            system_prompt.push_str(
-                                "\n### Details (full text of the top findings)\n",
-                            );
+                            system_prompt
+                                .push_str("\n### Details (full text of the top findings)\n");
                             system_prompt.push_str(&details);
                         }
                         let ids = crate::ai::kb_client::parse_finding_ids(&brief);
@@ -416,7 +424,10 @@ async fn try_claim_and_execute(
                                 .bind(("ids", ids))
                                 .await
                             {
-                                warn!("[Orchestrator] failed to record kb_brief_ids for {}: {}", rid, e);
+                                warn!(
+                                    "[Orchestrator] failed to record kb_brief_ids for {}: {}",
+                                    rid, e
+                                );
                             }
                         }
                     }
@@ -451,7 +462,10 @@ async fn try_claim_and_execute(
                         .bind(("sr", sr_json))
                         .await
                     {
-                        warn!("[Orchestrator] failed to record stale_reply for {}: {}", rid, e);
+                        warn!(
+                            "[Orchestrator] failed to record stale_reply for {}: {}",
+                            rid, e
+                        );
                     }
                 }
             }
@@ -523,11 +537,18 @@ async fn try_claim_and_execute(
         .to_string();
 
     if post_state_str == "awaiting_human" {
-        info!("[Orchestrator] Task {} parked awaiting human reply", task_id);
+        info!(
+            "[Orchestrator] Task {} parked awaiting human reply",
+            task_id
+        );
         return Ok(());
     }
 
-    let final_state = if exec_error.is_some() { "failed" } else { "completed" };
+    let final_state = if exec_error.is_some() {
+        "failed"
+    } else {
+        "completed"
+    };
     // Persist the agent's final answer ON the task row. Before this it lived
     // only in the `ai_thought` audit log, so the Operator Inbox (the consumer
     // of this whole loop) had nothing to show for a completed triage — we paid
@@ -567,7 +588,9 @@ async fn try_claim_and_execute(
 
     info!(
         "[Orchestrator] Task {} finished with state={} (SOPs used: {})",
-        task_id, final_state, used_sop_ids.len()
+        task_id,
+        final_state,
+        used_sop_ids.len()
     );
     Ok(())
 }
@@ -589,6 +612,7 @@ TRIAGE RULES:
 - If the ticket's `meta.description` is empty AND the subject is a reply (starts with Re:/Fwd:/Aw:) AND `list_ticket_attachments` returns nothing — there is no customer problem to solve. Respond with a single sentence like "No actionable content — reply thread without new request." and stop. Do not call `ask_human`.
 - Do not ask for CAS UUIDs. You have `list_ticket_attachments` — use it.
 - Never invent menu paths, firmware versions, part numbers or procedures that are not in the KB digest, the tool results or the ticket; write 'not in KB' instead.
+- {{PPRL_TOKEN_RULE}}
 - Think step by step. Be concise. If the task is solvable with the context already provided, just answer."#;
 
 /// Orchestrator system prompt with the tenant's product-domain phrase spliced
@@ -596,7 +620,9 @@ TRIAGE RULES:
 fn system_prompt_text() -> &'static str {
     static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     P.get_or_init(|| {
-        SYSTEM_PROMPT_TEMPLATE.replace("{{PRODUCT_DOMAIN}}", &crate::ai::branding::product_domain_phrase())
+        SYSTEM_PROMPT_TEMPLATE
+            .replace("{{PRODUCT_DOMAIN}}", &crate::ai::branding::product_domain_phrase())
+            .replace("{{PPRL_TOKEN_RULE}}", crate::ai::summarization::PPRL_TOKEN_RULE)
     })
 }
 
@@ -604,7 +630,9 @@ fn system_prompt_text() -> &'static str {
 fn oneshot_prompt_text() -> &'static str {
     static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     P.get_or_init(|| {
-        ONESHOT_PROMPT_TEMPLATE.replace("{{PRODUCT_DOMAIN}}", &crate::ai::branding::product_domain_phrase())
+        ONESHOT_PROMPT_TEMPLATE
+            .replace("{{PRODUCT_DOMAIN}}", &crate::ai::branding::product_domain_phrase())
+            .replace("{{PPRL_TOKEN_RULE}}", crate::ai::summarization::PPRL_TOKEN_RULE)
     })
 }
 
@@ -663,7 +691,8 @@ async fn run_agent(
             info!(
                 "[brain] model={model} path={} turns={turns} cost_usd={}",
                 if is_or { "or" } else { "gemini" },
-                cost.map(|c| format!("{c:.6}")).unwrap_or_else(|| "?".to_string())
+                cost.map(|c| format!("{c:.6}"))
+                    .unwrap_or_else(|| "?".to_string())
             );
             Ok(text)
         }
@@ -679,8 +708,18 @@ async fn run_agent(
                 .or_else(|_| std::env::var("GEMINI_GENERATION_MODEL"))
                 .unwrap_or_else(|_| "gemini-3.5-flash".to_string());
             let (text, turns, _) = drive_orchestrator_native(
-                &http, &gem_auth, &gem_model, system_prompt, user_prompt, db, task_rid, ws_tx,
-                filestore, 6, image_passthrough_env(), None,
+                &http,
+                &gem_auth,
+                &gem_model,
+                system_prompt,
+                user_prompt,
+                db,
+                task_rid,
+                ws_tx,
+                filestore,
+                6,
+                image_passthrough_env(),
+                None,
             )
             .await?;
             info!("[brain] model={gem_model} path=gemini turns={turns} (fallback)");
@@ -915,7 +954,9 @@ async fn drive_orchestrator_native(
                 // Gemini 3.x with thinkingBudget=0 occasionally emits an empty
                 // STOP turn — nudge once instead of failing the whole run.
                 if !last {
-                    warn!("[Orchestrator] turn {turn}: empty model turn — nudging for a final answer");
+                    warn!(
+                        "[Orchestrator] turn {turn}: empty model turn — nudging for a final answer"
+                    );
                     contents.push(json!({
                         "role": "user",
                         "parts": [{ "text": "Answer now, based on what you have gathered." }]
@@ -924,7 +965,9 @@ async fn drive_orchestrator_native(
                 }
                 anyhow::bail!(
                     "orchestrator returned neither text nor tool calls (finishReason: {})",
-                    resp["candidates"][0]["finishReason"].as_str().unwrap_or("?")
+                    resp["candidates"][0]["finishReason"]
+                        .as_str()
+                        .unwrap_or("?")
                 );
             }
             return Ok((text, turn + 1, cost_acc));
@@ -950,7 +993,12 @@ async fn drive_orchestrator_native(
             }
             let text: String = resp["candidates"][0]["content"]["parts"]
                 .as_array()
-                .map(|ps| ps.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).collect::<Vec<_>>().join(""))
+                .map(|ps| {
+                    ps.iter()
+                        .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
                 .unwrap_or_default();
             if !text.trim().is_empty() {
                 return Ok((text, turn + 1, cost_acc));
@@ -1020,7 +1068,10 @@ async fn drive_orchestrator_native(
                     break;
                 }
                 // Skip blank/unfilled templates if a result carried the flag.
-                let is_blank = resp.get("is_blank").and_then(|b| b.as_bool()).unwrap_or(false)
+                let is_blank = resp
+                    .get("is_blank")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false)
                     || resp
                         .pointer("/doc_class/is_blank")
                         .and_then(|b| b.as_bool())
@@ -1255,7 +1306,9 @@ async fn bench_resolve_route(
             _ => anyhow::bail!("vertex-openai route requires managed Vertex auth (ECK_AI_MODE=managed + a mintable license)"),
         };
         if bearer.is_empty() || project.is_empty() {
-            anyhow::bail!("vertex-openai route: empty Vertex bearer/project (managed mint not configured)");
+            anyhow::bail!(
+                "vertex-openai route: empty Vertex bearer/project (managed mint not configured)"
+            );
         }
         let base = format!(
             "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi"
@@ -1272,7 +1325,9 @@ async fn bench_resolve_route(
     if let Some(model) = route.strip_prefix("openrouter:") {
         let model = model.trim().to_string();
         if model.is_empty() {
-            anyhow::bail!("bench route 'openrouter:' needs a model, e.g. openrouter:deepseek/deepseek-v4-pro");
+            anyhow::bail!(
+                "bench route 'openrouter:' needs a model, e.g. openrouter:deepseek/deepseek-v4-pro"
+            );
         }
         let key = std::env::var("ECK_BENCH_OR_KEY").unwrap_or_default();
         if key.trim().is_empty() {
@@ -1359,26 +1414,34 @@ pub(crate) async fn bench_run_triage(
     }
 
     let started = std::time::Instant::now();
-    let run = eck_core::ai::with_ai_task("bench", drive_orchestrator_native(
-        &http,
-        &auth,
-        &model,
-        &system_prompt,
-        &user_prompt,
-        state.db.clone(),
-        task_rid,
-        state.ws_tx.clone(),
-        filestore,
-        max_turns,
-        image_passthrough,
-        Some(&mut trace),
-    ))
+    let run = eck_core::ai::with_ai_task(
+        "bench",
+        drive_orchestrator_native(
+            &http,
+            &auth,
+            &model,
+            &system_prompt,
+            &user_prompt,
+            state.db.clone(),
+            task_rid,
+            state.ws_tx.clone(),
+            filestore,
+            max_turns,
+            image_passthrough,
+            Some(&mut trace),
+        ),
+    )
     .await;
     let wall_ms = started.elapsed().as_millis() as i64;
 
     let (answer, turns, cost_usd, error) = match run {
         Ok((text, turns, cost)) => (text, turns as i64, cost, None),
-        Err(e) => (String::new(), trace.turns.len() as i64, None, Some(e.to_string())),
+        Err(e) => (
+            String::new(),
+            trace.turns.len() as i64,
+            None,
+            Some(e.to_string()),
+        ),
     };
 
     let asked_human = trace
@@ -1401,10 +1464,26 @@ pub(crate) async fn bench_run_triage(
         "completed"
     };
 
-    let prompt_tokens: i64 = trace.turns.iter().map(|t| t["prompt_tokens"].as_i64().unwrap_or(0)).sum();
-    let candidates_tokens: i64 = trace.turns.iter().map(|t| t["candidates_tokens"].as_i64().unwrap_or(0)).sum();
-    let cached_tokens: i64 = trace.turns.iter().map(|t| t["cached_tokens"].as_i64().unwrap_or(0)).sum();
-    let thinking_tokens: i64 = trace.turns.iter().map(|t| t["thinking_tokens"].as_i64().unwrap_or(0)).sum();
+    let prompt_tokens: i64 = trace
+        .turns
+        .iter()
+        .map(|t| t["prompt_tokens"].as_i64().unwrap_or(0))
+        .sum();
+    let candidates_tokens: i64 = trace
+        .turns
+        .iter()
+        .map(|t| t["candidates_tokens"].as_i64().unwrap_or(0))
+        .sum();
+    let cached_tokens: i64 = trace
+        .turns
+        .iter()
+        .map(|t| t["cached_tokens"].as_i64().unwrap_or(0))
+        .sum();
+    let thinking_tokens: i64 = trace
+        .turns
+        .iter()
+        .map(|t| t["thinking_tokens"].as_i64().unwrap_or(0))
+        .sum();
 
     Ok(json!({
         "route": route,
@@ -1457,7 +1536,566 @@ Tools (the WMS business graph):
 - `analyze_attachment_visual(file_id, question, region?, page?)` — Gemini vision over ONE page image; use ONLY when `ocr_attachment` text is insufficient. Prefer the smallest region. METERED; may be refused by node policy. On a vector fillable form (no page image to render) it returns `status:"no_image"` with a `note` and the form fields in `context` instead of an answer — read those field values and rely on `ocr_attachment`.
 - `kb_brief(model, symptom, error_code?)` — knowledge base recall for a device model + symptom/error code. Call it BEFORE proposing any diagnostic or repair step for a device, and whenever an error code is named. If the digest is empty, say the KB has nothing and reason from the ticket only. The `details` field carries the full text of the top findings — use it for concrete steps; the `digest` lines are only titles.
 
+{{PPRL_TOKEN_RULE}} Tokens are valid lookup keys for tools that take a customer, email, phone, or address.
+
 Ground every claim in tool results — do not guess. Never invent menu paths, firmware versions, part numbers or procedures that are not in the KB digest, the tool results or the ticket; write 'not in KB' instead. Reply with a concise, complete answer in English."#;
+
+/// Chat-only system prompt (W1-3). The one-shot MCP prompt above tells the model
+/// there is "no operator to ask and no follow-up turn" and to pick a candidate on
+/// its own — wrong for the interactive dashboard chat. This template frames an
+/// ongoing conversation with a human operator: answer in their language, ask ONE
+/// clarifying question instead of guessing, ground every fact, and reach for
+/// `ticket_stats` (not paged `ticket_search`) for counts and oldest/newest. Tool
+/// parameters are NOT copied in — the declarations carry them. `{{KB_RULE}}` is
+/// spliced empty when the KB is not configured on this node (capability-aware).
+const CHAT_PROMPT_TEMPLATE: &str = r#"You are the Central Brain (orchestrator) for eckWMS — a Rust-based WMS/ERP for {{PRODUCT_DOMAIN}}. You are talking to a human operator in an ongoing dashboard conversation: earlier turns are above and the operator can reply again, so you do not have to resolve everything in a single run.
+
+Answer in the language of the operator's LAST message. Be concise.
+
+When a question is ambiguous, or several customers / companies / tickets plausibly match, ask ONE short clarifying question instead of guessing — do not pick a candidate at random.
+
+Tools (the WMS business graph — the declarations carry each tool's parameters; pick the right one):
+- `customer_360` — START HERE for a customer question (email, name or company fragment): identity, devices, ticket counts, open tickets.
+- `device_history` — a unit's full ticket history by serial number.
+- `ticket_search` — find tickets by number or subject fragment.
+- `ticket_stats` — counts and rankings. Use this for "how many", "oldest / newest", and per-status / per-company / per-period questions. NEVER page `ticket_search` to count tickets yourself.
+- When you list tickets from `ticket_search` or `ticket_stats`, state the result's `matched_total`, and if you show fewer rows than that say the list is only part of the matches (e.g. "showing 6 of 11").
+- `similar_tickets` — semantically similar past tickets (across languages).
+- `search_database` — fuzzy full-text + semantic search when exact keys fail.
+- `list_ticket_attachments` / `ocr_attachment` / `analyze_qc_report` / `analyze_attachment_visual` — files on a ticket, their text, QC data, and (metered) page vision. On a fillable service form the customer's address, postal code / city and contact are NOT in the page text — they are in a `--- Formularfelder ---` block of `Feldname: Wert` lines at the END of the OCR text; pass the city or company you find there to `ticket_search`.
+
+Ground every fact in a tool result — never invent menu paths, firmware versions, part numbers, counts or procedures. Stop calling tools as soon as you can answer; do not keep probing once you have what you need. If something is not reachable from this chat (for example inventory / stock levels, or a knowledge base that is not configured on this node), say so in one sentence rather than guessing.
+{{KB_RULE}}
+{{PPRL_TOKEN_RULE}} Tokens are valid lookup keys for tools that take a customer, email, phone, or address.
+
+Format with short markdown: bullet or numbered lists, small tables, and ticket numbers as `#12345`. Keep answers tight and factual."#;
+
+/// Which brain prompt + tool catalog a run uses. `OneShot` is the MCP `ask_brain`
+/// delegation (unchanged, byte-for-byte); `Chat` is the dashboard conversation.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum RunKind {
+    OneShot,
+    Chat,
+}
+
+/// The chat system prompt with the tenant brand, the PPRL rule and — only when
+/// the KB is configured on this node — the device-diagnostic KB rule spliced in.
+/// Built per run (not cached) because KB configuration is a runtime capability.
+fn chat_prompt_text(kb_configured: bool) -> String {
+    let kb_rule = if kb_configured {
+        "- For any device diagnostic or repair step, call `kb_brief` first and ground the step in what it returns; if it has nothing, say so and reason from the ticket.\n"
+    } else {
+        ""
+    };
+    CHAT_PROMPT_TEMPLATE
+        .replace(
+            "{{PRODUCT_DOMAIN}}",
+            &crate::ai::branding::product_domain_phrase(),
+        )
+        .replace("{{PPRL_TOKEN_RULE}}", crate::ai::summarization::PPRL_TOKEN_RULE)
+        .replace("{{KB_RULE}}", kb_rule)
+}
+
+// ── Brain per-call / tool-output budgets (W1-1, W1-2) ───────────────────────
+
+/// Parse a `<secs>` / `off` / `0` AI-call timeout env into a `Duration`.
+/// `None` = no timeout (`off` or `0`); an unparseable value falls back to
+/// `default_secs`. Pure, so the parsing is unit-tested.
+fn ai_call_timeout(var: &str, default_secs: u64) -> Option<Duration> {
+    match std::env::var(var) {
+        Ok(s) => {
+            let s = s.trim();
+            if s.eq_ignore_ascii_case("off") {
+                return None;
+            }
+            match s.parse::<u64>() {
+                Ok(0) => None,
+                Ok(n) => Some(Duration::from_secs(n)),
+                Err(_) => Some(Duration::from_secs(default_secs)),
+            }
+        }
+        Err(_) => Some(Duration::from_secs(default_secs)),
+    }
+}
+
+/// Per-brain-model-call timeout (`ECK_AI_BRAIN_CALL_SECS`, default 60; `off`/`0`
+/// disables). Caps a single stalled `generateContent` turn — glm/OpenRouter
+/// latency spikes sat T13 at 186 s with no in-loop ceiling (panel: all four).
+fn brain_call_timeout() -> Option<Duration> {
+    ai_call_timeout("ECK_AI_BRAIN_CALL_SECS", 60)
+}
+
+/// One brain `generateContent` call under the per-call timeout (W1-1). On expiry
+/// the error names the model, turn and seconds. The OR leg passes
+/// `retry_timeout = false` so a timeout surfaces as an error that the caller
+/// routes to the Gemini leg (visible `Fallback`); the Gemini leg passes `true`
+/// so a single timed-out call is retried once before erroring.
+async fn brain_generate(
+    auth: &eck_core::ai::AiAuth,
+    http: &reqwest::Client,
+    model: &str,
+    body: Value,
+    turn: usize,
+    retry_timeout: bool,
+) -> anyhow::Result<Value> {
+    let Some(d) = brain_call_timeout() else {
+        return auth.generate_content_raw(http, model, body).await;
+    };
+    match tokio::time::timeout(d, auth.generate_content_raw(http, model, body.clone())).await {
+        Ok(r) => r,
+        Err(_) if retry_timeout => {
+            warn!(
+                "[brain] model={model} turn={turn} call timed out after {}s — one retry",
+                d.as_secs()
+            );
+            match tokio::time::timeout(d, auth.generate_content_raw(http, model, body)).await {
+                Ok(r) => r,
+                Err(_) => anyhow::bail!(
+                    "brain model call timed out twice: model={model} turn={turn} after {}s",
+                    d.as_secs()
+                ),
+            }
+        }
+        Err(_) => anyhow::bail!(
+            "brain model call timed out: model={model} turn={turn} after {}s",
+            d.as_secs()
+        ),
+    }
+}
+
+/// Per-compaction-call timeout (`ECK_AI_COMPACT_CALL_SECS`, default 30; `off`/`0`
+/// disables). On expiry the summarizer errors and the caller keeps the full
+/// verbatim tail (the existing compaction-failure behaviour).
+fn compaction_call_timeout() -> Option<Duration> {
+    ai_call_timeout("ECK_AI_COMPACT_CALL_SECS", 30)
+}
+
+/// Overall chat-run deadline in seconds (`ECK_AI_BRAIN_RUN_SECS`, default 240;
+/// `off`/`0` disables) — bounds compaction + the loop + wrap-up + Gemini fallback
+/// together (B6). `None` = no overall deadline.
+fn brain_run_secs() -> Option<u64> {
+    ai_call_timeout("ECK_AI_BRAIN_RUN_SECS", 240).map(|d| d.as_secs())
+}
+
+/// A char-count budget env (B3: one unit — everything is `chars().count()` of the
+/// serialized JSON). `0` and `off` mean UNLIMITED for both tool budgets (F08-10);
+/// an unparseable value falls back to `default`. A positive value below
+/// [`TOOL_CAP_FLOOR`] is raised to the floor (R2/F13-1) so a shrunk result or the
+/// fixed denial always fits — `0`/`off` stays unlimited.
+fn tool_budget_chars(var: &str, default: usize) -> usize {
+    let raw = match std::env::var(var) {
+        Ok(s) => {
+            let s = s.trim();
+            if s.eq_ignore_ascii_case("off") {
+                return 0;
+            }
+            s.parse().unwrap_or(default)
+        }
+        Err(_) => default,
+    };
+    let floored = floor_tool_cap(raw);
+    if floored != raw {
+        warn!("[Brain] {var}={raw} is below the floor — raising to {TOOL_CAP_FLOOR}");
+    }
+    floored
+}
+
+/// Smallest a positive tool-output cap may be (R2/F13-1). A nonzero cap below this
+/// is raised to it; `0` (unlimited) is left alone. Pure → unit-tested.
+const TOOL_CAP_FLOOR: usize = 512;
+fn floor_tool_cap(raw: usize) -> usize {
+    if raw == 0 {
+        0
+    } else {
+        raw.max(TOOL_CAP_FLOOR)
+    }
+}
+
+/// Max function calls DISPATCHED per model turn (`ECK_AI_TOOL_CALLS_PER_TURN`,
+/// default 16; `0`/`off` = no per-turn cap). Calls beyond this in one turn are
+/// answered with the fixed denial WITHOUT dispatch — see the note on
+/// [`TOOL_DENIAL_TEXT`] on why they are not dropped from the recorded turn.
+const DEFAULT_TOOL_CALLS_PER_TURN: usize = 16;
+fn tool_calls_per_turn() -> usize {
+    match std::env::var("ECK_AI_TOOL_CALLS_PER_TURN") {
+        Ok(s) => {
+            let s = s.trim();
+            if s.eq_ignore_ascii_case("off") {
+                return 0;
+            }
+            s.parse().unwrap_or(DEFAULT_TOOL_CALLS_PER_TURN)
+        }
+        Err(_) => DEFAULT_TOOL_CALLS_PER_TURN,
+    }
+}
+
+/// Hard ceiling on the NUMBER of tool calls in ONE model turn
+/// (`ECK_AI_TOOL_CALLS_PER_TURN_ABORT`, default 32; `0`/`off` = no ceiling). The
+/// per-turn DISPATCH cap ([`tool_calls_per_turn`]) limits only how many calls are
+/// executed — the model still controls how many calls (and therefore appended
+/// response parts) a turn carries, since every excess / no-capacity call still gets
+/// its own denial part. A turn over this ceiling is a model malfunction and aborts
+/// the run on this engine BEFORE anything is appended, so the number of appended
+/// parts per turn — and the whole-run size — is bounded by a CONSTANT (F24-1):
+/// `run cap + ceiling x DENIAL_PART_MAX_CHARS`.
+const DEFAULT_TOOL_CALLS_PER_TURN_ABORT: usize = 32;
+fn tool_calls_per_turn_abort() -> usize {
+    let raw = match std::env::var("ECK_AI_TOOL_CALLS_PER_TURN_ABORT") {
+        Ok(s) => {
+            let s = s.trim();
+            if s.eq_ignore_ascii_case("off") {
+                return 0;
+            }
+            s.parse().unwrap_or(DEFAULT_TOOL_CALLS_PER_TURN_ABORT)
+        }
+        Err(_) => DEFAULT_TOOL_CALLS_PER_TURN_ABORT,
+    };
+    raise_abort_ceiling(raw, tool_calls_per_turn())
+}
+
+/// The abort ceiling actually enforced: `0` (no ceiling) stays `0`; a positive value
+/// is raised to at least the dispatch cap so it never aborts a turn whose calls the
+/// dispatch cap would otherwise accept. Pure → unit-tested.
+fn raise_abort_ceiling(raw: usize, dispatch_cap: usize) -> usize {
+    if raw == 0 {
+        0
+    } else {
+        raw.max(dispatch_cap)
+    }
+}
+
+/// The ONE fixed tool-budget denial (B1/F14-1): the SAME short text every time, so
+/// the context cannot grow via ever-different denials. The serialized
+/// `functionResponse` part (wrapper + tool name + this response) stays within
+/// [`DENIAL_PART_MAX_CHARS`] for every ACCEPTED tool name — see the name guard
+/// [`tool_name_ok`] and the `tool_denial_envelope_is_bounded_and_fixed` test.
+///
+/// NOTE on calls-per-turn: excess calls are DENIED, not dropped from the recorded
+/// assistant turn. Dropping is unsafe on BOTH routes `drive_oneshot_native` serves —
+/// the Gemini-native leg echoes the model turn VERBATIM to carry its per-part
+/// `thoughtSignature` (editing it risks a 400 from Vertex), and the OpenAI-compatible
+/// OR-shim leg pairs every assistant `tool_call` id with a `tool` message, so a
+/// dropped call would leave an unanswered id. We therefore still ANSWER every call
+/// (so none is owed a response) but give the overflow the fixed denial.
+const TOOL_DENIAL_TEXT: &str = "budget hit - answer from what you have";
+/// Ceiling on a serialized denial `functionResponse` part for EVERY accepted name
+/// (F19-2). The name guard limits names to `[A-Za-z0-9_.-]{1,64}` (no JSON escaping),
+/// so the widest denial part — a 64-char name + the fixed envelope — is 158 chars;
+/// 160 covers it with margin. Together with the per-turn call-count ceiling
+/// ([`tool_calls_per_turn_abort`]) and the one-denial-turn rule, the whole-run size is
+/// a CONSTANT bound (F24-1): `run cap + ceiling x 160` (defaults 60000 + 32 x 160).
+pub(crate) const DENIAL_PART_MAX_CHARS: usize = 160;
+
+fn tool_denial_response() -> Value {
+    json!({ "error": TOOL_DENIAL_TEXT })
+}
+
+/// Longest an ACCEPTED model-supplied tool-call name may be (D2/F17-1/F19-2).
+const MAX_TOOL_NAME_CHARS: usize = 64;
+
+/// A model-supplied tool-call name is ACCEPTED only if it matches
+/// `[A-Za-z0-9_.-]{1,64}` (D2/F19-2). The name is echoed verbatim into every
+/// `functionResponse` wrapper; restricting it to characters that never JSON-escape
+/// means an accepted name cannot expand the serialized part beyond the denial
+/// ceiling, and bounds the per-result wrapper overhead. Anything else — an empty
+/// name, a 1 000-char name, a quote / backslash / non-ASCII character — is a model
+/// malfunction and aborts the run on this engine BEFORE anything is appended. Every
+/// catalog name (letters + `_`) passes. Pure → unit-tested.
+fn tool_name_ok(name: &str) -> bool {
+    let n = name.chars().count();
+    (1..=MAX_TOOL_NAME_CHARS).contains(&n)
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+}
+
+/// The ONE fixed result for a tool call whose name is well-formed (passes
+/// [`tool_name_ok`]) but NOT in the catalog offered this run (D2/F17-1): small and
+/// constant so it cannot grow the context. It is NOT a budget denial — but it is
+/// routed through the SAME per-turn-cap + `per_result_cap` enforcement as any result
+/// (F19-1), so it counts toward the per-turn dispatch cap and the run budget and the
+/// model can correct itself only while capacity remains.
+fn unknown_tool_response() -> Value {
+    json!({ "error": "unknown tool" })
+}
+
+/// The exact `functionResponse` part appended to the context for one tool call —
+/// wrapper + tool name + response. This is the B3 size unit that the run budget is
+/// charged in (previously only the bare response was counted — F14-1).
+fn tool_response_part(name: &str, response: Value) -> Value {
+    json!({ "functionResponse": { "name": name, "response": response } })
+}
+
+/// The bare error object the bounded fallback degrades to; also the "minimal
+/// bounded object" `per_result_cap` must leave room for before dispatching.
+const BARE_ERROR_MSG: &str = "result too large to show - narrow the query";
+fn bare_error_result() -> Value {
+    json!({ "truncated": true, "error": BARE_ERROR_MSG })
+}
+/// The ACTUAL serialized wrapper + tool-name overhead (chars) the `functionResponse`
+/// part adds AROUND its response value for THIS call: `serialized_len` of the part
+/// with a `null` response, minus the 4 chars of `null`. serde serializes the
+/// response value in place, so `serialized_len(tool_response_part(name, resp)) ==
+/// wrapper_overhead(name) + serialized_len(resp)` exactly — sizing the response to
+/// `cap - overhead` therefore bounds the WHOLE appended part (F17-1). This replaces
+/// the old fixed `WRAPPER_OVERHEAD_MAX` estimate; no size bound rests on a constant.
+fn wrapper_overhead(name: &str) -> usize {
+    serialized_len(&tool_response_part(name, Value::Null)).saturating_sub(4)
+}
+/// Chars a minimal bounded result still needs; below this remaining capacity a call
+/// is denied instead of dispatched.
+const MIN_BOUNDED_RESULT_CHARS: usize = 80;
+
+/// Per-tool-result char cap (`ECK_AI_TOOL_RESULT_MAX_CHARS`, default 12000; `0`/`off`
+/// = unlimited), measured on the serialized JSON the model would see.
+fn tool_result_max_chars() -> usize {
+    tool_budget_chars("ECK_AI_TOOL_RESULT_MAX_CHARS", 12000)
+}
+
+/// Per-run cumulative tool-output char cap (`ECK_AI_TOOL_RUN_MAX_CHARS`, default
+/// 60000; `0`/`off` = unlimited). A HARD bound: each result is capped to the
+/// remaining capacity so the run total never exceeds it (T4 reached 151k tokens).
+fn tool_run_max_chars() -> usize {
+    tool_budget_chars("ECK_AI_TOOL_RUN_MAX_CHARS", 60000)
+}
+
+/// Per-tool-dispatch timeout (`ECK_AI_TOOL_CALL_SECS`, default 60; `off`/`0`
+/// disables) — a slow DB/tool call returns a tool error and the loop continues
+/// (B6). Distinct from the model-call timeout.
+fn tool_call_timeout() -> Option<Duration> {
+    ai_call_timeout("ECK_AI_TOOL_CALL_SECS", 60)
+}
+
+/// Lowest a long string may be shortened to (B2): vault tokens (`Name_<16 hex>`),
+/// record ids, serials, ticket numbers and timestamps are all well under this, so
+/// no exact lookup key is ever corrupted.
+const SHRINK_STRING_FLOOR: usize = 200;
+
+/// The `truncated_note` text (its length is reserved before the content is sized).
+const SHRINK_NOTE: &str = "Result was shortened to fit the tool-output budget. Narrow the query (add a status / company / date filter or a ticket number), or call ticket_stats for counts and oldest/newest.";
+
+/// Serialized-JSON length of a value in CHARS (B3: one unit) — the size the model
+/// actually pays for.
+fn serialized_len(v: &Value) -> usize {
+    serde_json::to_string(v)
+        .map(|s| s.chars().count())
+        .unwrap_or(0)
+}
+
+/// Recursively cap every array to `arr_cap` elements, keeping the HEAD (drop
+/// trailing elements). Strings and scalars are untouched.
+fn cap_arrays(v: &mut Value, arr_cap: usize) {
+    match v {
+        Value::Array(a) => {
+            if a.len() > arr_cap {
+                a.truncate(arr_cap);
+            }
+            for item in a.iter_mut() {
+                cap_arrays(item, arr_cap);
+            }
+        }
+        Value::Object(o) => {
+            for (_k, val) in o.iter_mut() {
+                cap_arrays(val, arr_cap);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Recursively shorten strings LONGER than `cap` to `cap` chars (keep head +`…`),
+/// but NEVER below [`SHRINK_STRING_FLOOR`] and never a string already at/under the
+/// floor (B2 — exact ids/tokens survive byte-identical). Scalars/keys untouched.
+fn cap_strings(v: &mut Value, cap: usize) {
+    let cap = cap.max(SHRINK_STRING_FLOOR);
+    match v {
+        Value::String(s) => {
+            let n = s.chars().count();
+            if n > SHRINK_STRING_FLOOR && n > cap {
+                let kept: String = s.chars().take(cap).collect();
+                *s = format!("{kept}…");
+            }
+        }
+        Value::Array(a) => {
+            for item in a.iter_mut() {
+                cap_strings(item, cap);
+            }
+        }
+        Value::Object(o) => {
+            for (_k, val) in o.iter_mut() {
+                cap_strings(val, cap);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Add the `truncated` + `truncated_note` markers to an object (clone-free on the
+/// passed value).
+fn mark_truncated(mut v: Value) -> Value {
+    if let Value::Object(o) = &mut v {
+        o.insert("truncated".to_string(), json!(true));
+        o.insert("truncated_note".to_string(), json!(SHRINK_NOTE));
+    }
+    v
+}
+
+/// The B1 bounded fallback: a small object carrying the error plus whatever TOP-LEVEL
+/// scalar fields (counts/ids) still fit under `max_chars` — byte-identical, never
+/// shortened. Guaranteed `<= max_chars` as long as the bare error object fits.
+fn bounded_fallback(orig: &Value, max_chars: usize) -> Value {
+    let mut out = bare_error_result();
+    if let Value::Object(src) = orig {
+        for (k, val) in src {
+            // Keep exact scalars (and short strings) that still fit; never shorten.
+            let keepable = val.is_number()
+                || val.is_boolean()
+                || val.is_null()
+                || (val.is_string()
+                    && val.as_str().map(|s| s.chars().count()).unwrap_or(0) <= SHRINK_STRING_FLOOR);
+            if !keepable {
+                continue;
+            }
+            if let Value::Object(o) = &mut out {
+                o.insert(k.clone(), val.clone());
+            }
+            if serialized_len(&out) > max_chars {
+                if let Value::Object(o) = &mut out {
+                    o.remove(k);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Structure-aware shrink of one tool result to a HARD `max_chars` serialized-JSON
+/// bound (B1/B2). Order: drop trailing array elements → shorten long strings (never
+/// below the 200-char floor) → bounded fallback. Scalars and exact ids/tokens are
+/// never corrupted. `max_chars == 0` means unlimited; input already within budget
+/// is returned untouched (no marker). Ends with a hard final bound check.
+fn shrink_tool_result(v: Value, max_chars: usize) -> Value {
+    if max_chars == 0 {
+        return v;
+    }
+    if serialized_len(&v) <= max_chars {
+        return v;
+    }
+    // The marked result must fit, so size every candidate WITH the markers (B1).
+    let fits = |cand: &Value| cand.is_object() && serialized_len(&mark_truncated(cand.clone())) <= max_chars;
+
+    let mut work = v.clone();
+    // Phase 1 — drop trailing array elements (64, 32, …, 1, 0).
+    let mut arr_cap = 64usize;
+    loop {
+        cap_arrays(&mut work, arr_cap);
+        if fits(&work) {
+            return enforce_bound(mark_truncated(work), &v, max_chars);
+        }
+        if arr_cap == 0 {
+            break;
+        }
+        arr_cap /= 2;
+    }
+    // Phase 2 — shorten long strings down to the floor.
+    let mut str_cap = 4000usize;
+    loop {
+        cap_strings(&mut work, str_cap);
+        if fits(&work) {
+            return enforce_bound(mark_truncated(work), &v, max_chars);
+        }
+        if str_cap <= SHRINK_STRING_FLOOR {
+            break;
+        }
+        str_cap = (str_cap / 2).max(SHRINK_STRING_FLOOR);
+    }
+    // Phase 3 — bounded fallback (counts/ids that fit + the error).
+    enforce_bound(bounded_fallback(&v, max_chars), &v, max_chars)
+}
+
+/// Final bound guard (B1): the shrink function must never return something over
+/// budget. If `candidate` somehow exceeds `max_chars`, fall back to the bounded
+/// object; if even that overflows (an extreme cap), return the bare error.
+fn enforce_bound(candidate: Value, orig: &Value, max_chars: usize) -> Value {
+    if serialized_len(&candidate) <= max_chars {
+        return candidate;
+    }
+    let fb = bounded_fallback(orig, max_chars);
+    if serialized_len(&fb) <= max_chars {
+        return fb;
+    }
+    bare_error_result()
+}
+
+/// The per-result char cap for a tool call (B1/F17-1), measured on the RESPONSE
+/// value. The hard contract is on the whole APPENDED PART (wrapper + name +
+/// response), which must stay within BOTH the per-result cap and the remaining run
+/// capacity. Because the part is exactly `wrapper_overhead(name) + response`, this
+/// returns `min(result cap, remaining run capacity) - overhead` — the largest
+/// response whose part honours both caps. `0` means unlimited for either budget.
+/// `None` → even the minimal bounded result part would not fit the remaining
+/// capacity, so the call must be DENIED (not dispatched) and gets the fixed denial.
+/// Pure → unit-tested.
+fn per_result_cap(name: &str, result_max: usize, run_max: usize, run_used: usize) -> Option<usize> {
+    // The ceiling on the whole appended PART from the active budgets (0 = unlimited).
+    let part_ceiling = match (result_max, run_max) {
+        (0, 0) => return Some(0), // both unlimited → unlimited response
+        (r, 0) => r,
+        (0, run) => run.saturating_sub(run_used),
+        (r, run) => r.min(run.saturating_sub(run_used)),
+    };
+    // Reserve the ACTUAL wrapper overhead so the sized response + wrapper fits.
+    let avail = part_ceiling.saturating_sub(wrapper_overhead(name));
+    if avail < MIN_BOUNDED_RESULT_CHARS {
+        return None; // deny — no room for a useful bounded result part
+    }
+    Some(avail)
+}
+
+/// Tracks the wall-clock of the last progress event the OR run emitted, so the
+/// interactive (`Offer`) hedge can tell a silent stall from a run that is still
+/// making progress (deepseek F05-7: the old offer nagged while glm was visibly
+/// working through 9 of 14 tasks). Interior-mutable so the running future can
+/// `mark()` it while the offer loop reads it.
+#[derive(Clone)]
+struct ProgressClock {
+    start: std::time::Instant,
+    last_ms: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl ProgressClock {
+    fn new() -> Self {
+        Self {
+            start: std::time::Instant::now(),
+            last_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
+    /// Record progress now (a turn/tool/tool_done event fired).
+    fn mark(&self) {
+        self.last_ms.store(
+            self.start.elapsed().as_millis() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+    /// Seconds since the last progress event (or since start if none yet).
+    fn idle_secs(&self) -> u64 {
+        let now = self.start.elapsed().as_millis() as u64;
+        let last = self.last_ms.load(std::sync::atomic::Ordering::Relaxed);
+        now.saturating_sub(last) / 1000
+    }
+    /// Seconds since the run began.
+    fn elapsed_secs(&self) -> u64 {
+        self.start.elapsed().as_secs()
+    }
+}
+
+/// Decide whether the interactive (`Offer`) hedge should surface a takeover
+/// offer now: offer when the OR run has made NO progress for a full budget
+/// window, OR when total elapsed reaches 3× the budget — whichever comes first
+/// (W1-4). Pure so the timing rule is unit-tested without a live run.
+pub(crate) fn should_offer_now(idle_secs: u64, elapsed_secs: u64, budget_secs: u64) -> bool {
+    idle_secs >= budget_secs || elapsed_secs >= budget_secs.saturating_mul(3)
+}
 
 /// The read tools the one-shot brain may call — the SAME catalog `/mcp`
 /// exposes (single source: `crate::mcp::tools`), minus `ask_brain` (recursion)
@@ -1466,6 +2104,7 @@ const ONESHOT_TOOLS: &[&str] = &[
     "customer_360",
     "device_history",
     "ticket_search",
+    "ticket_stats",
     "similar_tickets",
     "search_database",
     "list_ticket_attachments",
@@ -1480,7 +2119,12 @@ const ONESHOT_TOOLS: &[&str] = &[
 /// block is byte-stable across turns (prefix cache hygiene, owner §5) — the
 /// `tools_list` order and the `kb_brief` insertion point must not perturb the
 /// cache. Pure (no I/O), so the loop and the tool-list test share it.
-fn oneshot_tool_decls(tier: crate::mcp::McpTier) -> Vec<Value> {
+///
+/// `include_kb_brief` gates the `kb_brief` recall front door: the one-shot MCP
+/// path always arms it (byte-for-byte unchanged), while the dashboard chat drops
+/// it on a node where the KB is not configured (W1-3 capability-aware catalog),
+/// so the model is never told to call a tool that always answers "not configured".
+fn oneshot_tool_decls(tier: crate::mcp::McpTier, include_kb_brief: bool) -> Vec<Value> {
     let mut decls: Vec<Value> = crate::mcp::tools::tools_list(tier)
         .as_array()
         .cloned()
@@ -1495,6 +2139,15 @@ fn oneshot_tool_decls(tier: crate::mcp::McpTier) -> Vec<Value> {
             })
         })
         .collect();
+    if !include_kb_brief {
+        decls.sort_by(|a, b| {
+            a.get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .cmp(b.get("name").and_then(|n| n.as_str()).unwrap_or(""))
+        });
+        return decls;
+    }
     decls.push(json!({
         "name": "kb_brief",
         "description": "Knowledge base recall for a device model + symptom/error code. \
@@ -1530,11 +2183,63 @@ fn oneshot_tool_decls(tier: crate::mcp::McpTier) -> Vec<Value> {
 /// `Auto` preserves today's behavior (OR/glm when `ECK_AI_TASK_ROUTES` routes
 /// `brain`, else Gemini); `Glm`/`Gemini` force a lane per-request (e.g. the
 /// dashboard chat's engine picker) while keeping the same fallback chain.
+/// `Alt` is a THIRD OR lane pinned to an alternate slug model
+/// (`ECK_BRAIN_ALT_MODEL`, default `deepseek/deepseek-v4.1-flash-1017`) resolved via
+/// a per-request model instead of the `brain` route — it hedges to Gemini and
+/// falls back exactly like `Glm`. Read the model at the use site so the enum
+/// stays `Copy` (no `String` inside).
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum BrainEngine {
     Auto,
     Glm,
     Gemini,
+    Alt(AltModel),
+}
+
+/// The pinned slug models behind `BrainEngine::Alt` — one picker entry each in
+/// the dashboard chat. All three reach the per-model "slug upstream"
+/// (`.eck/OPENROUTER_TIER.md` §slug); the serving node must list the slug in
+/// `ECK_OR_SERVE_MODELS`/`ECK_OR_PRICES` or the request falls back to Gemini
+/// visibly. MiMo was benched 2026-09-23 (Pro = best triage quality, Flash = the
+/// cheapest; both need thinking ON, which the unknown-prefix default of
+/// `or_reasoning_for` gives them) and added on the owner's ask of 2026-09-30.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum AltModel {
+    DeepSeek,
+    MimoPro,
+    MimoFlash,
+}
+
+impl AltModel {
+    /// The OR slug for this lane: env override first, then the vendor default.
+    pub(crate) fn model(self) -> String {
+        let (var, default) = match self {
+            AltModel::DeepSeek => ("ECK_BRAIN_ALT_MODEL", "deepseek/deepseek-v4.1-flash-1017"),
+            AltModel::MimoPro => ("ECK_BRAIN_MIMO_PRO_MODEL", "xiaomi/mimo-v2.6-pro"),
+            AltModel::MimoFlash => ("ECK_BRAIN_MIMO_FLASH_MODEL", "xiaomi/mimo-v2.6-flash"),
+        };
+        std::env::var(var)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| default.to_string())
+    }
+}
+
+/// How the glm→Gemini hedge behaves when the routed OR (glm) run stays silent
+/// past the brain time budget.
+///
+/// * `Auto` — today's race: start the Gemini path IN PARALLEL and return
+///   whichever engine answers first (used by every non-interactive caller:
+///   MCP `ask_brain`, the blocking `POST /api/ai/chat`).
+/// * `Offer` — interactive chat: never start Gemini on silence. Emit a
+///   `HedgeOffer` event so the CLIENT can decide (a "glm is slow — let Gemini
+///   pick it up?" button) and keep waiting for the OR run alone. The client
+///   implements the takeover by aborting the SSE request and re-asking with
+///   `engine: "gemini"` + `takeover_from`. (Used by `chat_stream`.)
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum HedgeMode {
+    Auto,
+    Offer,
 }
 
 /// Progress events emitted by the one-shot brain loop for the streaming
@@ -1546,12 +2251,51 @@ pub(crate) enum BrainEngine {
 /// receiver never fails the underlying run.
 #[derive(Clone, Debug)]
 pub(crate) enum BrainEvent {
-    Turn { turn: usize, max: usize },
-    Tool { name: String, args_preview: String },
+    Turn {
+        turn: usize,
+        max: usize,
+    },
+    Tool {
+        name: String,
+        args_preview: String,
+    },
+    /// A tool call finished (W1-5): `ms` = wall time of the dispatch, `chars` =
+    /// serialized length of the (possibly shrunk) result the model received,
+    /// `truncated` = whether the per-result budget shortened it. Forwarded by
+    /// `chat_stream` as an SSE `tool_done` event so the UI can show timing.
+    ToolDone {
+        name: String,
+        ms: u64,
+        chars: usize,
+        truncated: bool,
+    },
     /// The routed OR (glm) run stayed silent past the brain time budget, so a
     /// Gemini run was started in parallel (hedge). `from` = the slow OR model,
     /// `to` = the Gemini model now racing it, `after_secs` = the budget waited.
-    Hedge { from: String, to: String, after_secs: u64 },
+    Hedge {
+        from: String,
+        to: String,
+        after_secs: u64,
+    },
+    /// `Offer` hedge mode: the routed OR (glm) run stayed silent past the brain
+    /// time budget, so instead of starting Gemini automatically we OFFER the
+    /// client a Gemini takeover. `from` = the slow OR model, `to` = the Gemini
+    /// model it could hand off to, `after_secs` = the budget waited. The server
+    /// keeps waiting on the OR run; only the client may trigger the takeover.
+    HedgeOffer {
+        from: String,
+        to: String,
+        after_secs: u64,
+    },
+    /// The routed OR (glm) run ERRORED and the Gemini path answered instead.
+    /// `from` = the OR model that failed, `to` = the Gemini model that served
+    /// it, `error` = the OR failure (truncated). Distinct from `Hedge`, which is
+    /// about SILENCE, not failure.
+    Fallback {
+        from: String,
+        to: String,
+        error: String,
+    },
     /// The complete terminal `done` payload the SSE handler emits verbatim:
     /// `{ answer, model, usage {…}, session_id, compaction? }`. Assembled by the
     /// chat handler once the run resolves (it alone knows the session id + any
@@ -1571,8 +2315,8 @@ pub(crate) struct BrainUsage {
     pub cost_usd: Option<f64>,
     pub turns: usize,
     pub retries: usize,
-    /// (tool name, compact args preview) in call order.
-    pub tools: Vec<(String, String)>,
+    /// (tool name, compact args preview, dispatch ms) in call order.
+    pub tools: Vec<(String, String, u64)>,
 }
 
 impl BrainUsage {
@@ -1610,6 +2354,13 @@ pub(crate) struct BrainAnswer {
     /// `or` | `gemini` | `gemini-hedge`
     pub path: &'static str,
     pub hedged: bool,
+    /// Set to the OR model that ERRORED when the Gemini path answered in its
+    /// place (a fallback, not a race). `None` when the OR run served the answer
+    /// or when Gemini was the only engine tried.
+    pub fallback_from: Option<String>,
+    /// Set to the OR model that was SLOW when the Gemini path won the automatic
+    /// hedge race (`Auto` mode). `None` otherwise.
+    pub hedge_from: Option<String>,
 }
 
 /// Build the multi-turn `contents` array for the brain (owner's cache-friendly
@@ -1641,7 +2392,11 @@ pub(crate) fn build_chat_contents(
         }
     }
     for (role, text) in history {
-        let r = if role == "assistant" || role == "model" { "model" } else { "user" };
+        let r = if role == "assistant" || role == "model" {
+            "model"
+        } else {
+            "user"
+        };
         contents.push(json!({ "role": r, "parts": [{ "text": text }] }));
     }
     contents.push(json!({ "role": "user", "parts": [{ "text": question_text }] }));
@@ -1735,7 +2490,7 @@ pub(crate) async fn answer_oneshot_with_engine_events(
 ) -> anyhow::Result<(String, String)> {
     let user_prompt = single_shot_question_text(question, context);
     let contents = vec![json!({ "role": "user", "parts": [{ "text": user_prompt }] })];
-    let ans = answer_oneshot_full(state, contents, tier, engine, events).await?;
+    let ans = answer_oneshot_full(state, contents, tier, engine, HedgeMode::Auto, events).await?;
     Ok((ans.answer, ans.model))
 }
 
@@ -1751,7 +2506,36 @@ pub(crate) async fn answer_oneshot_full(
     contents: Vec<Value>,
     tier: crate::mcp::McpTier,
     engine: BrainEngine,
+    hedge_mode: HedgeMode,
     events: Option<tokio::sync::mpsc::UnboundedSender<BrainEvent>>,
+) -> anyhow::Result<BrainAnswer> {
+    // Default to the one-shot MCP delegation prompt + catalog (byte-for-byte as
+    // before); the dashboard chat enters via `answer_oneshot_full_kind`.
+    answer_oneshot_full_kind(
+        state,
+        contents,
+        tier,
+        engine,
+        hedge_mode,
+        events,
+        RunKind::OneShot,
+        None,
+    )
+    .await
+}
+
+/// Same as [`answer_oneshot_full`] but with the run kind, which selects the
+/// system prompt and the capability-aware tool catalog (one-shot MCP vs chat).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn answer_oneshot_full_kind(
+    state: &Arc<AppState>,
+    contents: Vec<Value>,
+    tier: crate::mcp::McpTier,
+    engine: BrainEngine,
+    hedge_mode: HedgeMode,
+    events: Option<tokio::sync::mpsc::UnboundedSender<BrainEvent>>,
+    kind: RunKind,
+    context_block: Option<String>,
 ) -> anyhow::Result<BrainAnswer> {
     // Attribute every usage report this brain run fires (glm and/or Gemini legs)
     // to the "brain" task. The inner run keeps both engines as LOCAL futures
@@ -1759,22 +2543,41 @@ pub(crate) async fn answer_oneshot_full(
     // the whole run.
     eck_core::ai::with_ai_task(
         "brain",
-        answer_oneshot_full_inner(state, contents, tier, engine, events),
+        answer_oneshot_full_inner(state, contents, tier, engine, hedge_mode, events, kind, context_block),
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn answer_oneshot_full_inner(
     state: &Arc<AppState>,
     contents: Vec<Value>,
     tier: crate::mcp::McpTier,
     engine: BrainEngine,
+    hedge_mode: HedgeMode,
     events: Option<tokio::sync::mpsc::UnboundedSender<BrainEvent>>,
+    kind: RunKind,
+    context_block: Option<String>,
 ) -> anyhow::Result<BrainAnswer> {
     let external_caller = !tier.reveal_pii();
     let http = reqwest::Client::new();
 
-    let mut system_prompt = oneshot_prompt_text().to_string();
+    // Chat uses the conversational prompt + a capability-aware catalog (drop
+    // `kb_brief` when the KB is not configured); one-shot MCP is unchanged.
+    let include_kb = match kind {
+        RunKind::OneShot => true,
+        RunKind::Chat => crate::ai::kb_client::configured(),
+    };
+    let mut system_prompt = match kind {
+        RunKind::OneShot => oneshot_prompt_text().to_string(),
+        RunKind::Chat => chat_prompt_text(include_kb),
+    };
+    // §6: entity-scoped chat prepends a compact "Current object" rendering so the
+    // brain reasons about the open object page without a tool round-trip.
+    if let Some(block) = context_block.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        system_prompt.push_str("\n");
+        system_prompt.push_str(block);
+    }
     if external_caller {
         system_prompt.push_str(
             "\n\nThe caller is an external automated agent: do NOT include personal names, \
@@ -1796,36 +2599,137 @@ async fn answer_oneshot_full_inner(
     // (`generate_for_task`), the brain does NOT retry OR within the budget — a
     // rerun would repeat any tool side effects the first turn performed — so an
     // OR error escalates to Gemini at once, and only SILENCE triggers the hedge.
+    // Set to the OR model when we drop to the shared Gemini path below BECAUSE
+    // the OR run errored (so the final Gemini return records it as a fallback).
+    // Stays `None` when Gemini is reached for a non-error reason (unrouted node,
+    // OR auth that didn't materialize, or the explicit Gemini engine).
+    let mut fell_back_from: Option<String> = None;
     if engine != BrainEngine::Gemini
-        && (engine == BrainEngine::Glm || eck_core::ai::task_route("brain").is_some())
+        && (engine == BrainEngine::Glm
+            || matches!(engine, BrainEngine::Alt(_))
+            || eck_core::ai::task_route("brain").is_some())
     {
-        match eck_core::ai::resolve_for_task(&http, "brain").await {
+        // An alt engine PINS its model (per-request) rather than reading the
+        // `brain` route; both keep the deny-policy check and every transport.
+        let resolved = if let BrainEngine::Alt(alt) = engine {
+            eck_core::ai::resolve_for_task_with_model(&http, "brain", &alt.model()).await
+        } else {
+            eck_core::ai::resolve_for_task(&http, "brain").await
+        };
+        match resolved {
             Ok(or_auth) if or_auth.or_model().is_some() && or_auth.is_configured() => {
                 let or_model = or_auth.or_model().unwrap().to_string();
                 let hedge_budget = brain_hedge_budget();
 
+                // Emit a visible `Fallback` event (OR errored → Gemini takes over)
+                // when a progress channel is attached. Error truncated to ~200 chars.
+                let send_fallback = |e: &str| {
+                    if let Some(tx) = events.as_ref() {
+                        let err: String = e.chars().take(200).collect();
+                        let _ = tx.send(BrainEvent::Fallback {
+                            from: or_model.clone(),
+                            to: gemini_orchestrator_model(),
+                            error: err,
+                        });
+                    }
+                };
+
+                // Progress clock for the interactive offer: the OR future marks it
+                // on every turn/tool/tool_done so the `Offer` loop can tell a stall
+                // from a run that is still advancing (W1-4). A timed-out OR call
+                // errors → the existing fallback-to-Gemini path (W1-1).
+                let clock = ProgressClock::new();
                 // The OR run stays a LOCAL future (the tool loop isn't `Send`, so
                 // it can't be `tokio::spawn`ed) — both engines run concurrently in
                 // THIS task via `select!` over pinned futures, and dropping the
                 // loser's future cancels it. Behaviour is identical to a spawn+abort.
                 let or_fut = drive_oneshot_native(
-                    &http, &or_auth, &or_model, &system_prompt, &contents, state, tier,
+                    &http,
+                    &or_auth,
+                    &or_model,
+                    &system_prompt,
+                    &contents,
+                    state,
+                    tier,
                     events.as_ref(),
+                    include_kb,
+                    false,
+                    Some(&clock),
                 );
                 tokio::pin!(or_fut);
 
                 match hedge_budget {
                     // Hedge disabled → await OR fully; on error, fall through to
-                    // the Gemini path below.
+                    // the Gemini path below (recorded as a fallback).
                     None => match or_fut.await {
                         Ok((answer, usage)) => {
                             log_brain(&or_model, "or", &usage);
-                            return Ok(BrainAnswer { answer, model: or_model.clone(), usage, path: "or", hedged: false });
+                            return Ok(BrainAnswer {
+                                answer,
+                                model: or_model.clone(),
+                                usage,
+                                path: "or",
+                                hedged: false,
+                                fallback_from: None,
+                                hedge_from: None,
+                            });
                         }
-                        Err(e) => warn!("[brain-fallback] glm→gemini: {e}"),
+                        Err(e) => {
+                            warn!("[brain-fallback] glm→gemini: {e}");
+                            send_fallback(&e.to_string());
+                            fell_back_from = Some(or_model.clone());
+                        }
                     },
+                    // Interactive chat (`Offer`): never start Gemini automatically.
+                    // Keep waiting on the OR run, and when it genuinely STALLS —
+                    // no progress event for a full budget window, OR total elapsed
+                    // reaches 3× the budget — offer the client a takeover, at most
+                    // once (W1-4). An OR error falls through to Gemini as before.
+                    Some(budget) if hedge_mode == HedgeMode::Offer => {
+                        let budget_secs = budget.as_secs().max(1);
+                        let mut offered = false;
+                        loop {
+                            let tick = tokio::time::sleep(Duration::from_secs(1));
+                            tokio::pin!(tick);
+                            tokio::select! {
+                                r = &mut or_fut => match r {
+                                    Ok((answer, usage)) => {
+                                        log_brain(&or_model, "or", &usage);
+                                        return Ok(BrainAnswer { answer, model: or_model.clone(), usage, path: "or", hedged: false, fallback_from: None, hedge_from: None });
+                                    }
+                                    Err(e) => {
+                                        warn!("[brain-fallback] glm→gemini: {e}");
+                                        send_fallback(&e.to_string());
+                                        fell_back_from = Some(or_model.clone());
+                                        break;
+                                    }
+                                },
+                                _ = &mut tick => {
+                                    if !offered
+                                        && should_offer_now(clock.idle_secs(), clock.elapsed_secs(), budget_secs)
+                                    {
+                                        warn!(
+                                            "[brain-offer] {or_model} stalled (idle {}s / elapsed {}s) → offering gemini takeover",
+                                            clock.idle_secs(),
+                                            clock.elapsed_secs()
+                                        );
+                                        if let Some(tx) = events.as_ref() {
+                                            let _ = tx.send(BrainEvent::HedgeOffer {
+                                                from: or_model.clone(),
+                                                to: gemini_orchestrator_model(),
+                                                after_secs: clock.elapsed_secs(),
+                                            });
+                                        }
+                                        offered = true;
+                                    }
+                                }
+                            }
+                        }
+                        // OR errored → fall through to the Gemini path below.
+                    }
                     Some(budget) => {
-                        // Phase 1 — OR alone, until it answers or the budget elapses.
+                        // Auto (MCP / blocking chat): wait the budget, then race the
+                        // Gemini path in parallel and return the first Ok.
                         let mut hedged = false;
                         {
                             let sleep = tokio::time::sleep(budget);
@@ -1834,21 +2738,22 @@ async fn answer_oneshot_full_inner(
                                 r = &mut or_fut => match r {
                                     Ok((answer, usage)) => {
                                         log_brain(&or_model, "or", &usage);
-                                        return Ok(BrainAnswer { answer, model: or_model.clone(), usage, path: "or", hedged: false });
+                                        return Ok(BrainAnswer { answer, model: or_model.clone(), usage, path: "or", hedged: false, fallback_from: None, hedge_from: None });
                                     }
                                     // OR failed BEFORE the budget elapsed → straight
-                                    // to Gemini (fall through below).
-                                    Err(e) => warn!("[brain-fallback] glm→gemini: {e}"),
+                                    // to Gemini (fall through below, recorded as a fallback).
+                                    Err(e) => {
+                                        warn!("[brain-fallback] glm→gemini: {e}");
+                                        send_fallback(&e.to_string());
+                                        fell_back_from = Some(or_model.clone());
+                                    }
                                 },
                                 _ = &mut sleep => {
-                                    let gemini_model = std::env::var("GEMINI_ORCHESTRATOR_MODEL")
-                                        .or_else(|_| std::env::var("GEMINI_GENERATION_MODEL"))
-                                        .unwrap_or_else(|_| "gemini-3.5-flash".to_string());
                                     warn!("[brain-hedge] glm silent {}s → gemini started", budget.as_secs());
                                     if let Some(tx) = events.as_ref() {
                                         let _ = tx.send(BrainEvent::Hedge {
                                             from: or_model.clone(),
-                                            to: gemini_model,
+                                            to: gemini_orchestrator_model(),
                                             after_secs: budget.as_secs(),
                                         });
                                     }
@@ -1858,10 +2763,16 @@ async fn answer_oneshot_full_inner(
                         }
 
                         // Phase 2 — hedge race: OR (still running) vs Gemini, first
-                        // Ok wins; the loser's future is dropped (cancelled).
+                        // Ok wins; the loser's future is dropped.
                         if hedged {
                             let gem_fut = run_gemini_oneshot(
-                                &http, &system_prompt, &contents, state, tier, events.as_ref(),
+                                &http,
+                                &system_prompt,
+                                &contents,
+                                state,
+                                tier,
+                                events.as_ref(),
+                                include_kb,
                             );
                             tokio::pin!(gem_fut);
                             let mut or_err: Option<String> = None;
@@ -1872,7 +2783,7 @@ async fn answer_oneshot_full_inner(
                                         Ok((answer, usage)) => {
                                             info!("[brain-hedge] glm won the hedge (turns={})", usage.turns);
                                             log_brain(&or_model, "or", &usage);
-                                            return Ok(BrainAnswer { answer, model: or_model.clone(), usage, path: "or", hedged: true });
+                                            return Ok(BrainAnswer { answer, model: or_model.clone(), usage, path: "or", hedged: true, fallback_from: None, hedge_from: None });
                                         }
                                         Err(e) => or_err = Some(e.to_string()),
                                     },
@@ -1885,17 +2796,22 @@ async fn answer_oneshot_full_inner(
                                                 usage,
                                                 path: "gemini-hedge",
                                                 hedged: true,
+                                                fallback_from: None,
+                                                hedge_from: Some(or_model.clone()),
                                             });
                                         }
                                         Err(e) => gem_err = Some(e.to_string()),
                                     },
                                 }
                                 if let (Some(oe), Some(ge)) = (&or_err, &gem_err) {
-                                    anyhow::bail!("both engines failed after hedge: glm: {oe}; gemini: {ge}");
+                                    anyhow::bail!(
+                                        "both engines failed after hedge: glm: {oe}; gemini: {ge}"
+                                    );
                                 }
                             }
                         }
-                        // hedged == false → OR errored before the budget; fall through.
+                        // hedged == false → OR errored (before the budget, or in
+                        // Offer mode after it); fall through to Gemini.
                     }
                 }
             }
@@ -1907,9 +2823,33 @@ async fn answer_oneshot_full_inner(
     }
 
     // ── Gemini path (today's behavior; primary + 429 fallback chain) ───────
-    let (answer, model, usage) =
-        run_gemini_oneshot(&http, &system_prompt, &contents, state, tier, events.as_ref()).await?;
-    Ok(BrainAnswer { answer, model, usage, path: "gemini", hedged: false })
+    let (answer, model, usage) = run_gemini_oneshot(
+        &http,
+        &system_prompt,
+        &contents,
+        state,
+        tier,
+        events.as_ref(),
+        include_kb,
+    )
+    .await?;
+    Ok(BrainAnswer {
+        answer,
+        model,
+        usage,
+        path: "gemini",
+        hedged: false,
+        fallback_from: fell_back_from,
+        hedge_from: None,
+    })
+}
+
+/// The Gemini orchestrator model for the brain hedge / offer / fallback:
+/// `GEMINI_ORCHESTRATOR_MODEL` → `GEMINI_GENERATION_MODEL` → `gemini-3.5-flash`.
+fn gemini_orchestrator_model() -> String {
+    std::env::var("GEMINI_ORCHESTRATOR_MODEL")
+        .or_else(|_| std::env::var("GEMINI_GENERATION_MODEL"))
+        .unwrap_or_else(|_| "gemini-3.5-flash".to_string())
 }
 
 /// The brain hedge budget: how long to wait for the routed OR (glm) run before
@@ -1923,7 +2863,9 @@ fn brain_hedge_budget() -> Option<std::time::Duration> {
             return None;
         }
     }
-    Some(std::time::Duration::from_secs(eck_core::ai::task_budget_secs("brain")))
+    Some(std::time::Duration::from_secs(
+        eck_core::ai::task_budget_secs("brain"),
+    ))
 }
 
 /// The Gemini brain path (primary + one 429 retry + the DSQ fallback chain),
@@ -1936,14 +2878,13 @@ async fn run_gemini_oneshot(
     state: &Arc<AppState>,
     tier: crate::mcp::McpTier,
     events: Option<&tokio::sync::mpsc::UnboundedSender<BrainEvent>>,
+    include_kb: bool,
 ) -> anyhow::Result<(String, String, BrainUsage)> {
     let auth = eck_core::ai::AiAuth::resolve(http).await?;
     if !auth.is_configured() {
         anyhow::bail!("AI auth not configured on this node — the brain is unavailable");
     }
-    let model = std::env::var("GEMINI_ORCHESTRATOR_MODEL")
-        .or_else(|_| std::env::var("GEMINI_GENERATION_MODEL"))
-        .unwrap_or_else(|_| "gemini-3.5-flash".to_string());
+    let model = gemini_orchestrator_model();
 
     // Vertex DSQ starvation is per-model and WANDERS (observed live:
     // 3-flash-preview starved Jun-17, 3.5-flash Jul-13, 2.5-flash Jul-16 —
@@ -1955,37 +2896,58 @@ async fn run_gemini_oneshot(
     // sibling tier usually survives a 429 window), 3.5-flash-lite as the
     // last resort (a modest answer beats a dead brain when both pools starve).
     // Any non-429 error aborts immediately — the chain is quota-only.
+    // The Gemini leg retries a single timed-out model call once before erroring
+    // (W1-1), so `retry_timeout = true` on every drive below; no progress clock
+    // (the offer hedge watches only the OR leg).
     let is_429 = |e: &anyhow::Error| e.to_string().contains("429");
-    let mut last_err =
-        match drive_oneshot_native(
-            http, &auth, &model, system_prompt, contents, state, tier, events,
-        )
-        .await
-        {
-            Ok((answer, usage)) => {
-                log_brain(&model, "gemini", &usage);
-                return Ok((answer, model, usage));
-            }
-            Err(e) if is_429(&e) => e,
-            Err(e) => return Err(e),
-        };
+    let mut last_err = match drive_oneshot_native(
+        http,
+        &auth,
+        &model,
+        system_prompt,
+        contents,
+        state,
+        tier,
+        events,
+        include_kb,
+        true,
+        None,
+    )
+    .await
+    {
+        Ok((answer, usage)) => {
+            log_brain(&model, "gemini", &usage);
+            return Ok((answer, model, usage));
+        }
+        Err(e) if is_429(&e) => e,
+        Err(e) => return Err(e),
+    };
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     warn!("[Brain oneshot] {model} quota-exhausted (429) — one retry before the fallback chain");
-    last_err =
-        match drive_oneshot_native(
-            http, &auth, &model, system_prompt, contents, state, tier, events,
-        )
-        .await
-        {
-            Ok((answer, mut usage)) => {
-                usage.retries += 1;
-                log_brain(&model, "gemini", &usage);
-                return Ok((answer, model, usage));
-            }
-            Err(e) if is_429(&e) => e,
-            Err(e) => return Err(e),
-        };
+    last_err = match drive_oneshot_native(
+        http,
+        &auth,
+        &model,
+        system_prompt,
+        contents,
+        state,
+        tier,
+        events,
+        include_kb,
+        true,
+        None,
+    )
+    .await
+    {
+        Ok((answer, mut usage)) => {
+            usage.retries += 1;
+            log_brain(&model, "gemini", &usage);
+            return Ok((answer, model, usage));
+        }
+        Err(e) if is_429(&e) => e,
+        Err(e) => return Err(e),
+    };
 
     let chain = std::env::var("ECK_BRAIN_FALLBACK_MODEL")
         .unwrap_or_else(|_| "gemini-3.5-flash,gemini-3.5-flash-lite".to_string());
@@ -1996,7 +2958,17 @@ async fn run_gemini_oneshot(
         }
         warn!("[Brain oneshot] falling back to {fallback}");
         match drive_oneshot_native(
-            http, &auth, fallback, system_prompt, contents, state, tier, events,
+            http,
+            &auth,
+            fallback,
+            system_prompt,
+            contents,
+            state,
+            tier,
+            events,
+            include_kb,
+            true,
+            None,
         )
         .await
         {
@@ -2023,6 +2995,7 @@ async fn run_gemini_oneshot(
 /// Returns `(final_answer, usage)`. `usage` accumulates per-turn `usageMetadata`
 /// (prompt/cached/completion tokens, summed `openrouterCostUsd` when the OR path
 /// served the run) plus the tools called and the turn count.
+#[allow(clippy::too_many_arguments)]
 async fn drive_oneshot_native(
     http: &reqwest::Client,
     auth: &eck_core::ai::AiAuth,
@@ -2032,10 +3005,20 @@ async fn drive_oneshot_native(
     state: &Arc<AppState>,
     tier: crate::mcp::McpTier,
     events: Option<&tokio::sync::mpsc::UnboundedSender<BrainEvent>>,
+    include_kb: bool,
+    retry_timeout: bool,
+    progress: Option<&ProgressClock>,
 ) -> anyhow::Result<(String, BrainUsage)> {
     // functionDeclarations for the one-shot / Brain-Chat brain (byte-stable,
-    // sorted by name — prefix cache hygiene, owner §5). See `oneshot_tool_decls`.
-    let decls = oneshot_tool_decls(tier);
+    // sorted by name — prefix cache hygiene, owner §5). `include_kb` drops the
+    // `kb_brief` front door for a chat on a node with no KB. See `oneshot_tool_decls`.
+    let decls = oneshot_tool_decls(tier, include_kb);
+    // The exact catalog offered THIS run (D2/F17-1): a model tool call whose name is
+    // not here is answered with the fixed `unknown_tool_response`, never dispatched.
+    let decl_names: std::collections::HashSet<&str> = decls
+        .iter()
+        .filter_map(|d| d.get("name").and_then(|n| n.as_str()))
+        .collect();
     // `kb_brief` is NOT an MCP tool — it's dispatched via `KbBriefTool` below,
     // which masks the model's free-text symptom before it leaves the node.
     let kb_brief_tool = crate::ai::tools::KbBriefTool { http: http.clone() };
@@ -2045,16 +3028,37 @@ async fn drive_oneshot_native(
     let mut contents: Vec<Value> = seed_contents.to_vec();
     let mut usage = BrainUsage::default();
     let mut cost_acc: Option<f64> = None;
+    // Per-run tool-output budget: once this many serialized chars of tool results
+    // have been handed to the model, later calls are refused (W1-2).
+    let run_max = tool_run_max_chars();
+    let result_max = tool_result_max_chars();
+    let mut run_chars_used: usize = 0;
     const MAX_TURNS: usize = 6;
     for turn in 0..MAX_TURNS {
         if let Some(tx) = events {
-            let _ = tx.send(BrainEvent::Turn { turn: turn + 1, max: MAX_TURNS });
+            let _ = tx.send(BrainEvent::Turn {
+                turn: turn + 1,
+                max: MAX_TURNS,
+            });
+        }
+        if let Some(p) = progress {
+            p.mark();
         }
         // Last turn: forbid further tool calls so the model MUST answer from
         // what it has gathered instead of burning the budget on one more probe.
+        // `toolConfig.mode = NONE` alone is not enough — Gemini 3.x ignores it on
+        // the managed Vertex path — so ALSO append an explicit user nudge before
+        // the request. (Belt and braces; the wrap-up below is the backstop if the
+        // model STILL calls tools.)
         let last = turn + 1 == MAX_TURNS;
+        if last {
+            contents.push(json!({
+                "role": "user",
+                "parts": [{ "text": "Tool budget exhausted. Answer the question now from what you have gathered — do not call any tools." }]
+            }));
+        }
         let body = build_gemini_brain_body(system_prompt, &contents, &decls, last);
-        let resp = auth.generate_content_raw(http, model, body).await?;
+        let resp = brain_generate(auth, http, model, body, turn + 1, retry_timeout).await?;
         // Accumulate this turn's usage (Gemini implicit-cache figures + the OR
         // shim's mapped cachedContentTokenCount).
         let um = &resp["usageMetadata"];
@@ -2077,6 +3081,106 @@ async fn drive_oneshot_native(
             .filter(|p| p.get("functionCall").is_some())
             .cloned()
             .collect();
+
+        // D2/F17-1/F19-2: a model-supplied tool name is accepted only if it matches
+        // `[A-Za-z0-9_.-]{1,64}` — it is echoed verbatim into the functionResponse
+        // wrapper, and any other shape (over-long, empty, or a character that JSON-
+        // escapes) would defeat the size bounds. Abort the run on THIS engine BEFORE
+        // any response (or the model turn itself) is appended; the caller's fallback /
+        // error path takes over. Checked on every path (last-turn wrap-up included).
+        if let Some(bad) = calls.iter().find_map(|c| {
+            let n = c["functionCall"]["name"].as_str().unwrap_or("");
+            (!tool_name_ok(n)).then_some(n)
+        }) {
+            anyhow::bail!(
+                "brain returned a tool call with a disallowed name {bad:?} (must match [A-Za-z0-9_.-]{{1,64}}) — aborting run on this engine"
+            );
+        }
+
+        // F24-1: cap the NUMBER of calls in one model turn. The dispatch cap limits
+        // only executions; the model still controls how many calls (= appended parts)
+        // a turn carries, so without this the whole-run bound has a model-controlled
+        // multiplier. A turn over the hard ceiling is a malfunction — abort BEFORE any
+        // response (or the model turn itself) is appended, on every path (the last-turn
+        // wrap-up included). This keeps the whole-run size a CONSTANT bound:
+        // `run cap + ceiling x DENIAL_PART_MAX_CHARS`.
+        let abort_ceiling = tool_calls_per_turn_abort();
+        if abort_ceiling > 0 && calls.len() > abort_ceiling {
+            anyhow::bail!(
+                "brain returned {} tool calls in one turn (> ceiling {abort_ceiling}) — aborting run on this engine",
+                calls.len()
+            );
+        }
+
+        // Last turn but the model STILL wants tools (Gemini 3.x ignores the
+        // mode=NONE toolConfig on the managed Vertex path, and can ignore the
+        // nudge too). Do NOT execute the calls — the budget is spent. If the same
+        // response carries text, return that. Otherwise do ONE wrap-up request:
+        // echo the model turn VERBATIM (thoughtSignature hygiene, as elsewhere in
+        // this loop), feed a budget-exhausted error back for every call, and force
+        // a final answer. No `Turn` event is emitted for the wrap-up.
+        if last && !calls.is_empty() {
+            let text: String = parts
+                .iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("");
+            if !text.trim().is_empty() {
+                warn!("[Brain oneshot] last turn called tools AND returned text — using the text");
+                usage.cost_usd = cost_acc;
+                return Ok((text, usage));
+            }
+            warn!("[Brain oneshot] last turn still called tools — one wrap-up request to force a final answer");
+            contents.push(content);
+            // D3/F17-1/F19-2: route every outstanding call through the SAME fixed
+            // denial envelope + part builder the budget path uses, and CHARGE each
+            // part to `run_chars_used` like every other appended part (F24-1) — the
+            // old branch built a longer object that bypassed the accounting. The name
+            // guard AND the per-turn count ceiling above have already run on these
+            // calls, so every name is accepted (`[A-Za-z0-9_.-]{1,64}`, denial part
+            // <= 160) and there are at most `ceiling` of them.
+            let mut wrap_parts: Vec<Value> = Vec::with_capacity(calls.len());
+            for call in &calls {
+                let name = call["functionCall"]["name"].as_str().unwrap_or("");
+                let part = tool_response_part(name, tool_denial_response());
+                run_chars_used = run_chars_used.saturating_add(serialized_len(&part));
+                wrap_parts.push(part);
+            }
+            // The wrap-up is the final request; `run_chars_used` is not read again, so
+            // bind it to make the intent (consistent accounting) explicit to the lint.
+            let _ = run_chars_used;
+            contents.push(json!({ "role": "user", "parts": wrap_parts }));
+            let body = build_gemini_brain_body(system_prompt, &contents, &decls, true);
+            let resp2 = brain_generate(auth, http, model, body, turn + 1, retry_timeout).await?;
+            let um2 = &resp2["usageMetadata"];
+            usage.prompt_tokens += um2["promptTokenCount"].as_i64().unwrap_or(0);
+            usage.completion_tokens += um2["candidatesTokenCount"].as_i64().unwrap_or(0);
+            usage.cached_tokens += um2["cachedContentTokenCount"].as_i64().unwrap_or(0);
+            if let Some(c) = um2["openrouterCostUsd"].as_f64() {
+                cost_acc = Some(cost_acc.unwrap_or(0.0) + c);
+            }
+            usage.turns += 1;
+            usage.cost_usd = cost_acc;
+            let parts2 = resp2["candidates"][0]["content"]["parts"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let text2: String = parts2
+                .iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("");
+            if !text2.trim().is_empty() {
+                return Ok((text2, usage));
+            }
+            anyhow::bail!(
+                "brain did not reach a final answer within 6 turns (wrap-up finishReason: {})",
+                resp2["candidates"][0]["finishReason"]
+                    .as_str()
+                    .unwrap_or("?")
+            );
+        }
+
         if calls.is_empty() {
             let text: String = parts
                 .iter()
@@ -2096,7 +3200,9 @@ async fn drive_oneshot_native(
                 }
                 anyhow::bail!(
                     "brain returned neither text nor tool calls (finishReason: {})",
-                    resp["candidates"][0]["finishReason"].as_str().unwrap_or("?")
+                    resp["candidates"][0]["finishReason"]
+                        .as_str()
+                        .unwrap_or("?")
                 );
             }
             usage.cost_usd = cost_acc;
@@ -2108,6 +3214,14 @@ async fn drive_oneshot_native(
         // dispatch the MCP surface uses, at the caller's tier.
         contents.push(content);
         let mut response_parts: Vec<Value> = Vec::new();
+        // Per-turn dispatch cap + one-denial-turn rule (F14-1): dispatch at most
+        // `calls_per_turn` tools; the rest, and anything the run budget can no longer
+        // fit, get the fixed denial. If ANY denial is issued this turn we stop
+        // offering tools after it and force a tools-off wrap-up (so denials occur in
+        // at most one model turn per run).
+        let calls_per_turn = tool_calls_per_turn();
+        let mut dispatched_this_turn = 0usize;
+        let mut turn_had_denial = false;
         for call in calls {
             let fc = &call["functionCall"];
             let name = fc["name"].as_str().unwrap_or("");
@@ -2125,44 +3239,172 @@ async fn drive_oneshot_native(
             } else {
                 preview
             };
-            usage.tools.push((name.to_string(), preview.clone()));
             if let Some(tx) = events {
                 let _ = tx.send(BrainEvent::Tool {
                     name: name.to_string(),
-                    args_preview: preview,
+                    args_preview: preview.clone(),
                 });
             }
-            let response_obj = if name == "kb_brief" {
-                // Same KB-recall implementation as the triage loop, masking the
-                // model's free-text symptom before it leaves the node.
-                match serde_json::from_value::<crate::ai::tools::KbBriefArgs>(args.clone()) {
-                    Ok(a) => match kb_brief_tool.call(a).await {
-                        Ok(v) => v,
-                        Err(e) => json!({ "error": e.to_string() }),
-                    },
-                    Err(e) => json!({ "error": format!("invalid args: {e}") }),
-                }
-            } else if ONESHOT_TOOLS.contains(&name) {
-                let out = crate::mcp::tools::dispatch_tool(state, name, &args, tier).await;
-                let text = out["content"][0]["text"].as_str().unwrap_or("").to_string();
-                if out.get("isError").and_then(|v| v.as_bool()).unwrap_or(false) {
-                    json!({ "error": text })
-                } else {
-                    // Tool text is itself JSON — hand the model the structure.
-                    match serde_json::from_str::<Value>(&text) {
-                        Ok(v) if v.is_object() => v,
-                        Ok(v) => json!({ "result": v }),
-                        Err(_) => json!({ "result": text }),
-                    }
-                }
+            if let Some(p) = progress {
+                p.mark();
+            }
+            let t0 = std::time::Instant::now();
+            // A name that passed the guard but is not in the catalog offered this run
+            // is NOT dispatched (F17-1); it still goes through the SAME enforcement as
+            // a real result below (F19-1) so it cannot grow the context past the run
+            // cap and repeated unknowns end in the wrap-up like anything else.
+            let known = decl_names.contains(name);
+            // Per-turn dispatch cap: once this turn has dispatched `calls_per_turn`
+            // tools, deny the rest (same fixed envelope) without executing them.
+            let over_turn_cap = calls_per_turn > 0 && dispatched_this_turn >= calls_per_turn;
+            // Hard run budget (B1/F17-1): the per-result cap is `min(result cap,
+            // remaining run capacity) - actual wrapper overhead`, so the APPENDED PART
+            // (wrapper + name + response) stays within both caps. `None` (or over the
+            // per-turn cap) → the call is DENIED with ONE fixed envelope without
+            // executing the tool. Both the denial AND an unknown-tool result are
+            // charged like any other part.
+            let mut this_denied = false;
+            let response_obj = if over_turn_cap {
+                turn_had_denial = true;
+                this_denied = true;
+                tool_denial_response()
             } else {
-                json!({ "error": format!("unknown tool '{name}'") })
+                match per_result_cap(name, result_max, run_max, run_chars_used) {
+                None => {
+                    // No capacity for a bounded result part — denied (F19-1: unknown
+                    // names reach this path too, so they cannot bypass the run cap).
+                    turn_had_denial = true;
+                    this_denied = true;
+                    tool_denial_response()
+                }
+                Some(_cap) if !known => {
+                    // Catalog miss with capacity still available: the fixed unknown-tool
+                    // error, counted toward the per-turn cap and charged (F19-1).
+                    dispatched_this_turn += 1;
+                    unknown_tool_response()
+                }
+                Some(cap) => {
+                    dispatched_this_turn += 1;
+                    // Dispatch under a per-call timeout (B6): a slow tool returns a
+                    // tool error and the loop continues.
+                    let dispatch = async {
+                        if name == "kb_brief" {
+                            // Same KB-recall implementation as the triage loop, masking
+                            // the model's free-text symptom before it leaves the node.
+                            match serde_json::from_value::<crate::ai::tools::KbBriefArgs>(args.clone()) {
+                                Ok(a) => match kb_brief_tool.call(a).await {
+                                    Ok(v) => v,
+                                    Err(e) => json!({ "error": e.to_string() }),
+                                },
+                                Err(e) => json!({ "error": format!("invalid args: {e}") }),
+                            }
+                        } else if ONESHOT_TOOLS.contains(&name) {
+                            let out = crate::mcp::tools::dispatch_tool(state, name, &args, tier).await;
+                            let text = out["content"][0]["text"].as_str().unwrap_or("").to_string();
+                            if out
+                                .get("isError")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
+                            {
+                                json!({ "error": text })
+                            } else {
+                                // Tool text is itself JSON — hand the model the structure.
+                                match serde_json::from_str::<Value>(&text) {
+                                    Ok(v) if v.is_object() => v,
+                                    Ok(v) => json!({ "result": v }),
+                                    Err(_) => json!({ "result": text }),
+                                }
+                            }
+                        } else {
+                            json!({ "error": format!("unknown tool '{name}'") })
+                        }
+                    };
+                    let raw = match tool_call_timeout() {
+                        None => dispatch.await,
+                        Some(d) => match tokio::time::timeout(d, dispatch).await {
+                            Ok(v) => v,
+                            Err(_) => {
+                                warn!("[Brain oneshot] tool {name} timed out after {}s", d.as_secs());
+                                json!({ "error": format!("tool '{name}' timed out after {}s", d.as_secs()) })
+                            }
+                        },
+                    };
+                    // Structure-aware per-result shrink to the hard cap (B1/B2).
+                    shrink_tool_result(raw, cap)
+                }
+                }
             };
-            response_parts.push(json!({
-                "functionResponse": { "name": name, "response": response_obj }
-            }));
+            let truncated = response_obj
+                .get("truncated")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            // Charge the run budget on the WHOLE appended part (wrapper + name +
+            // response) — the B3 size unit — INCLUDING denial envelopes (F14-1).
+            let part = tool_response_part(name, response_obj);
+            let chars = serialized_len(&part);
+            // A denial stays within the fixed envelope for every ACCEPTED name: the
+            // guard (D2/F19-2) admits only `[A-Za-z0-9_.-]{1,64}`, whose widest denial
+            // part is 158 chars <= the 160 ceiling. So this cannot be exceeded here —
+            // assert it in debug, don't log.
+            debug_assert!(
+                !this_denied || chars <= DENIAL_PART_MAX_CHARS,
+                "denial part is {chars} chars (> {DENIAL_PART_MAX_CHARS}) — the name guard should have aborted the run"
+            );
+            run_chars_used = run_chars_used.saturating_add(chars);
+            let ms = t0.elapsed().as_millis() as u64;
+            usage.tools.push((name.to_string(), preview, ms));
+            if let Some(tx) = events {
+                let _ = tx.send(BrainEvent::ToolDone {
+                    name: name.to_string(),
+                    ms,
+                    chars,
+                    truncated,
+                });
+            }
+            if let Some(p) = progress {
+                p.mark();
+            }
+            response_parts.push(part);
         }
         contents.push(json!({ "role": "user", "parts": response_parts }));
+
+        // One denial turn only (F14-1): if any call was denied this turn, do NOT
+        // offer tools again — force a single tools-off wrap-up and return its text,
+        // so the loop cannot keep appending charged denials turn after turn.
+        if turn_had_denial {
+            warn!("[Brain oneshot] turn {turn}: tool budget / per-turn cap hit — forcing a tools-off wrap-up");
+            contents.push(json!({
+                "role": "user",
+                "parts": [{ "text": "Tool budget exhausted. Answer the question now from what you have gathered — do not call any tools." }]
+            }));
+            let body = build_gemini_brain_body(system_prompt, &contents, &decls, true);
+            let resp2 = brain_generate(auth, http, model, body, turn + 1, retry_timeout).await?;
+            let um2 = &resp2["usageMetadata"];
+            usage.prompt_tokens += um2["promptTokenCount"].as_i64().unwrap_or(0);
+            usage.completion_tokens += um2["candidatesTokenCount"].as_i64().unwrap_or(0);
+            usage.cached_tokens += um2["cachedContentTokenCount"].as_i64().unwrap_or(0);
+            if let Some(c) = um2["openrouterCostUsd"].as_f64() {
+                cost_acc = Some(cost_acc.unwrap_or(0.0) + c);
+            }
+            usage.turns += 1;
+            usage.cost_usd = cost_acc;
+            let parts2 = resp2["candidates"][0]["content"]["parts"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let text2: String = parts2
+                .iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("");
+            if !text2.trim().is_empty() {
+                return Ok((text2, usage));
+            }
+            anyhow::bail!(
+                "brain did not reach a final answer after the budget wrap-up (finishReason: {})",
+                resp2["candidates"][0]["finishReason"].as_str().unwrap_or("?")
+            );
+        }
     }
     let _ = usage;
     anyhow::bail!("brain did not reach a final answer within 6 turns")
@@ -2227,7 +3469,11 @@ pub(crate) fn split_oldest_rounds(
 fn render_chunk_transcript(chunk: &[(String, String)]) -> String {
     let mut out = String::new();
     for (role, text) in chunk {
-        let who = if role == "assistant" || role == "model" { "ASSISTANT" } else { "USER" };
+        let who = if role == "assistant" || role == "model" {
+            "ASSISTANT"
+        } else {
+            "USER"
+        };
         out.push_str(&format!("{who}: {text}\n"));
     }
     out
@@ -2238,7 +3484,11 @@ fn render_chunk_transcript(chunk: &[(String, String)]) -> String {
 #[derive(Clone, Debug)]
 pub(crate) struct ChatCompaction {
     pub summary: String,
+    /// Rounds (user messages) folded into the summary.
     pub dropped_turns: usize,
+    /// Exact number of history MESSAGES (not rounds) folded — the client drops
+    /// precisely this many from its tail (W1-7).
+    pub dropped_messages: usize,
     pub chunk_text_len: usize,
 }
 
@@ -2275,7 +3525,16 @@ Updated summary:"
     let body = json!({
         "contents": [{ "role": "user", "parts": [{ "text": prompt }] }],
     });
-    let gen = eck_core::ai::AiAuth::generate_for_task(http, "chat_compact", &model, body, None).await?;
+    // Per-call timeout (W1-1): on expiry the summarizer errors and the caller
+    // keeps the full verbatim tail (the existing compaction-failure behaviour).
+    let gen_fut = eck_core::ai::AiAuth::generate_for_task(http, "chat_compact", &model, body, None);
+    let gen = match compaction_call_timeout() {
+        None => gen_fut.await?,
+        Some(d) => match tokio::time::timeout(d, gen_fut).await {
+            Ok(r) => r?,
+            Err(_) => anyhow::bail!("chat_compact summarizer timed out after {}s", d.as_secs()),
+        },
+    };
     let text = gen.text.trim().to_string();
     if text.is_empty() {
         anyhow::bail!("chat_compact summarizer returned empty text");
@@ -2289,6 +3548,7 @@ Updated summary:"
 /// plus any compaction that happened THIS request (so clients adopt the new
 /// summary and drop the compacted rounds).
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn answer_chat(
     state: &Arc<AppState>,
     question: &str,
@@ -2296,10 +3556,32 @@ pub(crate) async fn answer_chat(
     history: Vec<(String, String)>,
     tier: crate::mcp::McpTier,
     engine: BrainEngine,
+    hedge_mode: HedgeMode,
     events: Option<tokio::sync::mpsc::UnboundedSender<BrainEvent>>,
+    // §6: prepended to the system prompt under "Current object" when the chat is
+    // scoped to an entity (object-page chat); `None` for free-form dashboard chat.
+    context_block: Option<String>,
 ) -> anyhow::Result<ChatRunResult> {
     let keep = chat_keep_turns();
     let chunk = chat_compact_chunk();
+
+    // Overall run deadline (B6): bound compaction + the loop + wrap-up + the Gemini
+    // fallback together. `remaining(stage)` errors (naming the stage) when the
+    // deadline is already spent, else gives the time left to wrap the next stage.
+    let run_start = std::time::Instant::now();
+    let run_secs = brain_run_secs();
+    let remaining = |stage: &str| -> anyhow::Result<Option<Duration>> {
+        match run_secs {
+            None => Ok(None),
+            Some(secs) => {
+                let elapsed = run_start.elapsed().as_secs();
+                if elapsed >= secs {
+                    anyhow::bail!("chat run deadline ({secs}s) exceeded before the {stage} stage");
+                }
+                Ok(Some(Duration::from_secs(secs - elapsed)))
+            }
+        }
+    };
 
     let mut summary = incoming_summary.filter(|s| !s.trim().is_empty());
     let mut tail = history;
@@ -2308,14 +3590,29 @@ pub(crate) async fn answer_chat(
     if should_compact(count_rounds(&tail), keep, chunk) {
         let (old_chunk, rest) = split_oldest_rounds(&tail, chunk);
         let dropped = count_rounds(&old_chunk);
+        let dropped_messages = old_chunk.len();
         if dropped > 0 {
             let chunk_text = render_chunk_transcript(&old_chunk);
             let chunk_text_len = chunk_text.len();
             let http = reqwest::Client::new();
-            match summarize_chunk(&http, summary.as_deref(), &chunk_text, question).await {
+            // Keep compaction under the run deadline as well as its own call timeout.
+            // Scope the borrowing future so its `&summary` is released before we
+            // reassign `summary` below.
+            let compact_res = {
+                let compact_fut = summarize_chunk(&http, summary.as_deref(), &chunk_text, question);
+                match remaining("compaction") {
+                    Ok(None) => compact_fut.await,
+                    Ok(Some(d)) => match tokio::time::timeout(d, compact_fut).await {
+                        Ok(r) => r,
+                        Err(_) => Err(anyhow::anyhow!("compaction exceeded the chat run deadline")),
+                    },
+                    Err(e) => Err(e),
+                }
+            };
+            match compact_res {
                 Ok(new_summary) => {
                     info!(
-                        "[chat-compact] folded {dropped} oldest rounds ({chunk_text_len} chars) into summary ({} chars)",
+                        "[chat-compact] folded {dropped} oldest rounds / {dropped_messages} messages ({chunk_text_len} chars) into summary ({} chars)",
                         new_summary.len()
                     );
                     summary = Some(new_summary.clone());
@@ -2323,6 +3620,7 @@ pub(crate) async fn answer_chat(
                     compaction = Some(ChatCompaction {
                         summary: new_summary,
                         dropped_turns: dropped,
+                        dropped_messages,
                         chunk_text_len,
                     });
                 }
@@ -2335,7 +3633,28 @@ pub(crate) async fn answer_chat(
     // Chat path: the question is the raw LAST user turn (matches how the client
     // stores it, so next turn's prefix is byte-identical — cache-friendly).
     let contents = build_chat_contents(summary.as_deref(), &tail, question);
-    let answer = answer_oneshot_full(state, contents, tier, engine, events).await?;
+    let answer_fut = answer_oneshot_full_kind(
+        state,
+        contents,
+        tier,
+        engine,
+        hedge_mode,
+        events,
+        RunKind::Chat,
+        context_block,
+    );
+    // The brain answer (loop + wrap-up + Gemini fallback) runs under the remaining
+    // run deadline (B6). On expiry a clear error naming the stage.
+    let answer = match remaining("brain answer")? {
+        None => answer_fut.await?,
+        Some(d) => match tokio::time::timeout(d, answer_fut).await {
+            Ok(r) => r?,
+            Err(_) => anyhow::bail!(
+                "chat run deadline ({}s) exceeded during the brain answer loop",
+                run_secs.unwrap_or(0)
+            ),
+        },
+    };
     Ok(ChatRunResult { answer, compaction })
 }
 
@@ -2462,7 +3781,9 @@ pub(crate) async fn mask_free_text(http: &reqwest::Client, raw: &str) -> String 
             let model = std::env::var("GEMINI_GENERATION_MODEL").unwrap_or_default();
             match eck_core::ai::AiAuth::resolve(http).await {
                 Ok(auth) if !model.is_empty() => {
-                    match crate::ai::embeddings::extract_and_anonymize(http, &auth, raw, &model).await {
+                    match crate::ai::embeddings::extract_and_anonymize(http, &auth, raw, &model)
+                        .await
+                    {
                         Ok((text, _)) => text,
                         Err(e) => {
                             warn!("[mask] cloud masking failed ({e}) — regex backstop only");
@@ -2548,7 +3869,10 @@ async fn write_thought(
         .await;
 
     if let Err(e) = res.and_then(|mut r| r.take::<Vec<Value>>(0).map(|_| ())) {
-        warn!("[Orchestrator] Failed to persist ai_thought for {}: {}", task_rid, e);
+        warn!(
+            "[Orchestrator] Failed to persist ai_thought for {}: {}",
+            task_rid, e
+        );
     }
 }
 
@@ -2559,14 +3883,7 @@ async fn fail_task(state: &Arc<AppState>, task_rid: &str, reason: &str) {
         .query("UPDATE type::record($rid) SET state = 'failed', updated_at = time::now()")
         .bind(("rid", task_rid.to_string()))
         .await;
-    write_thought(
-        state,
-        task_rid,
-        0,
-        "fail",
-        &json!({ "error": reason }),
-    )
-    .await;
+    write_thought(state, task_rid, 0, "fail", &json!({ "error": reason })).await;
 }
 
 #[cfg(test)]
@@ -2574,7 +3891,8 @@ mod chat_tests {
     #[test]
     fn scrub_swaps_masked_description_in_and_raw_out() {
         // Raw description alone → dropped (fail-closed, legacy behaviour).
-        let ctx = serde_json::json!({"meta": {"description": "Herr Müller, 0171 2345678, Gerät piept"}});
+        let ctx =
+            serde_json::json!({"meta": {"description": "Herr Müller, 0171 2345678, Gerät piept"}});
         let out = scrub_context_for_prompt(&ctx);
         assert!(out["meta"].get("description").is_none());
 
@@ -2584,15 +3902,33 @@ mod chat_tests {
             "description_masked": "Name_ab12, Phone_cd34, Gerät piept"
         }});
         let out = scrub_context_for_prompt(&ctx);
-        assert_eq!(out["meta"]["description"], "Name_ab12, Phone_cd34, Gerät piept");
+        assert_eq!(
+            out["meta"]["description"],
+            "Name_ab12, Phone_cd34, Gerät piept"
+        );
         assert!(out["meta"].get("description_masked").is_none());
         assert!(!out.to_string().contains("Müller"));
+    }
+
+    #[test]
+    fn scrub_leaves_already_tokenized_meta_untouched() {
+        // The vault tokenizes stored meta at ingest, so the brain context can
+        // arrive already masked. scrub_context_for_prompt must NOT re-hash a
+        // token into a second-level token that decodes to nothing.
+        let ctx = serde_json::json!({"meta": {
+            "customer": "Name_CC0068898836CB06",
+            "address": "Address_DEADBEEF00000000"
+        }});
+        assert_eq!(scrub_context_for_prompt(&ctx), ctx);
     }
 
     use super::*;
 
     fn h(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs.iter().map(|(r, t)| (r.to_string(), t.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(r, t)| (r.to_string(), t.to_string()))
+            .collect()
     }
 
     #[test]
@@ -2602,7 +3938,10 @@ mod chat_tests {
         // [summary(user), ack(model), q1(user), a1(model), q2(user)]
         assert_eq!(c.len(), 5);
         assert_eq!(c[0]["role"], "user");
-        assert!(c[0]["parts"][0]["text"].as_str().unwrap().starts_with("Conversation summary so far (compacted): prior facts"));
+        assert!(c[0]["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Conversation summary so far (compacted): prior facts"));
         assert_eq!(c[1]["role"], "model");
         assert_eq!(c[1]["parts"][0]["text"], "Understood.");
         assert_eq!(c[2]["role"], "user");
@@ -2632,17 +3971,29 @@ mod chat_tests {
         let hist_n = h(&[("user", "q1"), ("assistant", "a1")]);
         let cn = build_chat_contents(Some("S"), &hist_n, "q2");
         // Turn N+1: q2/a2 appended, we ask q3.
-        let hist_n1 = h(&[("user", "q1"), ("assistant", "a1"), ("user", "q2"), ("assistant", "a2")]);
+        let hist_n1 = h(&[
+            ("user", "q1"),
+            ("assistant", "a1"),
+            ("user", "q2"),
+            ("assistant", "a2"),
+        ]);
         let cn1 = build_chat_contents(Some("S"), &hist_n1, "q3");
 
         // Concatenated element serialization of everything in turn N EXCEPT its
         // last (question) turn must be a byte-prefix of turn N+1's concatenation.
         let concat = |elems: &[Value]| -> String {
-            elems.iter().map(|e| serde_json::to_string(e).unwrap()).collect::<Vec<_>>().join("\n")
+            elems
+                .iter()
+                .map(|e| serde_json::to_string(e).unwrap())
+                .collect::<Vec<_>>()
+                .join("\n")
         };
         let head_n = concat(&cn[..cn.len() - 1]); // [S, ack, q1, a1]
         let full_n1 = concat(&cn1);
-        assert!(full_n1.starts_with(&head_n), "turn N head must prefix turn N+1");
+        assert!(
+            full_n1.starts_with(&head_n),
+            "turn N head must prefix turn N+1"
+        );
         // And q2 (turn N's last user turn) reappears verbatim as a mid turn in N+1.
         assert_eq!(cn[cn.len() - 1], cn1[cn1.len() - 3]);
     }
@@ -2660,7 +4011,13 @@ mod chat_tests {
 
     #[test]
     fn count_rounds_counts_user_messages() {
-        let hist = h(&[("user", "a"), ("assistant", "b"), ("user", "c"), ("model", "d"), ("user", "e")]);
+        let hist = h(&[
+            ("user", "a"),
+            ("assistant", "b"),
+            ("user", "c"),
+            ("model", "d"),
+            ("user", "e"),
+        ]);
         assert_eq!(count_rounds(&hist), 3);
     }
 
@@ -2668,10 +4025,14 @@ mod chat_tests {
     fn split_oldest_rounds_takes_first_chunk_pairs() {
         // 4 rounds; split off the oldest 2 → chunk keeps 2 pairs (4 msgs), rest 2 pairs.
         let hist = h(&[
-            ("user", "q1"), ("assistant", "a1"),
-            ("user", "q2"), ("assistant", "a2"),
-            ("user", "q3"), ("assistant", "a3"),
-            ("user", "q4"), ("assistant", "a4"),
+            ("user", "q1"),
+            ("assistant", "a1"),
+            ("user", "q2"),
+            ("assistant", "a2"),
+            ("user", "q3"),
+            ("assistant", "a3"),
+            ("user", "q4"),
+            ("assistant", "a4"),
         ]);
         let (chunk, rest) = split_oldest_rounds(&hist, 2);
         assert_eq!(count_rounds(&chunk), 2);
@@ -2700,7 +4061,12 @@ mod chat_tests {
         let cn = build_chat_contents(Some("S"), &h(&[("user", "q1"), ("assistant", "a1")]), "q2");
         let cn1 = build_chat_contents(
             Some("S"),
-            &h(&[("user", "q1"), ("assistant", "a1"), ("user", "q2"), ("assistant", "a2")]),
+            &h(&[
+                ("user", "q1"),
+                ("assistant", "a1"),
+                ("user", "q2"),
+                ("assistant", "a2"),
+            ]),
             "q3",
         );
         let bn = build_gemini_brain_body(sys, &cn, &decls, false);
@@ -2725,7 +4091,10 @@ mod chat_tests {
             concat(&json!(arr[..arr.len() - 1]))
         };
         let full_n1 = concat(&bn1["contents"]);
-        assert!(full_n1.starts_with(&head_n), "gemini contents head must prefix N+1");
+        assert!(
+            full_n1.starts_with(&head_n),
+            "gemini contents head must prefix N+1"
+        );
     }
 
     /// The one-shot / Brain-Chat tool list carries `kb_brief` for every tier.
@@ -2736,16 +4105,26 @@ mod chat_tests {
             crate::mcp::McpTier::Agent,
             crate::mcp::McpTier::Observer,
         ] {
-            let decls = oneshot_tool_decls(tier);
+            let decls = oneshot_tool_decls(tier, true);
             assert!(
                 decls
                     .iter()
                     .any(|d| d.get("name").and_then(|n| n.as_str()) == Some("kb_brief")),
                 "oneshot tool list must include kb_brief"
             );
+            // Chat on a KB-less node drops the kb_brief front door.
+            let chat_decls = oneshot_tool_decls(tier, false);
+            assert!(
+                !chat_decls
+                    .iter()
+                    .any(|d| d.get("name").and_then(|n| n.as_str()) == Some("kb_brief")),
+                "capability-aware chat catalog must omit kb_brief when KB is off"
+            );
             // Byte-stable ordering (sorted) — the cache-prefix invariant.
-            let names: Vec<&str> =
-                decls.iter().filter_map(|d| d.get("name").and_then(|n| n.as_str())).collect();
+            let names: Vec<&str> = decls
+                .iter()
+                .filter_map(|d| d.get("name").and_then(|n| n.as_str()))
+                .collect();
             let mut sorted = names.clone();
             sorted.sort_unstable();
             assert_eq!(names, sorted, "oneshot decls must be sorted by name");
@@ -2755,7 +4134,9 @@ mod chat_tests {
     /// The triage loop arms `kb_brief` via the same `KbBriefTool` + `native_decl`.
     #[tokio::test]
     async fn triage_kb_brief_decl_name() {
-        let tool = crate::ai::tools::KbBriefTool { http: reqwest::Client::new() };
+        let tool = crate::ai::tools::KbBriefTool {
+            http: reqwest::Client::new(),
+        };
         let decl = native_decl(&tool, json!({ "type": "object" })).await;
         assert_eq!(decl["name"], "kb_brief");
     }
@@ -2765,7 +4146,10 @@ mod chat_tests {
     #[test]
     fn prompts_have_kb_brief_and_anti_parking() {
         let sys = system_prompt_text();
-        assert!(sys.contains("kb_brief"), "system prompt must mention kb_brief");
+        assert!(
+            sys.contains("kb_brief"),
+            "system prompt must mention kb_brief"
+        );
         assert!(
             sys.contains("a fact that exists solely in the operator's head"),
             "system prompt must carry the anti-parking rule"
@@ -2773,7 +4157,9 @@ mod chat_tests {
         // The gate is phrased as a frequency target + NOT-list (a precondition
         // checklist read as a licence to ask — 10/30 asks in the 2026-09-06 bench).
         assert!(
-            sys.contains("This is a LAST RESORT") && sys.contains("These are NOT reasons to ask") && sys.contains("A goodwill / legal / management decision IS such a fact"),
+            sys.contains("This is a LAST RESORT")
+                && sys.contains("These are NOT reasons to ask")
+                && sys.contains("A goodwill / legal / management decision IS such a fact"),
             "system prompt must carry the last-resort rule with the NOT-reasons list"
         );
         assert!(
@@ -2786,9 +4172,33 @@ mod chat_tests {
         );
     }
 
+    /// Last-turn body forbids further tool calls (`toolConfig.mode = NONE`);
+    /// earlier turns carry no `toolConfig`. (The nudge + wrap-up in
+    /// `drive_oneshot_native` is the backstop for Gemini 3.x ignoring this on the
+    /// managed Vertex path — see the module docs.)
+    #[test]
+    fn gemini_last_turn_body_forbids_tools() {
+        let decls = vec![
+            json!({ "name": "a_tool", "description": "d", "parameters": { "type": "object" } }),
+        ];
+        let contents = build_chat_contents(None, &h(&[]), "q");
+        let last = build_gemini_brain_body("sys", &contents, &decls, true);
+        assert_eq!(last["toolConfig"]["functionCallingConfig"]["mode"], "NONE");
+        let mid = build_gemini_brain_body("sys", &contents, &decls, false);
+        assert!(
+            mid.get("toolConfig").is_none(),
+            "non-last turns must not pin toolConfig"
+        );
+    }
+
     #[test]
     fn brain_usage_cache_ratio_and_json() {
-        let u = BrainUsage { prompt_tokens: 2000, cached_tokens: 1700, completion_tokens: 100, ..Default::default() };
+        let u = BrainUsage {
+            prompt_tokens: 2000,
+            cached_tokens: 1700,
+            completion_tokens: 100,
+            ..Default::default()
+        };
         assert!((u.cache_ratio() - 0.85).abs() < 1e-9);
         let j = u.to_json();
         assert_eq!(j["prompt_tokens"], 2000);
@@ -2796,5 +4206,410 @@ mod chat_tests {
         assert_eq!(j["cache_ratio"], 0.85);
         // Zero prompt → 0 ratio, no panic.
         assert_eq!(BrainUsage::default().cache_ratio(), 0.0);
+    }
+
+    // ── W1-1: per-call timeout parsing ──────────────────────────────────────
+    #[test]
+    fn ai_call_timeout_parsing() {
+        // Default when unset.
+        std::env::remove_var("ECK_TEST_TO");
+        assert_eq!(ai_call_timeout("ECK_TEST_TO", 60), Some(Duration::from_secs(60)));
+        // `off` / `0` disable.
+        std::env::set_var("ECK_TEST_TO", "off");
+        assert_eq!(ai_call_timeout("ECK_TEST_TO", 60), None);
+        std::env::set_var("ECK_TEST_TO", "0");
+        assert_eq!(ai_call_timeout("ECK_TEST_TO", 60), None);
+        // A number wins; whitespace tolerated.
+        std::env::set_var("ECK_TEST_TO", " 12 ");
+        assert_eq!(ai_call_timeout("ECK_TEST_TO", 60), Some(Duration::from_secs(12)));
+        // Garbage → default.
+        std::env::set_var("ECK_TEST_TO", "banana");
+        assert_eq!(ai_call_timeout("ECK_TEST_TO", 60), Some(Duration::from_secs(60)));
+        std::env::remove_var("ECK_TEST_TO");
+    }
+
+    // ── W1-2: structure-aware tool-result shrink ────────────────────────────
+    #[test]
+    fn shrink_leaves_small_input_untouched() {
+        let v = json!({ "matched_total": 3, "rows": [1, 2, 3] });
+        let out = shrink_tool_result(v.clone(), 12000);
+        assert_eq!(out, v);
+        assert!(out.get("truncated").is_none());
+    }
+
+    #[test]
+    fn shrink_keeps_scalars_and_trims_long_array() {
+        let big: Vec<Value> = (0..5000).map(|i| json!({ "n": i, "s": "x".repeat(50) })).collect();
+        let v = json!({ "matched_total": 5000, "status_counts": { "Open": 5000 }, "rows": big });
+        let out = shrink_tool_result(v, 4000);
+        assert!(serialized_len(&out) <= 4000 + 400); // marker adds a little
+        // Scalars survive verbatim.
+        assert_eq!(out["matched_total"], 5000);
+        assert_eq!(out["status_counts"]["Open"], 5000);
+        // The array was shortened (head kept) and the object flagged.
+        assert!(out["rows"].as_array().unwrap().len() < 5000);
+        assert_eq!(out["truncated"], json!(true));
+        assert!(out["truncated_note"].as_str().unwrap().contains("ticket_stats"));
+    }
+
+    #[test]
+    fn shrink_trims_one_huge_string() {
+        let v = json!({ "id": "T-1", "body": "y".repeat(100_000) });
+        let out = shrink_tool_result(v, 2000);
+        assert!(serialized_len(&out) <= 2000 + 400);
+        assert_eq!(out["id"], "T-1"); // short scalar kept
+        assert!(out["body"].as_str().unwrap().len() < 100_000);
+        assert_eq!(out["truncated"], json!(true));
+    }
+
+    #[test]
+    fn shrink_handles_nested_arrays() {
+        let inner: Vec<Value> = (0..2000).map(|i| json!(i)).collect();
+        let v = json!({ "groups": [ { "key": "a", "items": inner.clone() }, { "key": "b", "items": inner } ] });
+        let out = shrink_tool_result(v, 3000);
+        assert!(serialized_len(&out) <= 3000 + 400);
+        assert_eq!(out["truncated"], json!(true));
+        // The group keys (scalars) survive.
+        assert_eq!(out["groups"][0]["key"], "a");
+    }
+
+    // ── W1-4: hedge-offer timing (pure) ─────────────────────────────────────
+    #[test]
+    fn should_offer_now_rule() {
+        let budget = 25u64;
+        // Still making progress (idle small, elapsed small) → no offer.
+        assert!(!should_offer_now(5, 20, budget));
+        // No progress for a full budget window → offer.
+        assert!(should_offer_now(25, 30, budget));
+        // Total elapsed past 3× budget even while technically progressing → offer.
+        assert!(should_offer_now(1, 75, budget));
+        assert!(!should_offer_now(24, 74, budget));
+        // Boundary.
+        assert!(should_offer_now(25, 0, budget));
+    }
+
+    // ── W1-3: chat prompt content ───────────────────────────────────────────
+    #[test]
+    fn chat_prompt_differs_from_oneshot_and_is_capability_aware() {
+        let with_kb = chat_prompt_text(true);
+        let without_kb = chat_prompt_text(false);
+        // Chat framing, not the one-shot "no operator / no follow-up".
+        assert!(with_kb.contains("ongoing dashboard conversation"));
+        assert!(!with_kb.contains("no operator to ask and no follow-up"));
+        // Directs the model to ticket_stats for counts, and to ask one question.
+        assert!(with_kb.contains("ticket_stats"));
+        assert!(with_kb.contains("ONE short clarifying question"));
+        // Capability-aware: the kb_brief rule only appears when the KB is configured.
+        assert!(with_kb.contains("kb_brief"));
+        assert!(!without_kb.contains("kb_brief"));
+    }
+
+    // ── B1: hard tool-output bound ──────────────────────────────────────────
+    #[test]
+    fn shrink_wide_numeric_object_falls_back_bounded() {
+        // A wide object of numeric fields cannot be shrunk structurally (scalars
+        // are preserved, keys never removed) → bounded fallback, still under cap.
+        let mut obj = serde_json::Map::new();
+        for i in 0..2000 {
+            obj.insert(format!("field_{i}"), json!(i));
+        }
+        let v = Value::Object(obj);
+        let out = shrink_tool_result(v, 1000);
+        assert!(serialized_len(&out) <= 1000, "hard bound must hold");
+        assert_eq!(out["truncated"], json!(true));
+        assert!(out.get("error").is_some());
+    }
+
+    #[test]
+    fn shrink_is_a_hard_bound_for_many_caps() {
+        // Across a range of caps the output never exceeds the cap.
+        let big: Vec<Value> = (0..3000).map(|i| json!({ "n": i, "s": "z".repeat(300) })).collect();
+        let v = json!({ "matched_total": 3000, "rows": big, "note": "y".repeat(5000) });
+        for cap in [300usize, 500, 1200, 4000, 9000] {
+            let out = shrink_tool_result(v.clone(), cap);
+            assert!(serialized_len(&out) <= cap, "cap {cap} violated: {}", serialized_len(&out));
+        }
+    }
+
+    // ── B2: exact values never corrupted ────────────────────────────────────
+    #[test]
+    fn shrink_never_corrupts_tokens_and_ids() {
+        // Vault tokens, record ids, serials, ticket numbers, timestamps — all <=200
+        // chars — must survive byte-identical even when the result is shrunk hard.
+        let rows: Vec<Value> = (0..500)
+            .map(|i| {
+                json!({
+                    "customer": "Name_CC0068898836CB06",
+                    "phone": "Phone_DEADBEEF00000000",
+                    "ticket_number": format!("#{}", 30000 + i),
+                    "serial": "SN-ABCDEF123456",
+                    "created_time": "2026-10-01T00:30:00+02:00",
+                    "record_id": "chat_session:cs-7b3f0a12-0000-4444-8888-abcdefabcdef",
+                })
+            })
+            .collect();
+        let v = json!({ "matched_total": 500, "rows": rows });
+        let out = shrink_tool_result(v, 2000);
+        assert!(serialized_len(&out) <= 2000);
+        // Every surviving row keeps every token/id byte-identical.
+        for row in out["rows"].as_array().unwrap() {
+            assert_eq!(row["customer"], "Name_CC0068898836CB06");
+            assert_eq!(row["phone"], "Phone_DEADBEEF00000000");
+            assert_eq!(row["serial"], "SN-ABCDEF123456");
+            assert_eq!(row["created_time"], "2026-10-01T00:30:00+02:00");
+            assert_eq!(
+                row["record_id"],
+                "chat_session:cs-7b3f0a12-0000-4444-8888-abcdefabcdef"
+            );
+            assert!(row["ticket_number"].as_str().unwrap().starts_with('#'));
+        }
+    }
+
+    #[test]
+    fn shrink_string_floor_is_respected() {
+        // A single long string is cut, but never below the 200-char floor. The cap
+        // is large enough that the string-shortening path (not the bounded fallback)
+        // runs — the note + markers still leave room for a >=200-char body.
+        let v = json!({ "id": "T-1", "body": "w".repeat(10_000) });
+        let out = shrink_tool_result(v, 1500);
+        assert!(serialized_len(&out) <= 1500);
+        let body = out["body"].as_str().expect("body kept as a (shortened) string");
+        assert!(body.chars().count() >= 200, "never cut below the 200 floor");
+        assert!(body.chars().count() < 10_000, "but it was shortened");
+        assert_eq!(out["id"], "T-1"); // short scalar kept exactly
+    }
+
+    #[test]
+    fn shrink_tiny_cap_falls_back_without_corruption() {
+        // When the cap is too small for even a floored string + note, the bounded
+        // fallback drops the oversized string entirely rather than cut it below 200.
+        let v = json!({ "matched_total": 7, "body": "w".repeat(10_000) });
+        let out = shrink_tool_result(v, 400);
+        assert!(serialized_len(&out) <= 400);
+        assert_eq!(out["truncated"], json!(true));
+        assert_eq!(out["matched_total"], 7); // scalar count survives
+        assert!(out.get("body").is_none()); // oversized string dropped, never corrupted
+    }
+
+    // ── B1/F17-1: per-result cap arithmetic. The cap is `min(result cap, remaining
+    //    run capacity) - ACTUAL wrapper overhead`, so the whole appended part honours
+    //    both caps; deny when the remaining capacity cannot fit a minimal bounded part.
+    #[test]
+    fn per_result_cap_rules() {
+        // The overhead is the actual serialized wrapper for THIS name (no constant).
+        let name = "customer_360";
+        let oh = wrapper_overhead(name);
+        assert!(oh > 0 && oh < MIN_BOUNDED_RESULT_CHARS, "overhead {oh} is the real wrapper size");
+        // Normal: min(result, remaining) - overhead. remaining 10000 < result 12000.
+        assert_eq!(per_result_cap(name, 12000, 60000, 50000), Some(10000 - oh));
+        assert_eq!(per_result_cap(name, 12000, 60000, 0), Some(12000 - oh));
+        // Run exhausted → deny (every further call).
+        assert_eq!(per_result_cap(name, 12000, 60000, 60000), None);
+        assert_eq!(per_result_cap(name, 12000, 60000, 61000), None);
+        // Near-exhaustion: remaining too small to fit the wrapper + a minimal bounded
+        // result part → deny instead of returning an unusable tiny cap (F13-1).
+        assert_eq!(per_result_cap(name, 12000, 60000, 59950), None); // remaining 50
+        assert_eq!(per_result_cap(name, 12000, 60000, 59900), None); // remaining 100
+        // B3: 0 = unlimited for a budget — the OTHER budget (minus overhead) governs.
+        assert_eq!(per_result_cap(name, 12000, 0, 999_999), Some(12000 - oh)); // run unlimited
+        assert_eq!(per_result_cap(name, 0, 60000, 10000), Some(50000 - oh)); // result unlimited
+        assert_eq!(per_result_cap(name, 0, 0, 999), Some(0)); // both unlimited
+    }
+
+    // ── RC1/F17-1: the APPENDED PART (wrapper + name + response), not just the bare
+    //    response, must stay within BOTH the result cap and the remaining run capacity
+    //    on the actual serialized value. The old sizing overshot by the wrapper. ──
+    #[test]
+    fn appended_part_stays_within_result_and_run_caps() {
+        let name = "customer_360";
+        let result_max = 512usize;
+        let run_max = 60000usize;
+        let run_used = 0usize;
+        // A bare result well over the result cap (Astra's 512-char case).
+        let raw = json!({ "result": "x".repeat(512) });
+        let cap = per_result_cap(name, result_max, run_max, run_used).expect("should dispatch");
+        let response = shrink_tool_result(raw, cap);
+        let part = tool_response_part(name, response);
+        let part_len = serialized_len(&part);
+        assert!(part_len <= result_max, "part {part_len} > result cap {result_max}");
+        assert!(
+            part_len <= run_max - run_used,
+            "part {part_len} > remaining run capacity {}",
+            run_max - run_used
+        );
+    }
+
+    // ── D2/F17-1/F19-2: a model-supplied tool name is accepted only if it matches
+    //    `[A-Za-z0-9_.-]{1,64}`; the loop checks this pure guard BEFORE appending
+    //    anything. Quotes / backslashes / non-ASCII / empty / 65-char names are
+    //    rejected (JSON escaping can never expand an accepted name); catalog names
+    //    pass. ──
+    #[test]
+    fn tool_name_guard_accepts_catalog_rejects_malformed() {
+        // Accepted: every catalog name, and the allowed punctuation / 64-char edge.
+        for name in ONESHOT_TOOLS {
+            assert!(tool_name_ok(name), "catalog name {name} must pass");
+        }
+        assert!(tool_name_ok("kb_brief"));
+        assert!(tool_name_ok("a"));
+        assert!(tool_name_ok("gemini-2.5_pro"));
+        assert!(tool_name_ok(&"n".repeat(MAX_TOOL_NAME_CHARS)));
+        // Rejected: empty, too long, and any character that JSON-escapes or is outside
+        // the allowed set.
+        assert!(!tool_name_ok(""));
+        assert!(!tool_name_ok(&"n".repeat(MAX_TOOL_NAME_CHARS + 1)));
+        assert!(!tool_name_ok(&"n".repeat(1000)));
+        assert!(!tool_name_ok("has\"quote"));
+        assert!(!tool_name_ok("has\\backslash"));
+        assert!(!tool_name_ok("häs_umlaut"));
+        assert!(!tool_name_ok("has space"));
+        assert!(!tool_name_ok("has/slash"));
+        assert!(!tool_name_ok("emoji😀"));
+    }
+
+    // ── D2/F17-1: an uncatalogued short name gets ONE fixed, small error result —
+    //    distinct from the budget denial, and tiny enough to never defeat a bound. ──
+    #[test]
+    fn unknown_tool_result_is_small_and_not_the_denial() {
+        assert_ne!(unknown_tool_response(), tool_denial_response());
+        for name in ONESHOT_TOOLS {
+            let part = tool_response_part(name, unknown_tool_response());
+            assert!(serialized_len(&part) <= DENIAL_PART_MAX_CHARS, "{name}");
+        }
+    }
+
+    // ── D3/F17-1: the last-turn wrap-up routes outstanding calls through the fixed
+    //    denial envelope, so its part honours the DENIAL_PART_MAX_CHARS ceiling — the
+    //    old branch built a longer object for analyze_attachment_visual. ──
+    #[test]
+    fn last_turn_backstop_uses_the_fixed_denial() {
+        let part = tool_response_part("analyze_attachment_visual", tool_denial_response());
+        assert!(serialized_len(&part) <= DENIAL_PART_MAX_CHARS);
+    }
+
+    // ── R2/F13-1: positive sub-floor caps are raised; 0/off stays unlimited ──
+    #[test]
+    fn tool_cap_floor_rules() {
+        assert_eq!(floor_tool_cap(0), 0); // unlimited stays unlimited
+        for raw in 1..=100usize {
+            assert_eq!(floor_tool_cap(raw), TOOL_CAP_FLOOR, "cap {raw} must floor");
+        }
+        assert_eq!(floor_tool_cap(TOOL_CAP_FLOOR), TOOL_CAP_FLOOR);
+        assert_eq!(floor_tool_cap(1000), 1000); // above the floor is untouched
+    }
+
+    // ── F24-1: the per-turn call-count abort ceiling: 0 = no ceiling; a positive
+    //    ceiling is raised to at least the dispatch cap (never aborts a turn the
+    //    dispatch cap would accept). ──
+    #[test]
+    fn abort_ceiling_raise_rules() {
+        assert_eq!(raise_abort_ceiling(0, 16), 0); // off stays off
+        assert_eq!(raise_abort_ceiling(0, 0), 0);
+        assert_eq!(raise_abort_ceiling(32, 16), 32); // default: above the dispatch cap
+        assert_eq!(raise_abort_ceiling(8, 16), 16); // below the dispatch cap → raised
+        assert_eq!(raise_abort_ceiling(16, 16), 16); // equal is kept
+        assert_eq!(raise_abort_ceiling(32, 0), 32); // dispatch unlimited → ceiling kept
+        assert_eq!(raise_abort_ceiling(100, 16), 100); // above is untouched
+    }
+
+    // ── F14-1/F19-2: the denial is ONE fixed, charged envelope whose serialized part
+    //    stays within DENIAL_PART_MAX_CHARS (160) for EVERY accepted name — catalog
+    //    names AND the widest accepted name (64 chars), which is 158 today. The
+    //    whole-run bound is (bytes charged for dispatched results) + n x 160. ──
+    #[test]
+    fn tool_denial_envelope_is_bounded_and_fixed() {
+        // Every tool name's denial part stays within the envelope ceiling, and the
+        // bare-error fallback fits the minimal-result reservation.
+        let names = [
+            "customer_360",
+            "device_history",
+            "ticket_search",
+            "ticket_stats",
+            "similar_tickets",
+            "search_database",
+            "list_ticket_attachments",
+            "analyze_attachment_visual",
+            "surrealql_read",
+            "export_attachment",
+            "reveal_file_local",
+            "kb_brief",
+        ];
+        for name in names {
+            let part = tool_response_part(name, tool_denial_response());
+            assert!(
+                serialized_len(&part) <= DENIAL_PART_MAX_CHARS,
+                "denial part for {name} is {} chars",
+                serialized_len(&part)
+            );
+        }
+        // F19-2 worst case: the widest ACCEPTED name (64 chars) — the guard rejects
+        // anything longer or anything that JSON-escapes, so this is the true ceiling.
+        let widest = "n".repeat(MAX_TOOL_NAME_CHARS);
+        assert!(tool_name_ok(&widest));
+        let widest_part = serialized_len(&tool_response_part(&widest, tool_denial_response()));
+        assert!(
+            widest_part <= DENIAL_PART_MAX_CHARS,
+            "widest accepted denial part is {widest_part} chars (> {DENIAL_PART_MAX_CHARS})"
+        );
+        assert!(serialized_len(&bare_error_result()) <= MIN_BOUNDED_RESULT_CHARS);
+
+        // 50 budget-denied calls in one turn: each response is the SAME fixed
+        // envelope, and the run overhead they add is exactly n x the denial size.
+        let name = "customer_360";
+        let per = serialized_len(&tool_response_part(name, tool_denial_response()));
+        let mut sum = 0usize;
+        for _ in 0..50 {
+            let part = tool_response_part(name, tool_denial_response());
+            assert_eq!(serialized_len(&part), per); // identical every time
+            sum += serialized_len(&part);
+        }
+        assert_eq!(sum, 50 * per);
+        assert!(sum <= 50 * DENIAL_PART_MAX_CHARS);
+    }
+
+    // ── F14-1/F17-1: with caps 1..100 (raised to the floor), the dispatched tool-
+    //    result parts charged over a whole run never exceed the run cap. Each appended
+    //    part is at most `cap + overhead`, and `per_result_cap` only returns a `cap`
+    //    that leaves room for it (reserving the ACTUAL wrapper), so the running total
+    //    stays <= run_max. Denials (counted separately) are the only thing that can
+    //    sit on top of the cap. ──
+    #[test]
+    fn run_budget_dispatched_parts_stay_within_cap() {
+        let name = "customer_360";
+        let overhead = wrapper_overhead(name);
+        for raw in 1..=100usize {
+            let run_max = floor_tool_cap(raw); // == TOOL_CAP_FLOOR (512)
+            let result_max = floor_tool_cap(raw);
+            let mut run_used = 0usize;
+            let mut dispatched = 0usize;
+            while let Some(cap) = per_result_cap(name, result_max, run_max, run_used) {
+                // Worst-case appended part: a result shrunk exactly to `cap` plus the
+                // reserved actual wrapper overhead.
+                run_used += cap + overhead;
+                assert!(run_used <= run_max, "run_used {run_used} exceeded cap {run_max}");
+                dispatched += 1;
+                assert!(dispatched < 1000, "the budget loop must terminate");
+            }
+            assert!(run_used <= run_max);
+        }
+    }
+
+    // ── B3 / B6: budget + deadline env parsing (0/off = unlimited/disabled) ──
+    #[test]
+    fn budget_and_deadline_env() {
+        std::env::set_var("ECK_TEST_BUDGET", "off");
+        assert_eq!(tool_budget_chars("ECK_TEST_BUDGET", 60000), 0);
+        std::env::set_var("ECK_TEST_BUDGET", "0");
+        assert_eq!(tool_budget_chars("ECK_TEST_BUDGET", 60000), 0);
+        std::env::set_var("ECK_TEST_BUDGET", "1234");
+        assert_eq!(tool_budget_chars("ECK_TEST_BUDGET", 60000), 1234);
+        std::env::remove_var("ECK_TEST_BUDGET");
+        assert_eq!(tool_budget_chars("ECK_TEST_BUDGET", 60000), 60000);
+
+        std::env::remove_var("ECK_AI_BRAIN_RUN_SECS");
+        assert_eq!(brain_run_secs(), Some(240));
+        std::env::set_var("ECK_AI_BRAIN_RUN_SECS", "off");
+        assert_eq!(brain_run_secs(), None);
+        std::env::remove_var("ECK_AI_BRAIN_RUN_SECS");
     }
 }

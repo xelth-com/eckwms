@@ -12,4 +12,5 @@ export default {
   login: 'Войти',
   err_fill_fields: 'Пожалуйста, заполните все поля',
   err_login_failed: 'Ошибка входа',
+  kiosk_countdown: 'Режим киоска запустится через {time}',
 };

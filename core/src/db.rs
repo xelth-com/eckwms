@@ -87,7 +87,11 @@ pub async fn connect_with_db(path: &str, db_name: &str) -> Result<SurrealDb, sur
     } else {
         main_block_cache_mb(total_ram, std::env::var("ECK_KV_BLOCK_CACHE_MB").ok().as_deref())
     };
-    let memtable_mb_v = memtable_mb(total_ram, std::env::var("ECK_KV_MEMTABLE_MB").ok().as_deref());
+    let memtable_mb_v = if is_users {
+        users_memtable_mb(std::env::var("ECK_KV_USERS_MEMTABLE_MB").ok().as_deref())
+    } else {
+        memtable_mb(total_ram, std::env::var("ECK_KV_MEMTABLE_MB").ok().as_deref())
+    };
     let hnsw_mb = hnsw_cache_mb(total_ram, std::env::var("ECK_HNSW_CACHE_MB").ok().as_deref());
 
     // Append the SurrealKV + HNSW tuning params. All three keys are read UNPREFIXED
@@ -125,6 +129,7 @@ pub async fn connect_with_db(path: &str, db_name: &str) -> Result<SurrealDb, sur
 //   ECK_KV_BLOCK_CACHE_MB        main store block cache (MiB)
 //   ECK_KV_USERS_BLOCK_CACHE_MB  users store block cache (MiB, default 16)
 //   ECK_KV_MEMTABLE_MB           max memtable size (MiB)
+//   ECK_KV_USERS_MEMTABLE_MB     users store max memtable size (MiB, default 16)
 //   ECK_HNSW_CACHE_MB            HNSW ANN cache size (MiB)
 //
 // HOW THESE TAKE EFFECT (was previously inert; fixed 2026-09-03 via a vendored
@@ -200,6 +205,19 @@ pub fn main_block_cache_mb(total: Option<u64>, env: Option<&str>) -> u64 {
 /// (ECK_KV_USERS_BLOCK_CACHE_MB) wins; otherwise 16 MiB — the store holds only
 /// the node-local setup account, so it never needs a large cache.
 pub fn users_block_cache_mb(env: Option<&str>) -> u64 {
+    env.and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(16)
+}
+
+/// Effective USERS-store max memtable size (MiB). `env`
+/// (ECK_KV_USERS_MEMTABLE_MB) wins; otherwise 16 MiB — the users store holds
+/// only the node-local setup account, and its only steady writer is
+/// surrealdb-core's 3-second node heartbeat (a `replace` of the `/!nd` key).
+/// SurrealKV flushes the active memtable only when its arena (pre-allocated
+/// at `max_memtable_size`) fills, so a small arena here bounds RAM and keeps
+/// WAL replay at boot short — a large arena (e.g. the main store's 64+ MiB)
+/// would let heartbeat versions accumulate for a very long time before ever
+/// flushing.
+pub fn users_memtable_mb(env: Option<&str>) -> u64 {
     env.and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(16)
 }
 
@@ -281,6 +299,13 @@ mod mem_tuning_tests {
         assert_eq!(users_block_cache_mb(None), 16);
         assert_eq!(users_block_cache_mb(Some("8")), 8);
         assert_eq!(users_block_cache_mb(Some("bad")), 16);
+    }
+
+    #[test]
+    fn users_memtable_defaults_16_env_overrides() {
+        assert_eq!(users_memtable_mb(None), 16);
+        assert_eq!(users_memtable_mb(Some("8")), 8);
+        assert_eq!(users_memtable_mb(Some("bad")), 16);
     }
 
     #[test]

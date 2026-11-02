@@ -34,11 +34,22 @@ pub async fn ensure_session(
     client: &str,
     first_question: &str,
 ) -> String {
-    let sid = session_id
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("cs-{}", Uuid::new_v4()));
+    // Ownership guard, FAIL CLOSED (B4 / F07-4): session ids are server-generated.
+    // Accept a client-supplied id ONLY when the session already exists AND its user
+    // is the authenticated user. In every other case — absent, other user, lookup
+    // error, malformed, or an id that does not exist yet (no check-then-create on a
+    // client-chosen id) — mint a fresh server id. A brand-new conversation thus
+    // always gets a server-minted id the client then echoes back.
+    let sid = match session_id.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(s) if session_is_owned_by(db, s, user).await => s.to_string(),
+        Some(s) => {
+            tracing::warn!(
+                "[chat-log] session {s} not owned by {user} (or absent/unverifiable) — minting a new session"
+            );
+            format!("cs-{}", Uuid::new_v4())
+        }
+        None => format!("cs-{}", Uuid::new_v4()),
+    };
 
     let title: String = first_question.chars().take(80).collect();
     // Create only if absent (idempotent): a repeat turn keeps the original
@@ -68,6 +79,31 @@ pub async fn ensure_session(
     sid
 }
 
+/// Fail-closed ownership check (B4 / F07-4): true ONLY when a `chat_session` row
+/// with this id exists AND its `user` equals `user`. Every other case — missing
+/// row, different / absent / malformed owner, or a lookup error — returns false,
+/// so the caller mints a fresh server id rather than appending to a session it
+/// could not positively verify.
+async fn session_is_owned_by(db: &SurrealDb, session_id: &str, user: &str) -> bool {
+    let rows: Result<Vec<Value>, _> = db
+        .query("SELECT user FROM type::record('chat_session', $id)")
+        .bind(("id", session_id.to_string()))
+        .await
+        .and_then(|mut r| r.take(0));
+    match rows {
+        Ok(rows) => rows
+            .first()
+            .and_then(|v| v.get("user"))
+            .and_then(|v| v.as_str())
+            .map(|owner| owner == user)
+            .unwrap_or(false),
+        Err(e) => {
+            tracing::warn!("[chat-log] session ownership check failed for {session_id}: {e}");
+            false
+        }
+    }
+}
+
 /// Persist one chat turn. Best-effort: a telemetry write must never fail the
 /// user's chat, so errors are logged and swallowed.
 #[allow(clippy::too_many_arguments)]
@@ -85,12 +121,13 @@ pub async fn record_turn(
     let tools: Vec<Value> = u
         .tools
         .iter()
-        .map(|(name, args)| json!({ "name": name, "args_preview": args }))
+        .map(|(name, args, ms)| json!({ "name": name, "args_preview": args, "ms": ms }))
         .collect();
     let compaction_json = compaction.map(|c| {
         json!({
             "summary": c.summary,
             "dropped_turns": c.dropped_turns,
+            "dropped_messages": c.dropped_messages,
             "chunk_text_len": c.chunk_text_len,
         })
     });

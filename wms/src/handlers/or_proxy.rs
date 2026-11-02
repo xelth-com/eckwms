@@ -50,7 +50,7 @@ fn or_allowed_models() -> Vec<String> {
     std::env::var("ECK_OR_SERVE_MODELS")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "glm-5.3-flash,z-ai/glm-5.3-flash,qwen/qwen3.5-flash-02-23".to_string())
+        .unwrap_or_else(|| "glm-5.3-flash,z-ai/glm-5.3-flash,qwen/qwen3.5-flash-02-23,deepseek/deepseek-v4.1-flash-1017,deepseek/deepseek-v4.1-flash,xiaomi/mimo-v2.6-pro,xiaomi/mimo-v2.6-flash".to_string())
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -129,8 +129,28 @@ fn or_price_table() -> HashMap<String, (f64, f64)> {
         &std::env::var("ECK_OR_PRICES")
             .ok()
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "glm-5.3-flash=0.075:0.25,z-ai/glm-5.3-flash=0.075:0.25".to_string()),
+            .unwrap_or_else(|| "glm-5.3-flash=0.075:0.25,z-ai/glm-5.3-flash=0.075:0.25,deepseek/deepseek-v4.1-flash-1017=0.15:0.60,deepseek/deepseek-v4.1-flash=0.045:0.50,xiaomi/mimo-v2.6-pro=0.435:0.87,xiaomi/mimo-v2.6-flash=0.14:0.28".to_string()),
     )
+}
+
+/// Slug upstream split for the SERVING side (`.eck/OPENROUTER_TIER.md` §slug),
+/// mirroring the client `slug_upstream_for`. A slug model (name contains `/`)
+/// can't be served by a vendor-direct upstream (e.g. Z.ai via
+/// `ECK_OR_UPSTREAM_URL`), so when `ECK_OR_SLUG_MASTER_KEY` is set it routes to
+/// a SECOND upstream (`ECK_OR_SLUG_UPSTREAM_URL`, default the public OpenRouter
+/// endpoint — formed like `ECK_OR_UPSTREAM_URL`, incl. `/chat/completions`)
+/// under that key. Returns `Some((upstream_url, master_key))` for the slug
+/// upstream, or `None` for "unchanged". Pure; env read by the caller.
+fn serve_slug_upstream_for(model: &str, slug_key: &str, slug_upstream: &str) -> Option<(String, String)> {
+    if !model.contains('/') || slug_key.trim().is_empty() {
+        return None;
+    }
+    let url = if slug_upstream.trim().is_empty() {
+        "https://openrouter.ai/api/v1/chat/completions".to_string()
+    } else {
+        slug_upstream.trim().to_string()
+    };
+    Some((url, slug_key.trim().to_string()))
 }
 
 /// Estimate USD from token counts via the price table (per-1M rates). `None`
@@ -378,13 +398,27 @@ pub async fn serve_or_request(
             return err_val(StatusCode::INTERNAL_SERVER_ERROR, "proxy client unavailable");
         }
     };
-    // Upstream endpoint. Default = OpenRouter; `ECK_OR_UPSTREAM_URL` lets the
-    // xelth commerce node point serving straight at Z.ai's OpenAI-compatible
-    // endpoint (https://api.z.ai/api/paas/v4/chat/completions) — no US transit.
-    let upstream = std::env::var("ECK_OR_UPSTREAM_URL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "https://openrouter.ai/api/v1/chat/completions".to_string());
+    // Upstream endpoint + bearer. Default = OpenRouter; `ECK_OR_UPSTREAM_URL`
+    // lets the xelth commerce node point serving straight at Z.ai's
+    // OpenAI-compatible endpoint (https://api.z.ai/api/paas/v4/chat/completions)
+    // — no US transit. A SLUG model (name contains `/`) can't be served by that
+    // vendor-direct upstream, so with `ECK_OR_SLUG_MASTER_KEY` set it routes to
+    // the SECOND upstream (`ECK_OR_SLUG_UPSTREAM_URL`) under the slug key; the
+    // metering below is identical (usage.cost still wins over the price table).
+    let (upstream, or_key) = match serve_slug_upstream_for(
+        &model,
+        &std::env::var("ECK_OR_SLUG_MASTER_KEY").unwrap_or_default(),
+        &std::env::var("ECK_OR_SLUG_UPSTREAM_URL").unwrap_or_default(),
+    ) {
+        Some((url, key)) => (url, key),
+        None => (
+            std::env::var("ECK_OR_UPSTREAM_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "https://openrouter.ai/api/v1/chat/completions".to_string()),
+            or_key,
+        ),
+    };
     let req_bytes = serde_json::to_vec(&body).map(|v| v.len()).unwrap_or(0);
     let res = http
         .post(&upstream)
@@ -470,6 +504,31 @@ mod tests {
         let dflt = or_allowed_models();
         assert!(or_model_allowed("glm-5.3-flash", &dflt), "default allows z.ai-direct glm-5.3-flash");
         assert!(or_model_allowed("z-ai/glm-5.3-flash", &dflt));
+    }
+
+    #[test]
+    fn serve_slug_upstream_split() {
+        // Unprefixed model ⇒ never (primary upstream path, byte-identical).
+        assert_eq!(serve_slug_upstream_for("glm-5.3-flash", "sk-slug", ""), None);
+        // Slug model but no slug key ⇒ never.
+        assert_eq!(serve_slug_upstream_for("deepseek/deepseek-v4.1-flash", " ", "x"), None);
+        // Slug model + key, empty upstream ⇒ public OpenRouter endpoint.
+        assert_eq!(
+            serve_slug_upstream_for("deepseek/deepseek-v4.1-flash", "sk-slug", ""),
+            Some(("https://openrouter.ai/api/v1/chat/completions".to_string(), "sk-slug".to_string()))
+        );
+        // Explicit upstream trimmed and carried with the key.
+        assert_eq!(
+            serve_slug_upstream_for("deepseek/deepseek-v4.1-flash", " sk ", " https://or.example/v1/chat/completions "),
+            Some(("https://or.example/v1/chat/completions".to_string(), "sk".to_string()))
+        );
+        // The default allowlist + price table cover the alt slug model.
+        assert!(or_model_allowed("deepseek/deepseek-v4.1-flash-1017", &or_allowed_models()));
+        assert!(or_model_allowed("deepseek/deepseek-v4.1-flash", &or_allowed_models()), "undated slug stays allowed for mixed-version fleets");
+        assert_eq!(
+            or_price_table().get("deepseek/deepseek-v4.1-flash-1017").copied(),
+            Some((0.15, 0.60))
+        );
     }
 
     #[test]

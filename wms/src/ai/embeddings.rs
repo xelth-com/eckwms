@@ -1,5 +1,5 @@
 use eck_core::db::SurrealDb;
-use eck_core::utils::anonymizer::{obfuscate_pii, scrub_pii_regex};
+use eck_core::utils::anonymizer::{obfuscate_pii, parse_pii_token, scrub_pii_regex};
 use reqwest::Client as HttpClient;
 use serde_json::Value;
 use std::sync::Arc;
@@ -721,7 +721,9 @@ pub(crate) async fn extract_and_anonymize(
 
     let prompt = format!(
         "Analyze the following support ticket text. Extract personal names and street addresses. \
-         DO NOT extract cities, countries, or zip codes. Summarize the technical issue. \
+         DO NOT extract cities, countries, or zip codes. \
+         Existing tokens like Name_<hex>, Email_<hex>, Phone_<hex>, Address_<hex>, Company_<hex> are already masked; never return them as entities. \
+         Summarize the technical issue. \
          Return ONLY a valid JSON object with this structure: \
          {{ \"summary\": \"<cleaned summary>\", \"entities\": [ {{ \"original\": \"<extracted text>\", \"type\": \"Name\" | \"Address\" }} ] }}\n\n\
          Text:\n{text}"
@@ -948,6 +950,13 @@ fn mask_ai_summary_address_with(summary: &str, own_markers: &[String]) -> String
             Some(s) if !s.is_empty() => s,
             _ => final_addr.to_string(),
         };
+        // The stored ai_summary can ALREADY be masked (the vault tokenizes meta
+        // at ingest), so `to_mask` may itself be an `Address_<hex>` token.
+        // `obfuscate_pii` is idempotent on a token, but skip the whole replacen
+        // so the line does not churn.
+        if parse_pii_token(&to_mask).is_some() {
+            return summary.to_string();
+        }
         let token = obfuscate_pii(&to_mask, "Address");
         return summary.replacen(&to_mask, &token, 1);
     }
@@ -1366,6 +1375,15 @@ mod tests {
     }
 
     #[test]
+    fn mask_ai_summary_address_leaves_already_masked_token_untouched() {
+        std::env::set_var("SYNC_SECRET", "test_secret");
+        // ai_summary already carries an Address token (the vault tokenized meta
+        // at ingest) — re-masking must be a byte-identical no-op, not a re-hash.
+        let summary = "**Adressen:**\nAddress_DEADBEEF00000000, 78462 Konstanz\n";
+        assert_eq!(mask_ai_summary_address(summary), summary);
+    }
+
+    #[test]
     fn mask_ai_summary_address_masks_whole_line_when_no_zip() {
         std::env::set_var("SYNC_SECRET", "test_secret");
         let summary = "**Adressen:** 221B Baker Street, London";
@@ -1475,10 +1493,10 @@ mod tests {
 
         // 2. Define BM25 + HNSW indexes (v3 syntax: FULLTEXT replaces SEARCH)
         db.query(
-            "DEFINE ANALYZER custom_analyzer TOKENIZERS blank,class,camel,punct FILTERS lowercase,ascii;
-             DEFINE INDEX issue_bm25 ON order FIELDS issue_description FULLTEXT ANALYZER custom_analyzer BM25;
-             DEFINE INDEX customer_name_bm25 ON order FIELDS customer_name FULLTEXT ANALYZER custom_analyzer BM25;
-             DEFINE INDEX embedding_hnsw ON order FIELDS embedding HNSW DIMENSION 768 DIST COSINE;"
+            "DEFINE ANALYZER IF NOT EXISTS custom_analyzer TOKENIZERS blank,class,camel,punct FILTERS lowercase,ascii;
+             DEFINE INDEX IF NOT EXISTS issue_bm25 ON order FIELDS issue_description FULLTEXT ANALYZER custom_analyzer BM25;
+             DEFINE INDEX IF NOT EXISTS customer_name_bm25 ON order FIELDS customer_name FULLTEXT ANALYZER custom_analyzer BM25;
+             DEFINE INDEX IF NOT EXISTS embedding_hnsw ON order FIELDS embedding HNSW DIMENSION 768 DIST COSINE;"
         ).await.unwrap();
 
         // 3. Define test documents

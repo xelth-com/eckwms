@@ -31,6 +31,7 @@
 //!     Zone-1 tables (`user`, credentials) stay unreachable, exactly like the
 //!     `/X/ops/*` surface. (Tool PII is tokenized for both tiers regardless.)
 
+pub(crate) mod bundles;
 pub(crate) mod connector;
 pub(crate) mod reveal;
 pub mod session;
@@ -264,7 +265,13 @@ pub async fn mcp_handler(
         Ok(t) => t,
         Err(e) => return e,
     };
-    match handle_jsonrpc(&state, tier, &req, false).await {
+    // Caller identity for the write-path audit (bundles.rs): the bearer tier.
+    let caller = match tier {
+        McpTier::Master => "mcp-bearer:master",
+        McpTier::Agent => "mcp-bearer:agent",
+        McpTier::Observer => "mcp-bearer:observer",
+    };
+    match bundles::with_caller(caller.to_string(), handle_jsonrpc(&state, tier, &req, false)).await {
         Some(resp) => sse_response(resp),
         None => (StatusCode::ACCEPTED, "").into_response(),
     }

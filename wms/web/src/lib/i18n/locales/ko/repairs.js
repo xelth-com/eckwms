@@ -6,6 +6,8 @@ export default {
     all_repairs_title: "전체 수리",
     new_order_title: "새 수리 주문",
     order_title: "수리 {number}",
+    title_fallback: "수리",
+    edit_section: "편집",
     geocoding_btn: "지오코딩 중…",
     view_route_btn: "경로 및 주변 보기",
     delete: "삭제",

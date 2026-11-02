@@ -43,14 +43,32 @@ pub mod image_summary;
 /// repair-lesson distiller.
 pub mod kb_client;
 pub mod loop_guard;
+/// OCR-serial verification (`.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md` §11): an
+/// async cheap-text-model review of OCR-captured unit serials. Additive only.
+pub mod ocr_verify;
+/// Shared Operator Inbox filing (`awaiting_human` `ai_task`) for the OCR-verify
+/// worker and the PII-leak self-report pipeline.
+pub mod operator_inbox;
 pub mod telemetry;
 pub mod observer;
 pub mod orchestrator;
 pub mod optimizer;
 pub mod repair_distiller;
+/// Remote-advice ledger → xelixir KB sync (kb_verify on HELPED, negative
+/// candidate on NOT_HELPED); spawned by the repair-distiller worker.
+pub mod advice_ledger;
 pub mod stale_reply;
 pub mod tools;
 pub mod translation;
+
+// chat-pii-1001 P0: test-only capture harness + its scenario tests.
+#[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
+mod chat_capture_tests;
+// chat-improve-1001 wave 3e: loop-level tool-budget / denial tests (RC1).
+#[cfg(test)]
+mod tool_budget_loop_tests;
 
 /// Largest byte index `<= max_bytes` that is a UTF-8 char boundary of `s`.
 /// Slicing at a raw byte offset (`&s[..N]`) panics when N lands inside a

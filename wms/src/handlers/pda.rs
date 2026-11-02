@@ -132,6 +132,8 @@ pub async fn status(
     // device that still authenticates with its legacy ANDROID_ID subject can adopt
     // its UUID on the next heartbeat — no re-pairing needed.
     let mut device_uuid: Option<String> = None;
+    // Scan-mirror preference (§5): the dashboard screen this PDA mirrors to.
+    let mut mirror_screen_id: Option<String> = None;
 
     if claims.auth_method == "ed25519_signature" {
         match resolve_device(&state, &claims.sub).await {
@@ -141,6 +143,7 @@ pub async fn status(
             Some(dev) => {
                 device_state = dev.status.clone();
                 device_uuid = Some(dev.device_id.clone());
+                mirror_screen_id = dev.mirror_screen_id.clone();
                 // Bump last_seen by the resolved canonical id (works whether the
                 // JWT subject is the UUID or a legacy ANDROID_ID).
                 let _ = state
@@ -154,7 +157,12 @@ pub async fn status(
         }
     }
 
-    let enc_key = if device_state == "active" {
+    // The SmartTag key goes only to a paired, active device (and to admins
+    // checking the node). Any other JWT — the kiosk observer, a guest, an
+    // operator's dashboard session — used to fall into the "active" default
+    // above and receive it too (review 2026-09-30, F10-4).
+    let key_bearer = claims.auth_method == "ed25519_signature" || claims.role == "admin";
+    let enc_key = if device_state == "active" && key_bearer {
         std::env::var("ENC_KEY").ok().filter(|k| !k.is_empty())
     } else {
         None
@@ -165,7 +173,12 @@ pub async fn status(
         "server": "wms",
         "version": env!("CARGO_PKG_VERSION"),
         "device_uuid": device_uuid,
+        "mirror_screen_id": mirror_screen_id,
         "instance_id": state.instance_id,
+        // Node identity for the PDA: hex of the node Ed25519 public key (the one
+        // pairing pins as server_public_key_hex; public, not a secret). Lets a
+        // client tell a renamed home node (same key) from a sibling mesh node.
+        "server_public_key": state.server_identity.public_key_hex().ok(),
         // Mesh identity + tier — the device orders the eckN default nodes by
         // mod3(mesh_id) for its failover list (no single node is the default).
         "mesh_id": state.mesh_id,
@@ -179,6 +192,67 @@ pub async fn status(
         // Encrypted data-at-rest volume (.eck/DATA_AT_REST.md). Device-facing
         // subset: whether it is on and live, never the filesystem paths.
         "datafs": eck_core::vault::datafs::status_json_public(),
+    })))
+}
+
+// ─── POST /api/pda/mirror — set the PDA's scan-mirror target screen ──────────
+
+#[derive(Deserialize)]
+pub struct SetMirrorRequest {
+    #[serde(rename = "deviceId", default)]
+    pub device_id: String,
+    /// Dashboard `screen_id` to mirror scans to; `null`/absent clears it.
+    #[serde(rename = "screenId", default)]
+    pub screen_id: Option<String>,
+}
+
+/// POST /api/pda/mirror { deviceId, screenId|null } — set (or clear) the
+/// dashboard screen this PDA mirrors its scans to (§5). Device-auth gated like
+/// the other PDA routes (`require_active_device`). Resolves to the canonical
+/// UUID row (the JWT subject may be a legacy ANDROID_ID) and advances this
+/// node's vclock so the preference wins mesh conflict-resolution.
+pub async fn set_mirror(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SetMirrorRequest>,
+) -> ApiResult<Json<Value>> {
+    require_active_device(&state, &body.device_id).await?;
+
+    let dev = resolve_device(&state, &body.device_id)
+        .await
+        .ok_or((StatusCode::FORBIDDEN, "Device not registered".into()))?;
+    let screen = body.screen_id.clone().filter(|s| !s.is_empty());
+
+    let rid = format!("registered_device:`{}`", dev.device_id);
+    let now = Utc::now().to_rfc3339();
+    match &screen {
+        Some(s) => {
+            state
+                .db
+                .query("UPDATE type::record($rid) SET mirror_screen_id = $s, updated_at = $now")
+                .bind(("rid", rid.clone()))
+                .bind(("s", s.clone()))
+                .bind(("now", now))
+                .await
+                .map_err(db_err)?;
+        }
+        None => {
+            state
+                .db
+                .query("UPDATE type::record($rid) SET mirror_screen_id = NONE, updated_at = $now")
+                .bind(("rid", rid.clone()))
+                .bind(("now", now))
+                .await
+                .map_err(db_err)?;
+        }
+    }
+    let _ = eck_core::sync::conflict::bump_local_vclock(&state.db, &rid, &state.instance_id).await;
+
+    // PDA accepts `{ ok, screen_id }`; extra fields are harmless context.
+    Ok(Json(json!({
+        "ok": true,
+        "screen_id": screen,
+        "device_id": dev.device_id,
+        "mirror_screen_id": screen,
     })))
 }
 
@@ -197,6 +271,10 @@ pub struct ScanRequest {
     pub msg_id: String,
     #[serde(rename = "orderId", default)]
     pub order_id: Option<String>,
+    /// Per-scan mirror target (§5): overrides the device's stored
+    /// `mirror_screen_id` for this one scan. Absent = use the stored preference.
+    #[serde(rename = "screenId", default)]
+    pub screen_id: Option<String>,
 }
 
 fn scan_response(
@@ -281,8 +359,18 @@ pub async fn handle_scan(
             .await;
     }
 
+    // The resolved path(s) funnel into a single tail (scan mirror, §5) that
+    // folds the `entity` summary into the HTTP response and broadcasts a
+    // SCAN_EVENT. Each branch records at most one resolved entity (single match
+    // / stub creation) or a collision candidate list; `unknown`/`duplicate` stay
+    // None and are not mirrored. All lookup + domain-event logic below is
+    // unchanged — the only additions are the `resolved`/`ambiguous_cands` writes
+    // and the funnel to `response`.
+    let mut resolved: Option<(&'static str, String, Value)> = None;
+    let mut ambiguous_cands: Option<Vec<(&'static str, Value)>> = None;
+
     // 1. Typed smart code ({prefix}-{uuid}) — decrypted locally on the PDA
-    if let Some((table, rtype, id)) = parse_typed_code(&barcode) {
+    let mut response: Value = if let Some((table, rtype, id)) = parse_typed_code(&barcode) {
         let found = state.get_synced_entity(table, &id).await.map_err(|e| db_err(e))?;
 
         if let Some(record) = found {
@@ -293,176 +381,410 @@ pub async fn handle_scan(
                 .and_then(|v| v.as_str())
                 .unwrap_or(rtype)
                 .to_string();
-            return Ok(Json(scan_response(rtype, "found", message, record, &body)));
-        }
-
-        // PDA is source of truth: lazily create items and places
-        let now = Utc::now().to_rfc3339();
-        let stub = match table {
-            "item" => Some(json!({
-                "name": format!("Item {}", &id[..8]),
-                "smart_code": barcode,
-                "source_system": "pda_scan",
-                "created_at": now, "updated_at": now,
-            })),
-            "location" => Some(json!({
-                "name": format!("LOC-{}", &id[..8]),
-                "complete_name": format!("LOC-{}", &id[..8]),
-                "barcode": barcode,
-                "usage": "internal",
-                "active": true,
-                "source_system": "pda_scan",
-                "created_at": now, "updated_at": now,
-            })),
-            _ => None, // CRM entities are never auto-created from scans
-        };
-
-        if let Some(content) = stub {
-            let created: Option<Value> = state
-                .db
-                .create((table, id.as_str()))
-                .content(content)
-                .await
-                .map_err(db_err)?;
-            let created = created.unwrap_or(Value::Null);
-            let message = created
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Registered")
-                .to_string();
-            info!("Scan: lazily created {} {} for device {}", table, id, body.device_id);
-            return Ok(Json(scan_response(rtype, "created", message, created, &body)));
-        }
-
-        return Ok(Json(scan_response(
-            rtype,
-            "unknown",
-            format!("{} not found locally", rtype),
-            Value::Null,
-            &body,
-        )));
-    }
-
-    // 2. Raw barcode lookups — collect candidates across entity types
-    let products: Vec<Value> = state
-        .db
-        .query("SELECT record::id(id) AS id, * FROM product WHERE barcode = $b OR default_code = $b LIMIT 5")
-        .bind(("b", barcode.clone()))
-        .await
-        .map_err(db_err)?
-        .take(0)
-        .unwrap_or_default();
-
-    let orders: Vec<Value> = state
-        .db
-        .query("SELECT record::id(id) AS id, * FROM order WHERE order_number = $b OR serial_number = $b LIMIT 5")
-        .bind(("b", barcode.clone()))
-        .await
-        .map_err(db_err)?
-        .take(0)
-        .unwrap_or_default();
-
-    let locations: Vec<Value> = state
-        .db
-        .query("SELECT record::id(id) AS id, * FROM location WHERE barcode = $b LIMIT 2")
-        .bind(("b", barcode.clone()))
-        .await
-        .map_err(db_err)?
-        .take(0)
-        .unwrap_or_default();
-
-    // A unit already booked into the warehouse by receiving must resolve to
-    // ITSELF — matched case-insensitively on the code scanned off the thing or
-    // on our own RCV-/smart code, with its receipt header folded into `data`.
-    // Critically this runs BEFORE the 0-candidate branch below, so scanning a
-    // parcel we received does not mint a bogus stub product for it.
-    let receipt_unit =
-        crate::services::receiving::lookup_unit_by_code(&state.db, &barcode).await;
-
-    let mut candidates: Vec<(String, Value)> = Vec::new();
-    for p in products {
-        candidates.push(("product".into(), p));
-    }
-    for o in orders {
-        candidates.push(("order".into(), o));
-    }
-    for l in locations {
-        candidates.push(("place".into(), l));
-    }
-    if let Some(u) = receipt_unit {
-        candidates.push(("receipt_unit".into(), u));
-    }
-
-    match candidates.len() {
-        1 => {
-            let (rtype, record) = candidates.pop().unwrap();
-            let message = record
-                .get("name")
-                .or_else(|| record.get("order_number"))
-                .or_else(|| record.get("complete_name"))
-                // receipt_unit: our own human code (RCV-… or the scanned b-… code)
-                .or_else(|| record.get("code"))
-                .and_then(|v| v.as_str())
-                .unwrap_or(&rtype)
-                .to_string();
-            Ok(Json(scan_response(&rtype, "found", message, record, &body)))
-        }
-        0 => {
-            // Nothing matched: register a stub product (legacy behavior)
+            // Domain-event: resolved scan (fire-and-forget; stubs excluded —
+            // only this already-resolved hit records). `partner` now has an object
+            // page + timeline, so CRM scans are journalled alongside item/place.
+            if let Some(ekind) = match table {
+                "item" => Some("item"),
+                "location" => Some("place"),
+                "partner" => Some("partner"),
+                _ => None,
+            } {
+                crate::services::events::record(
+                    &state.db,
+                    &state.instance_id,
+                    crate::services::events::Event::new(
+                        "scan",
+                        ekind,
+                        &id,
+                        format!("Scanned {}", barcode),
+                    )
+                    .actor(if body.device_id.is_empty() {
+                        None
+                    } else {
+                        Some(body.device_id.clone())
+                    }),
+                )
+                .await;
+            }
+            if let Some(k) = scan_entity_kind(table) {
+                resolved = Some((k, id.clone(), record.clone()));
+            }
+            scan_response(rtype, "found", message, record, &body)
+        } else {
+            // PDA is source of truth: lazily create items and places
             let now = Utc::now().to_rfc3339();
-            let created: Option<Value> = state
-                .db
-                .create("product")
-                .content(json!({
-                    "name": format!("Item {}", barcode),
-                    "barcode": barcode,
-                    "default_code": barcode,
-                    "active": true,
-                    "type": "product",
+            let stub = match table {
+                "item" => Some(json!({
+                    "name": format!("Item {}", &id[..8]),
+                    "smart_code": barcode,
                     "source_system": "pda_scan",
                     "created_at": now, "updated_at": now,
-                }))
-                .await
-                .map_err(db_err)?;
-            let created = created.unwrap_or(Value::Null);
-            let message = format!("Item {} registered", barcode);
-            info!("Scan: created stub product for unknown barcode {}", barcode);
-            Ok(Json(scan_response("product", "created", message, created, &body)))
+                })),
+                "location" => Some(json!({
+                    "name": format!("LOC-{}", &id[..8]),
+                    "complete_name": format!("LOC-{}", &id[..8]),
+                    "barcode": barcode,
+                    "usage": "internal",
+                    "active": true,
+                    "source_system": "pda_scan",
+                    "created_at": now, "updated_at": now,
+                })),
+                _ => None, // CRM entities are never auto-created from scans
+            };
+
+            if let Some(content) = stub {
+                let created: Option<Value> = state
+                    .db
+                    .create((table, id.as_str()))
+                    .content(content)
+                    .await
+                    .map_err(db_err)?;
+                let created = created.unwrap_or(Value::Null);
+                let message = created
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Registered")
+                    .to_string();
+                info!("Scan: lazily created {} {} for device {}", table, id, body.device_id);
+                // A freshly created stub is still a resolved entity for mirroring
+                // (though, per §3, NOT journalled as a domain event).
+                if let Some(k) = scan_entity_kind(table) {
+                    resolved = Some((k, id.clone(), created.clone()));
+                }
+                scan_response(rtype, "created", message, created, &body)
+            } else {
+                scan_response(
+                    rtype,
+                    "unknown",
+                    format!("{} not found locally", rtype),
+                    Value::Null,
+                    &body,
+                )
+            }
         }
-        _ => {
-            // Collision — the PDA renders a picker from data.candidates
-            let cand_json: Vec<Value> = candidates
-                .iter()
-                .map(|(t, r)| {
-                    json!({
-                        "title": r.get("name")
-                            .or_else(|| r.get("order_number"))
-                            .or_else(|| r.get("complete_name"))
-                            .or_else(|| r.get("code"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Unknown"),
-                        "type": t,
-                        "id": r.get("id")
-                            .or_else(|| r.get("unit_id"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(""),
-                        "barcode": r.get("barcode")
-                            .or_else(|| r.get("order_number"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(""),
+    } else {
+        // 2. Raw barcode lookups — collect candidates across entity types
+        let products: Vec<Value> = state
+            .db
+            .query("SELECT record::id(id) AS id, * FROM product WHERE barcode = $b OR default_code = $b LIMIT 5")
+            .bind(("b", barcode.clone()))
+            .await
+            .map_err(db_err)?
+            .take(0)
+            .unwrap_or_default();
+
+        let orders: Vec<Value> = state
+            .db
+            .query("SELECT record::id(id) AS id, * FROM order WHERE order_number = $b OR serial_number = $b LIMIT 5")
+            .bind(("b", barcode.clone()))
+            .await
+            .map_err(db_err)?
+            .take(0)
+            .unwrap_or_default();
+
+        let locations: Vec<Value> = state
+            .db
+            .query("SELECT record::id(id) AS id, * FROM location WHERE barcode = $b LIMIT 2")
+            .bind(("b", barcode.clone()))
+            .await
+            .map_err(db_err)?
+            .take(0)
+            .unwrap_or_default();
+
+        // A unit already booked into the warehouse by receiving must resolve to
+        // ITSELF — matched case-insensitively on the code scanned off the thing or
+        // on our own RCV-/smart code, with its receipt header folded into `data`.
+        // Critically this runs BEFORE the 0-candidate branch below, so scanning a
+        // parcel we received does not mint a bogus stub product for it.
+        let receipt_unit =
+            crate::services::receiving::lookup_unit_by_code(&state.db, &barcode).await;
+
+        let mut candidates: Vec<(String, Value)> = Vec::new();
+        for p in products {
+            candidates.push(("product".into(), p));
+        }
+        for o in orders {
+            candidates.push(("order".into(), o));
+        }
+        for l in locations {
+            candidates.push(("place".into(), l));
+        }
+        if let Some(u) = receipt_unit {
+            candidates.push(("receipt_unit".into(), u));
+        }
+
+        match candidates.len() {
+            1 => {
+                let (rtype, record) = candidates.pop().unwrap();
+                let message = record
+                    .get("name")
+                    .or_else(|| record.get("order_number"))
+                    .or_else(|| record.get("complete_name"))
+                    // receipt_unit: our own human code (RCV-… or the scanned b-… code)
+                    .or_else(|| record.get("code"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&rtype)
+                    .to_string();
+                // Domain-event: resolved scan (fire-and-forget; raw-barcode stubs
+                // are created on the 0-candidate branch and never reach here).
+                let ekind = match rtype.as_str() {
+                    "receipt_unit" => "unit",
+                    k => k,
+                };
+                if let Some(eid) = record
+                    .get("id")
+                    .or_else(|| record.get("unit_id"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                {
+                    crate::services::events::record(
+                        &state.db,
+                        &state.instance_id,
+                        crate::services::events::Event::new(
+                            "scan",
+                            ekind,
+                            &eid,
+                            format!("Scanned {}", barcode),
+                        )
+                        .actor(if body.device_id.is_empty() {
+                            None
+                        } else {
+                            Some(body.device_id.clone())
+                        }),
+                    )
+                    .await;
+                }
+                if let Some(k) = scan_entity_kind(&rtype) {
+                    let eid = record
+                        .get("id")
+                        .or_else(|| record.get("unit_id"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                        .unwrap_or_default();
+                    resolved = Some((k, eid, record.clone()));
+                }
+                scan_response(&rtype, "found", message, record, &body)
+            }
+            0 => {
+                // Nothing matched: register a stub product (legacy behavior)
+                let now = Utc::now().to_rfc3339();
+                let created: Option<Value> = state
+                    .db
+                    .create("product")
+                    .content(json!({
+                        "name": format!("Item {}", barcode),
+                        "barcode": barcode,
+                        "default_code": barcode,
+                        "active": true,
+                        "type": "product",
+                        "source_system": "pda_scan",
+                        "created_at": now, "updated_at": now,
+                    }))
+                    .await
+                    .map_err(db_err)?;
+                let created = created.unwrap_or(Value::Null);
+                let message = format!("Item {} registered", barcode);
+                info!("Scan: created stub product for unknown barcode {}", barcode);
+                if let Some(k) = scan_entity_kind("product") {
+                    let eid = record_key(&created).unwrap_or_default();
+                    resolved = Some((k, eid, created.clone()));
+                }
+                scan_response("product", "created", message, created, &body)
+            }
+            _ => {
+                // Collision — the PDA renders a picker from data.candidates
+                let cand_json: Vec<Value> = candidates
+                    .iter()
+                    .map(|(t, r)| {
+                        json!({
+                            "title": r.get("name")
+                                .or_else(|| r.get("order_number"))
+                                .or_else(|| r.get("complete_name"))
+                                .or_else(|| r.get("code"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown"),
+                            "type": t,
+                            "id": r.get("id")
+                                .or_else(|| r.get("unit_id"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(""),
+                            "barcode": r.get("barcode")
+                                .or_else(|| r.get("order_number"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(""),
+                        })
                     })
+                    .collect();
+                // Mirror the collision as entity-shaped candidates (§5).
+                let amb: Vec<(&'static str, Value)> = candidates
+                    .iter()
+                    .filter_map(|(t, r)| scan_entity_kind(t).map(|k| (k, r.clone())))
+                    .collect();
+                if !amb.is_empty() {
+                    ambiguous_cands = Some(amb);
+                }
+                json!({
+                    "type": "ambiguous",
+                    "action": "interaction",
+                    "message": format!("Multiple matches for {}. Select one:", barcode),
+                    "data": { "candidates": cand_json },
+                    "checksum": body.checksum,
+                    "msgId": body.msg_id,
                 })
-                .collect();
-            Ok(Json(json!({
-                "type": "ambiguous",
-                "action": "interaction",
-                "message": format!("Multiple matches for {}. Select one:", barcode),
-                "data": { "candidates": cand_json },
-                "checksum": body.checksum,
-                "msgId": body.msg_id,
-            })))
+            }
+        }
+    };
+
+    // ── Scan mirror tail (§5) ────────────────────────────────────────────────
+    // Build the compact entity summary(ies), fold `entity` into the HTTP
+    // response so the PDA can show the photo + "open" action, and broadcast a
+    // SCAN_EVENT so a chosen dashboard screen can drop it into its tray. Only a
+    // resolved entity or a collision mirrors; `unknown`/`duplicate` do not.
+    let entity = match &resolved {
+        Some((kind, id, rec)) => Some(build_entity_summary(&state, kind, id, rec).await),
+        None => None,
+    };
+    if let Some(e) = &entity {
+        if let Some(obj) = response.as_object_mut() {
+            obj.insert("entity".into(), e.clone());
         }
     }
+    let ambiguous_entities = match &ambiguous_cands {
+        Some(list) => {
+            let mut out = Vec::with_capacity(list.len());
+            for (kind, rec) in list {
+                let id = record_key(rec).unwrap_or_default();
+                out.push(build_entity_summary(&state, kind, &id, rec).await);
+            }
+            Some(out)
+        }
+        None => None,
+    };
+    if entity.is_some() || ambiguous_entities.is_some() {
+        broadcast_scan(&state, &body, entity, ambiguous_entities).await;
+    }
+
+    Ok(Json(response))
+}
+
+/// Map a scan candidate kind / smart-code table to the canonical entity kind
+/// used by the object pages + scan mirror (§1). `None` = not a mirrorable
+/// warehouse entity (CRM partners etc.).
+fn scan_entity_kind(s: &str) -> Option<&'static str> {
+    Some(match s {
+        "product" => "product",
+        "order" => "order",
+        "place" | "location" => "place",
+        "unit" | "receipt_unit" => "unit",
+        "item" => "item",
+        "receipt" => "receipt",
+        "partner" => "partner",
+        _ => return None,
+    })
+}
+
+/// Best-effort record key (id without the table prefix) from a row Value,
+/// tolerating SurrealDB's string (`"product:x"`) and object (`{tb,id}`) id forms
+/// plus our aliased `record::id(id) AS id` / `unit_id` columns.
+fn record_key(v: &Value) -> Option<String> {
+    if let Some(s) = v.get("id").and_then(|x| x.as_str()) {
+        let key = s.rsplit(':').next().unwrap_or(s);
+        return Some(key.trim_matches('`').to_string());
+    }
+    if let Some(obj) = v.get("id").and_then(|x| x.as_object()) {
+        if let Some(idv) = obj.get("id") {
+            if let Some(s) = idv.as_str() {
+                return Some(s.to_string());
+            }
+            if let Some(s) = idv.get("String").and_then(|x| x.as_str()) {
+                return Some(s.to_string());
+            }
+        }
+    }
+    v.get("unit_id").and_then(|x| x.as_str()).map(String::from)
+}
+
+/// Build the compact entity summary broadcast with a scan and embedded in the
+/// scan HTTP response (§5): `{kind,id,title,subtitle,icon_file_id}`.
+async fn build_entity_summary(state: &AppState, kind: &str, id: &str, rec: &Value) -> Value {
+    let title = rec
+        .get("name")
+        .or_else(|| rec.get("order_number"))
+        .or_else(|| rec.get("complete_name"))
+        .or_else(|| rec.get("serial_number"))
+        .or_else(|| rec.get("code"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(kind)
+        .to_string();
+    // For a CRM `partner` the mirror subtitle is "kind · city"; everything else
+    // keeps the serial/status line.
+    let subtitle = if kind == "partner" {
+        let klabel = match rec
+            .get("crm_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_lowercase())
+            .as_deref()
+        {
+            Some("c") | Some("company") => "company",
+            Some("d") | Some("opp") | Some("opportunity") => "opportunity",
+            Some("h") | Some("person") => "person",
+            _ => {
+                if rec.get("is_company").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    "company"
+                } else {
+                    "person"
+                }
+            }
+        };
+        match rec.get("city").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+            Some(city) => format!("{klabel} · {city}"),
+            None => klabel.to_string(),
+        }
+    } else {
+        rec.get("serial_number")
+            .or_else(|| rec.get("status"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let icon_file_id = crate::services::entity::icon_file_id(&state.db, kind, id).await;
+    json!({
+        "kind": kind,
+        "id": id,
+        "title": title,
+        "subtitle": subtitle,
+        "icon_file_id": icon_file_id,
+    })
+}
+
+/// Broadcast a `SCAN_EVENT` on `ws_tx` (§5). `screen_id` = the per-scan override
+/// (`body.screen_id`) else the device's stored `mirror_screen_id` (None = not
+/// mirrored; dashboards ignore it). Fire-and-forget.
+async fn broadcast_scan(
+    state: &AppState,
+    body: &ScanRequest,
+    entity: Option<Value>,
+    ambiguous: Option<Vec<Value>>,
+) {
+    let dev = resolve_device(state, &body.device_id).await;
+    let screen_id = body
+        .screen_id
+        .clone()
+        .filter(|s| !s.is_empty())
+        .or_else(|| dev.as_ref().and_then(|d| d.mirror_screen_id.clone()));
+    let device_name = dev.as_ref().and_then(|d| d.device_name.clone());
+    let event = json!({
+        "type": "SCAN_EVENT",
+        "scan_id": uuid::Uuid::new_v4().to_string(),
+        "at": Utc::now().to_rfc3339(),
+        "device_id": body.device_id,
+        "device_name": device_name,
+        "screen_id": screen_id,
+        "entity": entity,
+        "ambiguous": ambiguous,
+    });
+    let _ = state.ws_tx.send(event.to_string());
 }
 
 // ─── POST /api/repair/event — repair-mode workflow events ────────────────────

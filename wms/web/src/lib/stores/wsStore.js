@@ -14,6 +14,41 @@ function createWsStore() {
     let reconnectTimer;
     let explicitClose = false;
 
+    // Stable per-browser screen identity (scan-mirror target, §5). Created once
+    // and persisted; the name defaults to "<hostname or Kiosk> · <user>" and is
+    // operator-editable from the dashboard header.
+    function getScreenId() {
+        if (!browser) return null;
+        try {
+            let id = localStorage.getItem('eck_screen_id');
+            if (!id) {
+                id = (crypto?.randomUUID?.() ||
+                    ('s-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)));
+                localStorage.setItem('eck_screen_id', id);
+            }
+            return id;
+        } catch {
+            return null;
+        }
+    }
+
+    function defaultScreenName() {
+        let host = 'Kiosk';
+        try { host = window.location.hostname || 'Kiosk'; } catch {}
+        let user = '';
+        try { user = localStorage.getItem('eck_screen_user') || ''; } catch {}
+        return user ? `${host} · ${user}` : host;
+    }
+
+    function getScreenName() {
+        if (!browser) return null;
+        try {
+            return localStorage.getItem('eck_screen_name') || defaultScreenName();
+        } catch {
+            return defaultScreenName();
+        }
+    }
+
     function connect() {
         if (!browser) return;
         if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) return;
@@ -26,8 +61,18 @@ function createWsStore() {
         // JWT goes as a query param — the browser WebSocket API can't set an
         // Authorization header, and the server only streams broadcast events
         // (TRIP_LIVE etc.) to authenticated sockets.
+        // screen_id/screen_name register this browser as a PDA scan-mirror
+        // target (see GET /api/screens).
         const token = localStorage.getItem('auth_token');
-        const url = `${protocol}//${host}/E/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+        const params = new URLSearchParams();
+        if (token) params.set('token', token);
+        const screenId = getScreenId();
+        if (screenId) {
+            params.set('screen_id', screenId);
+            params.set('screen_name', getScreenName());
+        }
+        const qs = params.toString();
+        const url = `${protocol}//${host}/E/ws${qs ? `?${qs}` : ''}`;
 
         console.log(`[WS] Connecting to ${url}...`);
         socket = new WebSocket(url);
@@ -69,6 +114,34 @@ function createWsStore() {
         if (socket) socket.close();
     }
 
+    // Force a fresh connection (e.g. after a screen rename, so the server's
+    // live screen set picks up the new name). Closes the current socket and
+    // lets onclose/explicitClose logic reconnect immediately.
+    function reconnect() {
+        if (!browser) return;
+        explicitClose = false;
+        clearTimeout(reconnectTimer);
+        if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+            try { socket.close(); } catch {}
+            // onclose schedules a reconnect; nudge it to run now instead of after 3 s.
+            reconnectTimer = setTimeout(connect, 150);
+        } else {
+            connect();
+        }
+    }
+
+    // Persisted screen name (scan-mirror target label). Setting it stores the
+    // override and reconnects so the server re-registers under the new name.
+    function setScreenName(name) {
+        if (!browser) return;
+        const trimmed = (name || '').trim();
+        try {
+            if (trimmed) localStorage.setItem('eck_screen_name', trimmed);
+            else localStorage.removeItem('eck_screen_name');
+        } catch {}
+        reconnect();
+    }
+
     function send(msg) {
         if (socket && socket.readyState === WebSocket.OPEN) {
             socket.send(JSON.stringify(msg));
@@ -81,7 +154,11 @@ function createWsStore() {
         subscribe,
         connect,
         close,
-        send
+        reconnect,
+        send,
+        getScreenId,
+        getScreenName,
+        setScreenName
     };
 }
 

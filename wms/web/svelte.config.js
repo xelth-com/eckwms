@@ -13,6 +13,13 @@ const config = {
 		paths: {
 			// Базовый путь для продакшена
 			base: '/E'
+		},
+		// Poll the deployed build's version every 60s so `$updated` from
+		// `$app/stores` flips true after an OTA deploy — the root layout
+		// uses it to reload the kiosk browser once the user goes idle
+		// (see src/routes/+layout.svelte).
+		version: {
+			pollInterval: 60000
 		}
 	}
 };

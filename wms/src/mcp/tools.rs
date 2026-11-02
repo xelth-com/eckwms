@@ -14,7 +14,9 @@ use eck_core::utils::anonymizer::{
     pii_fuzzy_sig_address, pii_fuzzy_sig_kind, pprl_reveal_map, scrub_pii_regex, SigKind,
     PII_FUZZY_THRESHOLD,
 };
-use crate::ai::pii_fuzzy::{looks_like_address, looks_like_person_name};
+use crate::ai::pii_fuzzy::{
+    company_similarity, looks_like_address, looks_like_person_name, normalize_company,
+};
 use rig::tool::Tool as _;
 use serde_json::{json, Value};
 
@@ -102,7 +104,7 @@ pub(crate) fn tools_list(tier: McpTier) -> Value {
                 "Full repair/support history of one device by its serial number \
                  (exact, case-insensitive): every ticket that unit appears in, \
                  chronological, with status, subject, and the customer who sent \
-                 it each time — plus how many of those tickets are still open.",
+                 it each time — plus how many of those tickets are still open.                  Also returns the unit's `device` record (or null), its                  examination `events` (STK/MTK/Funktionskontrolle/repair, newest                  first, each with its attachment list) and `next_due` per                  examination kind (latest non-superseded passing event).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -130,10 +132,14 @@ pub(crate) fn tools_list(tier: McpTier) -> Value {
                  fragment (e.g. 'escalated'). To ENUMERATE every ticket in a \
                  status, pass only `status` — never fake a wildcard with a \
                  single-letter query. At least one of query/city/company/status \
-                 is required. Newest first. Each hit carries `city` + \
-                 `city_source` ('zoho' = stated, 'area_code' = derived from the \
-                 phone, …), `zip`, `company`, and its `zoho_id` (feed that to \
-                 list_ticket_attachments).",
+                 is required. `sort` is 'newest' (default) or 'oldest'. The result \
+                 carries `matched_total` (count AFTER the status filter), \
+                 `matched_before_status_filter`, and `truncated` (more matched \
+                 than returned). For counts / oldest-first / per-status or \
+                 per-period questions prefer `ticket_stats`. Each hit carries \
+                 `city` + `city_source` ('zoho' = stated, 'area_code' = derived \
+                 from the phone, …), `zip`, `company`, and its `zoho_id` (feed \
+                 that to list_ticket_attachments).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -156,6 +162,68 @@ pub(crate) fn tools_list(tier: McpTier) -> Value {
                     "limit": {
                         "type": "integer",
                         "description": "Max results (default 20, cap 50)."
+                    },
+                    "sort": {
+                        "type": "string",
+                        "description": "Result order: 'newest' (default) or 'oldest'."
+                    }
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "ticket_stats",
+            "description":
+                "Aggregate statistics over support tickets, computed server-side \
+                 over ALL tickets (never paged, never capped at 50) — use this for \
+                 any 'how many', 'oldest'/'newest N', or 'per status / company / \
+                 city / period' question instead of paging `ticket_search`. All \
+                 filters are optional and ANDed: `status` ('open', 'closed', or a \
+                 status fragment — same vocabulary as ticket_search), `company` \
+                 and `city` (case-insensitive substring), and the date window \
+                 `created_from` (inclusive) / `created_to` (EXCLUSIVE), each an \
+                 ISO date ('2026-09-01') or datetime. Returns `matched_total` (the \
+                 true count after every filter), `status_counts` (per raw status), \
+                 and `rows`: the top `top` tickets (default 5, max 20) by `order` \
+                 ('oldest' default, or 'newest'), each with ticket_number, \
+                 subject, status, created_time, `age_days`, and company. Set \
+                 `group_by` ('status'|'company'|'city'|'model') to also get \
+                 `groups` (top 20 by count + an 'other' bucket). No free-text \
+                 query and no raw SQL — filter by the fields above.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "description": "Optional: 'open', 'closed', or a status fragment."
+                    },
+                    "company": {
+                        "type": "string",
+                        "description": "Optional: company/customer name (case-insensitive substring)."
+                    },
+                    "city": {
+                        "type": "string",
+                        "description": "Optional: town (stated or derived from the phone area code)."
+                    },
+                    "created_from": {
+                        "type": "string",
+                        "description": "Optional: only tickets created on/after this ISO date/datetime (inclusive)."
+                    },
+                    "created_to": {
+                        "type": "string",
+                        "description": "Optional: only tickets created before this ISO date/datetime (exclusive)."
+                    },
+                    "group_by": {
+                        "type": "string",
+                        "description": "Optional: 'status', 'company', 'city', or 'model' to return per-group counts."
+                    },
+                    "order": {
+                        "type": "string",
+                        "description": "Edge rows order: 'oldest' (default) or 'newest'."
+                    },
+                    "top": {
+                        "type": "integer",
+                        "description": "How many edge rows to return (1..20, default 5)."
                     }
                 },
                 "required": []
@@ -606,13 +674,15 @@ pub(crate) fn tools_list(tier: McpTier) -> Value {
             }
         }
     ]);
-    let tools: Vec<Value> = all
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
+    let mut all_tools = all.as_array().cloned().unwrap_or_default();
+    all_tools.extend(super::bundles::tool_schemas());
+    let tools: Vec<Value> = all_tools
         .into_iter()
         .filter(|t| {
             match t.get("name").and_then(|n| n.as_str()).unwrap_or("") {
+                // Examination-bundle write path: Master only (also enforced at
+                // dispatch in `bundles::call` for every transport).
+                n if super::bundles::TOOL_NAMES.contains(&n) => tier == McpTier::Master,
                 "surrealql_read" => tier == McpTier::Master,
                 "reveal_file_local" => tier == McpTier::Master,
                 // Writes raw bytes to the server's disk — Master gate, like the
@@ -649,6 +719,7 @@ pub(crate) async fn dispatch_tool(
         "customer_360" => customer_360(state, args, tier).await,
         "device_history" => device_history(state, args, tier).await,
         "ticket_search" => ticket_search(state, args, tier).await,
+        "ticket_stats" => ticket_stats(state, args, tier).await,
         "similar_tickets" => similar_tickets(state, args, tier).await,
         "search_database" => search_database(state, args, tier).await,
         "list_ticket_attachments" => list_ticket_attachments(state, args).await,
@@ -667,6 +738,7 @@ pub(crate) async fn dispatch_tool(
         "chat_transcript" => chat_transcript(state, args, tier).await,
         "list_printers" => list_printers_tool().await,
         "print_labels" => print_labels_tool(args, tier).await,
+        n if super::bundles::TOOL_NAMES.contains(&n) => super::bundles::call(state, n, args, tier).await,
         other => error_result(format!("unknown tool '{other}'")),
     }
 }
@@ -1003,6 +1075,525 @@ fn is_closed(status: &str) -> bool {
         .any(|m| s.contains(m))
 }
 
+/// The shared status predicate for `ticket_search` AND `ticket_stats` (one
+/// vocabulary, no fork): `None` matches every status, `"open"` matches anything
+/// not [`is_closed`], `"closed"` matches a closed status, any other value is a
+/// case-insensitive substring of the raw status (e.g. `"escalated"`). `filter`
+/// is expected already lowercased/trimmed. Pure — unit-tested below.
+fn status_matches(filter: Option<&str>, status: &str) -> bool {
+    match filter {
+        None => true,
+        Some("open") => !is_closed(status),
+        Some("closed") => is_closed(status),
+        Some(f) => status.to_ascii_lowercase().contains(f),
+    }
+}
+
+/// Parse a ticket timestamp or a `created_from`/`created_to` bound into a UTC
+/// datetime. Accepts RFC3339 (`2026-09-01T12:00:00Z`), a naive datetime
+/// (`2026-09-01T12:00:00`), or a bare date (`2026-09-01`, taken as 00:00:00 UTC).
+/// `None` when nothing parses. Used for aggregation bounds and oldest/newest
+/// ordering (comparison is on parsed instants, not lexical strings).
+fn parse_ticket_dt(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return Some(chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc));
+    }
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return d
+            .and_hms_opt(0, 0, 0)
+            .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc));
+    }
+    None
+}
+
+/// Ticket number as a sort tie-breaker: numeric when it parses, else lexical.
+/// Returns `(numeric_key, raw)` so a stable compare can prefer the number.
+fn ticket_number_key(nr: &str) -> (u64, &str) {
+    (nr.trim().parse::<u64>().unwrap_or(u64::MAX), nr)
+}
+
+/// The single created_time ordering used by BOTH `ticket_search` and
+/// `ticket_stats` (F07-6/F08-6): compare parsed UTC instants (so mixed-offset
+/// timestamps order correctly, not lexically), place undated rows LAST in either
+/// direction, and break ties on the ticket number. Keys are precomputed by the
+/// caller so each row is parsed once.
+fn cmp_created(
+    ad: Option<chrono::DateTime<chrono::Utc>>,
+    an: (u64, &str),
+    bd: Option<chrono::DateTime<chrono::Utc>>,
+    bn: (u64, &str),
+    oldest_first: bool,
+) -> std::cmp::Ordering {
+    let ord = match (ad, bd) {
+        (Some(x), Some(y)) => {
+            if oldest_first {
+                x.cmp(&y)
+            } else {
+                y.cmp(&x)
+            }
+        }
+        (Some(_), None) => std::cmp::Ordering::Less, // dated before undated
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    };
+    ord.then_with(|| {
+        if oldest_first {
+            an.cmp(&bn)
+        } else {
+            bn.cmp(&an)
+        }
+    })
+}
+
+// ─── company-name fuzzy channel (clear text — see pii_fuzzy::company_*) ──────
+
+/// Company fuzzy-match thresholds. A company name is stored in clear, so this
+/// channel never touches PPRL signatures; it ranks the DISTINCT `meta.company`
+/// strings by [`company_similarity`] (normalized Jaro-Winkler).
+const COMPANY_WINNER_MIN: f32 = 0.90; // a lone/leading candidate must clear this
+const COMPANY_MARGIN: f32 = 0.05; // …and lead the runner-up by this to win outright
+const COMPANY_PLAUSIBLE_MIN: f32 = 0.85; // below this a candidate is not even offered
+
+/// One scored distinct company: the stored label (clear), its ticket count, score.
+#[derive(Clone, Debug, PartialEq)]
+struct CompanyCand {
+    company: String,
+    count: usize,
+    score: f32,
+}
+
+/// Rank the distinct companies against `query` (desc by score, tie-break company
+/// name) keeping only the plausible ones. Pure — unit-tested below.
+fn rank_companies(query: &str, companies: &[(String, usize)]) -> Vec<CompanyCand> {
+    let mut ranked: Vec<CompanyCand> = companies
+        .iter()
+        .map(|(company, count)| CompanyCand {
+            company: company.clone(),
+            count: *count,
+            score: company_similarity(query, company),
+        })
+        .filter(|c| c.score >= COMPANY_PLAUSIBLE_MIN)
+        .collect();
+    ranked.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.company.cmp(&b.company))
+    });
+    ranked
+}
+
+/// Whether the ranked (already plausible, desc-sorted) companies contain ONE
+/// clear winner: the top clears the winner floor AND is alone or leads the
+/// runner-up by the margin.
+fn company_is_winner(ranked: &[CompanyCand]) -> bool {
+    match ranked.first() {
+        Some(top) => {
+            top.score >= COMPANY_WINNER_MIN
+                && (ranked.len() == 1 || top.score - ranked[1].score >= COMPANY_MARGIN)
+        }
+        None => false,
+    }
+}
+
+/// Generic, small set of tokens that mark a query as explicitly naming a COMPANY
+/// (legal forms + a few generic company words — not customer-specific). When one
+/// is present the query has company intent and the person path is not consulted
+/// (C2 / F08-2, F08-3).
+fn has_company_marker(query: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "gmbh", "ag", "ug", "kg", "ohg", "gbr", "mbh", "ev", "ltd", "inc", "llc", "corp", "sarl",
+        "bv", "nv", "srl", "spa", "oy", "ab", "gesellschaft", "holding", "group", "verein",
+    ];
+    query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .any(|t| MARKERS.contains(&t.to_ascii_lowercase().as_str()))
+}
+
+/// The `n` closest distinct companies to `query` IGNORING the plausible floor —
+/// used to show the operator what was near on a company-intent miss.
+fn closest_companies(query: &str, companies: &[(String, usize)], n: usize) -> Vec<CompanyCand> {
+    let mut all: Vec<CompanyCand> = companies
+        .iter()
+        .map(|(c, k)| CompanyCand {
+            company: c.clone(),
+            count: *k,
+            score: company_similarity(query, c),
+        })
+        .collect();
+    all.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.company.cmp(&b.company))
+    });
+    all.truncate(n);
+    all
+}
+
+/// Fuzzy person/address candidates (masked tokens + scores) over the SHARED
+/// ticket-meta snapshot (C4 — no extra DB scan). Channel A scores the clear
+/// `meta.customer`/`meta.address` (needs the pepper); Channel B unions the
+/// in-memory `FuzzyIndex`. Returns tokens sorted by score desc, tie-break token.
+fn person_candidates(
+    state: &Arc<AppState>,
+    query: &str,
+    all_metas: &[Value],
+) -> Vec<(String, f32, SigKind)> {
+    use std::collections::HashMap;
+    let mut cand: HashMap<String, (f32, SigKind)> = HashMap::new();
+    let mut bump = |tok: String, s: f32, k: SigKind| {
+        let e = cand.entry(tok).or_insert((0.0, k));
+        if s > e.0 {
+            *e = (s, k);
+        }
+    };
+    // Channel A — clear-field scan (needs the pepper for the query sigs).
+    if eck_core::keyring::pepper().is_some() {
+        let qn = pii_fuzzy_sig_kind(query, SigKind::Name);
+        let qa = pii_fuzzy_sig_kind(query, SigKind::Address);
+        for r in all_metas {
+            let Some(meta) = r.get("meta") else { continue };
+            if let Some(name) = meta
+                .get("customer")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+            {
+                let s = fuzzy_score(&qn, &pii_fuzzy_sig_kind(name, SigKind::Name));
+                if s >= PII_FUZZY_THRESHOLD {
+                    bump(obfuscate_pii(name, "Name"), s, SigKind::Name);
+                }
+            }
+            if let Some(addr) = meta
+                .get("address")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+            {
+                // Union street ∪ zip ∪ city so a city-only / zip-only query
+                // resolves; the token stays derived from `meta.address`.
+                let field = |k: &str| {
+                    meta.get(k)
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                };
+                let comps: Vec<&str> = [Some(addr), field("zip"), field("city")]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                let s = fuzzy_score(&qa, &pii_fuzzy_sig_address(&comps));
+                if s >= PII_FUZZY_THRESHOLD {
+                    bump(obfuscate_pii(addr, "Address"), s, SigKind::Address);
+                }
+            }
+        }
+    }
+    // Channel B — in-memory index (names that live only as tokens).
+    for c in state.fuzzy_index.resolve_query(query, 10) {
+        bump(c.token, c.score, c.kind);
+    }
+    let mut cands: Vec<(String, f32, SigKind)> =
+        cand.into_iter().map(|(t, (s, k))| (t, s, k)).collect();
+    cands.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    cands
+}
+
+/// A person candidate's score is "essentially exact" — used to stop a company
+/// winner from preempting an all-but-certain person match (C2 decision table).
+const PERSON_STRONG_SCORE: f32 = 0.98;
+
+/// Build a typed person candidate value `{kind,label,ticket_count,score}` (the
+/// token IS the masked pseudonym; `ticket_count` is not computed for a person).
+fn person_candidate_value(token: &str, score: f32, kind: SigKind) -> Value {
+    json!({
+        "kind": if kind == SigKind::Address { "address" } else { "person" },
+        "label": token,
+        "ticket_count": Value::Null,
+        "score": score,
+    })
+}
+
+/// A fuzzy person/address candidate: masked token, score, kind.
+type PersonCand = (String, f32, SigKind);
+
+/// The typed, JOINT company/person resolution decision (C2 / F07-7, F08-2,
+/// F08-3). Pure over the two channels' ranked candidates so the whole decision
+/// table is unit-testable without a DB. It NEVER makes a silent cross-kind
+/// choice: when both an entity company and a person are plausible it asks.
+#[derive(Debug, PartialEq)]
+enum Resolution {
+    /// Resolve to this company; `also` carries a person candidate that also
+    /// matched (surfaced masked as `also_matches`).
+    Company {
+        company: CompanyCand,
+        also: Option<PersonCand>,
+    },
+    /// Resolve to this person/address token (today's behaviour).
+    Person(PersonCand),
+    /// Only company candidates, no clear winner → `found:false` (hint varies by
+    /// count: one → "one possible match", several → "several").
+    AmbiguousCompany(Vec<CompanyCand>),
+    /// Both a company and a person are plausible → typed ambiguity, ask.
+    AmbiguousJoint {
+        companies: Vec<CompanyCand>,
+        persons: Vec<PersonCand>,
+    },
+    /// Only person candidates, not confident → `found:true` ambiguous (as before).
+    AmbiguousPerson(Vec<PersonCand>),
+    /// Explicit company intent but nothing plausible → show the closest labels.
+    CompanyMiss,
+    /// Nothing resolved on either channel → fall through to `found:false`.
+    None,
+}
+
+fn person_is_confident(person_cands: &[PersonCand]) -> bool {
+    person_cands.len() == 1
+        || (person_cands.len() >= 2 && person_cands[0].1 - person_cands[1].1 >= 0.05)
+}
+
+/// Decide the joint resolution from the two channels' candidates. See the C2
+/// decision table in `.eck/collab/chat-improve-1001/wave3b-spec.md`.
+fn decide_resolution(
+    marker: bool,
+    company_ranked: &[CompanyCand],
+    person_cands: &[PersonCand],
+) -> Resolution {
+    let company_winner = company_is_winner(company_ranked);
+    let company_plausible = !company_ranked.is_empty();
+    let person_plausible = !person_cands.is_empty();
+    let person_confident = person_is_confident(person_cands);
+    let person_strong = person_cands
+        .first()
+        .map(|c| c.1 >= PERSON_STRONG_SCORE)
+        .unwrap_or(false);
+
+    if marker {
+        // Explicit company intent — the person path is not consulted.
+        if company_winner {
+            return Resolution::Company {
+                company: company_ranked[0].clone(),
+                also: None,
+            };
+        }
+        if company_plausible {
+            return Resolution::AmbiguousCompany(company_ranked.to_vec());
+        }
+        return Resolution::CompanyMiss;
+    }
+    // A clear company winner takes it UNLESS a person is essentially exact.
+    if company_winner && !person_strong {
+        return Resolution::Company {
+            company: company_ranked[0].clone(),
+            also: person_cands.first().cloned(),
+        };
+    }
+    // Confident person and no plausible company → the person (today's behaviour).
+    if person_confident && !company_plausible {
+        return Resolution::Person(person_cands[0].clone());
+    }
+    // Both sides plausible → never a silent choice; ask with typed candidates.
+    if company_plausible && person_plausible {
+        return Resolution::AmbiguousJoint {
+            companies: company_ranked.to_vec(),
+            persons: person_cands.to_vec(),
+        };
+    }
+    if company_plausible {
+        return Resolution::AmbiguousCompany(company_ranked.to_vec());
+    }
+    if person_plausible {
+        return if person_confident {
+            Resolution::Person(person_cands[0].clone())
+        } else {
+            Resolution::AmbiguousPerson(person_cands.to_vec())
+        };
+    }
+    Resolution::None
+}
+
+/// C3 / F15-3: whether ESTABLISHED company intent scopes the row-set to ONE
+/// company, so the overview stays a single company view across its MEMBER contacts
+/// and is NEVER re-split by e-mail into "ambiguous customers". Intent is positive:
+/// a fuzzy/exact company winner scopes directly (`resolved_company`); otherwise the
+/// rows must name exactly one company AND the query must actually NAME it — an
+/// explicit company marker, or normalized-equal to that company. A PLAIN SUBSTRING
+/// is NOT intent (a surname that is a prefix of the company name scores high on a
+/// prefix-weighted metric but is still just a substring); those are decided against
+/// the person channel by [`decide_exact_scope`]. A pseudonym-token query never
+/// scopes to a company.
+fn company_scope_of(
+    query: &str,
+    resolved_company: Option<String>,
+    distinct_companies: &[&str],
+) -> Option<String> {
+    if resolved_company.is_some() {
+        return resolved_company;
+    }
+    if parse_pii_token(query).is_some() {
+        return None;
+    }
+    if distinct_companies.len() == 1 {
+        let only = distinct_companies[0].trim();
+        if only.is_empty() {
+            return None;
+        }
+        let nq = normalize_company(query);
+        if has_company_marker(query) || (!nq.is_empty() && normalize_company(only) == nq) {
+            return Some(only.to_string());
+        }
+    }
+    None
+}
+
+/// The exact-path company-vs-person decision for a result-set with exactly one
+/// distinct company that the query hits by a PLAIN substring (no established
+/// intent, F15-3). Pure → unit-tested.
+/// - established intent (`company_scope_of`) → the member-only company overview;
+/// - a substring company hit that ALSO matches a person name → typed ambiguity
+///   (company branch + person branches, nothing aggregated across them);
+/// - a substring company hit with no person-name match → the company overview;
+/// - otherwise (query hit the row-set only via a person / e-mail) → the person path.
+#[derive(Debug, PartialEq)]
+enum ExactScope {
+    Company(String),
+    Ambiguous(String),
+    Person,
+}
+
+fn decide_exact_scope(
+    query: &str,
+    established_scope: Option<String>,
+    single_company: Option<&str>,
+    person_name_match: bool,
+) -> ExactScope {
+    if let Some(c) = established_scope {
+        return ExactScope::Company(c);
+    }
+    if let Some(co) = single_company {
+        if ci_contains(co, query) {
+            return if person_name_match {
+                ExactScope::Ambiguous(co.to_string())
+            } else {
+                ExactScope::Company(co.to_string())
+            };
+        }
+    }
+    ExactScope::Person
+}
+
+/// Positive company membership (F15-3): a row belongs to company X only when its
+/// normalized company equals X's. Empty / missing company is never membership, so
+/// a blank-company row can never be swept into a named company's aggregate.
+fn meta_is_company_member(m: &Value, company: &str) -> bool {
+    let c = meta_str(m, "company").trim();
+    !c.is_empty() && normalize_company(c) == normalize_company(company)
+}
+
+/// Whether a person-name match makes a single-company exact-path result AMBIGUOUS
+/// (D4/F13-3/F14-2). The company reading is the MEMBER rows; the person reading is
+/// the rows whose customer name contains the query. It is ambiguous when a person
+/// name matches AND the two readings DIFFER — some member row does not match the
+/// person name, OR some person-name match is not a member. When the member rows are
+/// exactly the matched person's rows (a one-contact company named after its owner),
+/// the readings coincide and it stays a plain company overview. Earlier this fired
+/// only on NON-member person matches, so two members sharing a surname
+/// ("Hans Mueller" + "Eva Schmidt" at "Mueller Bau GmbH", query "Mueller") were
+/// wrongly collapsed into one company total. Pure over the matched rows → unit-tested.
+fn person_match_is_ambiguous(metas: &[&Value], company: &str, query: &str) -> bool {
+    let mut any_person = false;
+    let mut member_not_person = false;
+    let mut person_not_member = false;
+    for m in metas {
+        let is_member = meta_is_company_member(m, company);
+        let is_person = ci_contains(meta_str(m, "customer"), query);
+        any_person |= is_person;
+        member_not_person |= is_member && !is_person;
+        person_not_member |= is_person && !is_member;
+    }
+    any_person && (member_not_person || person_not_member)
+}
+
+/// Shared aggregates for a resolved customer/company's ticket metas (expected
+/// sorted created_time DESC): distinct devices, ticket totals + status breakdown,
+/// and the open-ticket rows. None of these fields carry PII, so no tokenization.
+/// Returned pieces are spliced into both the single-customer and the one-company
+/// (C3) overviews.
+fn ticket_overview_parts(metas: &[&Value]) -> (Vec<Value>, usize, Value, Vec<Value>) {
+    let mut devices: std::collections::BTreeMap<String, String> = Default::default();
+    for m in metas {
+        let serial = meta_str(m, "serial_number");
+        if !serial.is_empty() {
+            devices
+                .entry(serial.to_string())
+                .or_insert_with(|| meta_str(m, "device_model").to_string());
+        }
+    }
+    let devices_json: Vec<Value> = devices
+        .iter()
+        .map(|(serial, model)| json!({ "serial": serial, "model": model }))
+        .collect();
+    let device_count = devices.len();
+
+    let total = metas.len();
+    let mut open = 0usize;
+    let mut open_tickets: Vec<Value> = Vec::new();
+    let mut status_counts: std::collections::BTreeMap<String, usize> = Default::default();
+    let now = chrono::Utc::now();
+    for m in metas {
+        let status = meta_str(m, "status");
+        *status_counts.entry(status.to_string()).or_default() += 1;
+        if !is_closed(status) {
+            open += 1;
+            let created = meta_str(m, "created_time");
+            let waiting_days = parse_ticket_dt(created).map(|c| (now - c).num_days());
+            open_tickets.push(json!({
+                "ticket_number": meta_str(m, "ticket_number"),
+                "subject": meta_str(m, "subject"),
+                "status": status,
+                "serial": meta_str(m, "serial_number"),
+                "created_time": created,
+                "waiting_days": waiting_days,
+            }));
+        }
+    }
+    // First / last contact by PARSED instant, not lexical min/max (F13-4): a
+    // mixed-offset or non-ISO timestamp must still order chronologically. Undated
+    // rows are ignored. The stored string is kept for display.
+    let mut dated: Vec<(chrono::DateTime<chrono::Utc>, &str)> = metas
+        .iter()
+        .filter_map(|m| {
+            let s = meta_str(m, "created_time");
+            parse_ticket_dt(s).map(|d| (d, s))
+        })
+        .collect();
+    dated.sort_by(|a, b| a.0.cmp(&b.0));
+    let first_contact = dated.first().map(|(_, s)| *s).unwrap_or("");
+    let last_contact = dated.last().map(|(_, s)| *s).unwrap_or("");
+    let tickets_summary = json!({
+        "total": total,
+        "open": open,
+        "closed": total - open,
+        "status_breakdown": status_counts,
+        "first_contact": first_contact,
+        "last_contact": last_contact,
+    });
+    (devices_json, device_count, tickets_summary, open_tickets)
+}
+
 async fn customer_360(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> Value {
     let query = match args.get("query").and_then(|v| v.as_str()) {
         Some(q) if !q.trim().is_empty() => q.trim().to_string(),
@@ -1020,6 +1611,12 @@ async fn customer_360(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> Va
     // identity field in Rust and compare (no plaintext reverse map needed,
     // works across restarts). Non-token queries keep the DB-side match.
     let mut resolved_from: Option<Value> = None;
+    // Set when the resolution is scoped to ONE company: the downstream overview
+    // then stays a single company view across its contacts (C3), never re-split
+    // by e-mail into "ambiguous customers". Carries person candidate(s) that also
+    // matched a company resolution (C2 `also_matches`).
+    let mut company_scope: Option<String> = None;
+    let mut also_matches: Option<Value> = None;
     let mut rows: Vec<Value> = if let Some(label) = parse_pii_token(&query) {
         let field = match label {
             "Name" => "customer",
@@ -1074,130 +1671,204 @@ async fn customer_360(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> Va
         }
     };
 
-    // Typo-tolerant fallback (`.eck/PPRL_FUZZY.md` §D): an exact/substring miss
-    // on a query that looks like a person name or an address is resolved via
-    // Channel A (score every ticket's clear `meta.customer`/`meta.address`
-    // against the query signature — microseconds per row) UNIONed with Channel B
-    // (the in-memory `FuzzyIndex` over stored/derived sigs). Returns tokens +
-    // scores only — never a clear value or a raw signature.
-    if rows.is_empty()
-        && parse_pii_token(&query).is_none()
-        && (looks_like_person_name(&query) || looks_like_address(&query))
-    {
-        use std::collections::HashMap;
-        let mut cand: HashMap<String, (f32, SigKind)> = HashMap::new();
-        let bump = |cand: &mut HashMap<String, (f32, SigKind)>, tok: String, s: f32, k: SigKind| {
-            let e = cand.entry(tok).or_insert((0.0, k));
-            if s > e.0 {
-                *e = (s, k);
+    // Typo-tolerant fallback (`.eck/PPRL_FUZZY.md` §D, extended by wave-3b C2/C4):
+    // ONE scan of the ticket metas feeds BOTH the company channel (clear
+    // `meta.company`, normalized Jaro-Winkler) and the person/address channel
+    // (Channel A clear-field sigs ∪ Channel B in-memory index). The two are then
+    // decided TOGETHER by a typed decision table — a company-shaped query is
+    // never silently answered as a person, and a company winner never preempts an
+    // all-but-exact person match.
+    if rows.is_empty() && parse_pii_token(&query).is_none() {
+        // ── ONE shared scan of ticket metas (C4) ────────────────────────────
+        let all_metas: Vec<Value> = state
+            .db
+            .query("SELECT meta FROM document WHERE type = 'support_ticket'")
+            .await
+            .and_then(|mut r| r.take(0))
+            .unwrap_or_default();
+
+        // Distinct companies + ticket counts (clear text), from the shared scan.
+        let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+        for r in &all_metas {
+            if let Some(co) = r
+                .get("meta")
+                .and_then(|m| m.get("company"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+            {
+                *counts.entry(co.to_string()).or_default() += 1;
+            }
+        }
+        let companies: Vec<(String, usize)> = counts.iter().map(|(c, n)| (c.clone(), *n)).collect();
+        // A query that normalizes away (e.g. a bare legal form) carries no
+        // company signal.
+        let company_query = !normalize_company(&query).is_empty() && !companies.is_empty();
+        let company_ranked = if company_query {
+            rank_companies(&query, &companies)
+        } else {
+            Vec::new()
+        };
+
+        // Person/address channel: consulted ONLY for person/address-shaped
+        // queries, and never when the query carries an explicit company marker —
+        // so a company string is never scored against person signatures (F08-3).
+        let marker = has_company_marker(&query);
+        let person_cands =
+            if !marker && (looks_like_person_name(&query) || looks_like_address(&query)) {
+                person_candidates(state, &query, &all_metas)
+            } else {
+                Vec::new()
+            };
+
+        // Scope the rows to one company (C3) + annotate `resolved_from`.
+        let resolve_company = |rows: &mut Vec<Value>,
+                               resolved_from: &mut Option<Value>,
+                               company_scope: &mut Option<String>,
+                               company: String,
+                               score: f32| {
+            *rows = all_metas
+                .iter()
+                .filter(|r| {
+                    r.get("meta")
+                        .and_then(|m| m.get("company"))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .is_some_and(|v| v == company)
+                })
+                .cloned()
+                .collect();
+            *resolved_from = Some(json!({
+                "mode": "fuzzy_company",
+                "matched": company.clone(),
+                "score": score,
+            }));
+            *company_scope = Some(company);
+        };
+        // Scope the rows to one person/address token.
+        let resolve_person = |rows: &mut Vec<Value>,
+                              resolved_from: &mut Option<Value>,
+                              token: String,
+                              score: f32,
+                              kind: SigKind| {
+            let field = match kind {
+                SigKind::Name => "customer",
+                SigKind::Address => "address",
+            };
+            let label = kind.label();
+            *rows = all_metas
+                .iter()
+                .filter(|r| {
+                    r.get("meta")
+                        .and_then(|m| m.get(field))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .is_some_and(|v| obfuscate_pii(v, label) == token)
+                })
+                .cloned()
+                .collect();
+            *resolved_from = Some(json!({
+                "token": token,
+                "score": score,
+                "mode": if kind == SigKind::Address { "fuzzy_address" } else { "fuzzy_name" },
+            }));
+        };
+        let company_cand_values = |ranked: &[CompanyCand]| -> Vec<Value> {
+            ranked
+                .iter()
+                .take(20)
+                .map(|c| {
+                    json!({
+                        "kind": "company",
+                        "label": c.company,
+                        "ticket_count": c.count,
+                        "score": c.score,
+                    })
+                })
+                .collect()
+        };
+
+        // One hint builder for company-candidate replies (count-aware).
+        let company_hint = |n: usize| -> &'static str {
+            if n == 1 {
+                "One possible company match — confirm by re-querying customer_360 with \
+                 the candidate's exact `label`."
+            } else {
+                "Several companies fuzzily match this name. Re-query customer_360 with \
+                 one candidate's exact `label`."
             }
         };
-        // Channel A — clear-field scan (needs the pepper for the query sigs).
-        if eck_core::keyring::pepper().is_some() {
-            let all_metas: Vec<Value> = state
-                .db
-                .query("SELECT meta FROM document WHERE type = 'support_ticket'")
-                .await
-                .and_then(|mut r| r.take(0))
-                .unwrap_or_default();
-            let qn = pii_fuzzy_sig_kind(&query, SigKind::Name);
-            let qa = pii_fuzzy_sig_kind(&query, SigKind::Address);
-            for r in &all_metas {
-                let Some(meta) = r.get("meta") else { continue };
-                if let Some(name) = meta
-                    .get("customer")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                {
-                    let s = fuzzy_score(&qn, &pii_fuzzy_sig_kind(name, SigKind::Name));
-                    if s >= PII_FUZZY_THRESHOLD {
-                        bump(&mut cand, obfuscate_pii(name, "Name"), s, SigKind::Name);
-                    }
-                }
-                if let Some(addr) = meta
-                    .get("address")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                {
-                    // Union street ∪ zip ∪ city so a city-only / zip-only query
-                    // resolves; the token stays derived from `meta.address`.
-                    let field = |k: &str| meta.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|v| !v.is_empty());
-                    let comps: Vec<&str> =
-                        [Some(addr), field("zip"), field("city")].into_iter().flatten().collect();
-                    let s = fuzzy_score(&qa, &pii_fuzzy_sig_address(&comps));
-                    if s >= PII_FUZZY_THRESHOLD {
-                        bump(&mut cand, obfuscate_pii(addr, "Address"), s, SigKind::Address);
-                    }
+
+        match decide_resolution(marker, &company_ranked, &person_cands) {
+            Resolution::Company { company, also } => {
+                resolve_company(
+                    &mut rows,
+                    &mut resolved_from,
+                    &mut company_scope,
+                    company.company,
+                    company.score,
+                );
+                if let Some((t, s, k)) = also {
+                    also_matches = Some(json!([person_candidate_value(&t, s, k)]));
                 }
             }
-        }
-        // Channel B — in-memory index (names that live only as tokens).
-        for c in state.fuzzy_index.resolve_query(&query, 10) {
-            bump(&mut cand, c.token, c.score, c.kind);
-        }
-
-        let mut cands: Vec<(String, f32, SigKind)> =
-            cand.into_iter().map(|(t, (s, k))| (t, s, k)).collect();
-        cands.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.0.cmp(&b.0))
-        });
-
-        if !cands.is_empty() {
-            // Confident when exactly one candidate matched, or the top-1 leads
-            // top-2 by ≥ 0.05 → proceed as if that token had been the query.
-            let confident = cands.len() == 1 || (cands[0].1 - cands[1].1 >= 0.05);
-            if confident {
-                let (token, score, kind) = cands[0].clone();
-                let field = match kind {
-                    SigKind::Name => "customer",
-                    SigKind::Address => "address",
-                };
-                let label = kind.label();
-                let all: Vec<Value> = state
-                    .db
-                    .query("SELECT meta FROM document WHERE type = 'support_ticket'")
-                    .await
-                    .and_then(|mut r| r.take(0))
-                    .unwrap_or_default();
-                rows = all
-                    .into_iter()
-                    .filter(|r| {
-                        r.get("meta")
-                            .and_then(|m| m.get(field))
-                            .and_then(|v| v.as_str())
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                            .is_some_and(|v| obfuscate_pii(v, label) == token)
-                    })
-                    .collect();
-                resolved_from = Some(json!({
-                    "token": token,
-                    "score": score,
-                    "mode": if kind == SigKind::Address { "fuzzy_address" } else { "fuzzy_name" },
+            Resolution::Person((token, score, kind)) => {
+                resolve_person(&mut rows, &mut resolved_from, token, score, kind);
+            }
+            Resolution::AmbiguousCompany(ranked) => {
+                let hint = company_hint(ranked.len());
+                return json_result(&json!({
+                    "query": query, "found": false, "ambiguous": true,
+                    "match_mode": "fuzzy_company",
+                    "candidates": company_cand_values(&ranked),
+                    "hint": hint,
                 }));
-            } else {
-                // Ambiguous — hand back the candidate tokens + scores so the
-                // caller can re-query with one (a token is a valid query key).
-                let candidates: Vec<Value> = cands
+            }
+            Resolution::AmbiguousJoint { companies: cos, persons } => {
+                let mut candidates = company_cand_values(&cos);
+                candidates.extend(
+                    persons
+                        .iter()
+                        .take(10)
+                        .map(|(t, s, k)| person_candidate_value(t, *s, *k)),
+                );
+                return json_result(&json!({
+                    "query": query, "found": false, "ambiguous": true,
+                    "match_mode": "fuzzy_company_or_person",
+                    "candidates": candidates,
+                    "hint": "This query matches both a company and a person. Re-query \
+                             customer_360 with one candidate's `label` — a company name \
+                             or a Name_/Address_ token is a valid query key.",
+                }));
+            }
+            Resolution::AmbiguousPerson(persons) => {
+                let candidates: Vec<Value> = persons
                     .iter()
                     .take(20)
-                    .map(|(t, s, k)| json!({ "token": t, "score": s, "kind": k.label() }))
+                    .map(|(t, s, k)| person_candidate_value(t, *s, *k))
                     .collect();
                 return json_result(&json!({
-                    "query": query,
-                    "found": true,
-                    "ambiguous": true,
+                    "query": query, "found": true, "ambiguous": true,
                     "match_mode": "fuzzy_name_or_address",
                     "candidates": candidates,
-                    "hint": "Multiple people/addresses fuzzily match this query. \
-                             Re-query customer_360 with one candidate's `token` \
-                             value — a Name_/Address_ token IS a valid query key.",
+                    "hint": "Multiple people/addresses fuzzily match this query. Re-query \
+                             customer_360 with one candidate's `label` token — a \
+                             Name_/Address_ token IS a valid query key.",
                 }));
             }
+            Resolution::CompanyMiss => {
+                // Explicit company intent but nothing plausible — closest labels.
+                let closest = closest_companies(&query, &companies, 5);
+                return json_result(&json!({
+                    "query": query, "found": false, "ambiguous": false,
+                    "match_mode": "fuzzy_company",
+                    "candidates": company_cand_values(&closest),
+                    "hint": "No company closely matches this name — the closest on file \
+                             are listed; refine the spelling or use the exact name.",
+                }));
+            }
+            Resolution::None => {} // fall through to found:false
         }
     }
 
@@ -1209,44 +1880,159 @@ async fn customer_360(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> Va
         }));
     }
 
-    // Sort by created_time DESC in Rust (ISO-8601 → lexical == chronological).
+    // Sort by created_time DESC by PARSED instant, ties on ticket number (F13-4):
+    // never a lexical compare of raw timestamps.
     let mut metas: Vec<&Value> = rows.iter().filter_map(|r| r.get("meta")).collect();
-    metas.sort_by(|a, b| meta_str(b, "created_time").cmp(meta_str(a, "created_time")));
+    metas.sort_by(|a, b| {
+        cmp_created(
+            parse_ticket_dt(meta_str(a, "created_time")),
+            ticket_number_key(meta_str(a, "ticket_number")),
+            parse_ticket_dt(meta_str(b, "created_time")),
+            ticket_number_key(meta_str(b, "ticket_number")),
+            false,
+        )
+    });
 
-    // A fragment like "gmbh" can match hundreds of unrelated companies; merging
-    // them into one 360 view is a lie. Group by identity and, when more than
-    // one distinct customer matches, return a disambiguation list instead.
-    let mut groups: std::collections::BTreeMap<String, Vec<&Value>> = Default::default();
-    for m in &metas {
-        groups.entry(identity_key(m)).or_default().push(m);
-    }
-    if groups.len() > 1 {
-        // Vec order inside each group follows `metas` (created_time DESC), so
-        // [0] is that customer's latest ticket.
-        let mut candidates: Vec<Value> = groups
+    const PAYMENTS_NOTE: &str = "NO DATA SOURCE YET — order.total_cost is unpopulated and tickets carry no amount; wire an invoice source (Odoo/Zoho) before trusting spend figures.";
+
+    // One masked contact per real-world identity group (email → name → company),
+    // latest ticket first. The company overview and the person-disambiguation list
+    // share the SAME contact fields — name, email, phone, company (Bench T12).
+    let contacts_of = |group_metas: &[&Value]| -> Vec<Value> {
+        let mut groups: std::collections::BTreeMap<String, Vec<&Value>> = Default::default();
+        for m in group_metas {
+            groups.entry(identity_key(m)).or_default().push(m);
+        }
+        let mut contacts: Vec<Value> = groups
             .values()
             .map(|g| {
                 let latest = g[0];
-                let name = meta_str(latest, "customer");
-                let email = meta_str(latest, "email");
                 json!({
-                    "name": tokenize(state, name, "Name"),
-                    "email": tokenize(state, email, "Email"),
+                    "name": tokenize(state, meta_str(latest, "customer"), "Name"),
+                    "email": tokenize(state, meta_str(latest, "email"), "Email"),
+                    "phone": tokenize(state, meta_str(latest, "phone"), "Phone"),
                     "company": meta_str(latest, "company"),
                     "tickets": g.len(),
                     "last_contact": meta_str(latest, "created_time"),
                 })
             })
             .collect();
-        candidates.sort_by(|a, b| b["tickets"].as_u64().cmp(&a["tickets"].as_u64()));
-        let matched = candidates.len();
-        candidates.truncate(20);
+        contacts.sort_by(|a, b| b["tickets"].as_u64().cmp(&a["tickets"].as_u64()));
+        contacts
+    };
+
+    // Distinct non-empty companies among the matched rows. Company intent (F15-3) is
+    // decided below; empty/missing company is never membership.
+    let distinct_companies: Vec<&str> = {
+        let set: std::collections::BTreeSet<&str> = metas
+            .iter()
+            .map(|m| meta_str(m, "company").trim())
+            .filter(|c| !c.is_empty())
+            .collect();
+        set.into_iter().collect()
+    };
+    let established_scope = company_scope_of(&query, company_scope, &distinct_companies);
+    let single_company = (distinct_companies.len() == 1).then(|| distinct_companies[0]);
+    // Does a person-name match make a bare company substring ambiguous (D4)? Yes
+    // whenever the company (member) reading and the person reading diverge — a member
+    // sharing the queried surname with another member counts, not only outsiders.
+    let person_name_match =
+        single_company.is_some_and(|co| person_match_is_ambiguous(&metas, co, &query));
+
+    match decide_exact_scope(&query, established_scope, single_company, person_name_match) {
+        // ── One-company overview: totals over MEMBER rows ONLY (F15-3). ──────
+        ExactScope::Company(company) => {
+            let member_metas: Vec<&Value> = metas
+                .iter()
+                .copied()
+                .filter(|m| meta_is_company_member(m, &company))
+                .collect();
+            let mut contacts = contacts_of(&member_metas);
+            let contact_count = contacts.len();
+            contacts.truncate(20);
+            let (devices_json, device_count, tickets_summary, open_tickets) =
+                ticket_overview_parts(&member_metas);
+            let mut result = json!({
+                "query": query,
+                "found": true,
+                "ambiguous": false,
+                "pii_revealed": false,
+                "company": company,
+                "contacts": contacts,
+                "contact_count": contact_count,
+                "devices": devices_json,
+                "device_count": device_count,
+                "tickets": tickets_summary,
+                "open_tickets": open_tickets,
+                "payments": PAYMENTS_NOTE,
+            });
+            if let Some(rf) = resolved_from {
+                result["resolved_from"] = rf;
+            }
+            if let Some(am) = also_matches {
+                result["also_matches"] = am;
+            }
+            return json_result(&result);
+        }
+        // ── Typed ambiguity: the company (member count) + each matching NON-member
+        //    person (their own count). Nothing aggregated across branches (F15-3). ─
+        ExactScope::Ambiguous(company) => {
+            let co = company.as_str();
+            // Company reading: all MEMBER rows (count only — nothing aggregated across
+            // the branches). Person reading: every row whose customer name matches the
+            // query, member or not (D4 — a surname shared by two members is the case
+            // that was previously collapsed into the company total).
+            let member_count = metas.iter().filter(|m| meta_is_company_member(m, co)).count();
+            let person_rows: Vec<&Value> = metas
+                .iter()
+                .copied()
+                .filter(|m| ci_contains(meta_str(m, "customer"), &query))
+                .collect();
+            let mut persons = contacts_of(&person_rows);
+            persons.truncate(20);
+            let mut candidates: Vec<Value> = vec![json!({
+                "kind": "company",
+                "label": company,
+                "ticket_count": member_count,
+            })];
+            candidates.extend(persons.into_iter().map(|c| {
+                json!({
+                    "kind": "person",
+                    "label": c.get("name").cloned().unwrap_or(Value::Null),
+                    "email": c.get("email").cloned().unwrap_or(Value::Null),
+                    "phone": c.get("phone").cloned().unwrap_or(Value::Null),
+                    "ticket_count": c.get("tickets").cloned().unwrap_or(Value::Null),
+                })
+            }));
+            let mut result = json!({
+                "query": query,
+                "found": true,
+                "ambiguous": true,
+                "match_mode": "company_or_person",
+                "candidates": candidates,
+                "hint": "This query matches a company by name and one or more people. \
+                         Re-query customer_360 with one candidate's `label` — a company \
+                         name, or a Name_ token, is a valid query key.",
+            });
+            if let Some(rf) = resolved_from {
+                result["resolved_from"] = rf;
+            }
+            return json_result(&result);
+        }
+        ExactScope::Person => {}
+    }
+
+    // ── Person path: one or several distinct customers (as before). ───────────
+    let mut contacts = contacts_of(&metas);
+    if contacts.len() > 1 {
+        let matched = contacts.len();
+        contacts.truncate(20);
         let mut result = json!({
             "query": query,
             "found": true,
             "ambiguous": true,
             "matched_customers": matched,
-            "candidates": candidates,
+            "candidates": contacts,
             "hint": "Multiple distinct customers match this fragment. Re-query \
                      customer_360 with one candidate's `email` value — the \
                      Email_<hex> token IS a valid query key — or a company \
@@ -1258,72 +2044,16 @@ async fn customer_360(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> Va
         return json_result(&result);
     }
 
-    // Identity from the most recent ticket.
+    // ── Single customer 360. ─────────────────────────────────────────────────
     let latest = metas.first().copied().unwrap_or(&Value::Null);
-    let name_raw = meta_str(latest, "customer");
-    let email_raw = meta_str(latest, "email");
-    let phone_raw = meta_str(latest, "phone");
-    let address_raw = meta_str(latest, "address");
     let identity = json!({
-        "name": tokenize(state, name_raw, "Name"),
-        "email": tokenize(state, email_raw, "Email"),
-        "phone": tokenize(state, phone_raw, "Phone"),
-        "address": tokenize(state, address_raw, "Address"),
+        "name": tokenize(state, meta_str(latest, "customer"), "Name"),
+        "email": tokenize(state, meta_str(latest, "email"), "Email"),
+        "phone": tokenize(state, meta_str(latest, "phone"), "Phone"),
+        "address": tokenize(state, meta_str(latest, "address"), "Address"),
         "company": meta_str(latest, "company"),
     });
-
-    // Devices: distinct non-empty serials, with the model last seen for each.
-    let mut devices: std::collections::BTreeMap<String, String> = Default::default();
-    for m in &metas {
-        let serial = meta_str(m, "serial_number");
-        if !serial.is_empty() {
-            devices
-                .entry(serial.to_string())
-                .or_insert_with(|| meta_str(m, "device_model").to_string());
-        }
-    }
-    let devices_json: Vec<Value> = devices
-        .iter()
-        .map(|(serial, model)| json!({ "serial": serial, "model": model }))
-        .collect();
-
-    // Ticket aggregates.
-    let total = metas.len();
-    let mut open = 0usize;
-    let mut open_tickets: Vec<Value> = Vec::new();
-    let mut status_counts: std::collections::BTreeMap<String, usize> = Default::default();
-    let now = chrono::Utc::now();
-
-    for m in &metas {
-        let status = meta_str(m, "status");
-        *status_counts.entry(status.to_string()).or_default() += 1;
-        if !is_closed(status) {
-            open += 1;
-            // Days waiting = now − created_time (RFC3339); best-effort.
-            let created = meta_str(m, "created_time");
-            let waiting_days = chrono::DateTime::parse_from_rfc3339(created)
-                .ok()
-                .map(|c| (now - c.with_timezone(&chrono::Utc)).num_days());
-            open_tickets.push(json!({
-                "ticket_number": meta_str(m, "ticket_number"),
-                "subject": meta_str(m, "subject"),
-                "status": status,
-                "serial": meta_str(m, "serial_number"),
-                "created_time": created,
-                "waiting_days": waiting_days,
-            }));
-        }
-    }
-
-    // created_time is ISO-8601, so lexical min/max == chronological.
-    let created_times: Vec<&str> = metas
-        .iter()
-        .map(|m| meta_str(m, "created_time"))
-        .filter(|s| !s.is_empty())
-        .collect();
-    let first_contact = created_times.iter().min().copied().unwrap_or("");
-    let last_contact = created_times.iter().max().copied().unwrap_or("");
-
+    let (devices_json, device_count, tickets_summary, open_tickets) = ticket_overview_parts(&metas);
     let mut result = json!({
         "query": query,
         "found": true,
@@ -1331,21 +2061,16 @@ async fn customer_360(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> Va
         "pii_revealed": false,
         "identity": identity,
         "devices": devices_json,
-        "device_count": devices.len(),
-        "tickets": {
-            "total": total,
-            "open": open,
-            "closed": total - open,
-            "status_breakdown": status_counts,
-            "first_contact": first_contact,
-            "last_contact": last_contact,
-        },
+        "device_count": device_count,
+        "tickets": tickets_summary,
         "open_tickets": open_tickets,
-        "payments": "NO DATA SOURCE YET — order.total_cost is unpopulated and tickets carry no amount; wire an invoice source (Odoo/Zoho) before trusting spend figures.",
+        "payments": PAYMENTS_NOTE,
     });
-    // Typo-tolerant resolution annotation: which token the query resolved to.
     if let Some(rf) = resolved_from {
         result["resolved_from"] = rf;
+    }
+    if let Some(am) = also_matches {
+        result["also_matches"] = am;
     }
     json_result(&result)
 }
@@ -1373,11 +2098,32 @@ async fn device_history(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> 
         Err(e) => return error_result(format!("query failed: {e}")),
     };
 
-    if rows.is_empty() {
+    // Examination record (device + device_event, bundle write path). Customer
+    // names/addresses in the event's operator snapshot are tokenized like
+    // every other PII field on this surface.
+    let mut exam = match super::bundles::device_history_ext(&state.db, &serial).await {
+        Ok(v) => v,
+        Err(e) => return error_result(format!("query failed: {}: {}", e.code, e.msg)),
+    };
+    if let Some(evs) = exam.get_mut("events").and_then(|v| v.as_array_mut()) {
+        for ev in evs {
+            if let Some(op) = ev.get_mut("operator_snapshot").and_then(|v| v.as_object_mut()) {
+                for (k, kind) in [("name", "Name"), ("address", "Address")] {
+                    if let Some(v) = op.get(k).and_then(|v| v.as_str()).map(str::to_string) {
+                        op.insert(k.to_string(), json!(tokenize(state, &v, kind)));
+                    }
+                }
+            }
+        }
+    }
+    let exam_empty = exam["device"].is_null()
+        && exam["events"].as_array().map(|a| a.is_empty()).unwrap_or(true);
+
+    if rows.is_empty() && exam_empty {
         return json_result(&json!({
             "serial": serial,
             "found": false,
-            "message": "no support tickets reference this serial number",
+            "message": "no support tickets or examination records reference this serial number",
         }));
     }
 
@@ -1422,6 +2168,9 @@ async fn device_history(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> 
         "tickets_total": tickets.len(),
         "tickets_open": open,
         "tickets": tickets,
+        "device": exam["device"],
+        "events": exam["events"],
+        "next_due": exam["next_due"],
     }))
 }
 
@@ -1532,6 +2281,14 @@ async fn ticket_search(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> V
         .and_then(|v| v.as_u64())
         .unwrap_or(20)
         .clamp(1, 50) as usize;
+    // Result ordering: newest-first by default, `oldest` for ascending (so the
+    // loop can reach the oldest records without paging — see W2-1/ticket_stats
+    // for aggregates). Any other value falls back to newest.
+    let oldest_first = args
+        .get("sort")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().eq_ignore_ascii_case("oldest"))
+        .unwrap_or(false);
 
     // Fetch the (small, distilled) meta of every support ticket, then match in
     // Rust: the content filters now span ticket_number/subject/company/city/
@@ -1562,22 +2319,32 @@ async fn ticket_search(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> V
         })
         .filter(|(m, _)| ticket_matches(m, query.as_deref(), city.as_deref(), company.as_deref()))
         .collect();
-    hits.sort_by(|a, b| meta_str(b.0, "created_time").cmp(meta_str(a.0, "created_time")));
+    let matched_before_status = hits.len();
 
+    // Apply the status filter, then count AFTER it (the true match total), then
+    // order and cap. `matched_before_status_filter` is kept for continuity.
+    hits.retain(|(m, _)| status_matches(status_filter.as_deref(), meta_str(m, "status")));
     let matched_total = hits.len();
-    let tickets: Vec<Value> = hits
+    // Precompute the parsed-instant sort keys once per row, then order with the
+    // shared comparator (same parsed/undated-last policy as ticket_stats — C1).
+    let mut keyed: Vec<(Option<chrono::DateTime<chrono::Utc>>, &Value, &str)> = hits
         .iter()
-        .filter(|(m, _)| {
-            let status = meta_str(m, "status");
-            match status_filter.as_deref() {
-                None => true,
-                Some("open") => !is_closed(status),
-                Some("closed") => is_closed(status),
-                Some(f) => status.to_ascii_lowercase().contains(f),
-            }
-        })
+        .map(|(m, z)| (parse_ticket_dt(meta_str(m, "created_time")), *m, *z))
+        .collect();
+    keyed.sort_by(|a, b| {
+        cmp_created(
+            a.0,
+            ticket_number_key(meta_str(a.1, "ticket_number")),
+            b.0,
+            ticket_number_key(meta_str(b.1, "ticket_number")),
+            oldest_first,
+        )
+    });
+
+    let tickets: Vec<Value> = keyed
+        .iter()
         .take(limit)
-        .map(|(m, zoho_id)| {
+        .map(|(_, m, zoho_id)| {
             let name = meta_str(m, "customer");
             let email = meta_str(m, "email");
             let address = meta_str(m, "address");
@@ -1606,11 +2373,229 @@ async fn ticket_search(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> V
         "city": city,
         "company": company,
         "status_filter": status_filter,
-        "matched_before_status_filter": matched_total,
+        "sort": if oldest_first { "oldest" } else { "newest" },
+        "matched_before_status_filter": matched_before_status,
+        "matched_total": matched_total,
         "returned": tickets.len(),
+        "truncated": matched_total > tickets.len(),
         "pii_revealed": false,
         "tickets": tickets,
     }))
+}
+
+// ─── ticket_stats ────────────────────────────────────────────────────────────
+
+/// Parsed, validated `ticket_stats` filters (shared with the pure aggregation so
+/// it can be unit-tested without a DB).
+struct StatsFilters {
+    status: Option<String>, // lowercased, same vocabulary as ticket_search
+    company: Option<String>,
+    city: Option<String>,
+    created_from: Option<chrono::DateTime<chrono::Utc>>, // inclusive
+    created_to: Option<chrono::DateTime<chrono::Utc>>,   // exclusive
+    group_by: Option<String>,                            // status|company|city|model
+    oldest_first: bool,                                  // order
+    top: usize,                                          // 1..=20
+}
+
+/// Whether a ticket's `created_time` lies within [`created_from`, `created_to`)
+/// (`created_to` exclusive). With no bound every ticket passes; with a bound, a
+/// ticket whose timestamp does not parse cannot satisfy it and is excluded.
+fn within_bounds(
+    created: &str,
+    from: Option<chrono::DateTime<chrono::Utc>>,
+    to: Option<chrono::DateTime<chrono::Utc>>,
+) -> bool {
+    if from.is_none() && to.is_none() {
+        return true;
+    }
+    let Some(c) = parse_ticket_dt(created) else {
+        return false;
+    };
+    if let Some(f) = from {
+        if c < f {
+            return false;
+        }
+    }
+    if let Some(t) = to {
+        if c >= t {
+            return false;
+        }
+    }
+    true
+}
+
+/// The group key for one ticket under a given `group_by` field.
+fn stats_group_key(meta: &Value, group_by: &str) -> String {
+    match group_by {
+        "status" => meta_str(meta, "status").to_string(),
+        "company" => meta_str(meta, "company").to_string(),
+        "city" => ticket_city_and_source(meta).0,
+        "model" => meta_str(meta, "device_model").to_string(),
+        _ => String::new(),
+    }
+}
+
+/// Compute the aggregation over the already-enumerated ticket metas. Pure (one
+/// pass to filter, one to count/group, one sort for the edge rows) — unit-tested.
+/// Returns `{matched_total, status_counts, groups?, rows}`; the async wrapper
+/// adds `as_of` + the echoed `filters`.
+fn compute_ticket_stats(metas: &[&Value], f: &StatsFilters, now: chrono::DateTime<chrono::Utc>) -> Value {
+    let matched: Vec<&Value> = metas
+        .iter()
+        .copied()
+        .filter(|m| {
+            ticket_matches(m, None, f.city.as_deref(), f.company.as_deref())
+                && status_matches(f.status.as_deref(), meta_str(m, "status"))
+                && within_bounds(meta_str(m, "created_time"), f.created_from, f.created_to)
+        })
+        .collect();
+    let matched_total = matched.len();
+
+    let mut status_counts: std::collections::BTreeMap<String, usize> = Default::default();
+    for m in &matched {
+        *status_counts.entry(meta_str(m, "status").to_string()).or_default() += 1;
+    }
+
+    let groups = f.group_by.as_deref().map(|gb| {
+        let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+        for m in &matched {
+            *counts.entry(stats_group_key(m, gb)).or_default() += 1;
+        }
+        let mut v: Vec<(String, usize)> = counts.into_iter().collect();
+        // Sort by count desc, then key asc for a stable order.
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let mut out: Vec<Value> = v
+            .iter()
+            .take(20)
+            .map(|(k, c)| json!({ "key": k, "count": c }))
+            .collect();
+        let other: usize = v.iter().skip(20).map(|(_, c)| c).sum();
+        if other > 0 {
+            out.push(json!({ "key": "other", "count": other }));
+        }
+        Value::Array(out)
+    });
+
+    // Edge rows: top N by created_time (oldest/newest), ticket_number as the
+    // tie-breaker, undated rows last — the shared `cmp_created` comparator (C1).
+    // Keys are precomputed once per row.
+    let mut keyed: Vec<(Option<chrono::DateTime<chrono::Utc>>, &Value)> = matched
+        .iter()
+        .map(|m| (parse_ticket_dt(meta_str(m, "created_time")), *m))
+        .collect();
+    keyed.sort_by(|a, b| {
+        cmp_created(
+            a.0,
+            ticket_number_key(meta_str(a.1, "ticket_number")),
+            b.0,
+            ticket_number_key(meta_str(b.1, "ticket_number")),
+            f.oldest_first,
+        )
+    });
+    let rows: Vec<Value> = keyed
+        .iter()
+        .take(f.top)
+        .map(|(_, m)| {
+            let created = meta_str(m, "created_time");
+            let age_days = parse_ticket_dt(created).map(|c| (now - c).num_days());
+            json!({
+                "ticket_number": meta_str(m, "ticket_number"),
+                "subject": meta_str(m, "subject"),
+                "status": meta_str(m, "status"),
+                "created_time": created,
+                "age_days": age_days,
+                "company": meta_str(m, "company"),
+            })
+        })
+        .collect();
+
+    let mut out = json!({
+        "matched_total": matched_total,
+        "status_counts": status_counts,
+        "rows": rows,
+    });
+    if let Some(g) = groups {
+        out["groups"] = g;
+    }
+    out
+}
+
+async fn ticket_stats(state: &Arc<AppState>, args: &Value, _tier: McpTier) -> Value {
+    let str_arg = |k: &str| {
+        args.get(k)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    };
+    let status = str_arg("status").map(|s| s.to_ascii_lowercase());
+    let company = str_arg("company");
+    let city = str_arg("city");
+    let created_from_raw = str_arg("created_from");
+    let created_to_raw = str_arg("created_to");
+    let created_from = created_from_raw.as_deref().and_then(parse_ticket_dt);
+    let created_to = created_to_raw.as_deref().and_then(parse_ticket_dt);
+    // Reject a bound that was given but did not parse — silently ignoring it
+    // would answer a different question than the operator asked.
+    if created_from_raw.is_some() && created_from.is_none() {
+        return error_result("`created_from` is not a valid ISO date or datetime");
+    }
+    if created_to_raw.is_some() && created_to.is_none() {
+        return error_result("`created_to` is not a valid ISO date or datetime");
+    }
+    let group_by = str_arg("group_by")
+        .map(|s| s.to_ascii_lowercase())
+        .filter(|s| matches!(s.as_str(), "status" | "company" | "city" | "model"));
+    let oldest_first = args
+        .get("order")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.trim().eq_ignore_ascii_case("newest"))
+        .unwrap_or(true); // default oldest
+    let top = args
+        .get("top")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(5)
+        .clamp(1, 20) as usize;
+
+    let rows: Vec<Value> = match state
+        .db
+        .query("SELECT meta FROM document WHERE type = 'support_ticket'")
+        .await
+        .and_then(|mut r| r.take(0))
+    {
+        Ok(v) => v,
+        Err(e) => return error_result(format!("query failed: {e}")),
+    };
+    let metas: Vec<&Value> = rows.iter().filter_map(|r| r.get("meta")).collect();
+
+    let filters = StatsFilters {
+        status,
+        company,
+        city,
+        created_from,
+        created_to,
+        group_by,
+        oldest_first,
+        top,
+    };
+    let now = chrono::Utc::now();
+    let mut result = compute_ticket_stats(&metas, &filters, now);
+
+    // Wrap with provenance + the filters as actually applied.
+    result["as_of"] = json!(now.to_rfc3339());
+    result["filters"] = json!({
+        "status": filters.status,
+        "company": filters.company,
+        "city": filters.city,
+        "created_from": filters.created_from.map(|d| d.to_rfc3339()),
+        "created_to": filters.created_to.map(|d| d.to_rfc3339()),
+        "group_by": filters.group_by,
+        "order": if filters.oldest_first { "oldest" } else { "newest" },
+        "top": filters.top,
+    });
+    result["pii_revealed"] = json!(false);
+    json_result(&result)
 }
 
 // ─── similar_tickets ───────────────────────────────────────────────────────
@@ -2396,6 +3381,7 @@ async fn ask_brain(state: &Arc<AppState>, args: &Value, tier: McpTier) -> Value 
             contents,
             tier,
             crate::ai::orchestrator::BrainEngine::Auto,
+            crate::ai::orchestrator::HedgeMode::Auto,
             None,
         )
         .await
@@ -2412,6 +3398,7 @@ async fn ask_brain(state: &Arc<AppState>, args: &Value, tier: McpTier) -> Value 
             contents.as_array().cloned().unwrap_or_default(),
             tier,
             crate::ai::orchestrator::BrainEngine::Auto,
+            crate::ai::orchestrator::HedgeMode::Auto,
             None,
         )
         .await
@@ -2692,5 +3679,467 @@ mod tests {
         assert_eq!(ticket_city_and_source(&derived), ("Konstanz".to_string(), "area_code".to_string()));
         // Neither → empty.
         assert_eq!(ticket_city_and_source(&json!({})), (String::new(), String::new()));
+    }
+
+    // ── status predicate (shared by ticket_search + ticket_stats) ──
+    #[test]
+    fn status_predicate_vocabulary() {
+        assert!(status_matches(None, "whatever"));
+        assert!(status_matches(Some("open"), "In Progress"));
+        assert!(!status_matches(Some("open"), "Closed"));
+        assert!(status_matches(Some("closed"), "Auto closed"));
+        assert!(status_matches(Some("closed"), "Gelöst"));
+        assert!(!status_matches(Some("closed"), "Open"));
+        // Any other value → case-insensitive substring of the raw status.
+        assert!(status_matches(Some("escalated"), "Escalated to L2"));
+        assert!(!status_matches(Some("escalated"), "In Progress"));
+    }
+
+    // ── company fuzzy channel (pure ranking) ──
+    #[test]
+    fn company_typo_resolves_to_winner() {
+        let companies = vec![
+            ("Globex Trading GmbH".to_string(), 3usize),
+            ("Zenith Services AG".to_string(), 1usize),
+        ];
+        let ranked = rank_companies("Globx Trading", &companies);
+        assert!(company_is_winner(&ranked), "a one-char typo must win outright");
+        assert_eq!(ranked[0].company, "Globex Trading GmbH");
+        assert!(ranked[0].score >= COMPANY_WINNER_MIN, "score {}", ranked[0].score);
+    }
+
+    #[test]
+    fn company_near_equal_pair_is_ambiguous() {
+        let companies = vec![
+            ("Boreas Klinik GmbH".to_string(), 2usize),
+            ("Boreas Klinc AG".to_string(), 1usize),
+        ];
+        let ranked = rank_companies("Boreas Klini", &companies);
+        assert!(!company_is_winner(&ranked), "near-equal pair must not win");
+        assert_eq!(ranked.len(), 2, "both near-equal companies must be offered");
+        assert!(ranked[0].score >= COMPANY_PLAUSIBLE_MIN && ranked[1].score >= COMPANY_PLAUSIBLE_MIN);
+    }
+
+    #[test]
+    fn shared_long_prefix_is_not_a_winner() {
+        // Two genuinely distinct companies that share a long prefix ("Fitness
+        // Park" vs "Fitness Parc") with a query sitting EQUIDISTANT between them
+        // ("Fitness Par", one char short of each): the shared prefix must not let
+        // either win — the tool must ask, not guess (C2).
+        let companies = vec![
+            ("Fitness Park GmbH".to_string(), 2usize),
+            ("Fitness Parc AG".to_string(), 3usize),
+        ];
+        let ranked = rank_companies("Fitness Par", &companies);
+        assert!(!company_is_winner(&ranked), "shared-prefix near-tie must not win");
+        assert_eq!(ranked.len(), 2, "both prefix-sharing companies plausible");
+    }
+
+    #[test]
+    fn person_shaped_query_finds_no_plausible_company() {
+        // A person-name query against unrelated companies yields no plausible
+        // company, so customer_360 proceeds to the person path.
+        let companies = vec![
+            ("Globex Trading GmbH".to_string(), 3usize),
+            ("Zenith Services AG".to_string(), 1usize),
+        ];
+        assert!(rank_companies("Hans Mueller", &companies).is_empty());
+    }
+
+    #[test]
+    fn company_marker_detection() {
+        assert!(has_company_marker("Globex Trading GmbH"));
+        assert!(has_company_marker("Northwind Holding"));
+        assert!(has_company_marker("Acme ltd"));
+        assert!(!has_company_marker("Hans Mueller"));
+        assert!(!has_company_marker("Fitness Point")); // no legal/company word
+    }
+
+    #[test]
+    fn person_surname_sharing_a_company_name_is_a_winner_only_without_strong_person() {
+        // F08-2: query "Mueller" scores high against company "Mueller Bau GmbH".
+        // The company is a winner on its own, BUT the joint decision in
+        // customer_360 suppresses it when a person scores >= PERSON_STRONG_SCORE;
+        // here we assert the raw signals the decision table consumes.
+        let companies = vec![
+            ("Mueller Bau GmbH".to_string(), 4usize),
+            ("Zenith Services AG".to_string(), 1usize),
+        ];
+        let ranked = rank_companies("Mueller", &companies);
+        assert!(company_is_winner(&ranked), "surname matches the company name");
+        // An exact person match would score at/above the strong floor, so the
+        // decision table must NOT let the company preempt it.
+        assert!(1.0_f32 >= PERSON_STRONG_SCORE);
+    }
+
+    // ── ticket_stats aggregation (pure) ──
+    fn tk(nr: &str, status: &str, created: &str, company: &str) -> Value {
+        json!({
+            "ticket_number": nr,
+            "subject": format!("subject {nr}"),
+            "status": status,
+            "created_time": created,
+            "company": company,
+        })
+    }
+
+    #[test]
+    fn stats_counts_after_status_filter() {
+        let metas = vec![
+            tk("1", "Open", "2026-01-10T00:00:00Z", "A GmbH"),
+            tk("2", "Closed", "2026-01-11T00:00:00Z", "A GmbH"),
+            tk("3", "In Progress", "2026-01-12T00:00:00Z", "B AG"),
+        ];
+        let refs: Vec<&Value> = metas.iter().collect();
+        let now = parse_ticket_dt("2026-03-01T00:00:00Z").unwrap();
+        let f = StatsFilters {
+            status: Some("open".into()),
+            company: None,
+            city: None,
+            created_from: None,
+            created_to: None,
+            group_by: None,
+            oldest_first: true,
+            top: 5,
+        };
+        let out = compute_ticket_stats(&refs, &f, now);
+        assert_eq!(out["matched_total"], json!(2)); // Open + In Progress, not Closed
+    }
+
+    #[test]
+    fn stats_oldest_newest_order_with_tie() {
+        // Two tickets share a timestamp → ticket_number is the tie-breaker.
+        let metas = vec![
+            tk("100", "Open", "2026-01-01T00:00:00Z", "A GmbH"),
+            tk("50", "Open", "2026-01-01T00:00:00Z", "A GmbH"),
+            tk("9", "Open", "2026-02-01T00:00:00Z", "A GmbH"),
+        ];
+        let refs: Vec<&Value> = metas.iter().collect();
+        let now = parse_ticket_dt("2026-03-01T00:00:00Z").unwrap();
+        let base = |oldest_first: bool| StatsFilters {
+            status: None,
+            company: None,
+            city: None,
+            created_from: None,
+            created_to: None,
+            group_by: None,
+            oldest_first,
+            top: 5,
+        };
+        let oldest = compute_ticket_stats(&refs, &base(true), now);
+        let order: Vec<&str> = oldest["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["ticket_number"].as_str().unwrap())
+            .collect();
+        assert_eq!(order, vec!["50", "100", "9"]); // tie: lower number first, then newer
+
+        let newest = compute_ticket_stats(&refs, &base(false), now);
+        let order: Vec<&str> = newest["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["ticket_number"].as_str().unwrap())
+            .collect();
+        assert_eq!(order, vec!["9", "100", "50"]); // newest first, tie: higher number first
+    }
+
+    #[test]
+    fn stats_created_to_is_exclusive() {
+        let metas = vec![
+            tk("1", "Open", "2026-01-31T12:00:00Z", "A GmbH"),
+            tk("2", "Open", "2026-02-01T00:00:00Z", "A GmbH"), // exactly the bound
+            tk("3", "Open", "2026-02-02T00:00:00Z", "A GmbH"),
+        ];
+        let refs: Vec<&Value> = metas.iter().collect();
+        let now = parse_ticket_dt("2026-03-01T00:00:00Z").unwrap();
+        let f = StatsFilters {
+            status: None,
+            company: None,
+            city: None,
+            created_from: parse_ticket_dt("2026-01-01"),
+            created_to: parse_ticket_dt("2026-02-01"), // exclusive
+            group_by: None,
+            oldest_first: true,
+            top: 5,
+        };
+        let out = compute_ticket_stats(&refs, &f, now);
+        assert_eq!(out["matched_total"], json!(1)); // only the Jan-31 ticket
+    }
+
+    #[test]
+    fn stats_group_by_company_with_other_bucket() {
+        // 22 distinct companies (1 ticket each) → top 20 + an "other" bucket of 2.
+        let metas: Vec<Value> = (0..22)
+            .map(|i| tk(&i.to_string(), "Open", "2026-01-01T00:00:00Z", &format!("Co{i:02} GmbH")))
+            .collect();
+        let refs: Vec<&Value> = metas.iter().collect();
+        let now = parse_ticket_dt("2026-03-01T00:00:00Z").unwrap();
+        let f = StatsFilters {
+            status: None,
+            company: None,
+            city: None,
+            created_from: None,
+            created_to: None,
+            group_by: Some("company".into()),
+            oldest_first: true,
+            top: 5,
+        };
+        let out = compute_ticket_stats(&refs, &f, now);
+        let groups = out["groups"].as_array().unwrap();
+        assert_eq!(groups.len(), 21); // 20 + other
+        let other = groups.last().unwrap();
+        assert_eq!(other["key"], json!("other"));
+        assert_eq!(other["count"], json!(2));
+    }
+
+    // ── C1: ticket_search & ticket_stats share one parsed-instant comparator ──
+    #[test]
+    fn created_order_uses_utc_instants_and_undated_last() {
+        // +02:00 00:30 == 2026-09-30T22:30Z is EARLIER than 2026-09-30T23:00Z,
+        // though it sorts LATER lexically — the comparator must use instants.
+        let a = parse_ticket_dt("2026-10-01T00:30:00+02:00"); // 22:30Z
+        let b = parse_ticket_dt("2026-09-30T23:00:00Z"); // 23:00Z
+        assert!(a < b, "the +02:00 ticket is earlier in UTC");
+        // oldest-first: a before b; newest-first: b before a.
+        assert_eq!(cmp_created(a, (1, "1"), b, (2, "2"), true), std::cmp::Ordering::Less);
+        assert_eq!(cmp_created(a, (1, "1"), b, (2, "2"), false), std::cmp::Ordering::Greater);
+        // Undated row sorts LAST in both directions.
+        let u = parse_ticket_dt("");
+        assert_eq!(cmp_created(a, (1, "1"), u, (9, "9"), true), std::cmp::Ordering::Less);
+        assert_eq!(cmp_created(a, (1, "1"), u, (9, "9"), false), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn stats_rows_order_mixed_offsets_and_undated() {
+        let metas = vec![
+            tk("1", "Open", "2026-10-01T00:30:00+02:00", "A"), // 22:30Z (earliest)
+            tk("2", "Open", "2026-09-30T23:00:00Z", "A"),      // 23:00Z
+            tk("3", "Open", "", "A"),                          // undated → last
+        ];
+        let refs: Vec<&Value> = metas.iter().collect();
+        let now = parse_ticket_dt("2026-11-01T00:00:00Z").unwrap();
+        let base = |oldest_first: bool| StatsFilters {
+            status: None, company: None, city: None, created_from: None, created_to: None,
+            group_by: None, oldest_first, top: 5,
+        };
+        let order = |v: &Value| -> Vec<String> {
+            v["rows"].as_array().unwrap().iter()
+                .map(|r| r["ticket_number"].as_str().unwrap().to_string()).collect()
+        };
+        assert_eq!(order(&compute_ticket_stats(&refs, &base(true), now)), vec!["1", "2", "3"]);
+        assert_eq!(order(&compute_ticket_stats(&refs, &base(false), now)), vec!["2", "1", "3"]);
+    }
+
+    // ── C2: the typed joint decision table (pure, DB-free) ──
+    fn pc(tok: &str, score: f32) -> PersonCand {
+        (tok.to_string(), score, SigKind::Name)
+    }
+    fn co(name: &str, score: f32) -> CompanyCand {
+        CompanyCand { company: name.to_string(), count: 2, score }
+    }
+
+    #[test]
+    fn decide_company_typo_with_similar_person_resolves_company_with_also() {
+        // A clear company winner + a non-exact lookalike person → the company,
+        // carrying the person as `also_matches`.
+        let r = decide_resolution(false, &[co("Globex Trading GmbH", 0.95)], &[pc("Name_abc", 0.82)]);
+        match r {
+            Resolution::Company { company, also } => {
+                assert_eq!(company.company, "Globex Trading GmbH");
+                assert!(also.is_some(), "a lookalike person must be surfaced as also_matches");
+            }
+            other => panic!("expected Company, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decide_person_typo_resembling_company_is_ambiguous_not_silent() {
+        // F08-2 "Mueller": company "Mueller Bau" wins on its own, but an exact
+        // person (>= PERSON_STRONG_SCORE) must stop a silent company answer.
+        let r = decide_resolution(false, &[co("Mueller Bau GmbH", 0.94)], &[pc("Name_mueller", 1.0)]);
+        assert!(
+            matches!(r, Resolution::AmbiguousJoint { .. }),
+            "a strong person + plausible company must be typed-ambiguous, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn decide_single_plausible_company_is_one_candidate() {
+        // One plausible company below the winner floor, no person → a single
+        // candidate (the hint says "one possible match", not "several").
+        let r = decide_resolution(false, &[co("Fitness Point AG", 0.87)], &[]);
+        match r {
+            Resolution::AmbiguousCompany(v) => assert_eq!(v.len(), 1),
+            other => panic!("expected one company candidate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decide_marker_intent_skips_person_path() {
+        // Explicit company marker, no plausible company → CompanyMiss (closest
+        // labels), NEVER a person — even with a strong person candidate present.
+        let r = decide_resolution(true, &[], &[pc("Name_x", 1.0)]);
+        assert_eq!(r, Resolution::CompanyMiss);
+        // Marker + winner → the company, person not consulted.
+        let r2 = decide_resolution(true, &[co("Acme Holding", 0.96)], &[pc("Name_x", 1.0)]);
+        assert!(matches!(r2, Resolution::Company { also: None, .. }));
+    }
+
+    #[test]
+    fn decide_person_only_resolves_person() {
+        let r = decide_resolution(false, &[], &[pc("Name_solo", 0.90)]);
+        assert_eq!(r, Resolution::Person(pc("Name_solo", 0.90)));
+    }
+
+    // ── C3: company scope is decided on distinct COMPANIES, not e-mails ──
+    #[test]
+    fn company_scope_one_company_two_contacts() {
+        // One company, two tickets, two contact e-mails → still ONE scope, so the
+        // overview is never re-split into "ambiguous customers".
+        let distinct = ["Globex Trading GmbH"];
+        assert_eq!(
+            company_scope_of("Globex Trading", None, &distinct),
+            Some("Globex Trading GmbH".to_string())
+        );
+        // A fuzzy winner scopes directly regardless of the query shape.
+        assert_eq!(
+            company_scope_of("anything", Some("Zenith AG".to_string()), &["Zenith AG"]),
+            Some("Zenith AG".to_string())
+        );
+    }
+
+    #[test]
+    fn company_scope_rejects_person_and_token_queries() {
+        // A person name that merely works at the one company → NOT a company scope.
+        assert_eq!(company_scope_of("Hans Mueller", None, &["Globex Trading GmbH"]), None);
+        // A pseudonym-token query never scopes to a company.
+        assert_eq!(company_scope_of("Name_deadbeef", None, &["Globex Trading GmbH"]), None);
+        // Several distinct companies → no single scope.
+        assert_eq!(company_scope_of("gmbh", None, &["A GmbH", "B GmbH"]), None);
+    }
+
+    // ── F15-3: substring company scope must not swallow outsiders ──
+    #[test]
+    fn company_scope_plain_substring_is_not_intent() {
+        // "Mueller" is a substring (and a prefix, scoring high on a prefix-weighted
+        // metric) of the company, but a PLAIN substring is not company intent.
+        assert_eq!(company_scope_of("Mueller", None, &["Mueller Bau GmbH"]), None);
+        // An explicit company marker establishes intent.
+        assert_eq!(
+            company_scope_of("Mueller GmbH", None, &["Mueller Bau GmbH"]),
+            Some("Mueller Bau GmbH".to_string())
+        );
+        // The normalized-equal (exact) company name establishes intent.
+        assert_eq!(
+            company_scope_of("Mueller Bau", None, &["Mueller Bau GmbH"]),
+            Some("Mueller Bau GmbH".to_string())
+        );
+    }
+
+    #[test]
+    fn exact_scope_rc2_substring_plus_person_is_ambiguous() {
+        // RC2: "Mueller" hits Mueller Bau GmbH by substring AND a person named
+        // Mueller with no company → typed ambiguity, never a merged company total.
+        let d = decide_exact_scope("Mueller", None, Some("Mueller Bau GmbH"), true);
+        assert_eq!(d, ExactScope::Ambiguous("Mueller Bau GmbH".to_string()));
+    }
+
+    #[test]
+    fn person_match_ambiguity_over_matched_rows() {
+        // D4/F13-3/F14-2: the ambiguity predicate runs over the ACTUAL matched rows.
+        let co = "Mueller Bau GmbH";
+        // RC2: two MEMBERS sharing the queried surname → the company reading (2 rows)
+        // differs from the person reading (1 row) → ambiguous, end to end.
+        let hans = json!({"company": co, "customer": "Hans Mueller"});
+        let eva = json!({"company": co, "customer": "Eva Schmidt"});
+        let two_members: Vec<&Value> = vec![&hans, &eva];
+        assert!(person_match_is_ambiguous(&two_members, co, "Mueller"));
+        assert_eq!(
+            decide_exact_scope(
+                "Mueller",
+                None,
+                Some(co),
+                person_match_is_ambiguous(&two_members, co, "Mueller"),
+            ),
+            ExactScope::Ambiguous(co.to_string())
+        );
+
+        // A one-contact company named after its owner (member rows == matched-person
+        // rows, even across several tickets) stays a plain company overview.
+        let hans2 = json!({"company": co, "customer": "Hans Mueller"});
+        let owner_only: Vec<&Value> = vec![&hans, &hans2];
+        assert!(!person_match_is_ambiguous(&owner_only, co, "Mueller"));
+        assert_eq!(
+            decide_exact_scope(
+                "Mueller",
+                None,
+                Some(co),
+                person_match_is_ambiguous(&owner_only, co, "Mueller"),
+            ),
+            ExactScope::Company(co.to_string())
+        );
+
+        // The original non-member outsider case still triggers ambiguity.
+        let klaus = json!({"company": co, "customer": "Klaus Berger"});
+        let outsider = json!({"company": "", "customer": "Petra Mueller"});
+        let member_plus_outsider: Vec<&Value> = vec![&klaus, &outsider];
+        assert!(person_match_is_ambiguous(&member_plus_outsider, co, "Mueller"));
+
+        // No person-name hit (query matched only the company name) → not ambiguous.
+        let berger: Vec<&Value> = vec![&klaus];
+        assert!(!person_match_is_ambiguous(&berger, co, "Bau"));
+    }
+
+    #[test]
+    fn exact_scope_only_company_substring_is_company() {
+        // A company substring with no person-name match → the company overview.
+        let d = decide_exact_scope("Bau", None, Some("Mueller Bau GmbH"), false);
+        assert_eq!(d, ExactScope::Company("Mueller Bau GmbH".to_string()));
+    }
+
+    #[test]
+    fn exact_scope_established_intent_is_company() {
+        // Marker / fuzzy-winner intent → the company even when a person also matched.
+        let d = decide_exact_scope(
+            "Mueller GmbH",
+            Some("Mueller Bau GmbH".to_string()),
+            Some("Mueller Bau GmbH"),
+            true,
+        );
+        assert_eq!(d, ExactScope::Company("Mueller Bau GmbH".to_string()));
+    }
+
+    #[test]
+    fn exact_scope_non_substring_is_person() {
+        // The query hit the row-set via e-mail / person, not the company name.
+        let d = decide_exact_scope("hans@example.com", None, Some("Mueller Bau GmbH"), false);
+        assert_eq!(d, ExactScope::Person);
+    }
+
+    #[test]
+    fn company_membership_is_positive() {
+        // Membership is positive and legal-form-insensitive; blank/other never match.
+        let member = json!({"company":"Mueller Bau GmbH"});
+        let member_variant = json!({"company":"mueller bau"});
+        let blank = json!({"company":""});
+        let other = json!({"company":"Zenith AG"});
+        assert!(meta_is_company_member(&member, "Mueller Bau GmbH"));
+        assert!(meta_is_company_member(&member_variant, "Mueller Bau GmbH"));
+        assert!(!meta_is_company_member(&blank, "Mueller Bau GmbH"));
+        assert!(!meta_is_company_member(&other, "Mueller Bau GmbH"));
+    }
+
+    #[test]
+    fn ticket_overview_dates_use_parsed_instants() {
+        // Lexical min/max would pick the wrong rows; parsed instants must win (F13-4):
+        // A is 05:00Z (earliest) though its string sorts AFTER B's lexically.
+        let a = json!({"created_time":"2020-06-01T10:00:00+05:00","status":"closed","ticket_number":"1"});
+        let b = json!({"created_time":"2020-06-01T09:00:00Z","status":"closed","ticket_number":"2"});
+        let metas: Vec<&Value> = vec![&a, &b];
+        let (_devices, _device_count, summary, _open) = ticket_overview_parts(&metas);
+        assert_eq!(summary["first_contact"], "2020-06-01T10:00:00+05:00");
+        assert_eq!(summary["last_contact"], "2020-06-01T09:00:00Z");
     }
 }

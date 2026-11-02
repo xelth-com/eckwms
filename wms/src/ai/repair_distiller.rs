@@ -17,6 +17,15 @@
 //! telemetry, strict-JSON + SKIP sentinel, two-layer PII guard (LLM prompt +
 //! device-side: device_model/serial are attached by Rust from `meta`, never by
 //! the LLM, and names/emails/phones/addresses are forbidden in the prompt).
+//!
+//! CANDIDATE INTAKE (xelixir kb-curation CONTRACT §7, 2026-10-31): the LLM reads the
+//! ticket's already-masked `ai_summary` when one exists (raw thread digests, run
+//! through the regex + name-heuristic masker, are only the fallback); `kb_record`
+//! carries `origin {system:"9eck", id:<ticket id>, revision:<ticket updated_at>}`
+//! and its IntakeReply is stored (`xelixir_candidate_id`, `xelixir_finding_id`).
+//! A daily write-back (`write_back_candidates`) copies a later promotion into
+//! `xelixir_finding_id`; the advice-ledger sync (`advice_ledger.rs`) rides the
+//! same worker on its own 6 h tick.
 
 use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
@@ -33,6 +42,8 @@ const BATCH_LIMIT: usize = 8;
 const RATE_LIMIT_MS: u64 = 1500;
 const MAX_THREADS: usize = 30; // cap correspondence per ticket fed to the LLM
 const MAX_DISTILL_ATTEMPTS: i64 = 3; // give up on a ticket only after this many FAILED cycles
+const MAX_SUMMARY_CHARS: usize = 12_000; // cap the masked ai_summary fed to the LLM
+const WRITE_BACK_LIMIT: i64 = 40; // kb_candidate reads per daily write-back pass
 
 const SYSTEM_PROMPT_TEMPLATE: &str = r#"You are the Repair-Lesson Distiller for {{SERVICE_OP}}.
 You read ONE customer support ticket (symptom + the email correspondence between the customer and a service technician) and distill the TECHNICAL repair lesson into strict JSON.
@@ -71,6 +82,13 @@ pub async fn start_repair_distiller_worker(state: Arc<AppState>) {
     );
 
     let http = HttpClient::new();
+
+    // Advice-ledger → xelixir KB sync: same worker, own tick (default 6 h), no LLM.
+    if super::advice_ledger::enabled() {
+        let (ls, lh) = (state.clone(), http.clone());
+        tokio::spawn(async move { super::advice_ledger::run_loop(ls, lh).await });
+    }
+
     let mut interval = tokio::time::interval(Duration::from_secs(DISTILLER_INTERVAL_SECS));
 
     loop {
@@ -95,12 +113,25 @@ pub async fn start_repair_distiller_worker(state: Arc<AppState>) {
 }
 
 async fn run_cycle(state: &Arc<AppState>, http: &HttpClient) -> anyhow::Result<()> {
+    // Define first: the re-push / write-back SELECTs below must not error on a
+    // fresh node where no lesson has been stored yet (schemaless — new columns
+    // such as xelixir_candidate_id / kb_state / kb_outcome / source_revision /
+    // input_source need no migration).
+    if let Err(e) = state.db.query("DEFINE TABLE IF NOT EXISTS repair_lesson SCHEMALESS;").await {
+        warn!("[RepairDistiller] define repair_lesson failed: {}", e);
+    }
     // 0. Re-push any gate-passed lessons whose earlier xelixir POST failed (transient
     //    network/ADC/xelixir outage). Independent of GCP AI auth — runs even when the
     //    distiller LLM itself is unavailable, so a confirmed lesson is never lost.
     match retry_unpushed_lessons(state, http).await {
         Ok(n) if n > 0 => info!("[RepairDistiller] re-pushed {n} previously-unpushed lesson(s) to xelixir KB"),
         Err(e) => warn!("[RepairDistiller] re-push scan failed: {}", e),
+        _ => {}
+    }
+    // 0b. Finding-id write-back: candidates the operator has since promoted/linked.
+    match write_back_candidates(state, http).await {
+        Ok(n) if n > 0 => info!("[RepairDistiller] wrote back {n} candidate decision(s) from xelixir KB"),
+        Err(e) => warn!("[RepairDistiller] candidate write-back failed: {}", e),
         _ => {}
     }
 
@@ -120,7 +151,9 @@ async fn run_cycle(state: &Arc<AppState>, http: &HttpClient) -> anyhow::Result<(
     let candidates: Vec<Value> = state
         .db
         .query(
-            "SELECT record::id(id) AS id, status, meta, updated_at, repair_distill_attempts FROM document \
+            "SELECT record::id(id) AS id, status, meta, ai_summary, updated_at, \
+             (IF updated_at != NONE THEN type::string(updated_at) ELSE NONE END) AS revision, \
+             repair_distill_attempts FROM document \
              WHERE type = 'support_ticket' \
              AND (repair_distilled IS NONE OR repair_distilled = false) \
              AND meta.device_model != NONE AND meta.device_model != '' \
@@ -206,7 +239,7 @@ async fn retry_unpushed_lessons(state: &Arc<AppState>, http: &HttpClient) -> any
         .db
         .query(
             "SELECT ticket_id, ticket_number, device_model, serial, symptom, error_code, \
-             diagnosis, action, remote_vs_workshop, parts, confidence \
+             diagnosis, action, remote_vs_workshop, parts, confidence, source_revision \
              FROM repair_lesson \
              WHERE push_eligible = true AND pushed_to_xelixir = false LIMIT 20",
         )
@@ -226,21 +259,26 @@ async fn retry_unpushed_lessons(state: &Arc<AppState>, http: &HttpClient) -> any
             .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
             .unwrap_or_default();
 
-        match push_to_xelixir_kb(
-            http, &g("device_model"), &g("serial"), &g("symptom"), &g("error_code"),
-            &g("diagnosis"), &g("action"), &g("remote_vs_workshop"), &parts,
-            &g("confidence"), &g("ticket_number"),
-        )
-        .await
-        {
-            Ok(Some(fid)) => {
-                let _ = state
-                    .db
-                    .query("UPDATE repair_lesson SET pushed_to_xelixir = true, xelixir_finding_id = $fid, updated_at = time::now() WHERE ticket_id = $tid")
-                    .bind(("fid", fid))
-                    .bind(("tid", ticket_id.clone()))
-                    .await;
-                repushed += 1;
+        let revision = g("source_revision");
+        let lesson = LessonPush {
+            ticket_id: &ticket_id,
+            ticket_number: &g("ticket_number"),
+            revision: Some(revision.as_str()).filter(|r| !r.is_empty()),
+            device_model: &g("device_model"),
+            serial: &g("serial"),
+            symptom: &g("symptom"),
+            error_code: &g("error_code"),
+            diagnosis: &g("diagnosis"),
+            action: &g("action"),
+            remote_ws: &g("remote_vs_workshop"),
+            parts: &parts,
+            confidence: &g("confidence"),
+        };
+        match push_to_xelixir_kb(http, &lesson).await {
+            Ok(Some(reply)) => {
+                if record_push_result(state, &ticket_id, &reply).await {
+                    repushed += 1;
+                }
             }
             Ok(None) => {} // not configured (already guarded above)
             Err(e) => warn!("[RepairDistiller] re-push failed for {}: {}", ticket_id, e),
@@ -266,36 +304,41 @@ async fn process_ticket(
     let subject = meta.get("subject").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let ticket_number = meta.get("ticket_number").and_then(|v| v.as_str()).unwrap_or(ticket_id).to_string();
     let status = ticket.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let revision = ticket.get("revision").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let ai_summary = ticket.get("ai_summary").and_then(|v| v.as_str());
 
-    // Compact correspondence: direction + author type + Zoho summary (NOT the raw
-    // HTML body / attachments) — short, lower-PII, enough to judge the resolution.
-    let threads: Vec<Value> = state
-        .db
-        .query(
-            "SELECT payload.direction AS direction, payload.summary AS summary, \
-             payload.author.type AS author_type, payload.createdTime AS created, updated_at \
-             FROM document_raw WHERE type = 'support_thread' AND ticket_id = $tid \
-             ORDER BY updated_at ASC LIMIT $lim",
-        )
-        .bind(("tid", ticket_id.to_string()))
-        .bind(("lim", MAX_THREADS as i64))
-        .await?
-        .take(0)?;
+    // Prefer the ticket's MASKED ai_summary (CONTRACT §7). Only when it is absent
+    // read the compact correspondence: direction + author type + Zoho summary (NOT
+    // the raw HTML body / attachments), masked here before it leaves the process.
+    let threads: Vec<Value> = if usable_summary(ai_summary).is_some() {
+        Vec::new()
+    } else {
+        state
+            .db
+            .query(
+                "SELECT payload.direction AS direction, payload.summary AS summary, \
+                 payload.author.type AS author_type, payload.createdTime AS created, updated_at \
+                 FROM document_raw WHERE type = 'support_thread' AND ticket_id = $tid \
+                 ORDER BY updated_at ASC LIMIT $lim",
+            )
+            .bind(("tid", ticket_id.to_string()))
+            .bind(("lim", MAX_THREADS as i64))
+            .await?
+            .take(0)?
+    };
 
-    if threads.is_empty() {
-        // Threads not imported yet (scraper lag). Treat as transient so we do NOT
-        // finalize the ticket — retry on later cycles (bounded by MAX_DISTILL_ATTEMPTS).
-        return Err(anyhow::anyhow!("no threads imported yet for ticket {ticket_id}"));
-    }
-
-    let bundle = json!({
-        "subject": subject,
-        "status": status,
-        "threads": threads,
-    });
+    let Some((bundle, source)) = build_distill_bundle(&subject, &status, ai_summary, &threads) else {
+        // No summary and threads not imported yet (scraper lag). Treat as transient so
+        // we do NOT finalize the ticket — retry later (bounded by MAX_DISTILL_ATTEMPTS).
+        return Err(anyhow::anyhow!("no ai_summary and no threads imported yet for ticket {ticket_id}"));
+    };
+    debug!("[RepairDistiller] ticket {} input={:?}", ticket_id, source);
     let bundle_str = serde_json::to_string(&bundle).unwrap_or_default();
     let user_prompt = format!(
-        "Distill the repair lesson from this support ticket. Strict JSON only.\n\n## Ticket\n```json\n{bundle_str}\n```"
+        "Distill the repair lesson from this support ticket. Strict JSON only. \
+         The ticket comes either as a masked AI summary of its correspondence (`summary`) \
+         or as a masked thread digest (`threads`); tokens like Name_<hex>/Email_<hex>/Company_<hex> \
+         are pseudonyms — never copy them into any field.\n\n## Ticket\n```json\n{bundle_str}\n```"
     );
 
     let payload = json!({
@@ -365,6 +408,7 @@ async fn process_ticket(
                 manufacturing_date: $mfg, symptom: $sym, error_code: $ec, diagnosis: $diag, \
                 action: $act, remote_vs_workshop: $rws, parts: $parts, outcome: $out, \
                 confidence: $conf, embedding: $emb, push_eligible: $elig, pushed_to_xelixir: false, \
+                source_revision: $rev, input_source: $src, \
                 created_at: time::now(), updated_at: time::now() \
              }",
         )
@@ -383,6 +427,8 @@ async fn process_ticket(
         .bind(("conf", confidence.clone()))
         .bind(("emb", embedding))
         .bind(("elig", should_push))
+        .bind(("rev", revision.clone()))
+        .bind(("src", source.as_str()))
         .await?
         .take(0)
         .unwrap_or_default();
@@ -396,24 +442,33 @@ async fn process_ticket(
     }
 
     // ── GATE PASSED: push the confirmed repair lesson to the xelixir KB ──
-    match push_to_xelixir_kb(
-        http, &device_model, &serial, &symptom, &error_code, &diagnosis,
-        &action, &remote_ws, &parts, &confidence, &ticket_number,
-    )
-    .await
-    {
-        Ok(Some(finding_id)) => {
-            let _ = state
-                .db
-                .query("UPDATE repair_lesson SET pushed_to_xelixir = true, xelixir_finding_id = $fid, updated_at = time::now() WHERE ticket_id = $tid")
-                .bind(("fid", finding_id.clone()))
-                .bind(("tid", ticket_id.to_string()))
-                .await;
+    let lesson = LessonPush {
+        ticket_id,
+        ticket_number: &ticket_number,
+        revision: Some(revision.as_str()).filter(|r| !r.is_empty()),
+        device_model: &device_model,
+        serial: &serial,
+        symptom: &symptom,
+        error_code: &error_code,
+        diagnosis: &diagnosis,
+        action: &action,
+        remote_ws: &remote_ws,
+        parts: &parts,
+        confidence: &confidence,
+    };
+    match push_to_xelixir_kb(http, &lesson).await {
+        Ok(Some(reply)) => {
+            let ok = record_push_result(state, ticket_id, &reply).await;
             info!(
-                "[RepairDistiller] ticket {} -> xelixir KB {} (model={}, '{}')",
-                ticket_id, finding_id, device_model, symptom
+                "[RepairDistiller] ticket {} -> xelixir KB outcome={} candidate={} finding={} (model={}, '{}')",
+                ticket_id,
+                reply.outcome.as_deref().unwrap_or("legacy"),
+                reply.candidate_id.as_deref().unwrap_or("-"),
+                reply.finding_id.as_deref().unwrap_or("-"),
+                device_model,
+                symptom
             );
-            Ok(true)
+            Ok(ok)
         }
         Ok(None) => {
             debug!("[RepairDistiller] xelixir push skipped (not configured) for {}", ticket_id);
@@ -426,54 +481,353 @@ async fn process_ticket(
     }
 }
 
-/// POST a `kb_record` to the xelixir KB MCP endpoint. Returns the new finding id,
-/// or `None` if the bridge is not configured (XELIXIR_KB_URL/XELIXIR_KB_TOKEN).
-#[allow(clippy::too_many_arguments)]
+/// Which input the distiller LLM read for a ticket (stored as
+/// `repair_lesson.input_source` for stats).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputSource {
+    /// The ticket's already-masked `document.ai_summary` (preferred).
+    AiSummary,
+    /// Fallback: the Zoho thread digest, masked by [`mask_outbound`].
+    Threads,
+}
+
+impl InputSource {
+    /// Stable column value.
+    fn as_str(self) -> &'static str {
+        match self {
+            InputSource::AiSummary => "ai_summary",
+            InputSource::Threads => "threads",
+        }
+    }
+}
+
+/// The ticket's `ai_summary` when it is present and non-blank, else `None`.
+fn usable_summary(ai_summary: Option<&str>) -> Option<&str> {
+    ai_summary.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Deterministic outbound PII mask for text that did NOT come through the
+/// summarizer's egress ladder: the high-confidence regex scrub (email, phone,
+/// IBAN, …) then the person-name heuristic. Both are idempotent over existing
+/// `Name_/Email_…` tokens, so masking already-masked text is harmless.
+fn mask_outbound(text: &str) -> String {
+    let (scrubbed, _) = eck_core::utils::anonymizer::scrub_pii_regex(text);
+    eck_core::utils::anonymizer::mask_person_names_heuristic(&scrubbed).0
+}
+
+/// Build the LLM input bundle for one ticket (CONTRACT §7): the masked
+/// `ai_summary` when present and non-empty (threads are then ignored); else the
+/// thread digest with every thread `summary` run through [`mask_outbound`].
+/// The subject is masked on both paths. `None` = neither a summary nor any
+/// thread (scraper lag → the caller retries later).
+fn build_distill_bundle(
+    subject: &str,
+    status: &str,
+    ai_summary: Option<&str>,
+    threads: &[Value],
+) -> Option<(Value, InputSource)> {
+    let subject = mask_outbound(subject);
+    if let Some(summary) = usable_summary(ai_summary) {
+        let summary: String = summary.chars().take(MAX_SUMMARY_CHARS).collect();
+        return Some((
+            json!({ "subject": subject, "status": status, "summary": summary }),
+            InputSource::AiSummary,
+        ));
+    }
+    if threads.is_empty() {
+        return None;
+    }
+    let masked: Vec<Value> = threads
+        .iter()
+        .map(|t| {
+            let mut t = t.clone();
+            if let Some(s) = t.get("summary").and_then(|v| v.as_str()).map(mask_outbound) {
+                t["summary"] = json!(s);
+            }
+            t
+        })
+        .collect();
+    Some((
+        json!({ "subject": subject, "status": status, "threads": masked }),
+        InputSource::Threads,
+    ))
+}
+
+/// One gate-passed lesson as it is pushed to the xelixir KB (fresh distill or
+/// re-push from `repair_lesson`).
+struct LessonPush<'a> {
+    /// `document` record id of the support ticket — the `origin.id`.
+    ticket_id: &'a str,
+    /// Zoho ticket number — the `src:zoho:<n>` tag.
+    ticket_number: &'a str,
+    /// Ticket `updated_at` at distill time — the `origin.revision` (absent on
+    /// lessons stored before 2026-10-31).
+    revision: Option<&'a str>,
+    device_model: &'a str,
+    serial: &'a str,
+    symptom: &'a str,
+    error_code: &'a str,
+    diagnosis: &'a str,
+    action: &'a str,
+    remote_ws: &'a str,
+    parts: &'a [String],
+    confidence: &'a str,
+}
+
+/// The `kb_record` arguments for one lesson: the confirmed-fix text, anchors,
+/// tags (`field-repair`, `src:zoho:<n>`) and `origin {system:"9eck", id, revision?}`
+/// so a re-push of the same ticket revision is one delivery on the server.
+fn kb_record_args(l: &LessonPush<'_>) -> Value {
+    let parts_str = if l.parts.is_empty() { String::new() } else { format!(" Parts: {}.", l.parts.join(", ")) };
+    let ec_note = if l.error_code.is_empty() { String::new() } else { format!(" [error_code {}]", l.error_code) };
+    let text = format!(
+        "FIELD REPAIR (confirmed){ec_note}: {} -> diagnosis: {}. Fix: {} ({}).{parts_str} \
+         Confirmed-fixed in the field on a {} (SN {}). Source: 9eck repair-lesson distiller, Zoho ticket {}.",
+        l.symptom, l.diagnosis, l.action, l.remote_ws, l.device_model, l.serial, l.ticket_number
+    );
+
+    let mut anchors = vec![json!({"kind":"symptom","slug": l.symptom})];
+    if !l.error_code.is_empty() {
+        anchors.push(json!({"kind":"error_code","slug": l.error_code}));
+    }
+    let mut origin = json!({ "system": "9eck", "id": l.ticket_id });
+    if let Some(rev) = l.revision {
+        origin["revision"] = json!(rev);
+    }
+
+    json!({
+        "text": text,
+        "kind": "repair_outcome",
+        "model": l.device_model,
+        "confidence": l.confidence,
+        "author": "9eck-distiller",
+        "device_uuid": l.serial,
+        "tags": ["field-repair", format!("src:zoho:{}", l.ticket_number)],
+        "anchors": anchors,
+        "origin": origin,
+    })
+}
+
+/// POST a `kb_record` to the xelixir KB MCP endpoint and parse the reply
+/// (IntakeReply, or the pre-intake `{finding_id}` shape). Returns `None` if the
+/// bridge is not configured (XELIXIR_KB_URL/XELIXIR_KB_TOKEN).
 async fn push_to_xelixir_kb(
     http: &HttpClient,
-    device_model: &str,
-    serial: &str,
-    symptom: &str,
-    error_code: &str,
-    diagnosis: &str,
-    action: &str,
-    remote_ws: &str,
-    parts: &[String],
-    confidence: &str,
-    ticket_number: &str,
-) -> anyhow::Result<Option<String>> {
+    lesson: &LessonPush<'_>,
+) -> anyhow::Result<Option<crate::ai::kb_client::IntakeOutcome>> {
     if !crate::ai::kb_client::configured() {
         return Ok(None);
     }
-
-    let parts_str = if parts.is_empty() { String::new() } else { format!(" Parts: {}.", parts.join(", ")) };
-    let ec_note = if error_code.is_empty() { String::new() } else { format!(" [error_code {error_code}]") };
-    let text = format!(
-        "FIELD REPAIR (confirmed){ec_note}: {symptom} -> diagnosis: {diagnosis}. Fix: {action} ({remote_ws}).{parts_str} \
-         Confirmed-fixed in the field on a {device_model} (SN {serial}). Source: 9eck repair-lesson distiller, Zoho ticket {ticket_number}."
-    );
-
-    let mut anchors = vec![json!({"kind":"symptom","slug": symptom})];
-    if !error_code.is_empty() {
-        anchors.push(json!({"kind":"error_code","slug": error_code}));
+    let text = crate::ai::kb_client::call_tool(
+        http, "kb_record", kb_record_args(lesson), Duration::from_secs(30),
+    )
+    .await?;
+    let reply = crate::ai::kb_client::parse_intake_reply(&text).unwrap_or_default();
+    if let Some(m) = reply.message.as_deref() {
+        debug!("[RepairDistiller] kb_record says: {}", m);
     }
+    Ok(Some(reply))
+}
 
-    let args = json!({
-        "text": text,
-        "kind": "repair_outcome",
-        "model": device_model,
-        "confidence": confidence,
-        "author": "9eck-distiller",
-        "device_uuid": serial,
-        "tags": ["field-repair", format!("src:zoho:{ticket_number}")],
-        "anchors": anchors,
-    });
-    let text =
-        crate::ai::kb_client::call_tool(http, "kb_record", args, Duration::from_secs(30)).await?;
-    if let Ok(inner) = serde_json::from_str::<Value>(&text) {
-        if let Some(fid) = inner.get("finding_id").and_then(|f| f.as_str()) {
-            return Ok(Some(fid.to_string()));
+/// Store a `kb_record` reply on the lesson row. Every intake outcome
+/// (`new_candidate | linked | corroborated_candidate | duplicate_delivery`) and
+/// the legacy finding-only reply count as delivered → `pushed_to_xelixir = true`,
+/// with `xelixir_candidate_id` / `xelixir_finding_id` set when the reply carries
+/// them. A reply with neither id leaves the lesson unpushed (re-pushed next
+/// cycle). Returns whether it counted as delivered.
+async fn record_push_result(
+    state: &Arc<AppState>,
+    ticket_id: &str,
+    reply: &crate::ai::kb_client::IntakeOutcome,
+) -> bool {
+    if !reply.delivered() {
+        warn!("[RepairDistiller] kb_record reply for {} carried no candidate/finding id; will re-push", ticket_id);
+        return false;
+    }
+    let state_tag = if reply.finding_id.is_some() { "linked" } else { "pending" };
+    let _ = state
+        .db
+        .query(
+            "UPDATE repair_lesson SET pushed_to_xelixir = true, \
+             xelixir_candidate_id = $cid ?? xelixir_candidate_id, \
+             xelixir_finding_id = $fid ?? xelixir_finding_id, \
+             kb_outcome = $out, kb_state = $st, updated_at = time::now() WHERE ticket_id = $tid",
+        )
+        .bind(("cid", reply.candidate_id.clone()))
+        .bind(("fid", reply.finding_id.clone()))
+        .bind(("out", reply.outcome.clone()))
+        .bind(("st", state_tag))
+        .bind(("tid", ticket_id.to_string()))
+        .await;
+    true
+}
+
+/// What a `kb_candidate` read says about one of our candidates: its state and
+/// the finding it ended up as (if any), plus the elder candidate it was counted
+/// against when it was a corroboration.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct CandidateStatus {
+    state: String,
+    linked_finding: Option<String>,
+    linked_candidate: Option<String>,
+}
+
+/// Parse a `kb_candidate` reply text. `linked_finding` / `linked_candidate` may
+/// be strings or record objects (`{tb, id}`); both read as `kb_<tb>:<id>`.
+fn parse_candidate_status(text: &str) -> Option<CandidateStatus> {
+    let v: Value = serde_json::from_str(text.trim()).ok()?;
+    let link = |k: &str| -> Option<String> {
+        match v.get(k)? {
+            Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+            Value::Object(o) => {
+                let tb = o.get("tb").or_else(|| o.get("table")).and_then(|x| x.as_str())?;
+                let id = o.get("id").and_then(|x| x.as_str().map(String::from).or_else(|| Some(x.to_string())))?;
+                Some(format!("{tb}:{id}"))
+            }
+            _ => None,
         }
+    };
+    Some(CandidateStatus {
+        state: v.get("state").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        linked_finding: link("linked_finding"),
+        linked_candidate: link("linked_candidate"),
+    })
+}
+
+/// Read one candidate via the MCP tool `kb_candidate {candidate_id}`.
+async fn fetch_candidate(http: &HttpClient, candidate_id: &str) -> anyhow::Result<CandidateStatus> {
+    let text = crate::ai::kb_client::call_tool(
+        http, "kb_candidate", json!({ "candidate_id": candidate_id }), Duration::from_secs(20),
+    )
+    .await?;
+    parse_candidate_status(&text).ok_or_else(|| anyhow::anyhow!("kb_candidate: non-JSON reply"))
+}
+
+/// Daily finding-id write-back (CONTRACT §7): for lessons that hold a
+/// `xelixir_candidate_id` but no `xelixir_finding_id`, read the candidate and
+/// copy `linked_finding` into `xelixir_finding_id` when its state is
+/// `linked | promoted`. A corroboration (`linked` to an elder candidate) follows
+/// the elder one hop. The state is always stored in `kb_state` (for stats);
+/// `rejected | expired` rows stop being polled. Returns the number of finding
+/// ids written. No-op when the bridge is not configured.
+async fn write_back_candidates(state: &Arc<AppState>, http: &HttpClient) -> anyhow::Result<usize> {
+    if !crate::ai::kb_client::configured() {
+        return Ok(0);
     }
-    Ok(Some(text.chars().take(60).collect()))
+    let rows: Vec<Value> = state
+        .db
+        .query(
+            "SELECT ticket_id, xelixir_candidate_id FROM repair_lesson \
+             WHERE xelixir_candidate_id != NONE AND xelixir_candidate_id != '' \
+             AND (xelixir_finding_id IS NONE OR xelixir_finding_id = '') \
+             AND (kb_state IS NONE OR kb_state NOT IN ['rejected', 'expired']) LIMIT $lim",
+        )
+        .bind(("lim", WRITE_BACK_LIMIT))
+        .await?
+        .take(0)?;
+
+    let mut written = 0usize;
+    for r in rows {
+        let (Some(tid), Some(cid)) = (
+            r.get("ticket_id").and_then(|v| v.as_str()),
+            r.get("xelixir_candidate_id").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+        let mut st = match fetch_candidate(http, cid).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("[RepairDistiller] kb_candidate {} failed: {}", cid, e);
+                continue;
+            }
+        };
+        if st.linked_finding.is_none() {
+            if let Some(elder) = st.linked_candidate.clone() {
+                // Elder may belong to another tenant (not readable) — then wait.
+                if let Ok(e) = fetch_candidate(http, &elder).await {
+                    if matches!(e.state.as_str(), "linked" | "promoted") {
+                        st.linked_finding = e.linked_finding;
+                    }
+                }
+            }
+        }
+        let fid = st
+            .linked_finding
+            .clone()
+            .filter(|_| matches!(st.state.as_str(), "linked" | "promoted"));
+        let _ = state
+            .db
+            .query(
+                "UPDATE repair_lesson SET kb_state = $st, xelixir_finding_id = $fid ?? xelixir_finding_id, \
+                 updated_at = time::now() WHERE ticket_id = $tid",
+            )
+            .bind(("st", st.state.clone()))
+            .bind(("fid", fid.clone()))
+            .bind(("tid", tid.to_string()))
+            .await;
+        if fid.is_some() {
+            written += 1;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    Ok(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_prefers_ai_summary() {
+        let threads = vec![json!({"direction":"in","summary":"mail from max@example.com"})];
+        let (b, src) = build_distill_bundle(
+            "Waage zeigt E2", "Closed", Some("  Customer Name_1a2b reports E2; board swapped; fixed.  "), &threads,
+        )
+        .unwrap();
+        assert_eq!(src, InputSource::AiSummary);
+        assert_eq!(b["summary"], "Customer Name_1a2b reports E2; board swapped; fixed.");
+        assert!(b.get("threads").is_none(), "threads must not be sent when a summary exists");
+    }
+
+    #[test]
+    fn input_falls_back_to_masked_threads() {
+        let threads = vec![json!({"direction":"in","summary":"Please call me at +49 170 1234567 or max.mustermann@example.com"})];
+        for empty in [None, Some(""), Some("   \n ")] {
+            let (b, src) = build_distill_bundle("E2", "Closed", empty, &threads).unwrap();
+            assert_eq!(src, InputSource::Threads);
+            let s = b["threads"][0]["summary"].as_str().unwrap();
+            assert!(!s.contains("max.mustermann@example.com"), "email must be masked: {s}");
+            assert!(!s.contains("1234567"), "phone must be masked: {s}");
+            assert!(b.get("summary").is_none());
+        }
+        // Neither summary nor threads → None (transient, retry).
+        assert!(build_distill_bundle("E2", "Closed", None, &[]).is_none());
+    }
+
+    #[test]
+    fn record_args_carry_origin_and_tag() {
+        let parts = vec!["right hand electrode".to_string()];
+        let l = LessonPush {
+            ticket_id: "53451000035655161", ticket_number: "31129", revision: Some("2026-10-30T09:12:00Z"),
+            device_model: "Acme770", serial: "I821000195", symptom: "E2 on boot", error_code: "E2",
+            diagnosis: "loose connector", action: "reseat", remote_ws: "workshop", parts: &parts, confidence: "high",
+        };
+        let a = kb_record_args(&l);
+        assert_eq!(a["origin"], json!({"system":"9eck","id":"53451000035655161","revision":"2026-10-30T09:12:00Z"}));
+        assert_eq!(a["tags"][1], "src:zoho:31129");
+        assert_eq!(a["kind"], "repair_outcome");
+        let l2 = LessonPush { revision: None, ..l };
+        assert!(kb_record_args(&l2)["origin"].get("revision").is_none());
+    }
+
+    #[test]
+    fn candidate_status_parses_string_and_record_links() {
+        let s = parse_candidate_status(r#"{"id":"kb_candidate:aa","state":"promoted","linked_finding":"kb_finding:xyz"}"#).unwrap();
+        assert_eq!(s.state, "promoted");
+        assert_eq!(s.linked_finding.as_deref(), Some("kb_finding:xyz"));
+        let s = parse_candidate_status(r#"{"state":"linked","linked_finding":null,"linked_candidate":{"tb":"kb_candidate","id":"bb"}}"#).unwrap();
+        assert_eq!(s.linked_candidate.as_deref(), Some("kb_candidate:bb"));
+        assert!(s.linked_finding.is_none());
+        assert!(parse_candidate_status("nope").is_none());
+    }
 }

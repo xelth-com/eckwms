@@ -5,6 +5,14 @@
     import { base } from '$app/paths';
     import { toastStore } from '$lib/stores/toastStore';
     import { t, tr } from '$lib/i18n';
+    import AuthImg from '$lib/components/AuthImg.svelte';
+
+    // Leading icon column (ENTITY_PAGES_AND_SCAN_MIRROR §4): representative
+    // device photo when the backend supplies `icon_file_id`, else kind glyph.
+    // /api/files is auth-gated — thumbnail via AuthImg (Bearer fetch → blob URL).
+    function iconUrl(fileId) {
+        return `${base}/api/files/${fileId}`;
+    }
 
     let rmas = [];
     let loading = true;
@@ -62,6 +70,7 @@
             <table class="rma-table">
                 <thead>
                     <tr>
+                        <th class="icon-col" aria-label={$t('lists.repairs_th_icon')}></th>
                         <th>{$t('rma.th_rma_number')}</th>
                         <th>{$t('rma.th_customer')}</th>
                         <th>{$t('rma.th_product_sku')}</th>
@@ -73,6 +82,15 @@
                     {#each rmas as rma}
                         <!-- svelte-ignore a11y-click-events-have-key-events -->
                         <tr on:click={() => openRMA(rma.id)}>
+                            <td class="icon-col">
+                                {#if rma.icon_file_id}
+                                    <AuthImg class="row-icon" src={iconUrl(rma.icon_file_id)} alt="">
+                                        <span slot="fallback" class="row-glyph">🔧</span>
+                                    </AuthImg>
+                                {:else}
+                                    <span class="row-glyph">🔧</span>
+                                {/if}
+                            </td>
                             <td class="code">{rma.rmaNumber}</td>
                             <td>{rma.customer_name}</td>
                             <td class="code-sm">{rma.product_sku}</td>
@@ -153,6 +171,17 @@
 
     .code { font-family: monospace; font-weight: bold; color: #4a69bd; }
     .code-sm { font-family: monospace; font-size: 0.9rem; color: #aaa; }
+
+    .icon-col { width: 56px; padding-right: 0; text-align: center; }
+    .icon-col :global(.row-icon) {
+        width: 40px; height: 40px; border-radius: 50%;
+        object-fit: cover; background: #121212; display: inline-block; vertical-align: middle;
+    }
+    .row-glyph {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 40px; height: 40px; border-radius: 50%;
+        background: #121212; border: 1px solid #333; font-size: 1.1rem; vertical-align: middle;
+    }
 
     .status-badge {
         padding: 2px 8px;

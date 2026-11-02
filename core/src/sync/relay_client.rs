@@ -182,9 +182,122 @@ pub struct RelayClient {
     /// (`Arc`) so every `discover_peers` caller sees the same state. See
     /// [`RelayBackoffState`].
     relay_backoff: Arc<Mutex<HashMap<String, RelayBackoffState>>>,
+    /// HMAC key for mesh-queue envelopes (see [`SIGNED_MESH_KINDS`]); `None`
+    /// on a node without `SYNC_SECRET` (dev mode: envelopes go out unsigned).
+    envelope_key: Option<Arc<Vec<u8>>>,
+}
+
+// ─── Mesh-queue envelope authentication ──────────────────────────────────────
+//
+// The relay's `/E/m/*` queue is a dumb pipe: `dispatch` is gated only by the
+// payload policy (open, or "one party is paid"), `poll`/`ack` by nothing. So
+// until 2026-09-30 anyone who knew a node's UUID and a relay URL could enqueue a
+// `pull_request` or `push` and the receiving WMS executed it (review finding
+// F02-2; F02-1 was an unchecked table name in the same path). The mesh secret
+// (`SYNC_SECRET`, the same token `mesh_auth` demands on the direct P2P routes)
+// now authenticates the envelope end to end: the sender HMACs
+// `target\nsender\nkind\nts\n<payload text>` and the receiver recomputes it —
+// the relay never sees the secret, only the tag. The payload travels as a JSON
+// STRING for these kinds so the relay's own database round-trip (key
+// reordering, number formatting) cannot change the signed bytes. Timestamped
+// to bound replay to one hour; a nonce ledger is a follow-up.
+//
+// Only the sync-engine kinds are signed — the ones a node executes against its
+// database. Device/trip/user kinds are sent by phones that hold no mesh secret
+// and carry their own proof (JWT, nonce signature), so they stay as they were.
+
+/// Mesh-queue kinds whose envelope must carry `ts` + `sig`.
+pub const SIGNED_MESH_KINDS: &[&str] = &["push", "pull_request", "file_fetch", "merkle_state"];
+
+/// Accepted clock skew / replay window for a signed envelope, in seconds.
+pub const ENVELOPE_SIG_MAX_SKEW_SECS: i64 = 3600;
+
+/// Derive the envelope HMAC key from the mesh secret (domain-separated so the
+/// raw secret is never used as a MAC key directly).
+pub fn envelope_key_from_secret(secret: &str) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"eck-mesh-envelope-v1\n");
+    h.update(secret.as_bytes());
+    h.finalize().to_vec()
+}
+
+fn envelope_mac(
+    key: &[u8],
+    target: &str,
+    sender: &str,
+    kind: &str,
+    ts: i64,
+    payload_text: &str,
+) -> hmac::Hmac<sha2::Sha256> {
+    use hmac::Mac;
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
+    for part in [target, sender, kind, ts.to_string().as_str()] {
+        mac.update(part.as_bytes());
+        mac.update(b"\n");
+    }
+    mac.update(payload_text.as_bytes());
+    mac
+}
+
+/// Sign a mesh-queue envelope: returns the payload as the exact text that was
+/// signed plus `(ts, sig)`.
+pub fn sign_envelope(
+    key: &[u8],
+    target: &str,
+    sender: &str,
+    kind: &str,
+    payload: &serde_json::Value,
+    ts: i64,
+) -> (String, String) {
+    use hmac::Mac;
+    let payload_text = payload.to_string();
+    let sig = hex::encode(envelope_mac(key, target, sender, kind, ts, &payload_text).finalize().into_bytes());
+    (payload_text, sig)
+}
+
+/// Verify a received envelope for `self_uuid`. Returns the parsed payload on
+/// success; the error string names the reason (logged and acked back, never
+/// executed). Only meaningful for [`SIGNED_MESH_KINDS`].
+pub fn verify_envelope(
+    key: &[u8],
+    self_uuid: &str,
+    envelope: &serde_json::Value,
+    now: i64,
+) -> Result<serde_json::Value, String> {
+    use hmac::Mac;
+    let field = |k: &str| envelope.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    let (target, sender, kind) = (field("target_uuid"), field("sender_uuid"), field("kind"));
+    if target != self_uuid {
+        return Err(format!("envelope target '{target}' is not this node"));
+    }
+    if sender.is_empty() {
+        return Err("envelope has no sender_uuid".into());
+    }
+    let ts = envelope.get("ts").and_then(|v| v.as_i64()).ok_or("envelope has no ts")?;
+    if (now - ts).abs() > ENVELOPE_SIG_MAX_SKEW_SECS {
+        return Err(format!("envelope ts {ts} outside the {ENVELOPE_SIG_MAX_SKEW_SECS}s window"));
+    }
+    let payload_text = envelope
+        .get("payload")
+        .and_then(|v| v.as_str())
+        .ok_or("signed envelope payload must be a JSON string")?;
+    let sig = hex::decode(field("sig")).map_err(|_| "envelope sig is not hex".to_string())?;
+    envelope_mac(key, target, sender, kind, ts, payload_text)
+        .verify_slice(&sig)
+        .map_err(|_| "envelope signature does not verify".to_string())?;
+    serde_json::from_str(payload_text).map_err(|e| format!("signed payload is not JSON: {e}"))
 }
 
 impl RelayClient {
+    /// Attach the mesh secret so `mesh_dispatch` signs sync-kind envelopes.
+    /// `None` / empty leaves envelopes unsigned (dev mode without `SYNC_SECRET`).
+    pub fn with_envelope_secret(mut self, secret: Option<&str>) -> Self {
+        self.envelope_key = secret
+            .filter(|s| !s.is_empty())
+            .map(|s| Arc::new(envelope_key_from_secret(s)));
+        self
+    }
     /// Single-relay constructor (back-compat). Prefer [`new_multi`].
     pub fn new(relay_url: &str, instance_id: &str, mesh_id: &str) -> Self {
         Self::new_multi(&[relay_url.to_string()], instance_id, mesh_id)
@@ -216,6 +329,7 @@ impl RelayClient {
             instance_id: instance_id.to_string(),
             mesh_id: mesh_id.to_string(),
             relay_backoff: Arc::new(Mutex::new(HashMap::new())),
+            envelope_key: None,
         }
     }
 
@@ -617,14 +731,33 @@ impl RelayClient {
         kind: &str,
         payload: serde_json::Value,
     ) -> Result<String, RelayError> {
-        let envelope = serde_json::json!({
-            "envelope": {
-                "target_uuid": target_uuid,
-                "sender_uuid": self.instance_id,
-                "kind": kind,
-                "payload": payload,
+        // Sync-engine kinds go out signed when this node holds the mesh secret
+        // (see SIGNED_MESH_KINDS above); everything else keeps the plain shape.
+        let envelope = match self.envelope_key.as_deref() {
+            Some(key) if SIGNED_MESH_KINDS.contains(&kind) => {
+                let ts = Utc::now().timestamp();
+                let (payload_text, sig) =
+                    sign_envelope(key, target_uuid, &self.instance_id, kind, &payload, ts);
+                serde_json::json!({
+                    "envelope": {
+                        "target_uuid": target_uuid,
+                        "sender_uuid": self.instance_id,
+                        "kind": kind,
+                        "payload": payload_text,
+                        "ts": ts,
+                        "sig": sig,
+                    }
+                })
             }
-        });
+            _ => serde_json::json!({
+                "envelope": {
+                    "target_uuid": target_uuid,
+                    "sender_uuid": self.instance_id,
+                    "kind": kind,
+                    "payload": payload,
+                }
+            }),
+        };
         let mut last_err = RelayError::AllRelaysDown;
         for base in self.payload_order() {
             let url = format!("{}/E/m/dispatch/{}", base, target_uuid);
@@ -1014,6 +1147,50 @@ impl RelayClient {
             }
         }
         Err(RelayError::StatusError(StatusCode::REQUEST_TIMEOUT))
+    }
+}
+
+#[cfg(test)]
+mod envelope_sig_tests {
+    use super::*;
+
+    fn signed(kind: &str, target: &str, ts: i64) -> (Vec<u8>, serde_json::Value) {
+        let key = envelope_key_from_secret("mesh-secret");
+        let payload = serde_json::json!({"entity_type": "document", "ids": ["a", "b"]});
+        let (text, sig) = sign_envelope(&key, target, "sender-1", kind, &payload, ts);
+        let env = serde_json::json!({
+            "target_uuid": target, "sender_uuid": "sender-1", "kind": kind,
+            "payload": text, "ts": ts, "sig": sig,
+        });
+        (key, env)
+    }
+
+    #[test]
+    fn round_trip_verifies_and_returns_the_payload() {
+        let (key, env) = signed("pull_request", "node-A", 1_000_000);
+        let payload = verify_envelope(&key, "node-A", &env, 1_000_010).expect("verifies");
+        assert_eq!(payload["ids"][1], "b");
+    }
+
+    #[test]
+    fn wrong_secret_target_or_tampered_payload_fails() {
+        let (key, env) = signed("push", "node-A", 1_000_000);
+        let other = envelope_key_from_secret("another-secret");
+        assert!(verify_envelope(&other, "node-A", &env, 1_000_000).is_err());
+        assert!(verify_envelope(&key, "node-B", &env, 1_000_000).is_err());
+        let mut tampered = env.clone();
+        tampered["payload"] = serde_json::Value::String(r#"{"entity_type":"user","ids":["a"]}"#.into());
+        assert!(verify_envelope(&key, "node-A", &tampered, 1_000_000).is_err());
+        let mut unsigned = env.clone();
+        unsigned.as_object_mut().unwrap().remove("sig");
+        assert!(verify_envelope(&key, "node-A", &unsigned, 1_000_000).is_err());
+    }
+
+    #[test]
+    fn stale_timestamp_is_rejected() {
+        let (key, env) = signed("merkle_state", "node-A", 1_000_000);
+        assert!(verify_envelope(&key, "node-A", &env, 1_000_000 + ENVELOPE_SIG_MAX_SKEW_SECS + 1).is_err());
+        assert!(verify_envelope(&key, "node-A", &env, 1_000_000 - ENVELOPE_SIG_MAX_SKEW_SECS + 1).is_ok());
     }
 }
 

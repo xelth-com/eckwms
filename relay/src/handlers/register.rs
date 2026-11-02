@@ -149,6 +149,24 @@ pub async fn register(
             _ => (existing_key.clone(), false),
         };
 
+    // Once a server-identity key is bound to an instance_id, only a request
+    // that just proved possession of it may rewrite the row. Until 2026-09-30
+    // an unsigned request "preserved the binding" but still replaced
+    // external_ip/port/base_url/lan_url/mesh_id — anyone could re-point a
+    // node's advertised endpoint and have its peers dial the impostor with the
+    // mesh secret in the Authorization header (review F02-1/F03-1). First
+    // registration stays TOFU: a node that has never bound a key is accepted
+    // as before, and every current node signs its heartbeat.
+    if existing_key.is_some() && !verified_now {
+        tracing::warn!(
+            "Register REJECTED for instance '{}' (mesh '{}'): row has a bound pubkey but the \
+             request carried no valid registration signature",
+            instance_id,
+            mesh_id
+        );
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
     // IMPORTANT: SurrealDB embedded mode doesn't share transaction state across
     // multi-statement queries. Each .query() call must be separate.
 

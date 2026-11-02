@@ -29,10 +29,17 @@ mod hooks;
 mod manifest;
 mod registry;
 
-pub use engine::{PluginEngine, PluginLimits};
+pub use engine::{PluginEngine, PluginLimits, POS_HOT_PATH_FUEL, POS_HOT_PATH_TIMEOUT_MS};
 pub use hooks::{
-    decode_ingest_input, decode_ingest_output, encode_ingest_input, HookError, HookKind,
-    IngestTransformInput, IngestTransformOutput, HOOK_ABI_VERSION,
+    decode_ingest_input, decode_ingest_output, decode_pos_price_rules_input,
+    decode_pos_price_rules_output, decode_pos_receipt_render_input, decode_pos_receipt_render_output,
+    encode_ingest_input, encode_pos_price_rules_input, encode_pos_receipt_render_input,
+    finalize_pos_price_rules, finalize_pos_receipt_render, validate_pos_price_rules,
+    validate_pos_receipt_render, AdjustmentKind, AdjustmentTarget, HookError, HookKind,
+    IngestTransformInput, IngestTransformOutput, PosCartItem, PosHookSkip, PosPriceRulesInput,
+    PosPriceRulesOutcome, PosPriceRulesOutput, PosReceiptLines, PosReceiptRenderInput,
+    PosReceiptRenderOutcome, PosReceiptRenderOutput, PriceAdjustment, ProposalRejected,
+    HOOK_ABI_VERSION,
 };
 // Capability tokens ONLY — the rest of `host` (host-fn linking, the
 // pre-instantiation import check) stays internal to the engine. Re-exported so

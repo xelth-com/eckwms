@@ -192,8 +192,24 @@ pub struct UnitInput {
     pub code: Option<String>,
     #[serde(default)]
     pub serial: Option<String>,
+    /// How the serial got in: `barcode` (scanned) | `ocr` (OCR review tap-out,
+    /// `.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md` §10) | `manual` (typed). Absent
+    /// or unrecognised normalises to `barcode` — see [`normalize_serial_source`].
+    #[serde(default)]
+    pub serial_source: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
+}
+
+/// Normalise the `serial_source` tag: `ocr` | `manual` pass through, anything
+/// else (absent, blank, unrecognised) is `barcode` — the pre-existing meaning
+/// of every unit that predates this field. Additive, case-insensitive.
+pub fn normalize_serial_source(raw: Option<&str>) -> &'static str {
+    match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some("ocr") => "ocr",
+        Some("manual") => "manual",
+        _ => "barcode",
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -419,6 +435,7 @@ pub async fn upsert_receipt(
             barcode: input.postal_barcode.clone(),
             code: None,
             serial: None,
+            serial_source: None,
             note: None,
         });
     }
@@ -481,7 +498,7 @@ async fn upsert_unit(
     }
 
     let prior: Option<Value> = db
-        .query("SELECT code, created_at FROM type::record($rid) LIMIT 1")
+        .query("SELECT code, created_at, serial, ocr_verify FROM type::record($rid) LIMIT 1")
         .bind(("rid", rid("receipt_unit", &unit_id)))
         .await
         .and_then(|mut r| r.take(0))
@@ -517,7 +534,7 @@ async fn upsert_unit(
     let q = format!(
         "UPSERT type::record($rid) MERGE {{ \
             receipt_id: $receipt_id, kind: $kind, barcode: $barcode, \
-            code: $code, serial: $serial, note: $note, \
+            code: $code, serial: $serial, serial_source: $serial_source, note: $note, \
             location_id: $location_id, location_barcode: $location_barcode, \
             {}_vclock: $vclock, {} \
          }} RETURN NONE",
@@ -532,17 +549,65 @@ async fn upsert_unit(
             .bind(("barcode", opt(u.barcode.as_ref())))
             .bind(("code", json!(code.clone())))
             .bind(("serial", opt(u.serial.as_ref())))
+            .bind(("serial_source", json!(normalize_serial_source(u.serial_source.as_deref()))))
             .bind(("note", opt(u.note.as_ref())))
             .bind(("location_id", json!(location_leaf.to_string())))
             .bind(("location_barcode", json!(location_barcode.to_string())))
             .bind(("vclock", vclock))
     );
 
+    // OCR-verify trigger (`.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md` §11): when the
+    // serial came from the OCR review, arm an async server-side review — but
+    // only when none exists yet OR the serial changed, so a receipt re-SAVE of
+    // an unchanged OCR unit never resets a completed review back to pending.
+    if normalize_serial_source(u.serial_source.as_deref()) == "ocr" {
+        let prior_serial = prior
+            .as_ref()
+            .and_then(|v| v.get("serial"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let had_review = prior
+            .as_ref()
+            .and_then(|v| v.get("ocr_verify"))
+            .map(|x| !x.is_null())
+            .unwrap_or(false);
+        let new_serial = u
+            .serial
+            .as_deref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        if !had_review || prior_serial != new_serial {
+            arm_ocr_verify_pending(db, instance_id, &unit_id).await;
+        }
+    }
+
     Ok(StoredUnit {
         unit_id,
         code,
         location_barcode: location_barcode.to_string(),
     })
+}
+
+/// Arm the async OCR-serial review on a unit: set
+/// `receipt_unit.ocr_verify = {status:"pending"}` (a vclock-advancing,
+/// mesh-synced write; the `ai::ocr_verify` worker picks it up). Additive and
+/// fire-and-forget-safe — a failed arm only warns. `ocr_verify` is replaced
+/// wholesale (SET, not a nested MERGE) so a re-review starts clean.
+pub async fn arm_ocr_verify_pending(db: &SurrealDb, instance_id: &str, unit_id: &str) {
+    let vclock = next_vclock(db, "receipt_unit", unit_id, instance_id).await;
+    if let Err(e) = db
+        .query(
+            "UPDATE type::record($rid) SET ocr_verify = { status: 'pending' }, \
+                _vclock = $vclock, updated_at = time::now() RETURN NONE",
+        )
+        .bind(("rid", rid("receipt_unit", unit_id)))
+        .bind(("vclock", vclock))
+        .await
+        .and_then(|r| r.check())
+    {
+        tracing::warn!("[receiving] arm ocr_verify {}: {}", unit_id, e);
+    }
 }
 
 // ─── The active receipt (Beleg) — point operations on ONE receipt ────────────
@@ -625,26 +690,26 @@ async fn unit_view(db: &SurrealDb, unit: &Value) -> Value {
         .get("location_barcode")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let repair = match repair_key_for(unit) {
-        Some(serial) => crate::services::repair::find_live_order(db, &serial)
-            .await
-            .unwrap_or(None)
-            .map(|o| {
-                json!({
-                    "order_uuid": o.get("order_uuid").cloned().unwrap_or(Value::Null),
-                    "order_number": o.get("order_number").cloned().unwrap_or(Value::Null),
-                    "status": o.get("status").cloned().unwrap_or(Value::Null),
-                })
+    // Prefer the UUID link (`receipt_unit.order_uuid`); the serial-string join is
+    // only a logged read-only fallback for legacy rows (`find_live_order_for_unit`).
+    let repair = crate::services::repair::find_live_order_for_unit(db, unit)
+        .await
+        .unwrap_or(None)
+        .map(|o| {
+            json!({
+                "order_uuid": o.get("order_uuid").cloned().unwrap_or(Value::Null),
+                "order_number": o.get("order_number").cloned().unwrap_or(Value::Null),
+                "status": o.get("status").cloned().unwrap_or(Value::Null),
             })
-            .unwrap_or(Value::Null),
-        None => Value::Null,
-    };
+        })
+        .unwrap_or(Value::Null);
     json!({
         "unit_id": unit.get("unit_id").cloned().unwrap_or(Value::Null),
         "code": unit.get("code").cloned().unwrap_or(Value::Null),
         "kind": unit.get("kind").cloned().unwrap_or(Value::Null),
         "barcode": unit.get("barcode").cloned().unwrap_or(Value::Null),
         "serial": unit.get("serial").cloned().unwrap_or(Value::Null),
+        "serial_source": json!(normalize_serial_source(unit.get("serial_source").and_then(|v| v.as_str()))),
         "note": unit.get("note").cloned().unwrap_or(Value::Null),
         "location_id": unit.get("location_id").cloned().unwrap_or(Value::Null),
         "location_barcode": unit.get("location_barcode").cloned().unwrap_or(Value::Null),
@@ -652,6 +717,10 @@ async fn unit_view(db: &SurrealDb, unit: &Value) -> Value {
         "status": unit.get("status").cloned().unwrap_or(Value::Null),
         "created_at": unit.get("created_at").cloned().unwrap_or(Value::Null),
         "repair": repair,
+        // OCR-verify (§11): additive; present only once a review has run / been
+        // armed. `null` keeps the shape stable for older PDA builds.
+        "ai_facts": unit.get("ai_facts").cloned().unwrap_or(Value::Null),
+        "ocr_verify": unit.get("ocr_verify").cloned().unwrap_or(Value::Null),
     })
 }
 
@@ -704,12 +773,21 @@ pub async fn get_receipt_context(db: &SurrealDb, receipt_id: &str) -> Result<Val
         .filter(|p| p.get("context").and_then(|v| v.as_str()) == Some(SCAN_FRAME_CONTEXT))
         .count();
 
+    // Additive `plan` key (§8): the derived receiving plan for this receipt, so
+    // the PDA can overlay it without a second round trip.
+    let plan = crate::services::plan::load_receiving_plan(
+        db,
+        &crate::services::plan::PlanQuery::Receipt(receipt_id.to_string()),
+    )
+    .await;
+
     Ok(json!({
         "receipt": receipt,
         "units": unit_views,
         "photos": photos,
         "photo_count": photos.len() - scan_frame_count,
         "scan_frame_count": scan_frame_count,
+        "plan": serde_json::to_value(plan).unwrap_or(Value::Null),
     }))
 }
 
@@ -864,6 +942,13 @@ pub async fn set_repair(
                 },
             )
             .await?;
+            // Stamp the order→unit side of the UUID link (the unit→order side is
+            // written in the `receipt_unit` UPDATE below). Done for an EXISTING
+            // live order too, so a serial-opened order gets its unit link here.
+            if let Some(ouid) = order.get("order_uuid").and_then(|v| v.as_str()) {
+                crate::services::repair::link_order_to_unit(db, instance_id, ouid, unit_id)
+                    .await?;
+            }
             (Some(order), created, "in_repair")
         }
         "remove" => {
@@ -890,18 +975,49 @@ pub async fn set_repair(
         other => return Err(format!("unknown action '{}' (add|remove)", other)),
     };
 
+    // On `add`, also write the unit→order side of the UUID link in the SAME
+    // vclock-advancing UPDATE. `remove` leaves `order_uuid` as it was — the
+    // cancelled order is terminal, so the readers treat the link as dead anyway.
+    let link_uuid: Option<String> = if new_status == "in_repair" {
+        repair
+            .as_ref()
+            .and_then(|o| o.get("order_uuid"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    } else {
+        None
+    };
     let vclock = next_vclock(db, "receipt_unit", unit_id, instance_id).await;
-    run_stmt!(
-        "unit repair status",
-        db.query(
-            "UPDATE type::record($rid) SET status = $status, \
-                _vclock = $vclock, updated_at = time::now() RETURN NONE",
-        )
+    let set_link = if link_uuid.is_some() { "order_uuid = $ouid, " } else { "" };
+    let q = format!(
+        "UPDATE type::record($rid) SET {}status = $status, \
+            _vclock = $vclock, updated_at = time::now() RETURN NONE",
+        set_link
+    );
+    let mut query = db
+        .query(&q)
         .bind(("rid", rid("receipt_unit", unit_id)))
         .bind(("status", json!(new_status)))
-        .bind(("vclock", vclock))
-    );
+        .bind(("vclock", vclock));
+    if let Some(ou) = link_uuid {
+        query = query.bind(("ouid", json!(ou)));
+    }
+    run_stmt!("unit repair status", query);
     touch_receipt(db, instance_id, receipt_id).await;
+
+    // Domain-event: unit repair status change (fire-and-forget).
+    crate::services::events::record(
+        db,
+        instance_id,
+        crate::services::events::Event::new(
+            "status",
+            "unit",
+            unit_id,
+            format!("Repair {} → {}", action.trim(), new_status),
+        )
+        .actor(str_field(&receipt, "received_by")),
+    )
+    .await;
 
     let row = load_unit(db, unit_id).await?;
     Ok(json!({
@@ -1028,6 +1144,21 @@ pub async fn move_unit(
         .bind(("vclock", vclock))
     );
 
+    // Domain-event: move (ref = destination place). Fire-and-forget — a failed
+    // journal entry must never roll back a move that already committed.
+    crate::services::events::record(
+        db,
+        instance_id,
+        crate::services::events::Event::new(
+            "move",
+            "unit",
+            unit_id,
+            format!("Moved to {}", location_barcode),
+        )
+        .reference("place", &location_leaf),
+    )
+    .await;
+
     Ok(json!({
         "success": true,
         "unit_id": unit_id,
@@ -1049,8 +1180,8 @@ pub async fn list_units(db: &SurrealDb, zone: &str, limit: usize) -> Result<Vec<
         None => ("", None),
     };
     let q = format!(
-        "SELECT record::id(id) AS unit_id, code, kind, barcode, serial, status, \
-                location_barcode, receipt_id, created_at \
+        "SELECT record::id(id) AS unit_id, code, kind, barcode, serial, serial_source, status, \
+                location_barcode, receipt_id, created_at, ai_facts, ocr_verify \
          FROM receipt_unit {}ORDER BY created_at DESC LIMIT {}",
         where_clause, limit
     );
@@ -1123,6 +1254,7 @@ pub async fn list_units(db: &SurrealDb, zone: &str, limit: usize) -> Result<Vec<
             "kind": u.get("kind").cloned().unwrap_or(Value::Null),
             "barcode": u.get("barcode").cloned().unwrap_or(Value::Null),
             "serial": u.get("serial").cloned().unwrap_or(Value::Null),
+            "serial_source": json!(normalize_serial_source(u.get("serial_source").and_then(|v| v.as_str()))),
             "status": u.get("status").cloned().unwrap_or(Value::Null),
             "location_barcode": u.get("location_barcode").cloned().unwrap_or(Value::Null),
             "zone": zone_for(&loc),
@@ -1142,9 +1274,136 @@ pub async fn list_units(db: &SurrealDb, zone: &str, limit: usize) -> Result<Vec<
             "received_by": h("received_by"),
             "received_at": u.get("created_at").cloned().unwrap_or(Value::Null),
             "photo_count": photo_count,
+            "ai_facts": u.get("ai_facts").cloned().unwrap_or(Value::Null),
+            "ocr_verify": u.get("ocr_verify").cloned().unwrap_or(Value::Null),
         }));
     }
 
+    Ok(out)
+}
+
+/// The repairs board's "awaiting triage" column: inbound `item` units that have
+/// NO live repair order — neither by the UUID link (`receipt_unit.order_uuid` →
+/// a live order, or a live order whose `unit_id` points back) nor by the serial
+/// fallback. Newest first, capped. `box`/`part` units are plumbing, not repair
+/// cases, so they are excluded; the zone is pinned to `ZONE-INBOUND` (Eingang) —
+/// a unit that has been put away onto a shelf is no longer "awaiting triage".
+///
+/// Liveness is resolved in ONE batched query over all candidates (serials, unit
+/// ids and links), so there is no per-unit round-trip (the kiosk is a small box).
+pub async fn awaiting_units(db: &SurrealDb, limit: usize) -> Result<Vec<Value>, String> {
+    let limit = limit.clamp(1, 200);
+
+    // Candidate inbound item units (a generous scan cap so filtering out the
+    // ones that DO have an order still leaves a full board).
+    let units: Vec<Value> = db
+        .query(
+            "SELECT record::id(id) AS unit_id, code, kind, serial, barcode, order_uuid, \
+                    location_barcode, receipt_id, status, created_at \
+             FROM receipt_unit \
+             WHERE location_barcode = $zone AND kind = 'item' \
+             ORDER BY created_at DESC LIMIT 1000",
+        )
+        .bind(("zone", ZONE_INBOUND.to_string()))
+        .await
+        .map_err(|e| format!("awaiting units: {}", e))?
+        .take(0)
+        .map_err(|e| format!("awaiting units: {}", e))?;
+
+    // Batched liveness over every candidate at once.
+    let serials: Vec<String> = units
+        .iter()
+        .filter_map(|u| str_field(u, "serial").or_else(|| str_field(u, "barcode")))
+        .collect();
+    let unit_ids: Vec<String> = units.iter().filter_map(|u| str_field(u, "unit_id")).collect();
+    let order_uuids: Vec<String> = units.iter().filter_map(|u| str_field(u, "order_uuid")).collect();
+
+    let live_orders: Vec<Value> = db
+        .query(
+            "SELECT record::id(id) AS order_id, serial_number, unit_id FROM order \
+             WHERE status NOT IN $terminal \
+               AND (serial_number IN $serials OR unit_id IN $unit_ids \
+                    OR record::id(id) IN $oids)",
+        )
+        .bind(("terminal", json!(crate::services::repair::TERMINAL_STATUSES)))
+        .bind(("serials", json!(serials)))
+        .bind(("unit_ids", json!(unit_ids)))
+        .bind(("oids", json!(order_uuids)))
+        .await
+        .map_err(|e| format!("awaiting liveness: {}", e))?
+        .take(0)
+        .map_err(|e| format!("awaiting liveness: {}", e))?;
+
+    let mut live_serials: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut linked_unit_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut live_order_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for o in &live_orders {
+        if let Some(sn) = str_field(o, "serial_number") {
+            live_serials.insert(sn);
+        }
+        if let Some(uid) = str_field(o, "unit_id") {
+            linked_unit_ids.insert(uid);
+        }
+        if let Some(oid) = str_field(o, "order_id") {
+            live_order_ids.insert(oid);
+        }
+    }
+
+    let mut headers: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for u in &units {
+        if out.len() >= limit {
+            break;
+        }
+        let uid = str_field(u, "unit_id").unwrap_or_default();
+        let serial = str_field(u, "serial").or_else(|| str_field(u, "barcode"));
+
+        // Live order via the UUID link (either direction), then serial fallback.
+        let has_uuid_order = str_field(u, "order_uuid")
+            .map(|ou| live_order_ids.contains(&ou))
+            .unwrap_or(false)
+            || linked_unit_ids.contains(&uid);
+        let has_serial_order = serial
+            .as_ref()
+            .map(|sn| live_serials.contains(sn))
+            .unwrap_or(false);
+        if has_uuid_order || has_serial_order {
+            continue;
+        }
+
+        let receipt_id = str_field(u, "receipt_id").unwrap_or_default();
+        if !receipt_id.is_empty() && !headers.contains_key(&receipt_id) {
+            let h: Value = db
+                .query("SELECT client_name, client_address FROM type::record($rid) LIMIT 1")
+                .bind(("rid", rid("receipt", &receipt_id)))
+                .await
+                .and_then(|mut r| r.take(0))
+                .ok()
+                .flatten()
+                .unwrap_or(Value::Null);
+            headers.insert(receipt_id.clone(), h);
+        }
+        let header = headers.get(&receipt_id).cloned().unwrap_or(Value::Null);
+        let client_name = header.get("client_name").cloned().unwrap_or(Value::Null);
+        let city = str_field(&header, "client_address")
+            .and_then(|a| crate::services::claimlist::city_from_address(&a));
+        let loc = u
+            .get("location_barcode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        out.push(json!({
+            "unit_id": u.get("unit_id").cloned().unwrap_or(Value::Null),
+            "serial": u.get("serial").cloned().unwrap_or(Value::Null),
+            "code": u.get("code").cloned().unwrap_or(Value::Null),
+            "kind": u.get("kind").cloned().unwrap_or(Value::Null),
+            "client_name": client_name,
+            "city": city.map(Value::String).unwrap_or(Value::Null),
+            "received_at": u.get("created_at").cloned().unwrap_or(Value::Null),
+            "receipt_id": receipt_id,
+            "zone": zone_for(loc),
+        }));
+    }
     Ok(out)
 }
 
@@ -1242,10 +1501,65 @@ mod tests {
                 barcode: Some("SN-4711".into()),
                 code: None,
                 serial: Some("4711".into()),
+                serial_source: None,
                 note: None,
             }],
             photo_ids: vec![],
         }
+    }
+
+    /// The OCR-verify trigger (§11): a unit saved with `serial_source = "ocr"`
+    /// is armed `ocr_verify = {status:"pending"}`; a non-OCR unit is NOT; and a
+    /// re-SAVE of the unchanged OCR unit does not reset a completed review.
+    #[tokio::test]
+    async fn ocr_verify_trigger_sets_pending_only_for_ocr() {
+        let db = test_db().await;
+        ensure_zone_locations(&db, "node-a").await;
+
+        // A barcode-sourced unit → no review armed.
+        let mut plain = sample("r-plain", "u-plain");
+        plain.units[0].kind = Some("item".into());
+        plain.units[0].serial_source = Some("barcode".into());
+        upsert_receipt(&db, "node-a", "dev-1", &plain).await.unwrap();
+        let ov: Option<Value> = db
+            .query("SELECT ocr_verify FROM type::record('receipt_unit', 'u-plain') LIMIT 1")
+            .await
+            .unwrap()
+            .take(0)
+            .unwrap();
+        assert!(ov.unwrap().get("ocr_verify").map(|v| v.is_null()).unwrap_or(true));
+
+        // An OCR-sourced unit → armed pending.
+        let mut ocr = sample("r-ocr", "u-ocr");
+        ocr.units[0].kind = Some("item".into());
+        ocr.units[0].serial = Some("I81800562".into());
+        ocr.units[0].serial_source = Some("ocr".into());
+        upsert_receipt(&db, "node-a", "dev-1", &ocr).await.unwrap();
+        async fn ocr_status(db: &SurrealDb) -> Option<String> {
+            let r: Option<Value> = db
+                .query("SELECT ocr_verify.status AS s FROM type::record('receipt_unit', 'u-ocr') LIMIT 1")
+                .await
+                .unwrap()
+                .take(0)
+                .unwrap();
+            r.and_then(|v| v.get("s").and_then(|x| x.as_str()).map(String::from))
+        }
+        assert_eq!(ocr_status(&db).await.as_deref(), Some("pending"));
+
+        // Simulate a completed review, then re-SAVE the SAME OCR unit unchanged:
+        // the completed review must NOT be reset back to pending.
+        db.query("UPDATE type::record('receipt_unit', 'u-ocr') SET ocr_verify = { status: 'ok' } RETURN NONE")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        upsert_receipt(&db, "node-a", "dev-1", &ocr).await.unwrap();
+        assert_eq!(ocr_status(&db).await.as_deref(), Some("ok"), "unchanged re-save keeps the review");
+
+        // Change the serial → re-armed pending.
+        ocr.units[0].serial = Some("I81800999".into());
+        upsert_receipt(&db, "node-a", "dev-1", &ocr).await.unwrap();
+        assert_eq!(ocr_status(&db).await.as_deref(), Some("pending"), "serial change re-arms");
     }
 
     #[test]
@@ -1579,6 +1893,90 @@ mod tests {
         assert!(get_receipt_context(&db, "nope").await.is_err());
     }
 
+    /// `set_repair add` writes BOTH sides of the UUID link: `order.unit_id` and
+    /// `receipt_unit.order_uuid`.
+    #[tokio::test]
+    async fn set_repair_stamps_both_sides_of_the_link() {
+        let db = test_db().await;
+        ensure_zone_locations(&db, "node-a").await;
+        upsert_receipt(&db, "node-a", "dev-1", &sample("r-link", "u-link"))
+            .await
+            .unwrap();
+
+        let res = set_repair(&db, "node-a", "r-link", "u-link", "add").await.unwrap();
+        let order_uuid = res["repair"]["order_uuid"].as_str().unwrap().to_string();
+
+        // order → unit
+        let o: Option<Value> = db
+            .query("SELECT unit_id FROM type::record('order', $id) LIMIT 1")
+            .bind(("id", order_uuid.clone()))
+            .await
+            .unwrap()
+            .take(0)
+            .unwrap();
+        assert_eq!(o.unwrap()["unit_id"], json!("u-link"));
+
+        // unit → order
+        let u: Option<Value> = db
+            .query("SELECT order_uuid FROM type::record('receipt_unit', 'u-link') LIMIT 1")
+            .await
+            .unwrap()
+            .take(0)
+            .unwrap();
+        assert_eq!(u.unwrap()["order_uuid"], json!(order_uuid));
+    }
+
+    /// The board's awaiting column: an inbound `item` with no order is IN; one
+    /// that has a live order (via the UUID link) is OUT.
+    #[tokio::test]
+    async fn awaiting_units_excludes_linked_and_includes_orderless() {
+        let db = test_db().await;
+        ensure_zone_locations(&db, "node-a").await;
+
+        // Two inbound item units on one receipt.
+        let mut input = sample("r-aw", "u-free");
+        input.units[0].kind = Some("item".into());
+        input.units[0].serial = Some("SN-FREE".into());
+        input.units[0].barcode = Some("SN-FREE".into());
+        input.units.push(UnitInput {
+            unit_id: "u-busy".into(),
+            kind: Some("item".into()),
+            barcode: Some("SN-BUSY".into()),
+            code: None,
+            serial: Some("SN-BUSY".into()),
+            serial_source: None,
+            note: None,
+        });
+        // A box unit must never appear on the board.
+        input.units.push(UnitInput {
+            unit_id: "u-box".into(),
+            kind: Some("box".into()),
+            barcode: Some("BOX-1".into()),
+            code: None,
+            serial: None,
+            serial_source: None,
+            note: None,
+        });
+        upsert_receipt(&db, "node-a", "dev-1", &input).await.unwrap();
+
+        // Put u-busy into repair → it now has a live order (UUID link).
+        set_repair(&db, "node-a", "r-aw", "u-busy", "add").await.unwrap();
+
+        let board = awaiting_units(&db, 200).await.unwrap();
+        let ids: Vec<&str> = board
+            .iter()
+            .map(|u| u["unit_id"].as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&"u-free"), "orderless item is awaiting");
+        assert!(!ids.contains(&"u-busy"), "linked item is not awaiting");
+        assert!(!ids.contains(&"u-box"), "a box is never a repair case");
+
+        let free = board.iter().find(|u| u["unit_id"] == json!("u-free")).unwrap();
+        assert_eq!(free["serial"], json!("SN-FREE"));
+        assert_eq!(free["client_name"], json!("ZetaBody"));
+        assert_eq!(free["zone"], json!("inbound"));
+    }
+
     /// A second device found in the same parcel: added onto the receipt's own
     /// place, given an RCV- code, and idempotent by the client-minted id.
     #[tokio::test]
@@ -1595,6 +1993,7 @@ mod tests {
             barcode: Some("SN-9999".into()),
             code: None,
             serial: Some("9999".into()),
+            serial_source: None,
             note: None,
         };
         let first = add_unit(&db, "node-a", "r-add", &extra).await.unwrap();

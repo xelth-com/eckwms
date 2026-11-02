@@ -19,8 +19,11 @@ talk to. Every touchpoint is an env-gated HTTP seam; unset env = seam inert.
 capabilities:
   - name: WMS/RMA core (documents, devices, customers, warehouse, trips)
     standalone: full            # embedded DB, no external deps
-  - name: Embedded web UI + POS UI
-    standalone: full            # TSE remains a mock seam either way (see 00-identity NON-CLAIMS)
+  - name: Embedded web UI (dashboard)
+    standalone: full            # Svelte dashboard served by the wms crate itself; no external deps
+  - name: POS UI (/K, ecKasse)
+    standalone: none            # pos crate compiled in only under the pos-module Cargo feature; not part of the open-source build
+    commercial: only            # commercial edition only; TSE remains a mock seam either way (see 00-identity NON-CLAIMS)
   - name: MCP agent surface (POST /mcp, bearer tokens)
     standalone: full            # mint your own ECK_MCP_MASTER_TOKEN / ECK_MCP_AGENT_TOKEN
   - name: Document AI (summaries, embeddings, classification, translation)

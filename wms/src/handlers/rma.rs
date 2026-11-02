@@ -30,10 +30,12 @@ pub async fn list_orders(
     State(state): State<Arc<AppState>>,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Vec<Value>>> {
-    let orders: Vec<Value> = if let Some(ref order_type) = q.r#type {
+    // `rec_leaf` = the record-id leaf, projected so we can batch the icon lookup
+    // (and match the `icons_for_orders` keys) without parsing the `id` Thing.
+    let mut orders: Vec<Value> = if let Some(ref order_type) = q.r#type {
         state
             .db
-            .query("SELECT * FROM order WHERE order_type = $otype ORDER BY created_at DESC")
+            .query("SELECT *, record::id(id) AS rec_leaf FROM order WHERE order_type = $otype ORDER BY created_at DESC")
             .bind(("otype", order_type.clone()))
             .await
             .map_err(db_err)?
@@ -42,14 +44,178 @@ pub async fn list_orders(
     } else {
         state
             .db
-            .query("SELECT * FROM order ORDER BY created_at DESC")
+            .query("SELECT *, record::id(id) AS rec_leaf FROM order ORDER BY created_at DESC")
             .await
             .map_err(db_err)?
             .take(0)
             .map_err(db_err)?
     };
 
+    // Representative photo per row in ONE batched query (no N+1 — §4).
+    let ids: Vec<String> = orders
+        .iter()
+        .filter_map(|o| o.get("rec_leaf").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
+    let icons = crate::services::entity::icons_for_orders(&state.db, &ids).await;
+    for o in orders.iter_mut() {
+        let leaf = o.get("rec_leaf").and_then(|v| v.as_str()).map(|s| s.to_string());
+        if let Some(obj) = o.as_object_mut() {
+            let icon = leaf.as_deref().and_then(|l| icons.get(l)).cloned();
+            obj.insert("icon_file_id".into(), icon.map(Value::String).unwrap_or(Value::Null));
+            obj.remove("rec_leaf");
+        }
+    }
+
     Ok(Json(orders))
+}
+
+/// GET /api/repairs/board — the repairs board: repair orders (identical shape
+/// to `GET /api/rma?type=repair`, including `icon_file_id`) PLUS an `awaiting`
+/// column of inbound units that have no live order yet ("awaiting triage"). The
+/// old list endpoint stays untouched; this one is additive.
+pub async fn board(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    // ── orders: same query + batched icons as list_orders(type=repair) ──
+    let mut orders: Vec<Value> = state
+        .db
+        .query("SELECT *, record::id(id) AS rec_leaf FROM order WHERE order_type = $otype ORDER BY created_at DESC")
+        .bind(("otype", "repair".to_string()))
+        .await
+        .map_err(db_err)?
+        .take(0)
+        .map_err(db_err)?;
+    let ids: Vec<String> = orders
+        .iter()
+        .filter_map(|o| o.get("rec_leaf").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
+    let icons = crate::services::entity::icons_for_orders(&state.db, &ids).await;
+    // Clear-tier company + city per order, resolved from its support ticket
+    // (metadata.ticket_id / zoho_ticket) in ONE batched ticket query. The
+    // REQUESTER person is never added; company = ticket company (else null);
+    // city = order.metadata.city, else the ticket's city. `company`/`city` are
+    // NEW keys — the existing shape is untouched.
+    use crate::services::order_enrich as oe;
+    let mut order_refs: std::collections::HashMap<String, oe::TicketRef> = std::collections::HashMap::new();
+    for o in &orders {
+        if let (Some(leaf), Some(meta)) =
+            (o.get("rec_leaf").and_then(|v| v.as_str()), o.get("metadata"))
+        {
+            let r = oe::ticket_ref_from_meta(meta);
+            if !r.is_empty() {
+                order_refs.insert(leaf.to_string(), r);
+            }
+        }
+    }
+    let order_contacts = oe::resolve_tickets(&state.db, &order_refs).await;
+    // Receipt fallback (owner, 2026-11-01): company → order.customer_name →
+    // receipt.client_name; city → receipt city. ONE batched receipt query.
+    let order_receipt_uuids: Vec<String> = orders
+        .iter()
+        .filter_map(|o| {
+            o.get("metadata")
+                .and_then(|m| m.get("receipt_uuid"))
+                .and_then(|v| v.as_str())
+        })
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    let order_receipts = oe::resolve_receipts(&state.db, &order_receipt_uuids).await;
+    for o in orders.iter_mut() {
+        let leaf = o.get("rec_leaf").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let order_city = o
+            .get("metadata")
+            .and_then(|m| m.get("city"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let order_customer = o.get("customer_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let receipt_uuid = o
+            .get("metadata")
+            .and_then(|m| m.get("receipt_uuid"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let contact = leaf.as_deref().and_then(|l| order_contacts.get(l));
+        let receipt_facts = receipt_uuid.as_deref().and_then(|r| order_receipts.get(r));
+        let (company, city) = oe::company_city(
+            contact,
+            order_customer.as_deref(),
+            order_city.as_deref(),
+            receipt_facts,
+        );
+        if let Some(obj) = o.as_object_mut() {
+            let icon = leaf.as_deref().and_then(|l| icons.get(l)).cloned();
+            obj.insert("icon_file_id".into(), icon.map(Value::String).unwrap_or(Value::Null));
+            obj.insert("company".into(), company.map(Value::String).unwrap_or(Value::Null));
+            obj.insert("city".into(), city.map(Value::String).unwrap_or(Value::Null));
+            obj.remove("rec_leaf");
+        }
+    }
+
+    // ── awaiting: inbound items with no live order (UUID link or serial) ──
+    let mut awaiting = crate::services::receiving::awaiting_units(&state.db, 200)
+        .await
+        .map_err(db_err)?;
+    let unit_ids: Vec<String> = awaiting
+        .iter()
+        .filter_map(|u| u.get("unit_id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
+    let unit_icons = crate::services::entity::icons_for_units(&state.db, &unit_ids).await;
+    // Awaiting cards gain the same clear-tier company + city, resolved from
+    // THEIR receipt's ticket (receipt.ticket_id / zoho_ticket), falling back to
+    // the receipt's own client_name / city. One batched receipt query + one
+    // batched ticket query.
+    let receipt_ids: Vec<String> = awaiting
+        .iter()
+        .filter_map(|u| u.get("receipt_id").and_then(|v| v.as_str()))
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    let receipt_rows: Vec<Value> = if receipt_ids.is_empty() {
+        Vec::new()
+    } else {
+        state
+            .db
+            .query("SELECT record::id(id) AS id, ticket_id, zoho_ticket FROM receipt WHERE record::id(id) IN $ids")
+            .bind(("ids", receipt_ids))
+            .await
+            .map_err(db_err)?
+            .take(0)
+            .map_err(db_err)?
+    };
+    let mut receipt_refs: std::collections::HashMap<String, oe::TicketRef> = std::collections::HashMap::new();
+    for row in &receipt_rows {
+        if let Some(id) = row.get("id").and_then(|v| v.as_str()) {
+            let r = oe::ticket_ref_from_meta(row);
+            if !r.is_empty() {
+                receipt_refs.insert(id.to_string(), r);
+            }
+        }
+    }
+    let receipt_contacts = oe::resolve_tickets(&state.db, &receipt_refs).await;
+
+    for u in awaiting.iter_mut() {
+        let uid = u.get("unit_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let receipt_id = u.get("receipt_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let contact = receipt_contacts.get(&receipt_id);
+        let client_name = u
+            .get("client_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let existing_city = u
+            .get("city")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let company = contact.and_then(|c| c.company.clone()).or(client_name);
+        let city = existing_city.or_else(|| contact.and_then(|c| c.city.clone()));
+        if let Some(obj) = u.as_object_mut() {
+            let icon = uid.as_deref().and_then(|l| unit_icons.get(l)).cloned();
+            obj.insert("icon_file_id".into(), icon.map(Value::String).unwrap_or(Value::Null));
+            obj.insert("company".into(), company.map(Value::String).unwrap_or(Value::Null));
+            obj.insert("city".into(), city.map(Value::String).unwrap_or(Value::Null));
+        }
+    }
+
+    Ok(Json(json!({ "orders": orders, "awaiting": awaiting })))
 }
 
 /// GET /api/rma/:id — get a single order
@@ -68,12 +234,17 @@ pub async fn get_order(
         .await
         .map_err(db_err)?;
 
-    if let Some(v) = order {
+    if let Some(mut v) = order {
         // Cache hit (or full-peer hit) — bump LRU access bit. Cheap UPSERT
         // on cache nodes; no-op on full peers since `is_cache=true` filter
         // never matches.
         if state.node_role == "cache" {
             state.sync_engine.touch_cache("order", &id).await;
+        }
+        // Representative photo (§4): full candidate set (order + units + receipt).
+        let icon = crate::services::entity::icon_file_id(&state.db, "order", &id).await;
+        if let Some(obj) = v.as_object_mut() {
+            obj.insert("icon_file_id".into(), icon.map(Value::String).unwrap_or(Value::Null));
         }
         return Ok(Json(v));
     }
@@ -184,6 +355,7 @@ pub async fn create_order(
         "is_refund_requested": payload.is_refund_requested,
         "created_at": now,
         "updated_at": now,
+        "status_changed_at": now,
     });
 
     let created: Option<Value> = state
@@ -203,24 +375,64 @@ pub async fn create_order(
 pub async fn update_order(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(payload): Json<Value>,
+    Json(mut payload): Json<Value>,
 ) -> ApiResult<Json<Value>> {
     // `order` is a synced table — route through put_synced_entity so the edit
     // advances `_vclock` (a raw .content() write left the clock null → peers
     // dropped the edit as local-wins/equal; same class as the importer churn).
     // Existence check keeps the update-only 404 (put_synced_entity upserts).
-    if state
+    let existing = state
         .get_synced_entity("order", &id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .is_none()
-    {
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let Some(existing) = existing else {
         return Err((StatusCode::NOT_FOUND, format!("Order '{id}' not found")));
+    };
+    let old_status = existing
+        .get("status")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let new_status = payload
+        .get("status")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    if let Some(ns) = &new_status {
+        if old_status.as_deref() != Some(ns.as_str()) {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert(
+                    "status_changed_at".to_string(),
+                    json!(Utc::now().to_rfc3339()),
+                );
+            }
+        }
     }
+
     let updated = state
         .put_synced_entity("order", &id, payload)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Domain-event: order status change (fire-and-forget).
+    if let Some(ns) = new_status {
+        if old_status.as_deref() != Some(ns.as_str()) {
+            crate::services::events::record(
+                &state.db,
+                &state.instance_id,
+                crate::services::events::Event::new(
+                    "status",
+                    "order",
+                    &id,
+                    match &old_status {
+                        Some(os) => format!("Status {os} → {ns}"),
+                        None => format!("Status set to {ns}"),
+                    },
+                ),
+            )
+            .await;
+        }
+    }
+
     Ok(Json(updated))
 }
 

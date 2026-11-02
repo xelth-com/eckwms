@@ -50,7 +50,14 @@ pub async fn call_tool(
         .send()
         .await?;
     let raw = resp.text().await?;
+    extract_tool_text(name, &raw)
+}
 
+/// Unwrap one MCP `tools/call` reply body — plain JSON or SSE (`data: {…}`
+/// lines) — into the `/result/content/0/text` string. A JSON-RPC top-level
+/// `error`, or an MCP `result.isError` flag, becomes `Err`. Pure, so the reply
+/// parsers built on top of it are unit-testable without a server.
+pub fn extract_tool_text(name: &str, raw: &str) -> anyhow::Result<String> {
     // The MCP endpoint replies as SSE: lines prefixed with "data: ".
     for line in raw.lines() {
         let payload = line.strip_prefix("data: ").unwrap_or(line);
@@ -73,6 +80,60 @@ pub async fn call_tool(
         }
     }
     anyhow::bail!("{name}: no usable response ({})", raw.chars().take(200).collect::<String>())
+}
+
+/// What a `kb_record` write came back with. The candidate-intake server
+/// (xelixir CONTRACT §3, 2026-10-30) replies with an IntakeReply
+/// `{candidate_id, outcome, finding_id|null, linked_candidate|null, observations,
+/// related[], coerced[], message}`; a pre-intake server replied with
+/// `{finding_id}` only. Both parse into this.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct IntakeOutcome {
+    /// `kb_candidate:<hex>` — absent on a pre-intake server.
+    pub candidate_id: Option<String>,
+    /// `kb_finding:<id>` — set when the claim linked to an open finding (or on
+    /// a pre-intake server, where every write was a finding).
+    pub finding_id: Option<String>,
+    /// `duplicate_delivery | linked | corroborated_candidate | new_candidate`,
+    /// absent on a pre-intake server.
+    pub outcome: Option<String>,
+    /// The elder candidate a `corroborated_candidate` write was counted against.
+    pub linked_candidate: Option<String>,
+    /// The server's note to the writer (logged, not stored).
+    pub message: Option<String>,
+}
+
+impl IntakeOutcome {
+    /// Every intake outcome is a successful delivery: the server has the
+    /// claim (new, attached to a finding, counted against a queued twin, or
+    /// already received). Only a reply carrying neither a candidate nor a
+    /// finding id is not.
+    pub fn delivered(&self) -> bool {
+        self.candidate_id.is_some() || self.finding_id.is_some()
+    }
+}
+
+/// Parse a `kb_record` reply text (the inner `content[0].text`, itself JSON)
+/// into an [`IntakeOutcome`]. Accepts the new IntakeReply and the old
+/// `{finding_id}` shape; JSON `null` and empty strings read as absent.
+/// Returns `None` when the text is not a JSON object.
+pub fn parse_intake_reply(text: &str) -> Option<IntakeOutcome> {
+    let v: Value = serde_json::from_str(text.trim()).ok()?;
+    let obj = v.as_object()?;
+    let s = |k: &str| {
+        obj.get(k)
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+            .map(String::from)
+    };
+    Some(IntakeOutcome {
+        candidate_id: s("candidate_id"),
+        finding_id: s("finding_id"),
+        outcome: s("outcome"),
+        linked_candidate: s("linked_candidate"),
+        message: s("message"),
+    })
 }
 
 /// The recall front door — call at the START of a repair/diagnosis. Graph-gated
@@ -276,6 +337,54 @@ mod tests {
         assert_eq!(extract_details(r#"{"brief":"x","findings":[]}"#, 6, 900), "");
         assert_eq!(extract_details(r#"{"brief":"x"}"#, 6, 900), "");
         assert_eq!(extract_details("not json", 6, 900), "");
+    }
+
+    #[test]
+    fn intake_reply_new_shape() {
+        let text = r#"{"ok":true,"candidate_id":"kb_candidate:0123456789abcdef0123456789abcdef","outcome":"new_candidate","finding_id":null,"linked_candidate":null,"observations":1,"related":[{"id":"kb_finding:abc","score":0.91,"text_head":"x"}],"coerced":[],"message":"new candidate queued"}"#;
+        let o = parse_intake_reply(text).unwrap();
+        assert_eq!(o.candidate_id.as_deref(), Some("kb_candidate:0123456789abcdef0123456789abcdef"));
+        assert_eq!(o.outcome.as_deref(), Some("new_candidate"));
+        assert!(o.finding_id.is_none());
+        assert!(o.delivered());
+
+        let linked = r#"{"candidate_id":"kb_candidate:ff","outcome":"linked","finding_id":"kb_finding:jhwye58i7sjho819ehhe","linked_candidate":null,"observations":3,"related":[],"coerced":[],"message":"already known"}"#;
+        let o = parse_intake_reply(linked).unwrap();
+        assert_eq!(o.finding_id.as_deref(), Some("kb_finding:jhwye58i7sjho819ehhe"));
+        assert_eq!(o.outcome.as_deref(), Some("linked"));
+
+        let corr = r#"{"candidate_id":"kb_candidate:aa","outcome":"corroborated_candidate","finding_id":null,"linked_candidate":"kb_candidate:bb","observations":2,"related":[],"coerced":[],"message":"m"}"#;
+        let o = parse_intake_reply(corr).unwrap();
+        assert_eq!(o.linked_candidate.as_deref(), Some("kb_candidate:bb"));
+        assert!(o.delivered());
+    }
+
+    #[test]
+    fn intake_reply_old_shape_and_garbage() {
+        let o = parse_intake_reply(r#"{"ok":true,"finding_id":"kb_finding:ocwc5wxrdv7k0ew2gobm"}"#).unwrap();
+        assert_eq!(o.finding_id.as_deref(), Some("kb_finding:ocwc5wxrdv7k0ew2gobm"));
+        assert!(o.candidate_id.is_none() && o.outcome.is_none());
+        assert!(o.delivered());
+        assert!(parse_intake_reply("recorded ok").is_none());
+        assert!(!parse_intake_reply(r#"{"ok":true,"finding_id":""}"#).unwrap().delivered());
+    }
+
+    #[test]
+    fn intake_reply_sse_wrapped() {
+        let inner = r#"{"candidate_id":"kb_candidate:cc","outcome":"duplicate_delivery","finding_id":null,"linked_candidate":null,"observations":1,"related":[],"coerced":[],"message":"duplicate delivery"}"#;
+        let envelope = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": { "content": [{ "type": "text", "text": inner }] }
+        });
+        let raw = format!("event: message\ndata: {envelope}\n\n");
+        let text = extract_tool_text("kb_record", &raw).unwrap();
+        let o = parse_intake_reply(&text).unwrap();
+        assert_eq!(o.candidate_id.as_deref(), Some("kb_candidate:cc"));
+        assert_eq!(o.outcome.as_deref(), Some("duplicate_delivery"));
+        // isError and JSON-RPC errors surface as Err.
+        let err = r#"data: {"jsonrpc":"2.0","id":1,"result":{"isError":true,"content":[{"type":"text","text":"missing text"}]}}"#;
+        assert!(extract_tool_text("kb_record", err).is_err());
+        assert!(extract_tool_text("kb_record", r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1}}"#).is_err());
     }
 
     #[tokio::test]

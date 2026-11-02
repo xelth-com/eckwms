@@ -26,10 +26,23 @@ fn filestore() -> FileStore {
 }
 
 /// The `file_resource` row for a CAS uuid, exactly as stored — no chain walk.
+/// Looks a file up by its `cas_uuid` (the historical `/api/files/:id` key) and,
+/// failing that, by its `file_resource` record id — attachment listings,
+/// `has_attachment` edges and the entity/icon views all hand out the record
+/// id, so both spellings must resolve to the same row.
 async fn fetch_file_row(db: &eck_core::db::SurrealDb, cas_uuid: &str) -> Option<Value> {
     let rows: Result<Vec<Value>, _> = db
         .query("SELECT * FROM file_resource WHERE cas_uuid = $id LIMIT 1")
         .bind(("id", cas_uuid.to_string()))
+        .await
+        .and_then(|mut r| r.take(0));
+    if let Some(row) = rows.ok().and_then(|mut v| v.pop()) {
+        return Some(row);
+    }
+    let key = cas_uuid.strip_prefix("file_resource:").unwrap_or(cas_uuid);
+    let rows: Result<Vec<Value>, _> = db
+        .query("SELECT * FROM type::record('file_resource', $key) LIMIT 1")
+        .bind(("key", key.to_string()))
         .await
         .and_then(|mut r| r.take(0));
     rows.ok()?.pop()
@@ -216,6 +229,10 @@ pub async fn upload(
     // Scan-frame evidence extras
     let mut ttl_days: Option<u32> = None;
     let mut recognized = String::new();
+    // Plan/capture evidence typing (.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md §8.2):
+    // when set, stamped onto the auto-RELATE `has_attachment` edge. Additive —
+    // absent means the edge carries no `evidence_type` (old PDA builds).
+    let mut evidence_type: Option<String> = None;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
         (StatusCode::BAD_REQUEST, format!("Multipart error: {}", e))
@@ -276,6 +293,13 @@ pub async fn upload(
             "recognized" | "recognized_text" | "recognizedText" => {
                 recognized = field.text().await.unwrap_or_default();
             }
+            "evidence_type" | "evidenceType" => {
+                let v = field.text().await.unwrap_or_default();
+                let v = v.trim();
+                if !v.is_empty() {
+                    evidence_type = Some(v.to_string());
+                }
+            }
             _ => {
                 let _ = field.bytes().await;
             }
@@ -287,7 +311,7 @@ pub async fn upload(
     let record = upload_image_core(&state, ImageUploadParams {
         content, file_name, mime_type, avatar_data, device_id, context,
         claimed_id, entity_type, entity_id, scan_mode, barcode_data, order_id, user_id,
-        ttl_days, recognized,
+        ttl_days, recognized, evidence_type,
     }).await?;
     Ok((StatusCode::CREATED, Json(record)))
 }
@@ -319,6 +343,8 @@ pub struct ImageUploadParams {
     /// The barcode value or OCR text this frame was recognised from — stored as
     /// `recognized_text` (≤ 4 kB). Scan frames only.
     pub recognized: String,
+    /// Optional evidence label for the auto-RELATE edge (plan/capture, §8.2).
+    pub evidence_type: Option<String>,
 }
 
 /// CAS-save + dedupe + optional RELATE attachment, callable off the HTTP path.
@@ -326,8 +352,11 @@ pub async fn upload_image_core(state: &Arc<AppState>, p: ImageUploadParams) -> A
     let ImageUploadParams {
         content, file_name, mime_type, avatar_data, device_id, mut context,
         claimed_id, mut entity_type, mut entity_id, scan_mode, barcode_data, order_id, user_id,
-        ttl_days, recognized,
+        ttl_days, recognized, evidence_type,
     } = p;
+    let evidence_type = evidence_type
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     let is_scan_frame = context == SCAN_FRAME_CONTEXT;
 
@@ -468,20 +497,34 @@ pub async fn upload_image_core(state: &Arc<AppState>, p: ImageUploadParams) -> A
     if let (Some(et), Some(eid)) = (entity_type, entity_id) {
         if !et.is_empty() && !eid.is_empty() {
             let relate_result: Result<Vec<Value>, String> = match file_record_id(&state.db, &cas_id).await {
-                Some(rid) => state
-                    .db
-                    .query(
+                Some(rid) => {
+                    // `evidence_type` rides onto the edge only when present, so an
+                    // ordinary upload leaves the edge exactly as before (additive).
+                    let et_clause = if evidence_type.is_some() {
+                        ", evidence_type = $evtype"
+                    } else {
+                        ""
+                    };
+                    let sql = format!(
                         "RELATE (type::record($et, $eid)) -> has_attachment -> \
                          (type::record('file_resource', $rid)) \
-                         SET created_at = time::now(), label = $ctx",
-                    )
-                    .bind(("et", et.clone()))
-                    .bind(("eid", eid.clone()))
-                    .bind(("rid", rid))
-                    .bind(("ctx", context.clone()))
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|mut r| r.take(0).map_err(|e| e.to_string())),
+                         SET created_at = time::now(), label = $ctx{}",
+                        et_clause
+                    );
+                    let mut q = state
+                        .db
+                        .query(&sql)
+                        .bind(("et", et.clone()))
+                        .bind(("eid", eid.clone()))
+                        .bind(("rid", rid))
+                        .bind(("ctx", context.clone()));
+                    if let Some(ev) = evidence_type.clone() {
+                        q = q.bind(("evtype", ev));
+                    }
+                    q.await
+                        .map_err(|e| e.to_string())
+                        .and_then(|mut r| r.take(0).map_err(|e| e.to_string()))
+                }
                 None => Err("file_resource row not found".into()),
             };
 
@@ -489,6 +532,26 @@ pub async fn upload_image_core(state: &Arc<AppState>, p: ImageUploadParams) -> A
                 Ok(_) => {
                     attached = true;
                     info!("Attached file {} to {}:{}", cas_id, et, eid);
+                    // Domain-event: photo attached (fire-and-forget). Map the
+                    // storage table onto the entity-page kind.
+                    let ekind = match et.as_str() {
+                        "receipt_unit" => "unit",
+                        "location" => "place",
+                        other => other,
+                    };
+                    crate::services::events::record(
+                        &state.db,
+                        &state.instance_id,
+                        crate::services::events::Event::new(
+                            "photo",
+                            ekind,
+                            &eid,
+                            "Photo attached",
+                        )
+                        .actor(if user_id.is_empty() { None } else { Some(user_id.clone()) })
+                        .reference("file", &cas_id),
+                    )
+                    .await;
                 }
                 Err(e) => warn!("RELATE attachment failed (non-fatal): {}", e),
             }
@@ -809,8 +872,77 @@ pub async fn list_attachments(
     Ok(Json(out))
 }
 
+/// Shared RELATE of an already-uploaded CAS file onto an entity, with an
+/// optional `evidence_type` on the edge (`.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md`
+/// §8.2). The single source of truth behind the generic `attach` handler and
+/// the entity-scoped capture path (`handlers::capture`), so the edge shape,
+/// temp-park clearing and the `photo` domain-event never drift between them.
+///
+/// `entity_table` is the STORAGE table (`order` | `receipt` | `receipt_unit` |
+/// `location` | …). Clears the temp-park and records the event only for a
+/// non-`user` target (a park edge onto `user` is not a real claim).
+pub(crate) async fn relate_attachment(
+    db: &eck_core::db::SurrealDb,
+    instance_id: &str,
+    entity_table: &str,
+    entity_id: &str,
+    file_id: &str,
+    label: &str,
+    evidence_type: Option<&str>,
+    actor: Option<&str>,
+) -> ApiResult<Value> {
+    let rid = file_record_id(db, file_id)
+        .await
+        .ok_or((StatusCode::NOT_FOUND, "unknown file_id".into()))?;
+    let evidence_type = evidence_type.map(str::trim).filter(|s| !s.is_empty());
+    let et_clause = if evidence_type.is_some() {
+        ", evidence_type = $evtype"
+    } else {
+        ""
+    };
+    let sql = format!(
+        "RELATE (type::record($et, $eid)) -> has_attachment -> \
+         (type::record('file_resource', $rid)) \
+         SET created_at = time::now(), label = $label{}",
+        et_clause
+    );
+    let mut q = db
+        .query(&sql)
+        .bind(("et", entity_table.to_string()))
+        .bind(("eid", entity_id.to_string()))
+        .bind(("rid", rid))
+        .bind(("label", label.to_string()));
+    if let Some(ev) = evidence_type {
+        q = q.bind(("evtype", ev.to_string()));
+    }
+    let result: Vec<Value> = q.await.map_err(db_err)?.take(0).map_err(db_err)?;
+    let edge = result
+        .into_iter()
+        .next()
+        .ok_or_else(|| db_err("RELATE returned nothing"))?;
+
+    if entity_table != "user" {
+        clear_temp_park(db, file_id).await;
+        let ekind = match entity_table {
+            "receipt_unit" => "unit",
+            "location" => "place",
+            other => other,
+        };
+        crate::services::events::record(
+            db,
+            instance_id,
+            crate::services::events::Event::new("photo", ekind, entity_id, "Photo attached")
+                .actor(actor.map(|s| s.to_string()))
+                .reference("file", file_id),
+        )
+        .await;
+    }
+    Ok(edge)
+}
+
 /// POST /api/files/attach — Create a graph edge between an entity and a file_resource.
-/// Body: { "entity_type": "order", "entity_id": "abc", "file_id": "<cas_uuid>", "label": "photo" }
+/// Body: { "entity_type": "order", "entity_id": "abc", "file_id": "<cas_uuid>",
+///         "label": "photo", "evidence_type": "serial_photo" }  (evidence_type optional)
 pub async fn attach(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
@@ -827,41 +959,21 @@ pub async fn attach(
         .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "file_id required".into()))?
         .to_string();
-    let label = body["label"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let label = body["label"].as_str().unwrap_or("").to_string();
+    let evidence_type = body["evidence_type"].as_str();
 
-    let rid = file_record_id(&state.db, &file_id)
-        .await
-        .ok_or((StatusCode::NOT_FOUND, "unknown file_id".into()))?;
-    let result: Vec<Value> = state
-        .db
-        .query(
-            "RELATE (type::record($et, $eid)) -> has_attachment -> \
-             (type::record('file_resource', $rid)) \
-             SET created_at = time::now(), label = $label",
-        )
-        .bind(("et", et.clone()))
-        .bind(("eid", eid))
-        .bind(("rid", rid))
-        .bind(("label", label))
-        .await
-        .map_err(db_err)?
-        .take(0)
-        .map_err(db_err)?;
-
-    match result.into_iter().next() {
-        Some(v) => {
-            // A real attachment claims the file — clear the temp TTL and drop
-            // the user park edge(s) so it no longer shows as "unbound".
-            if et != "user" {
-                clear_temp_park(&state.db, &file_id).await;
-            }
-            Ok((StatusCode::CREATED, Json(v)))
-        }
-        None => Err(db_err("RELATE returned nothing")),
-    }
+    let edge = relate_attachment(
+        &state.db,
+        &state.instance_id,
+        &et,
+        &eid,
+        &file_id,
+        &label,
+        evidence_type,
+        None,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(edge)))
 }
 
 /// Remove the temp-park state of a file: TTL off, `temp` user edges gone.

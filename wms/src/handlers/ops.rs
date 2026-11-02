@@ -1599,33 +1599,118 @@ const OR_SOAK_CONCURRENCY: usize = 4;
 
 #[derive(Deserialize)]
 pub struct OrSoakRequest {
-    /// How many recent summarized docs to shadow (clamped to `OR_SOAK_HARD_CAP`).
+    /// How many recent summarized docs to shadow (clamped to `OR_SOAK_HARD_CAP`,
+    /// or `SOAK_COLLECT_CAP` when `collect`).
     #[serde(default = "default_or_soak_limit")]
     pub limit: usize,
     /// OpenRouter model override; defaults via `default_soak_model` (base-URL-aware).
+    /// A slug model (name contains `/`) runs on the slug upstream when
+    /// `ECK_OR_SLUG_API_KEY` is set (see `openrouter_byok_for_model`).
     #[serde(default)]
     pub model: Option<String>,
+    /// Explicit `document` record ids (BARE, no `document:` prefix) to shadow.
+    /// When present, exactly these (still filtered by the eligibility predicate)
+    /// are selected instead of the latest-`limit` sweep.
+    #[serde(default)]
+    pub docs: Option<Vec<String>>,
+    /// `true` → run synchronously in the request and return the per-item A/B
+    /// results (capped at `SOAK_COLLECT_CAP`). `false` (default) → today's
+    /// fire-and-forget: 202 + background run + `[or-shadow]` logs.
+    #[serde(default)]
+    pub collect: bool,
 }
 
 fn default_or_soak_limit() -> usize {
     200
 }
 
-/// The or-soak selection SQL, extracted so the mem-Surreal test executes the
-/// EXACT query the handler runs (the shape that catches the v3 "ORDER BY field
-/// must be projected" parse error). `updated_at` IS in the projection.
+/// The or-soak eligibility predicate (a doc that already carries a summary, the
+/// §7 re-summarize sweep target). Shared by the sweep and the explicit-ids SQL so
+/// both apply the SAME filter. `ai_summary` is projected so the collector can
+/// return it as the production `reference` baseline for the judge.
+const OR_SOAK_WHERE: &str =
+    "WHERE ai_summary IS NOT NONE AND ai_summary != '' AND type IN ['support_ticket', 'invoice']";
+
+/// The or-soak SWEEP selection SQL (latest N), extracted so the mem-Surreal test
+/// executes the EXACT query the handler runs (the shape that catches the v3
+/// "ORDER BY field must be projected" parse error). `updated_at` IS in the
+/// projection.
 fn or_soak_select_sql(limit: usize) -> String {
     format!(
-        "SELECT record::id(id) AS id, type, updated_at FROM document \n         WHERE ai_summary IS NOT NONE AND ai_summary != '' \n         AND type IN ['support_ticket', 'invoice'] \n         ORDER BY updated_at DESC LIMIT {limit}"
+        "SELECT record::id(id) AS id, type, updated_at, ai_summary FROM document \n         {OR_SOAK_WHERE} \n         ORDER BY updated_at DESC LIMIT {limit}"
     )
 }
 
-/// The img-soak selection SQL, extracted for the same executed-query test.
-/// `created_at` MUST be in the projection or SurrealDB v3 rejects the ORDER BY.
+/// The or-soak EXPLICIT-IDS selection SQL: exactly the docs in `$ids` (bare
+/// record ids) that still satisfy the sweep eligibility predicate. `ORDER BY`
+/// stays on the projected `updated_at`.
+fn or_soak_select_by_ids_sql() -> String {
+    format!(
+        "SELECT record::id(id) AS id, type, updated_at, ai_summary FROM document \n         {OR_SOAK_WHERE} AND record::id(id) IN $ids \n         ORDER BY updated_at DESC"
+    )
+}
+
+/// The img-soak eligibility predicate (live, decodable image rows). Shared by the
+/// sweep and explicit-ids SQL.
+const IMG_SOAK_WHERE: &str = "WHERE replaced_by IS NONE AND storage_path IS NOT NONE \n         AND mime_type IN ['image/jpeg', 'image/png', 'image/webp', 'image/avif'] \n         AND (optimization_level IS NONE OR optimization_level >= 0)";
+
+/// The img-soak SWEEP selection SQL, extracted for the same executed-query test.
+/// `created_at` MUST be in the projection or SurrealDB v3 rejects the ORDER BY;
+/// `record::id(id) AS id` gives the collector each row's `file_id`.
 fn img_soak_select_sql(limit: usize) -> String {
     format!(
-        "SELECT cas_uuid, created_at FROM file_resource \n         WHERE replaced_by IS NONE AND storage_path IS NOT NONE \n         AND mime_type IN ['image/jpeg', 'image/png', 'image/webp', 'image/avif'] \n         AND (optimization_level IS NONE OR optimization_level >= 0) \n         ORDER BY created_at DESC LIMIT {limit}"
+        "SELECT record::id(id) AS id, cas_uuid, created_at FROM file_resource \n         {IMG_SOAK_WHERE} \n         ORDER BY created_at DESC LIMIT {limit}"
     )
+}
+
+/// The img-soak EXPLICIT-IDS selection SQL: exactly the `file_resource` rows in
+/// `$ids` (bare record ids) that still satisfy the eligibility predicate.
+fn img_soak_select_by_ids_sql() -> String {
+    format!(
+        "SELECT record::id(id) AS id, cas_uuid, created_at FROM file_resource \n         {IMG_SOAK_WHERE} AND record::id(id) IN $ids \n         ORDER BY created_at DESC"
+    )
+}
+
+/// Hard cap on items a synchronous `collect=true` A/B run will process in-request.
+const SOAK_COLLECT_CAP: usize = 60;
+
+/// Run the or-soak selection: explicit `ids` (each bare record id) when given,
+/// else the latest-`limit` sweep. `Response::check()` surfaces a v3 query error
+/// before `take`.
+async fn or_soak_select(
+    db: &eck_core::db::SurrealDb,
+    ids: Option<&[String]>,
+    limit: usize,
+) -> Result<Vec<Value>, anyhow::Error> {
+    let rows: Vec<Value> = match ids {
+        Some(ids) => db
+            .query(or_soak_select_by_ids_sql())
+            .bind(("ids", ids.to_vec()))
+            .await?
+            .check()?
+            .take(0)?,
+        None => db.query(or_soak_select_sql(limit)).await?.check()?.take(0)?,
+    };
+    Ok(rows)
+}
+
+/// Run the img-soak selection: explicit `ids` when given, else the latest-`limit`
+/// sweep.
+async fn img_soak_select(
+    db: &eck_core::db::SurrealDb,
+    ids: Option<&[String]>,
+    limit: usize,
+) -> Result<Vec<Value>, anyhow::Error> {
+    let rows: Vec<Value> = match ids {
+        Some(ids) => db
+            .query(img_soak_select_by_ids_sql())
+            .bind(("ids", ids.to_vec()))
+            .await?
+            .check()?
+            .take(0)?,
+        None => db.query(img_soak_select_sql(limit)).await?.check()?.take(0)?,
+    };
+    Ok(rows)
 }
 
 pub async fn or_soak(
@@ -1655,16 +1740,40 @@ pub async fn or_soak(
         );
     }
 
+    // Explicit ids (bare document record ids) → select exactly those; else sweep.
+    let ids = body
+        .docs
+        .as_ref()
+        .map(|v| {
+            v.iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty());
+
     let db = state.db.clone();
     info!(
         target: "ops_audit",
-        verb = "or_soak", limit, model = %model,
+        verb = "or_soak", limit, model = %model, collect = body.collect,
+        ids = ids.as_ref().map(|v| v.len()).unwrap_or(0),
         "ops verb dispatched (read-only OR shadow soak)"
     );
 
+    // collect=true → synchronous A/B run, returns the per-item results (200).
+    if body.collect {
+        let cap = limit.min(SOAK_COLLECT_CAP);
+        let ids = ids.map(|mut v| {
+            v.truncate(SOAK_COLLECT_CAP);
+            v
+        });
+        let result = run_or_soak_collect(db, key, model, ids, cap).await;
+        return (StatusCode::OK, Json(result));
+    }
+
     let model_for_spawn = model.clone();
     tokio::spawn(async move {
-        run_or_soak(db, key, model_for_spawn, limit).await;
+        run_or_soak(db, key, model_for_spawn, ids, limit).await;
     });
 
     (
@@ -1681,9 +1790,15 @@ pub async fn or_soak(
 
 /// The background soak body. Read-only: selection SELECT + per-doc masked-input
 /// build (SELECTs) + one OR chat call; logs only.
-async fn run_or_soak(db: eck_core::db::SurrealDb, api_key: String, model: String, limit: usize) {
+async fn run_or_soak(
+    db: eck_core::db::SurrealDb,
+    api_key: String,
+    model: String,
+    ids: Option<Vec<String>>,
+    limit: usize,
+) {
     let http = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(180))
         .build()
     {
         Ok(c) => c,
@@ -1692,23 +1807,15 @@ async fn run_or_soak(db: eck_core::db::SurrealDb, api_key: String, model: String
             return;
         }
     };
-    let or_auth = Arc::new(eck_core::ai::AiAuth::OpenRouter {
-        api_key,
-        model: model.clone(),
-        // Shadow soak uses the node-local OPENROUTER_API_KEY directly (BYOK).
-        proxied: false,
-        serve_node: None,
-        base_url: None,
-    });
+    // Slug-aware BYOK auth: a slug model on `ECK_OR_SLUG_API_KEY` takes the slug
+    // upstream (unreported to the wallet); otherwise the node-local BYOK key on
+    // the primary upstream — byte-identical to the old hand-built auth.
+    let or_auth = Arc::new(eck_core::ai::openrouter_byok_for_model(&model, &api_key));
 
-    // Selection: recent docs that already carry a summary (the re-summarize
-    // sweep of §7). Raw-availability is enforced per-doc by `or_soak_summarize`
-    // returning None (skipped) — the same input-build the live path uses.
-    let docs: Vec<Value> = match db
-        .query(or_soak_select_sql(limit))
-        .await
-        .and_then(|mut r| r.take(0))
-    {
+    // Selection: explicit ids when given, else recent docs that already carry a
+    // summary (the re-summarize sweep of §7). Raw-availability is enforced per-doc
+    // by `or_soak_summarize` returning None (skipped) — the live path's input-build.
+    let docs: Vec<Value> = match or_soak_select(&db, ids.as_deref(), limit).await {
         Ok(d) => d,
         Err(e) => {
             warn!("[or-soak] selection query failed: {e}");
@@ -1774,7 +1881,7 @@ async fn run_or_soak(db: eck_core::db::SurrealDb, api_key: String, model: String
                 Ok(None) => {
                     skipped.fetch_add(1, Ordering::Relaxed);
                 }
-                Ok(Some((summary, usage))) => {
+                Ok(Some((summary, usage, _masked_chars))) => {
                     let latency_ms = started.elapsed().as_millis() as u64;
                     let cost = usage
                         .get("openrouterCostUsd")
@@ -1848,6 +1955,140 @@ async fn run_or_soak(db: eck_core::db::SurrealDb, api_key: String, model: String
     );
 }
 
+/// SYNCHRONOUS or-soak (A/B collector): run sequentially in the request and
+/// return per-item results instead of logging. Read-only, same eligibility +
+/// masked-input build + $0.50 cost abort as the background run, but it CAPTURES
+/// each doc's masked summary so an offline judge can compare engines. Each item
+/// also carries `reference` = the doc's CURRENT stored `ai_summary` (the
+/// production baseline). Never persists.
+async fn run_or_soak_collect(
+    db: eck_core::db::SurrealDb,
+    api_key: String,
+    model: String,
+    ids: Option<Vec<String>>,
+    limit: usize,
+) -> Value {
+    let http = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return json!({ "success": false, "error": format!("http client build failed: {e}") }),
+    };
+    let or_auth = eck_core::ai::openrouter_byok_for_model(&model, &api_key);
+
+    let docs: Vec<Value> = match or_soak_select(&db, ids.as_deref(), limit).await {
+        Ok(d) => d,
+        Err(e) => return json!({ "success": false, "error": format!("selection query failed: {e}") }),
+    };
+
+    let mut items: Vec<Value> = Vec::new();
+    let mut processed: u64 = 0;
+    let mut errors: u64 = 0;
+    let mut cost_usd: f64 = 0.0;
+    let mut latency_sum_ms: u64 = 0;
+    let mut aborted = false;
+
+    for doc in docs {
+        let id = match doc.get("id").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let reference = doc
+            .get("ai_summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let started = Instant::now();
+        // One retry on a transient failure; an empty-content (guard) trip is not
+        // transient and never retried — mirrors the background loop.
+        let mut res =
+            crate::ai::summarization::or_soak_summarize(&db, &http, &or_auth, &doc, &id).await;
+        if let Err(ref e) = res {
+            if !e.to_string().contains("empty content") {
+                res = crate::ai::summarization::or_soak_summarize(&db, &http, &or_auth, &doc, &id)
+                    .await;
+            }
+        }
+        match res {
+            Ok(None) => {
+                items.push(json!({
+                    "doc_id": id,
+                    "masked_input_chars": 0,
+                    "output_text": "",
+                    "reference": reference,
+                    "guard_trip": false,
+                    "error": "skipped (no usable local text)",
+                }));
+            }
+            Ok(Some((summary, usage, masked_chars))) => {
+                let latency_ms = started.elapsed().as_millis() as u64;
+                let pt = usage.get("promptTokenCount").and_then(|v| v.as_i64()).unwrap_or(0);
+                let ct = usage.get("candidatesTokenCount").and_then(|v| v.as_i64()).unwrap_or(0);
+                let cached = usage
+                    .get("cachedContentTokenCount")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let c = usage.get("openrouterCostUsd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let cjk = crate::ai::summarization::contains_cjk(&summary);
+                processed += 1;
+                latency_sum_ms += latency_ms;
+                cost_usd += c.max(0.0);
+                items.push(json!({
+                    "doc_id": id,
+                    "masked_input_chars": masked_chars,
+                    "output_text": summary,
+                    "reference": reference,
+                    "latency_ms": latency_ms,
+                    "prompt_tokens": pt,
+                    "completion_tokens": ct,
+                    "cached_tokens": cached,
+                    "cost_usd": c,
+                    "cjk_bleed": cjk,
+                    "guard_trip": false,
+                    "error": Value::Null,
+                }));
+                // Safety cap: stop once cumulative cost crosses the abort threshold.
+                if cost_usd > OR_SOAK_COST_ABORT_USD {
+                    aborted = true;
+                    break;
+                }
+            }
+            Err(e) => {
+                let es = e.to_string();
+                let guard = es.contains("empty content");
+                if !guard {
+                    errors += 1;
+                }
+                items.push(json!({
+                    "doc_id": id,
+                    "masked_input_chars": 0,
+                    "output_text": "",
+                    "reference": reference,
+                    "guard_trip": guard,
+                    "error": es,
+                }));
+            }
+        }
+    }
+
+    let avg_latency_ms = if processed > 0 { latency_sum_ms / processed } else { 0 };
+    json!({
+        "success": true,
+        "verb": "or-soak",
+        "model": model,
+        "collect": true,
+        "aborted": aborted,
+        "totals": {
+            "processed": processed,
+            "errors": errors,
+            "cost_usd": cost_usd,
+            "avg_latency_ms": avg_latency_ms,
+        },
+        "items": items,
+    })
+}
+
 // ─── POST /admin/img-soak ───────────────────────────────────────────────────
 //
 // Vision-wave sibling of or-soak (.eck/OPENROUTER_TIER.md §13). Admin-gated,
@@ -1868,6 +2109,14 @@ pub struct ImgSoakRequest {
     pub limit: usize,
     #[serde(default)]
     pub model: Option<String>,
+    /// Explicit `file_resource` record ids (BARE) to shadow; when present these
+    /// replace the latest-`limit` sweep (still eligibility-filtered).
+    #[serde(default)]
+    pub files: Option<Vec<String>>,
+    /// `true` → synchronous in-request run returning per-item A/B results
+    /// (capped at `SOAK_COLLECT_CAP`); `false` (default) → 202 + background.
+    #[serde(default)]
+    pub collect: bool,
 }
 
 fn default_img_soak_limit() -> usize {
@@ -1900,16 +2149,38 @@ pub async fn img_soak(
         );
     }
 
+    let ids = body
+        .files
+        .as_ref()
+        .map(|v| {
+            v.iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty());
+
     let db = state.db.clone();
     info!(
         target: "ops_audit",
-        verb = "img_soak", limit, model = %model,
+        verb = "img_soak", limit, model = %model, collect = body.collect,
+        ids = ids.as_ref().map(|v| v.len()).unwrap_or(0),
         "ops verb dispatched (read-only image vision shadow soak)"
     );
 
+    if body.collect {
+        let cap = limit.min(SOAK_COLLECT_CAP);
+        let ids = ids.map(|mut v| {
+            v.truncate(SOAK_COLLECT_CAP);
+            v
+        });
+        let result = run_img_soak_collect(db, key, model, ids, cap).await;
+        return (StatusCode::OK, Json(result));
+    }
+
     let model_for_spawn = model.clone();
     tokio::spawn(async move {
-        run_img_soak(db, key, model_for_spawn, limit).await;
+        run_img_soak(db, key, model_for_spawn, ids, limit).await;
     });
 
     (
@@ -1926,7 +2197,13 @@ pub async fn img_soak(
 
 /// The background image soak body. Read-only: selection SELECT + per-attachment
 /// two-pass pipeline (no persist). Logs only.
-async fn run_img_soak(db: eck_core::db::SurrealDb, api_key: String, model: String, limit: usize) {
+async fn run_img_soak(
+    db: eck_core::db::SurrealDb,
+    api_key: String,
+    model: String,
+    ids: Option<Vec<String>>,
+    limit: usize,
+) {
     let http = match reqwest::Client::builder().timeout(Duration::from_secs(90)).build() {
         Ok(c) => c,
         Err(e) => {
@@ -1934,22 +2211,13 @@ async fn run_img_soak(db: eck_core::db::SurrealDb, api_key: String, model: Strin
             return;
         }
     };
-    let or_auth = Arc::new(eck_core::ai::AiAuth::OpenRouter {
-        api_key,
-        model: model.clone(),
-        proxied: false,
-        serve_node: None,
-        base_url: None,
-    });
+    // Slug-aware BYOK auth (see `run_or_soak`).
+    let or_auth = Arc::new(eck_core::ai::openrouter_byok_for_model(&model, &api_key));
 
-    // Live (byte-owning) image rows, newest first. Same decodable-mime + non-
-    // failed filter as the worker; the pipeline returns None for anything it
-    // cannot decode (counted as skipped).
-    let rows: Vec<Value> = match db
-        .query(img_soak_select_sql(limit))
-        .await
-        .and_then(|mut r| r.take(0))
-    {
+    // Explicit ids when given, else live (byte-owning) image rows, newest first.
+    // Same decodable-mime + non-failed filter as the worker; the pipeline returns
+    // None for anything it cannot decode (counted as skipped).
+    let rows: Vec<Value> = match img_soak_select(&db, ids.as_deref(), limit).await {
         Ok(d) => d,
         Err(e) => {
             warn!("[img-soak] selection query failed: {e}");
@@ -2000,10 +2268,10 @@ async fn run_img_soak(db: eck_core::db::SurrealDb, api_key: String, model: Strin
             }
             let started = Instant::now();
             match crate::ai::image_summary::run_image_pipeline(&db, &http, &or_auth, &cas).await {
-                Ok(None) => {
+                Ok(Err(_)) => {
                     skipped.fetch_add(1, Ordering::Relaxed);
                 }
-                Ok(Some(res)) => {
+                Ok(Ok(res)) => {
                     let latency_ms = started.elapsed().as_millis() as u64;
                     processed.fetch_add(1, Ordering::Relaxed);
                     latency_sum_ms.fetch_add(latency_ms, Ordering::Relaxed);
@@ -2055,6 +2323,100 @@ async fn run_img_soak(db: eck_core::db::SurrealDb, api_key: String, model: Strin
     info!(
         "[img-soak-done] requested={requested} processed={processed_n} errors={errors_n} zoom_hits={zoom_n} total_cost_usd={total_cost:.4} avg_latency_ms={avg_latency}"
     );
+}
+
+/// SYNCHRONOUS img-soak (A/B collector): sequential in-request two-pass pipeline
+/// runs, returning per-item results (never persists). Same eligibility + $0.50
+/// cost abort as the background run.
+async fn run_img_soak_collect(
+    db: eck_core::db::SurrealDb,
+    api_key: String,
+    model: String,
+    ids: Option<Vec<String>>,
+    limit: usize,
+) -> Value {
+    let http = match reqwest::Client::builder().timeout(Duration::from_secs(90)).build() {
+        Ok(c) => c,
+        Err(e) => return json!({ "success": false, "error": format!("http client build failed: {e}") }),
+    };
+    let or_auth = eck_core::ai::openrouter_byok_for_model(&model, &api_key);
+
+    let rows: Vec<Value> = match img_soak_select(&db, ids.as_deref(), limit).await {
+        Ok(d) => d,
+        Err(e) => return json!({ "success": false, "error": format!("selection query failed: {e}") }),
+    };
+
+    let mut items: Vec<Value> = Vec::new();
+    let mut processed: u64 = 0;
+    let mut errors: u64 = 0;
+    let mut cost_usd: f64 = 0.0;
+    let mut latency_sum_ms: u64 = 0;
+    let mut aborted = false;
+
+    for row in rows {
+        let file_id = row.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let cas = match row.get("cas_uuid").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let started = Instant::now();
+        match crate::ai::image_summary::run_image_pipeline(&db, &http, &or_auth, &cas).await {
+            Ok(Err(reason)) => {
+                items.push(json!({
+                    "file_id": file_id,
+                    "cas": cas,
+                    "output_text": "",
+                    "error": format!("skipped ({reason:?})"),
+                }));
+            }
+            Ok(Ok(res)) => {
+                let latency_ms = started.elapsed().as_millis() as u64;
+                processed += 1;
+                latency_sum_ms += latency_ms;
+                cost_usd += res.cost_usd.max(0.0);
+                items.push(json!({
+                    "file_id": file_id,
+                    "cas": cas,
+                    "output_text": res.summary,
+                    "latency_ms": latency_ms,
+                    "prompt_tokens": res.tier_prompt_tokens,
+                    "zoom_rounds": res.calls,
+                    "zoom_used": res.zoom_used,
+                    "cost_usd": res.cost_usd,
+                    "error": Value::Null,
+                }));
+                if cost_usd > OR_SOAK_COST_ABORT_USD {
+                    aborted = true;
+                    break;
+                }
+            }
+            Err(e) => {
+                errors += 1;
+                items.push(json!({
+                    "file_id": file_id,
+                    "cas": cas,
+                    "output_text": "",
+                    "error": e.to_string(),
+                }));
+            }
+        }
+    }
+
+    let avg_latency_ms = if processed > 0 { latency_sum_ms / processed } else { 0 };
+    json!({
+        "success": true,
+        "verb": "img-soak",
+        "model": model,
+        "collect": true,
+        "aborted": aborted,
+        "totals": {
+            "processed": processed,
+            "errors": errors,
+            "cost_usd": cost_usd,
+            "avg_latency_ms": avg_latency_ms,
+        },
+        "items": items,
+    })
 }
 
 // ── NAS repair-tree ingester (.eck/REPAIR_LIFECYCLE.md §7) ──────────────────
@@ -2127,7 +2489,10 @@ pub async fn nas_ingest(
 
 #[cfg(test)]
 mod soak_tests {
-    use super::{default_soak_model, img_soak_select_sql, or_soak_select_sql};
+    use super::{
+        default_soak_model, img_soak_select_by_ids_sql, img_soak_select_sql,
+        or_soak_select_by_ids_sql, or_soak_select_sql,
+    };
 
     /// The base-URL-aware default model: OR-prefixed for OpenRouter proper,
     /// UNprefixed for the Z.ai-direct / bigmodel dialect (the prefixed name 404s
@@ -2172,10 +2537,51 @@ mod soak_tests {
         let docs: Vec<serde_json::Value> =
             db.query(or_soak_select_sql(200)).await.unwrap().take(0).unwrap();
         assert_eq!(docs.len(), 1, "or-soak selection parses and returns the seeded ticket");
+        // ai_summary is projected so the collector can emit it as `reference`.
+        assert_eq!(docs[0].get("ai_summary").and_then(|v| v.as_str()), Some("x"));
+        let doc_id = docs[0].get("id").and_then(|v| v.as_str()).unwrap().to_string();
 
         let imgs: Vec<serde_json::Value> =
             db.query(img_soak_select_sql(50)).await.unwrap().take(0).unwrap();
         assert_eq!(imgs.len(), 1, "img-soak selection parses and returns the seeded image");
         assert_eq!(imgs[0].get("cas_uuid").and_then(|v| v.as_str()), Some("c1"));
+        let file_id = imgs[0].get("id").and_then(|v| v.as_str()).unwrap().to_string();
+
+        // Explicit-ids selection (collect / docs+files path): parses, binds $ids,
+        // and returns exactly the requested eligible row.
+        let by_ids: Vec<serde_json::Value> = db
+            .query(or_soak_select_by_ids_sql())
+            .bind(("ids", vec![doc_id.clone()]))
+            .await
+            .unwrap()
+            .check()
+            .unwrap()
+            .take(0)
+            .unwrap();
+        assert_eq!(by_ids.len(), 1, "or-soak by-ids selection returns the requested doc");
+        assert_eq!(by_ids[0].get("id").and_then(|v| v.as_str()), Some(doc_id.as_str()));
+
+        let img_by_ids: Vec<serde_json::Value> = db
+            .query(img_soak_select_by_ids_sql())
+            .bind(("ids", vec![file_id.clone()]))
+            .await
+            .unwrap()
+            .check()
+            .unwrap()
+            .take(0)
+            .unwrap();
+        assert_eq!(img_by_ids.len(), 1, "img-soak by-ids selection returns the requested file");
+
+        // A non-matching id yields nothing (predicate + IN both applied).
+        let none: Vec<serde_json::Value> = db
+            .query(or_soak_select_by_ids_sql())
+            .bind(("ids", vec!["does-not-exist".to_string()]))
+            .await
+            .unwrap()
+            .check()
+            .unwrap()
+            .take(0)
+            .unwrap();
+        assert!(none.is_empty(), "unknown id selects no rows");
     }
 }

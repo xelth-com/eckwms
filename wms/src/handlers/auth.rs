@@ -214,19 +214,34 @@ pub async fn setup_status(
         .unwrap_or("");
     match &*state.setup_password.read().await {
         Some(pw) => {
+            // The bootstrap password is handed out only on the LAN / loopback
+            // (the person installing the node is next to it, or on its
+            // network). A public caller hitting a freshly installed cloud node
+            // learns that setup is pending, not the credential — that one is
+            // in the boot journal ("FIRST RUN: Setup account created") for
+            // whoever has server access (review 2026-09-30, F10-1/F11-1).
+            let local = is_private_or_loopback_ip(&client_ip);
             tracing::info!(
                 target: "diag::setup_status",
                 ip = %client_ip,
                 ua_short = ua.chars().take(40).collect::<String>(),
                 referer = referer,
-                "needsSetup=true returned (password={}…)",
-                &pw.chars().take(4).collect::<String>()
+                "needsSetup=true returned (password={}, disclosed={local})",
+                if local { pw.chars().take(4).collect::<String>() + "…" } else { "withheld".to_string() }
             );
-            Json(json!({
-                "needsSetup": true,
-                "email": "admin@setup.local",
-                "password": pw
-            }))
+            if local {
+                Json(json!({
+                    "needsSetup": true,
+                    "email": "admin@setup.local",
+                    "password": pw
+                }))
+            } else {
+                Json(json!({
+                    "needsSetup": true,
+                    "email": "admin@setup.local",
+                    "hint": "bootstrap password is shown only on the node's own network; read it from the server journal (FIRST RUN: Setup account created)"
+                }))
+            }
         },
         None => {
             tracing::info!(
@@ -518,6 +533,28 @@ fn is_local_ip(ip: &str) -> bool {
     ip == "127.0.0.1" || ip == "::1" || ip == "::ffff:127.0.0.1"
 }
 
+/// Loopback or a private/link-local address (RFC 1918, 169.254/16, fc00::/7,
+/// fe80::/10, and their IPv4-mapped forms) — "on the node's own network".
+fn is_private_or_loopback_ip(ip: &str) -> bool {
+    use std::net::IpAddr;
+    let Ok(addr) = ip.parse::<IpAddr>() else { return is_local_ip(ip) };
+    let v4 = match addr {
+        IpAddr::V4(v4) => Some(v4),
+        IpAddr::V6(v6) => v6.to_ipv4_mapped(),
+    };
+    if let Some(v4) = v4 {
+        return v4.is_loopback() || v4.is_private() || v4.is_link_local();
+    }
+    match addr {
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00 // fc00::/7 unique local
+                || (v6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 link local
+        }
+        IpAddr::V4(_) => false,
+    }
+}
+
 fn extract_client_ip(headers: &HeaderMap, connect_info: &ConnectInfo<std::net::SocketAddr>) -> String {
     // Only trust proxy headers when the direct peer IS the local proxy (nginx
     // on this host). WMS also listens on direct public ports, where the remote
@@ -535,6 +572,18 @@ fn extract_client_ip(headers: &HeaderMap, connect_info: &ConnectInfo<std::net::S
         }
     }
     socket_ip.to_string()
+}
+
+/// Node-local key for the kiosk-enable row. `system_config` is mesh-synced
+/// (it's in SYNC_ENTITY_TYPES), so a single shared `system_config:kiosk`
+/// record gets overwritten the moment ANY other node's `system_config` write
+/// propagates here — which is exactly how this node's kiosk flag silently
+/// flipped back to `false` after being enabled. Suffixing the id with this
+/// node's `instance_id` gives every node its own row in the same meshed
+/// table: each node only ever reads/writes its own key, so remote writes to
+/// other nodes' kiosk rows never touch it.
+fn kiosk_config_key(state: &AppState) -> String {
+    format!("kiosk_{}", state.instance_id.replace('-', ""))
 }
 
 pub async fn kiosk_token(
@@ -569,6 +618,9 @@ pub async fn kiosk_token(
                 "success": true,
                 "token": token,
                 "mode": "wms",
+                // Public-exhibition nodes sign the visitor straight in; there's no
+                // login form to idle on, so the countdown is meaningless here.
+                "delay_secs": 0,
                 "user": { "id": "gast", "username": "Gast", "name": "Gast", "role": "observer", "preferredLanguage": "en", "languages": [] }
             }))),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "success": false, "error": e.to_string() }))),
@@ -585,20 +637,22 @@ pub async fn kiosk_token(
         return (StatusCode::FORBIDDEN, Json(json!({ "success": false, "error": "Kiosk token only available from localhost" })));
     }
 
-    let enabled: Option<serde_json::Value> = state
+    let key = kiosk_config_key(&state);
+    let config: Option<serde_json::Value> = state
         .db
-        .query("SELECT enabled, mode FROM system_config:kiosk")
+        .query("SELECT enabled, mode, auto_login_delay_secs FROM type::record('system_config', $key)")
+        .bind(("key", key))
         .await
         .ok()
         .and_then(|mut r| r.take(0).ok())
         .flatten();
 
-    let is_enabled = enabled.as_ref().and_then(|v| v.get("enabled")?.as_bool()).unwrap_or(false);
+    let is_enabled = config.as_ref().and_then(|v| v.get("enabled")?.as_bool()).unwrap_or(false);
     if !is_enabled {
         tracing::info!(
             target: "diag::kiosk_token",
             ip = %client_ip,
-            raw_config = ?enabled,
+            raw_config = ?config,
             "REJECTED: kiosk mode not enabled"
         );
         return (StatusCode::FORBIDDEN, Json(json!({ "success": false, "error": "Kiosk mode is not enabled" })));
@@ -607,7 +661,7 @@ pub async fn kiosk_token(
     // Boot mode "pos": this device is a register, not an observer dashboard.
     // No token is minted — cashiers authenticate on the POS PIN pad; the
     // login shell sees `mode` and redirects to /K/ instead.
-    let mode = enabled
+    let mode = config
         .as_ref()
         .and_then(|v| v.get("mode")?.as_str().map(str::to_string))
         .unwrap_or_else(|| "wms".into());
@@ -620,6 +674,13 @@ pub async fn kiosk_token(
         return (StatusCode::OK, Json(json!({ "success": true, "mode": "pos" })));
     }
 
+    // How long the login screen sits idle before auto-signing the kiosk
+    // observer in — configurable per node (see set_kiosk_config), 5 min default.
+    let delay_secs = config
+        .as_ref()
+        .and_then(|v| v.get("auto_login_delay_secs")?.as_u64())
+        .unwrap_or(300);
+
     tracing::info!(
         target: "diag::kiosk_token",
         ip = %client_ip,
@@ -631,6 +692,7 @@ pub async fn kiosk_token(
             "success": true,
             "token": token,
             "mode": "wms",
+            "delay_secs": delay_secs,
             "user": { "id": "kiosk", "username": "Kiosk Observer", "name": "Kiosk Observer", "role": "observer", "preferredLanguage": "en", "languages": [] }
         }))),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "success": false, "error": e.to_string() }))),
@@ -672,17 +734,25 @@ pub async fn get_kiosk_config(
     Extension(_claims): Extension<Claims>,
     State(state): State<Arc<AppState>>,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    let key = kiosk_config_key(&state);
+    let id = format!("system_config:{key}");
     let config: Option<serde_json::Value> = state
         .db
-        .query("SELECT * FROM system_config:kiosk")
+        .query("SELECT * FROM type::record('system_config', $key)")
+        .bind(("key", key))
         .await
         .ok()
         .and_then(|mut r| r.take(0).ok())
         .flatten();
 
     match config {
-        Some(v) => (StatusCode::OK, Json(v)),
-        None => (StatusCode::OK, Json(json!({ "id": "system_config:kiosk", "enabled": false }))),
+        Some(mut v) => {
+            if v.get("auto_login_delay_secs").and_then(|d| d.as_u64()).is_none() {
+                v["auto_login_delay_secs"] = json!(300);
+            }
+            (StatusCode::OK, Json(v))
+        }
+        None => (StatusCode::OK, Json(json!({ "id": id, "enabled": false, "auto_login_delay_secs": 300 }))),
     }
 }
 
@@ -799,6 +869,12 @@ pub struct KioskConfigRequest {
     /// or "pos" (boot straight into the register at /K/).
     #[serde(default)]
     pub mode: Option<String>,
+    /// Seconds the login screen idles before auto-signing the kiosk observer
+    /// in. Omitted → leave the stored value untouched (older clients /
+    /// enabled-only toggles); absent on first write → defaults to 300 at
+    /// read-time (see get_kiosk_config / kiosk_token).
+    #[serde(default)]
+    pub auto_login_delay_secs: Option<u64>,
 }
 
 pub async fn set_kiosk_config(
@@ -827,25 +903,56 @@ pub async fn set_kiosk_config(
             );
         }
     };
+    let delay_secs = body.auto_login_delay_secs.map(|d| d.min(3600));
 
-    let result = if let Some(ref m) = mode {
-        state
+    let key = kiosk_config_key(&state);
+
+    // `system_config` is the one table here that's node-local despite being
+    // in SYNC_ENTITY_TYPES — see kiosk_config_key. Every write below targets
+    // this node's own `kiosk_<instance_id>` key, never the legacy shared
+    // `system_config:kiosk` id, so other nodes' kiosk settings (and this
+    // node's, from their side) never collide.
+    let result = match (mode, delay_secs) {
+        (Some(m), Some(d)) => state
             .db
-            .query("UPSERT system_config:kiosk SET enabled = $enabled, mode = $mode, updated_at = time::now()")
+            .query("UPSERT type::record('system_config', $key) SET enabled = $enabled, mode = $mode, auto_login_delay_secs = $delay, updated_at = time::now()")
+            .bind(("key", key.clone()))
             .bind(("enabled", body.enabled))
-            .bind(("mode", m.clone()))
-            .await
-    } else {
-        // Mode omitted → leave the stored mode untouched (older clients).
-        state
+            .bind(("mode", m))
+            .bind(("delay", d))
+            .await,
+        (Some(m), None) => state
             .db
-            .query("UPSERT system_config:kiosk SET enabled = $enabled, updated_at = time::now()")
+            .query("UPSERT type::record('system_config', $key) SET enabled = $enabled, mode = $mode, updated_at = time::now()")
+            .bind(("key", key.clone()))
             .bind(("enabled", body.enabled))
-            .await
+            .bind(("mode", m))
+            .await,
+        (None, Some(d)) => state
+            .db
+            .query("UPSERT type::record('system_config', $key) SET enabled = $enabled, auto_login_delay_secs = $delay, updated_at = time::now()")
+            .bind(("key", key.clone()))
+            .bind(("enabled", body.enabled))
+            .bind(("delay", d))
+            .await,
+        (None, None) => {
+            // Both omitted → leave stored mode/delay untouched (older clients).
+            state
+                .db
+                .query("UPSERT type::record('system_config', $key) SET enabled = $enabled, updated_at = time::now()")
+                .bind(("key", key.clone()))
+                .bind(("enabled", body.enabled))
+                .await
+        }
     };
 
     match result {
-        Ok(_) => (StatusCode::OK, Json(json!({ "success": true, "enabled": body.enabled, "mode": mode }))),
+        Ok(_) => (StatusCode::OK, Json(json!({
+            "success": true,
+            "enabled": body.enabled,
+            "mode": body.mode,
+            "auto_login_delay_secs": delay_secs,
+        }))),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "success": false, "error": e.to_string() }))),
     }
 }

@@ -292,9 +292,142 @@ fn alpha_short_query(q: &str) -> bool {
     })
 }
 
+// ─── company-name fuzzy primitives (clear-text, no PPRL) ────────────────────
+//
+// Company names are stored in clear in `meta.company`, so the company channel in
+// `customer_360` does NOT need the keyed PPRL signatures (those exist to resolve
+// a MASKED person/address without ever seeing the clear value). It just needs a
+// typo-tolerant similarity over the distinct clear company strings. Normalization
+// mirrors `services::customer_geo::normalize_company` (lowercase, punctuation →
+// space, drop standalone legal-form tokens); scoring uses Jaro-Winkler, which is
+// predictable and tolerant of single-char typos and transpositions.
+
+/// Normalize a company name for fuzzy comparison: decode the few HTML entities the
+/// scrapers leave behind, lowercase, map every non-alphanumeric char to a space,
+/// drop standalone legal-form / conjunction tokens, collapse whitespace. A
+/// GENERIC list (not customer-specific). Both sides run through this identically.
+pub fn normalize_company(raw: &str) -> String {
+    let decoded = raw
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'");
+    let lower = decoded.to_lowercase();
+    // Everything that is not a (unicode) letter/digit becomes a space, so `&`,
+    // dots, slashes, dashes all split tokens. Umlauts survive (is_alphanumeric).
+    let spaced: String = lower
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect();
+    // Standalone legal-form / conjunction tokens carry no identity — "GmbH",
+    // "AG", "UG", "KG", "e.K." (→ "e k"), "e.V." (→ "e v"), "Ltd", "Inc",
+    // "SARL", "B.V." (→ "b v"), "& Co." (→ "co"), etc.
+    const LEGAL: &[&str] = &[
+        "gmbh", "ag", "kg", "ug", "ohg", "gbr", "mbh", "co", "ev", "ek", "e", "u", "v", "k",
+        "ltd", "inc", "sarl", "bv", "llc", "corp", "sa", "nv", "srl", "spa", "oy", "ab", "as",
+    ];
+    let tokens: Vec<&str> = spaced
+        .split_whitespace()
+        .filter(|t| !LEGAL.contains(t))
+        .collect();
+    tokens.join(" ")
+}
+
+/// Jaro-Winkler similarity in [0,1] (1.0 = identical). Prefix-weighted, so it
+/// rewards a shared head and tolerates single-char typos and transpositions —
+/// the standard choice for short name comparisons. Pure, no dependency.
+pub fn jaro_winkler(a: &str, b: &str) -> f32 {
+    let s1: Vec<char> = a.chars().collect();
+    let s2: Vec<char> = b.chars().collect();
+    let (l1, l2) = (s1.len(), s2.len());
+    if l1 == 0 && l2 == 0 {
+        return 1.0;
+    }
+    if l1 == 0 || l2 == 0 {
+        return 0.0;
+    }
+    let match_dist = (l1.max(l2) / 2).saturating_sub(1);
+    let mut m1 = vec![false; l1];
+    let mut m2 = vec![false; l2];
+    let mut matches = 0usize;
+    for i in 0..l1 {
+        let start = i.saturating_sub(match_dist);
+        let end = (i + match_dist + 1).min(l2);
+        for j in start..end {
+            if m2[j] || s1[i] != s2[j] {
+                continue;
+            }
+            m1[i] = true;
+            m2[j] = true;
+            matches += 1;
+            break;
+        }
+    }
+    if matches == 0 {
+        return 0.0;
+    }
+    // Half the number of matched chars that are out of order == transpositions.
+    let mut t = 0usize;
+    let mut k = 0usize;
+    for i in 0..l1 {
+        if !m1[i] {
+            continue;
+        }
+        while !m2[k] {
+            k += 1;
+        }
+        if s1[i] != s2[k] {
+            t += 1;
+        }
+        k += 1;
+    }
+    let m = matches as f32;
+    let jaro = (m / l1 as f32 + m / l2 as f32 + (m - t as f32 / 2.0) / m) / 3.0;
+    // Winkler boost: up to 4 leading chars shared, scaling factor 0.1.
+    let mut prefix = 0usize;
+    for i in 0..l1.min(l2).min(4) {
+        if s1[i] == s2[i] {
+            prefix += 1;
+        } else {
+            break;
+        }
+    }
+    jaro + prefix as f32 * 0.1 * (1.0 - jaro)
+}
+
+/// Typo-tolerant similarity of two RAW company names, in [0,1]: normalize both
+/// (legal-form-insensitive) then Jaro-Winkler. Empty normalization → 0.0.
+pub fn company_similarity(query: &str, company: &str) -> f32 {
+    let qn = normalize_company(query);
+    let cn = normalize_company(company);
+    if qn.is_empty() || cn.is_empty() {
+        return 0.0;
+    }
+    jaro_winkler(&qn, &cn)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn company_normalization_drops_legal_forms() {
+        assert_eq!(normalize_company("Globex Trading GmbH"), "globex trading");
+        assert_eq!(normalize_company("Zenith Services AG"), "zenith services");
+        assert_eq!(normalize_company("Hansa & Co. KG"), "hansa");
+        assert_eq!(normalize_company("Nordwind Fitness e.K."), "nordwind fitness");
+        // Entity-decoding before lowercasing.
+        assert_eq!(normalize_company("Koschel Sport &amp; Health GmbH"), "koschel sport health");
+    }
+
+    #[test]
+    fn company_similarity_typo_vs_distinct() {
+        // One-char typo resolves high; an unrelated company stays low.
+        let typo = company_similarity("Globx Trading", "Globex Trading GmbH");
+        let other = company_similarity("Globx Trading", "Zenith Services AG");
+        assert!(typo >= 0.90, "typo score {typo} should clear 0.90");
+        assert!(other < 0.80, "unrelated score {other} should be well under the typo");
+        assert!(typo - other > 0.1);
+    }
 
     #[test]
     fn person_name_gate() {

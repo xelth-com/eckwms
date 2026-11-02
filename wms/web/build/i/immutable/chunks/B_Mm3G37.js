@@ -1,0 +1,1 @@
+import{h as n,a as s}from"./Bb_2ZGmt.js";function u(l,f,e,a,d){var r;n&&s();var t=(r=f.$$slots)==null?void 0:r[e],i=!1;t===!0&&(t=f[e==="default"?"children":e],i=!0),t===void 0||t(l,i?()=>a:a)}export{u as s};

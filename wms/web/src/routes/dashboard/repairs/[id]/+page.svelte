@@ -9,28 +9,46 @@
     // [MODULE: GEO_ROUTING START]
     import GeoRouteMap from '$lib/components/GeoRouteMap.svelte';
     // [MODULE: GEO_ROUTING END]
+    import EntityPanel from '$lib/components/EntityPanel.svelte';
+    import { normalizeOrder, toSavePayload } from '$lib/repairForm';
 
     let orderId = $page.params.id;
     let isNew = orderId === 'new';
     let loading = !isNew;
+    // A failed load shows the real reason inline instead of silently bouncing
+    // back to the list (the owner could not tell why a card 404'd).
+    let loadError = null;
+    // Captured from EntityPanel's `loaded` event so the page header can show the
+    // requester COMPANY + CITY (clear-tier) without a second /api/entity call.
+    let entityView = null;
+    // The raw loaded row, kept only for the stage-age timestamps (status_changed_at
+    // etc. are not part of the editable form model).
+    let rawOrder = null;
+    // The edit form is collapsed below the case view by default (owner: the
+    // serial, firm+city, photos and documents matter — not the form).
+    let showEdit = false;
+    // Company falls back to the order's own customer_name; city to metadata.city —
+    // mirrors the backend ladder so a firm shows even before EntityPanel loads.
+    $: topCompany = entityView?.customer?.company || formData?.customerName || null;
+    $: topCity = entityView?.customer?.city || (formData?.metadata && formData.metadata.city) || null;
+    $: statusLabel = $t('repairs.status_' + (formData?.status || 'pending'));
 
-    // Form Data
-    let formData = {
-        orderType: 'repair',
-        orderNumber: '',
-        customerName: '',
-        customerEmail: '',
-        productSku: '',
-        productName: '',
-        serialNumber: '',
-        issueDescription: '',
-        status: 'pending',
-        priority: 'normal',
-        repairNotes: '',
-        laborHours: 0,
-        partsUsed:[],
-        metadata: {},
-    };
+    // Form Data — camelCase model the bindings use (see $lib/repairForm).
+    let formData = normalizeOrder({});
+
+    // Time spent in the current stage (same source + buckets as the list view).
+    function stageSince() {
+        const o = rawOrder || {};
+        return o.status_changed_at || o.started_at || o.created_at;
+    }
+    function stageAgeText() {
+        const since = stageSince();
+        if (!since) return '';
+        const hours = (Date.now() - new Date(since).getTime()) / 3_600_000;
+        if (hours < 1) return tr('lists.stage_age_now');
+        if (hours < 24) return tr('lists.stage_age_hours', { n: Math.floor(hours) });
+        return tr('lists.stage_age_days', { n: Math.floor(hours / 24) });
+    }
 
     // System keys to hide from dynamic attributes list
     const hiddenMetaKeys =['ticketId', 'trackingNumber', 'importedFromExcel', 'excelRow'];
@@ -138,13 +156,16 @@
     async function loadRepair() {
         try {
             const data = await api.get(`/api/rma/${orderId}`);
-            formData = { ...data };
-            if (!Array.isArray(formData.partsUsed)) {
-                formData.partsUsed =[];
-            }
+            rawOrder = data;
+            // Accept BOTH key styles — orders from receipts / claimlist are
+            // stored snake_case, the legacy form wrote camelCase.
+            formData = normalizeOrder(data);
+            loadError = null;
         } catch (e) {
+            // Keep the toast, but DON'T redirect — surface the real reason so a
+            // 404 / server error is visible on the page.
+            loadError = e.message;
             toastStore.add(tr('repairs.error_loading'), 'error');
-            goto(`${base}/dashboard/repairs`);
         } finally {
             loading = false;
         }
@@ -163,8 +184,10 @@
                 await api.post('/api/rma', formData);
                 toastStore.add(tr('repairs.created_success'), 'success');
             } else {
-                formData.laborHours = parseFloat(formData.laborHours) || 0;
-                await api.put(`/api/rma/${orderId}`, formData);
+                // Serialise back to the canonical snake_case keys; the PUT merges,
+                // so untouched fields are preserved and no camelCase duplicates
+                // are created.
+                await api.put(`/api/rma/${orderId}`, toSavePayload(formData));
                 toastStore.add(tr('repairs.updated_success'), 'success');
             }
             goto(`${base}/dashboard/repairs`);
@@ -249,22 +272,65 @@
     <div class="header">
         <button class="back-btn" on:click={goBack} title={$t('repairs.back_title')}>{$t('repairs.back')}</button>
         <button class="back-btn back-btn-up" on:click={goUp} title={$t('repairs.all_repairs_title')}>{$t('repairs.all_repairs')}</button>
+        <!-- Case view: SERIAL is the headline (the UUID is identity, the serial a
+             property). No order number / GER claim number anywhere on this page. -->
         <div class="title-row">
-            <h1>{isNew ? $t('repairs.new_order_title') : $t('repairs.order_title', { number: formData.orderNumber })}</h1>
+            <div class="id-block">
+                <h1 class="serial">{isNew ? $t('repairs.new_order_title') : (formData.serialNumber || $t('repairs.title_fallback'))}</h1>
+                <!-- Requester COMPANY + CITY (clear-tier). The requester person is
+                     never shown; company comes from the order's support ticket (or
+                     the order/receipt fallback) via EntityPanel. -->
+                {#if !isNew && (topCompany || topCity)}
+                    <div class="order-customer">
+                        {#if topCompany}<span class="oc-company">{topCompany}</span>{/if}
+                        {#if topCity}<span class="oc-city">{topCity}</span>{/if}
+                    </div>
+                {/if}
+                {#if !isNew && formData.productName}
+                    <div class="oc-product">{formData.productName}</div>
+                {/if}
+                {#if !isNew}
+                    <div class="badge-row">
+                        <span class="status-badge status-{formData.status}">{statusLabel}</span>
+                        {#if stageAgeText()}<span class="stage-age">{stageAgeText()}</span>{/if}
+                    </div>
+                {/if}
+            </div>
             {#if !isNew}
-                <!-- [MODULE: GEO_ROUTING START] -->
-                <button class="route-btn" on:click={openRouteMap} disabled={geocoding}>
-                    {geocoding ? $t('repairs.geocoding_btn') : $t('repairs.view_route_btn')}
-                </button>
-                <!-- [MODULE: GEO_ROUTING END] -->
-                <button class="delete-btn" on:click={deleteRepair}>{$t('repairs.delete')}</button>
+                <div class="top-actions">
+                    <!-- [MODULE: GEO_ROUTING START] -->
+                    <button class="route-btn" on:click={openRouteMap} disabled={geocoding}>
+                        {geocoding ? $t('repairs.geocoding_btn') : $t('repairs.view_route_btn')}
+                    </button>
+                    <!-- [MODULE: GEO_ROUTING END] -->
+                    <button class="delete-btn" on:click={deleteRepair}>{$t('repairs.delete')}</button>
+                </div>
             {/if}
         </div>
     </div>
 
     {#if loading}
         <div class="loading">{$t('repairs.loading')}</div>
+    {:else if loadError}
+        <div class="load-error">{$t('repairs.error_loading')}: {loadError}</div>
     {:else}
+        <!-- Case view FIRST: the shared entity panel (photos, Dokumente, history,
+             links, chat) sits directly under the header so photos and documents
+             are visible without scrolling past a form. -->
+        {#if !isNew}
+            <section class="entity-section">
+                <EntityPanel kind="order" id={orderId} on:loaded={(e) => entityView = e.detail} />
+            </section>
+        {/if}
+
+        <section class="edit-wrap">
+            {#if !isNew}
+                <button type="button" class="edit-toggle" aria-expanded={showEdit} on:click={() => showEdit = !showEdit}>
+                    <span>{$t('repairs.edit_section')}</span>
+                    <span class="chev">{showEdit ? '▲' : '▼'}</span>
+                </button>
+            {/if}
+            {#if isNew || showEdit}
         <form class="form-grid" on:submit|preventDefault={handleSubmit}>
             {#if formData.metadata?.ticketId || formData.metadata?.trackingNumber}
                 <div class="section full linked-banner">
@@ -330,7 +396,7 @@
                         {:else}
                             <div class="similar-grid">
                                 {#each similarRepairs as rep}
-                                    <a class="similar-card" href="{base}/dashboard/repairs/{rep.id}" target="_blank">
+                                    <a class="similar-card" href="{base}/dashboard/repairs/{rep.id}">
                                         <div class="sim-header">
                                             <span class="sim-id">{rep.order_number}</span>
                                             <span class="sim-score">{$t('repairs.percent_match', { percent: (rep.score * 100).toFixed(0) })}</span>
@@ -478,6 +544,8 @@
                 <button type="submit" class="save-btn">{isNew ? $t('repairs.create_order') : $t('repairs.save_changes')}</button>
             </div>
         </form>
+            {/if}
+        </section>
     {/if}
 
     <!-- [MODULE: GEO_ROUTING START] -->
@@ -491,7 +559,7 @@
                 <GeoRouteMap
                     targetLat={formData.metadata.geo.lat}
                     targetLng={formData.metadata.geo.lng}
-                    targetTitle={formData.orderNumber || $t('repairs.this_order')}
+                    targetTitle={formData.serialNumber || $t('repairs.this_order')}
                 />
             </div>
         </div>
@@ -501,13 +569,54 @@
 
 <style>
     .detail-page { max-width: 900px; margin: 0 auto; padding-bottom: 2rem; }
+    .entity-section { margin-top: 2rem; }
     .header { margin-bottom: 2rem; }
     .back-btn { background: none; border: none; color: #888; cursor: pointer; font-size: 1rem; padding: 0; margin-bottom: 1rem; }
     .back-btn:hover { color: #fff; }
     .back-btn-up { margin-left: 1.25rem; color: #888; }
     .back-btn-up:hover { color: #ccc; }
-    .title-row { display: flex; justify-content: space-between; align-items: center; }
+    .title-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+    .id-block { min-width: 0; }
     h1 { color: #fff; font-size: 2rem; margin: 0; }
+    h1.serial { font-family: monospace; letter-spacing: 0.5px; word-break: break-all; }
+
+    .order-customer { display: flex; align-items: baseline; gap: 0.75rem; margin-top: 0.6rem; flex-wrap: wrap; }
+    .oc-company { color: #e8eefc; font-weight: 700; font-size: 1.15rem; }
+    .oc-city { color: #a3bffa; font-size: 0.95rem; }
+    .oc-product { color: #bbb; font-size: 0.95rem; margin-top: 0.3rem; }
+
+    .badge-row { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.7rem; flex-wrap: wrap; }
+    .status-badge {
+        font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+        padding: 0.25rem 0.6rem; border-radius: 5px;
+        color: #a3bffa; background: #1a2540; border: 1px solid #27406e;
+    }
+    .status-badge.status-received { color: #93c5fd; background: #10213a; border-color: #2b4a7a; }
+    .status-badge.status-processing { color: #fcd34d; background: #2a2208; border-color: #5a4a12; }
+    .status-badge.status-completed { color: #86efac; background: #11291a; border-color: #1f5133; }
+    .status-badge.status-cancelled { color: #f3a0a0; background: #2a1414; border-color: #5a2626; }
+    .stage-age { color: #888; font-size: 0.85rem; }
+
+    .top-actions { display: flex; align-items: center; gap: 0.75rem; flex: 0 0 auto; }
+
+    .edit-wrap { margin-top: 2rem; }
+    .edit-toggle {
+        width: 100%; display: flex; justify-content: space-between; align-items: center;
+        background: #1e1e1e; border: 1px solid #333; border-radius: 8px;
+        color: #ccc; font-size: 1rem; font-weight: 600; padding: 0.9rem 1.25rem;
+        cursor: pointer; margin-bottom: 1.25rem;
+    }
+    .edit-toggle:hover { background: #262626; border-color: #444; }
+    .edit-toggle .chev { color: #888; font-size: 0.8rem; }
+
+    .load-error {
+        background: rgba(211, 47, 47, 0.12);
+        border: 1px solid #d32f2f;
+        color: #ff8a80;
+        border-radius: 8px;
+        padding: 1rem 1.25rem;
+        font-size: 0.95rem;
+    }
     h2 { color: #ccc; font-size: 1.1rem; margin-bottom: 1rem; border-bottom: 1px solid #333; padding-bottom: 0.5rem; }
 
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }

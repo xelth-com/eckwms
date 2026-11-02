@@ -38,3 +38,7 @@ antigravity
 
 # runtime log directory (dated suffixes dodge *.log)
 logs/
+
+# Codex CLI machine-local config + generated skills (absolute dev-box paths)
+.codex/
+.agents/

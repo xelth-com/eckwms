@@ -7,21 +7,27 @@ catalog exposed at `POST /mcp`. Source of truth: `wms/src/mcp/tools.rs`
 `wms/src/mcp/mod.rs` (transport, bearer auth, tier gating). Audience: an AI
 agent or program calling this endpoint directly — not a human reader.
 
-**Counts (sanity check):** `tools_list` catalogs **18** tools. `dispatch_tool`
-has **18** named match arms (one per tool) plus one `other => error_result(...)`
-fallback arm that answers unknown tool names with an MCP error result instead
-of a transport error — 18 = 18, consistent.
+**Counts (sanity check):** `tools_list` catalogs **24** tools. `dispatch_tool`
+has **19** named match arms (one per tool) plus one guard arm that routes the
+5 examination-bundle tool names (`super::bundles::TOOL_NAMES`) to
+`wms/src/mcp/bundles.rs`'s own `call` dispatcher, plus one
+`other => error_result(...)` fallback arm that answers unknown tool names with
+an MCP error result instead of a transport error — 19 + 5 = 24, consistent.
 
-Of the 18, **6 are Master-tier-only** (filtered out of `tools_list` for the
+Of the 24, **11 are Master-tier-only** (filtered out of `tools_list` for the
 lower tiers): `surrealql_read`, `reveal_file_local`, `export_attachment`,
-`analyze_attachment_visual`, `chat_transcripts`, `chat_transcript`.
+`analyze_attachment_visual`, `chat_transcripts`, `chat_transcript`, plus the 5
+examination-bundle tools — `bundle_begin`, `bundle_upload_chunk`,
+`bundle_commit`, `bundle_abort`, `protocol_number_allocate` (enforced both at
+discovery and, independently, at dispatch for every transport — see tools
+19–24 below).
 
 **Three tiers now.** `McpTier` is `Master`, `Agent`, or `Observer` (a
 read-only, masked-PII tier for an unattended kiosk/exhibition session with
 nobody signed in). One tool, `print_labels`, fires a physical printer, so it is
 hidden from `Observer` (`tier != McpTier::Observer`) but visible to Agent and
 Master; `list_printers` stays visible to all three (listing is harmless). Net
-visibility: **Master 18**, **Agent 12**, **Observer 11**.
+visibility: **Master 24**, **Agent 13**, **Observer 12**.
 
 ## Surface contract
 
@@ -835,3 +841,240 @@ the handler, not the JSON schema.)
 ```
 
 **Result shape:** `{ status, job_id, printer, ... }` on success (the submitted CUPS job id); an `isError` result when the tier is Observer, no CUPS scheduler is present, or the queue rejects the job.
+
+---
+
+### 19. ticket_stats
+
+| field | value |
+|---|---|
+| tier | agent, master |
+| side-effects | read-only |
+| PII behavior | aggregated counts/groups only — no name/email/phone/address fields are returned; `company`/`city` keys stay clear (same as `ticket_search`) |
+
+**Description (verbatim):**
+> Aggregate statistics over support tickets, computed server-side over ALL
+> tickets (never paged, never capped at 50) — use this for any 'how many',
+> 'oldest'/'newest N', or 'per status / company / city / period' question
+> instead of paging `ticket_search`. All filters are optional and ANDed:
+> `status` ('open', 'closed', or a status fragment — same vocabulary as
+> ticket_search), `company` and `city` (case-insensitive substring), and the
+> date window `created_from` (inclusive) / `created_to` (EXCLUSIVE), each an
+> ISO date ('2026-09-01') or datetime. Returns `matched_total` (the true
+> count after every filter), `status_counts` (per raw status), and `rows`:
+> the top `top` tickets (default 5, max 20) by `order` ('oldest' default, or
+> 'newest'), each with ticket_number, subject, status, created_time,
+> `age_days`, and company. Set `group_by` ('status'|'company'|'city'|'model')
+> to also get `groups` (top 20 by count + an 'other' bucket). No free-text
+> query and no raw SQL — filter by the fields above.
+
+**inputSchema (verbatim):**
+```json
+{
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "description": "Optional: 'open', 'closed', or a status fragment." },
+    "company": { "type": "string", "description": "Optional: company/customer name (case-insensitive substring)." },
+    "city": { "type": "string", "description": "Optional: town (stated or derived from the phone area code)." },
+    "created_from": { "type": "string", "description": "Optional: only tickets created on/after this ISO date/datetime (inclusive)." },
+    "created_to": { "type": "string", "description": "Optional: only tickets created before this ISO date/datetime (exclusive)." },
+    "group_by": { "type": "string", "description": "Optional: 'status', 'company', 'city', or 'model' to return per-group counts." },
+    "order": { "type": "string", "description": "Edge rows order: 'oldest' (default) or 'newest'." },
+    "top": { "type": "integer", "description": "How many edge rows to return (1..20, default 5)." }
+  },
+  "required": []
+}
+```
+
+**Result shape (top-level keys):**
+`{ matched_total, status_counts: {status: count}, rows: [{ ticket_number, subject, status, created_time, age_days, company }], groups?: [{ key, count }] (present only when `group_by` is set, max 20 + an "other" bucket), as_of, filters: {status, company, city, created_from, created_to, group_by, order, top} (filters as actually applied), pii_revealed: false }`. An invalid `created_from`/`created_to` returns an `isError` result instead of silently ignoring the bound. Shares its status-matching and date-comparator logic with `ticket_search` (same vocabulary, same undated-last ordering).
+
+---
+
+### 20. bundle_begin
+
+| field | value |
+|---|---|
+| tier | **master-only** |
+| side-effects | writes (creates/updates a `bundle_staging` row and, if the serial is unknown, a `device` record; no file bytes yet) |
+| PII behavior | n/a — device/ticket identifiers only, no customer identity fields |
+
+**Description (verbatim):**
+> MASTER ONLY. Open (or refresh, idempotent while open) the staging area for
+> an examination bundle (EN 62353 STK/MTK/Funktionskontrolle/repair evidence)
+> of one device. Creates the `device` record for the serial if missing.
+> Rejects an unknown ticket_id. Staging expires 48 h after the last begin.
+> See docs/MESH_BUNDLE_TOOLS.md.
+
+**inputSchema (verbatim, `manufacturer`/`model` descriptions paraphrased — the
+source default and example name a tenant-specific brand, not reproduced
+here):**
+```json
+{
+  "type": "object",
+  "properties": {
+    "bundle_id": { "type": "string", "description": "Client idempotency key, [A-Za-z0-9._-]{1,128}." },
+    "serial": { "type": "string", "description": "Device serial number." },
+    "manufacturer": { "type": "string", "description": "Defaults to the tenant's configured device manufacturer when omitted." },
+    "model": { "type": "string", "description": "e.g. a device model name/number." },
+    "udi": { "type": "string" },
+    "ticket_id": { "type": "string", "description": "Ticket document id (Zoho id) or ticket number." },
+    "manifest": { "type": "object", "description": "The bundle manifest JSON ({files:{name:sha256}, protocol_no, dut, …})." },
+    "schema_version": { "type": "integer", "description": "Must be 1." }
+  },
+  "required": ["bundle_id", "serial", "manifest"]
+}
+```
+
+**Result shape (top-level keys):**
+`{ bundle_id, device_id, device_created, ticket, expires_at, state: "open" }` on a fresh/refreshed begin; `{ bundle_id, device_id, device_created: false, ticket, state: "committed", receipt }` when the bundle_id was already committed with the identical ticket/manifest (idempotent replay — no new staging). An `isError` result on an unknown `ticket_id`, a `manifest` that isn't a JSON object, an unsupported `schema_version`, a re-begin with a different serial (`conflict`), or a bundle previously aborted (`aborted` — start a new `bundle_id`).
+
+---
+
+### 21. bundle_upload_chunk
+
+| field | value |
+|---|---|
+| tier | **master-only** |
+| side-effects | writes (stages chunk bytes on local disk under `data/bundle_staging/<bundle_id>/`; assembles + verifies the file once all chunks arrive) |
+| PII behavior | n/a — raw file bytes, no structured identity fields |
+
+**Description (verbatim):**
+> MASTER ONLY. Upload one chunk (≤ 640 KiB raw, base64) of one bundle file.
+> Chunks may arrive in any order; a repeated chunk is ignored. When all
+> chunks are present the node verifies size_bytes + sha256 and marks the file
+> complete (a mismatch drops the file so it can be re-declared).
+
+**inputSchema (verbatim):**
+```json
+{
+  "type": "object",
+  "properties": {
+    "bundle_id": { "type": "string" },
+    "role": { "type": "string", "enum": ["protocol_pdf", "protocol_html", "tester_payload", "manifest", "photo", "other"] },
+    "file_name": { "type": "string" },
+    "mime_type": { "type": "string" },
+    "size_bytes": { "type": "integer" },
+    "sha256": { "type": "string", "description": "sha256 hex of the WHOLE file." },
+    "chunks_total": { "type": "integer" },
+    "chunk_index": { "type": "integer", "description": "0-based." },
+    "content_base64": { "type": "string" }
+  },
+  "required": ["bundle_id", "role", "file_name", "size_bytes", "sha256", "chunks_total", "chunk_index", "content_base64"]
+}
+```
+
+**Result shape (top-level keys):**
+`{ file_name, role, received, chunks_total, complete, sha256_ok, duplicate }` — `duplicate: true` when `chunk_index` was already stored (byte content not rewritten). Once `received == chunks_total` the node assembles and re-hashes the file: on a match `complete`/`sha256_ok` flip `true`; on a mismatch the file entry is dropped (`isError`, `sha256_mismatch`) and must be re-declared from chunk 0. After the bundle is already `committed`, a chunk matching a file already in the receipt returns `{ ..., complete: true, sha256_ok: true, already_committed: true }`; one that doesn't match any committed file's sha256 is an `isError` (`closed`). `role` must be one of the enum values above (actual enum sourced from `ROLES` in `bundles.rs`).
+
+---
+
+### 22. bundle_commit
+
+| field | value |
+|---|---|
+| tier | **master-only** |
+| side-effects | writes (lands staged files into the CAS as `file_resource`, creates one `device_event`, `has_attachment` provenance edges from the event — and the ticket, if any — and marks the `protocol_reservation` + `bundle_staging` rows committed; one DB transaction) |
+| PII behavior | n/a — device/event/protocol fields only |
+
+**Description (verbatim):**
+> MASTER ONLY. Validate the staged bundle (all files complete +
+> sha256-verified, manifest consistent, required roles present, protocol_no
+> reserved for THIS bundle) and atomically file it: CAS blobs, device_event,
+> provenance has_attachment edges from the event and the ticket. An identical
+> retry returns the earlier receipt; a different event for the same
+> bundle_id fails with `conflict`. Corrections = new bundle with revision+1
+> and supersedes_protocol_no.
+
+**inputSchema (verbatim):**
+```json
+{
+  "type": "object",
+  "properties": {
+    "bundle_id": { "type": "string" },
+    "event": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["STK", "MTK", "FUNKTIONSKONTROLLE", "REPAIR", "OTHER"] },
+        "date": { "type": "string", "description": "YYYY-MM-DD" },
+        "protocol_no": { "type": "string", "description": "YYYY-NNNN" },
+        "revision": { "type": "integer" },
+        "result": { "type": "string", "enum": ["PASS", "PASS_WITH_NOTES", "FAIL", "NOT_ASSESSED"] },
+        "next_due": { "type": ["string", "null"], "description": "YYYY-MM or null" },
+        "examiner": { "type": "string" },
+        "instrument": { "type": "object" },
+        "standard": { "type": "string" },
+        "legal_basis": { "type": "string" },
+        "scope": { "type": "string" },
+        "operator_snapshot": { "type": "object" },
+        "notes": { "type": "string" },
+        "supersedes_protocol_no": { "type": ["string", "null"] }
+      },
+      "required": ["kind", "date", "protocol_no", "result", "examiner"]
+    },
+    "required_roles": { "type": "array", "items": { "type": "string" }, "description": "Default: protocol_pdf, protocol_html, tester_payload, manifest." }
+  },
+  "required": ["bundle_id", "event"]
+}
+```
+
+**Result shape (top-level keys):**
+The receipt: `{ event_id, device_id, protocol_no, bundle_id, files: [{ role, name, cas_uuid, sha256, deduped }], manifest_covered, manifest_missing, receipt_sha256 }`. An identical retry (same `event` payload hash) replays the stored receipt unchanged. An `isError` result on: any staged file not complete/sha256-verified (`incomplete`), a required role with no file, a manifest/serial or manifest/protocol mismatch (`manifest_mismatch`), `protocol_no` not reserved for this bundle (`protocol_not_reserved` — call `protocol_number_allocate` first) or already taken by another bundle (`protocol_no_taken`), a different committed event for the same `bundle_id` (`conflict`), or a `supersedes_protocol_no` with no matching prior event (`supersedes_not_found`). Coverage against the manifest is by sha256, not by file name — files outside the manifest pass on their own verified hash.
+
+---
+
+### 23. bundle_abort
+
+| field | value |
+|---|---|
+| tier | **master-only** |
+| side-effects | writes (marks the `bundle_staging` row `aborted` and deletes its staged tmp bytes from disk) |
+| PII behavior | n/a |
+
+**Description (verbatim):**
+> MASTER ONLY. Abort an open bundle staging and delete its tmp bytes. A
+> protocol number reserved for it stays reserved (numbers are never
+> recycled).
+
+**inputSchema (verbatim):**
+```json
+{
+  "type": "object",
+  "properties": { "bundle_id": { "type": "string" } },
+  "required": ["bundle_id"]
+}
+```
+
+**Result shape (top-level keys):**
+`{ bundle_id, state: "aborted" }`. Idempotent — aborting an already-aborted bundle returns the same shape without error. An `isError` result (`closed`) if the bundle is already `committed`. A reservation held by the bundle is NOT released (protocol numbers are never recycled).
+
+---
+
+### 24. protocol_number_allocate
+
+| field | value |
+|---|---|
+| tier | **master-only**, and only on the authoritative writer node (`ECK_PROTOCOL_WRITER=1`) |
+| side-effects | writes (`protocol_counter` + `protocol_reservation` rows, one transaction) |
+| PII behavior | n/a |
+
+**Description (verbatim):**
+> MASTER ONLY, authoritative writer node only (else `not_writer`). Reserve
+> the next protocol number YYYY-NNNN for a bundle; the same bundle_id always
+> gets the same number back (`reused: true`). Numbers are never recycled.
+
+**inputSchema (verbatim):**
+```json
+{
+  "type": "object",
+  "properties": {
+    "year": { "type": "integer" },
+    "bundle_id": { "type": "string" },
+    "kind": { "type": "string", "enum": ["STK", "MTK", "FUNKTIONSKONTROLLE", "REPAIR", "OTHER"] }
+  },
+  "required": ["year", "bundle_id"]
+}
+```
+
+**Result shape (top-level keys):**
+`{ number: "YYYY-NNNN", reserved_at, reused, state: "reserved" }`. A repeat call with the same `bundle_id`+`year` returns the existing reservation with `reused: true` (and the reservation's current `state`, e.g. `"committed"` after `bundle_commit` landed it) instead of allocating a new number. The number is `max(protocol_counter, every reservation, every recorded device_event for that year) + 1` — never re-issued even if the counter row is lost. An `isError` result (`not_writer`) on any node where `ECK_PROTOCOL_WRITER` is unset.

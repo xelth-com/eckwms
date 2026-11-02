@@ -499,6 +499,24 @@ vars:
     effect: "bearer token for the xelixir knowledge-base MCP endpoint (kb_brief read + kb_record write)"
     feature: AI-live
     required: false
+  - name: ECK_ADVICE_LEDGER_SYNC
+    files: [wms/src/ai/advice_ledger.rs]
+    default: "on; \"0\"/\"off\"/\"false\"/\"no\" disables the sync loop"
+    effect: "enables the periodic remote-advice-ledger → xelixir KB sync loop (spawned from the repair-distiller worker); the loop also no-ops while the xelixir bridge is unconfigured (XELIXIR_KB_URL unset)"
+    feature: AI-live
+    required: false
+  - name: ECK_ADVICE_LEDGER_SYNC_SECS
+    files: [wms/src/ai/advice_ledger.rs]
+    default: "21600 (6h); minimum 300s"
+    effect: "sync period for the remote-advice-ledger → xelixir KB sync loop"
+    feature: AI-live
+    required: false
+  - name: ECK_ADVICE_LEDGER_PATH
+    files: [wms/src/ai/advice_ledger.rs]
+    default: ".eck/advice/REMOTE_ADVICE_LEDGER.md"
+    effect: "filesystem path to the hand-kept, append-only remote-advice ledger this sync loop parses (read-only — the loop never writes the file)"
+    feature: AI-live
+    required: false
   - name: ECK_SOP_DEDUP_COS
     files: [wms/src/ai/optimizer.rs]
     default: "0.92"
@@ -509,6 +527,30 @@ vars:
     files: [wms/src/main.rs]
     default: "1 (this node produces its own summaries)"
     effect: "set to 0 to make this node a summary consumer only (mesh-syncs summaries produced elsewhere)"
+    feature: AI-live
+    required: false
+  - name: ECK_IMAGE_SUMMARY_WORKER
+    files: [wms/src/ai/image_summary.rs, wms/src/ai/ocr_verify.rs]
+    default: "disabled unless \"1\""
+    effect: "enables the background image-summary (vision) worker on this node (same convention as ECK_SUMMARY_WORKER); off on a cache node regardless; also consulted by ocr_verify as one signal of whether this node is the AI author"
+    feature: AI-live
+    required: false
+  - name: ECK_IMAGE_RESCORE
+    files: [wms/src/ai/image_summary.rs]
+    default: "false unless \"1\""
+    effect: "opts the image-summary worker into a secondary backlog: rows already summarized but missing device_score/device_label fields (e.g. upgraded from an older build); only consulted once the normal backlog is empty"
+    feature: AI-live
+    required: false
+  - name: ECK_IMAGE_WORKER_HOURS
+    files: [wms/src/ai/image_summary.rs]
+    default: "\"\" — no working-hours window, the worker runs anytime"
+    effect: "local-time \"HH-HH\" window (end exclusive, may wrap past midnight) restricting when the image-summary worker runs; empty, \"0-24\", or unparsable = always on"
+    feature: AI-live
+    required: false
+  - name: ECK_OCR_VERIFY
+    files: [wms/src/ai/ocr_verify.rs]
+    default: "\"dry\" on the AI author node (image-summary worker enabled or ECK_SUMMARY_WORKER not \"0\"), else \"off\"; always \"off\" with no AI credentials"
+    effect: "mode for the background OCR-verify worker: off | dry (compute only) | on; skipped entirely on a cache node"
     feature: AI-live
     required: false
   - name: ECK_EXTRACT_SWEEP_SECS
@@ -613,6 +655,18 @@ vars:
     effect: "vision-call gating policy for the image-summary path"
     feature: AI-live
     required: false
+  - name: ECK_AI_TOOL_CALLS_PER_TURN
+    files: [wms/src/ai/orchestrator.rs]
+    default: "16; \"0\"/\"off\" = no per-turn dispatch cap"
+    effect: "max function/tool calls DISPATCHED per orchestrator model turn; calls beyond this in one turn get the fixed denial text instead of being executed"
+    feature: AI-live
+    required: false
+  - name: ECK_AI_TOOL_CALLS_PER_TURN_ABORT
+    files: [wms/src/ai/orchestrator.rs]
+    default: "32 (raised if needed to stay above ECK_AI_TOOL_CALLS_PER_TURN); \"0\"/\"off\" = no ceiling"
+    effect: "hard ceiling on the NUMBER of tool calls the model may issue in one turn; exceeding it aborts the run on this engine before anything is appended (model-malfunction guard, bounds worst-case run size)"
+    feature: AI-live
+    required: false
   - name: ECK_BRAIN_FALLBACK_MODEL
     files: [wms/src/ai/orchestrator.rs]
     default: "none — no fallback model chain is configured for the brain"
@@ -635,6 +689,18 @@ vars:
     files: [wms/src/ai/orchestrator.rs]
     default: "falls back to the normal OpenRouter base URL"
     effect: "OpenRouter base URL used only by the brain bench harness"
+    feature: AI-live
+    required: false
+  - name: ECK_CHAT_DEFAULT_ENGINE
+    files: [wms/src/handlers/ai.rs]
+    default: "glm"
+    effect: "default Brain-Chat engine when a chat request names none; only the configurable default, the product default stays glm by owner decision"
+    feature: AI-live
+    required: false
+  - name: ECK_CHAT_HISTORY_MAX_CHARS
+    files: [wms/src/handlers/ai.rs]
+    default: "240000; \"0\"/\"off\" = unlimited"
+    effect: "aggregate char budget bounding the whole Brain-Chat history fed into one prompt, not just each entry"
     feature: AI-live
     required: false
   - name: ECK_CHAT_KEEP_TURNS
@@ -989,6 +1055,12 @@ vars:
     effect: "path override for a demo/bundled WASM plugin"
     feature: ops
     required: false
+  - name: ECK_POS_DEMO_PLUGIN_WASM
+    files: [core/src/plugin/engine.rs]
+    default: "none — dev/test only; required to run the #[ignore]d demo_pos_happy_hour_plugin test, which otherwise panics with a message naming scripts/build-pos-demo-plugin.ps1"
+    effect: "path to a locally-built demo POS price-rules WASM plugin, used only by an ignored integration test that proves a real extism-pdk build round-trips through the POS plugin engine's hot path"
+    feature: ops
+    required: false
   - name: ECK_TOKIO_MAX_BLOCKING
     files: [wms/src/main.rs]
     default: "a fixed default when unset (see source)"
@@ -999,6 +1071,24 @@ vars:
     files: [wms/src/services/self_watchdog.rs]
     default: "30 (0 disables the watchdog)"
     effect: "interval for the off-runtime self-watchdog that probes 127.0.0.1:<port>/E/health and kills the process after repeated unresponsive probes (recovers a wedged tokio runtime)"
+    feature: ops
+    required: false
+  - name: ECK_ALLOC_STATS_SECS
+    files: [wms/src/services/self_watchdog.rs]
+    default: "300 (0 disables the thread; Linux/glibc only, no-op elsewhere)"
+    effect: "interval for the allocator-stats thread; on the jemalloc build (feature jemalloc, default-on) logs [jemalloc] allocated=… active=… resident=… retained=… mapped=… metadata=… MiB | proc.anon=…; on a --no-default-features (glibc) build logs [malloc-trim] anon A→B MiB from a periodic malloc_trim(0)"
+    feature: ops
+    required: false
+  - name: ECK_MALLOC_TRIM_SECS
+    files: [wms/src/services/self_watchdog.rs]
+    default: "legacy alias for ECK_ALLOC_STATS_SECS, honoured only when ECK_ALLOC_STATS_SECS is unset"
+    effect: "see ECK_ALLOC_STATS_SECS"
+    feature: ops
+    required: false
+  - name: _RJEM_MALLOC_CONF
+    files: [wms/src/main.rs]
+    default: "unset (compiled-in default: background_thread:true,dirty_decay_ms:5000,muzzy_decay_ms:0,narenas:4)"
+    effect: "process env override of the jemalloc runtime options compiled into _rjem_malloc_conf (feature jemalloc); e.g. narenas:2"
     feature: ops
     required: false
   - name: ECK_SELF_WATCHDOG_FAILS
@@ -1353,6 +1443,24 @@ vars:
     effect: "share URL override for the external claim-list workbook"
     feature: other
     required: false
+  - name: ECK_CLAIM_PRODUCT_GROUP
+    files: [wms/src/handlers/claimlist.rs]
+    default: "\"\" — the product-group column is left blank on a minted claim"
+    effect: "deployment data: default product-group label for a minted claim-list row when its source ticket carries none"
+    feature: other
+    required: false
+  - name: ECK_NAS_DOCS_ROOT
+    files: [wms/src/handlers/claimlist.rs]
+    default: "\"\" — the presentation-only nas_folder label is omitted"
+    effect: "deployment data: root of the legacy NAS document tree, used ONLY for the presentation-only nas_folder projection label (the CAS filestore stays the source of truth); e.g. a UNC share path"
+    feature: other
+    required: false
+  - name: ECK_NAS_PHOTO_SUBFOLDERS
+    files: [wms/src/services/nas_ingest.rs]
+    default: "\"\" (comma-separated list; empty = none)"
+    effect: "deployment data: extra first-level NAS subfolder names (lowercased) classified as photo evidence during NAS ingest, beyond the built-in fotos*/2.gerät* folders"
+    feature: other
+    required: false
   - name: PAIR_BOARD_URLS
     files: [wms/src/handlers/device.rs]
     default: "none — no pairing-board relay URLs are advertised in a pairing QR"
@@ -1612,6 +1720,12 @@ vars:
     effect: "SurrealKV block-cache size (MiB) for the node-local setup-admin users store"
     feature: other
     required: false
+  - name: ECK_KV_USERS_MEMTABLE_MB
+    files: [core/src/db.rs]
+    default: "16"
+    effect: "maximum SurrealKV memtable size (MiB) before flush, for the node-local setup-admin users store"
+    feature: other
+    required: false
   - name: ECK_KV_BLOCK_CACHE_MB
     files: [core/src/db.rs]
     default: "min(SurrealKV's own default, 20% of system RAM, 512) MiB"
@@ -1724,6 +1838,36 @@ vars:
     files: [wms/src/handlers/or_proxy.rs]
     default: "\"\" — no per-client rate/spend caps are enforced on the OR proxy"
     effect: "per-client rate/spend caps for the OR proxy"
+    feature: AI-live
+    required: false
+  - name: ECK_OR_MAX_TOKENS
+    files: [core/src/ai.rs]
+    default: "3000 per model; 12000 for xiaomi/* models (reasoning models spend budget on thinking first)"
+    effect: "override string \"<model-prefix>=<n>,…\" for the per-model max_tokens floor applied to an OpenRouter/cheap-tier request's maxOutputTokens"
+    feature: AI-live
+    required: false
+  - name: ECK_OR_SLUG_API_KEY
+    files: [core/src/ai.rs]
+    default: "\"\" — a SLUG model (name contains \"/\") cannot be routed to the vendor-direct slug upstream"
+    effect: "API key for the vendor-direct \"slug\" OpenRouter-compatible upstream (e.g. Z.ai's OpenAI-compatible endpoint) used for SLUG-named models"
+    feature: AI-live
+    required: false
+  - name: ECK_OR_SLUG_BASE_URL
+    files: [core/src/ai.rs]
+    default: "https://openrouter.ai/api/v1"
+    effect: "base URL for the vendor-direct \"slug\" upstream paired with ECK_OR_SLUG_API_KEY"
+    feature: AI-live
+    required: false
+  - name: ECK_OR_SLUG_MASTER_KEY
+    files: [wms/src/handlers/or_proxy.rs]
+    default: "\"\" — the OR-serve handler's second (slug) upstream is unavailable, serving falls back to ECK_OR_UPSTREAM_URL"
+    effect: "master key for the OR-serve handler's slug upstream, used when serving a SLUG-named model for a peer mesh node"
+    feature: AI-live
+    required: false
+  - name: ECK_OR_SLUG_UPSTREAM_URL
+    files: [wms/src/handlers/or_proxy.rs]
+    default: "\"\" — paired with ECK_OR_SLUG_MASTER_KEY; empty disables the slug upstream path for OR-serve"
+    effect: "upstream URL for the OR-serve handler's slug route (paired with ECK_OR_SLUG_MASTER_KEY), used when a SLUG-named model can't be served by the vendor-direct upstream"
     feature: AI-live
     required: false
 ```

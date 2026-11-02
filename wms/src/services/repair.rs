@@ -113,6 +113,73 @@ pub async fn find_live_order(db: &SurrealDb, serial: &str) -> Result<Option<Valu
     Ok(rows.into_iter().max_by_key(created_at_key))
 }
 
+/// The live (non-terminal) order for a unit, PREFERRING the UUID link
+/// (`receipt_unit.order_uuid`) and only falling back to the OCR-prone
+/// serial-string join for legacy / un-stamped rows. The serial fallback logs a
+/// `[link] serial fallback` warning so the fragile path is visible in the logs.
+///
+/// The `unit` value is a `receipt_unit` row (as loaded by the receiving lane),
+/// so it carries `order_uuid`, `serial` and `barcode`.
+pub async fn find_live_order_for_unit(
+    db: &SurrealDb,
+    unit: &Value,
+) -> Result<Option<Value>, String> {
+    // 1. UUID link — the authoritative join.
+    if let Some(ouid) = unit
+        .get("order_uuid")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Some(order) = get_order(db, ouid).await? {
+            let status = order.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if !TERMINAL_STATUSES.contains(&status) {
+                return Ok(Some(order));
+            }
+        }
+    }
+    // 2. Serial fallback (read-only; only legacy rows with no UUID link reach it).
+    let serial = unit
+        .get("serial")
+        .and_then(|v| v.as_str())
+        .or_else(|| unit.get("barcode").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(sn) = serial {
+        if let Some(order) = find_live_order(db, sn).await? {
+            tracing::warn!(
+                "[link] serial fallback: unit resolved its order by serial {} (no live UUID link)",
+                sn
+            );
+            return Ok(Some(order));
+        }
+    }
+    Ok(None)
+}
+
+/// Stamp `order.unit_id` (the UUID link, order → unit) on an already-open order,
+/// advancing the order's `_vclock`. `unit_id` is a TOP-LEVEL field so a plain
+/// `SET` is safe (the SET-not-MERGE rule is only for the nested `metadata`).
+pub async fn link_order_to_unit(
+    db: &SurrealDb,
+    instance_id: &str,
+    order_uuid: &str,
+    unit_id: &str,
+) -> Result<(), String> {
+    let vclock = next_vclock(db, order_uuid, instance_id).await;
+    run_stmt!(
+        "link order to unit",
+        db.query(
+            "UPDATE type::record($rid) SET unit_id = $uid, \
+                _vclock = $vclock, updated_at = time::now() RETURN NONE",
+        )
+        .bind(("rid", rid("order", order_uuid)))
+        .bind(("uid", json!(unit_id)))
+        .bind(("vclock", vclock))
+    );
+    Ok(())
+}
+
 /// One order by its record-id leaf, in the same projection.
 pub async fn get_order(db: &SurrealDb, order_uuid: &str) -> Result<Option<Value>, String> {
     let q = format!("SELECT {} FROM type::record($rid) LIMIT 1", ORDER_PROJECTION);
@@ -216,6 +283,25 @@ pub async fn open_repair_order(
         serial,
         input.source
     );
+
+    // Domain-event: order created (fire-and-forget; never fails the mint).
+    crate::services::events::record(
+        db,
+        instance_id,
+        crate::services::events::Event::new(
+            "created",
+            "order",
+            &order_uuid,
+            format!("Repair order {} opened via {}", order_number, input.source),
+        )
+        .actor(
+            input
+                .acting_user_id
+                .clone()
+                .or_else(|| input.created_by_device.clone()),
+        ),
+    )
+    .await;
 
     let stored = get_order(db, &order_uuid)
         .await?
@@ -359,5 +445,52 @@ mod tests {
         let db = test_db().await;
         assert!(open_repair_order(&db, "node-a", &req("  ")).await.is_err());
         assert!(find_live_order(&db, "").await.unwrap().is_none());
+    }
+
+    /// A unit whose serial (A) does NOT match the order's serial (B) still
+    /// resolves to that order through the UUID link — the GER2610-028 case.
+    #[tokio::test]
+    async fn uuid_link_beats_serial_mismatch() {
+        let db = test_db().await;
+        // Order carries serial B; the unit's serial is A (OCR typo).
+        let (order, _) = open_repair_order(&db, "node-a", &req("I82400067")).await.unwrap();
+        let ouid = order["order_uuid"].as_str().unwrap().to_string();
+
+        let unit = json!({ "order_uuid": ouid, "serial": "I824000067" });
+        let resolved = find_live_order_for_unit(&db, &unit).await.unwrap().unwrap();
+        assert_eq!(resolved["order_uuid"], json!(ouid));
+
+        // A cancelled (terminal) linked order is NOT returned, and with no serial
+        // match either the unit resolves to nothing.
+        cancel_repair_order(&db, "node-a", &ouid, "t").await.unwrap();
+        assert!(find_live_order_for_unit(&db, &unit).await.unwrap().is_none());
+    }
+
+    /// With no UUID link, the reader falls back to the serial join.
+    #[tokio::test]
+    async fn serial_fallback_when_no_uuid_link() {
+        let db = test_db().await;
+        let (order, _) = open_repair_order(&db, "node-a", &req("SN-FB")).await.unwrap();
+        let unit = json!({ "serial": "SN-FB" }); // no order_uuid
+        let resolved = find_live_order_for_unit(&db, &unit).await.unwrap().unwrap();
+        assert_eq!(resolved["order_uuid"], order["order_uuid"]);
+    }
+
+    /// `link_order_to_unit` stamps `order.unit_id` and advances the vclock.
+    #[tokio::test]
+    async fn link_order_to_unit_stamps_unit_id() {
+        let db = test_db().await;
+        let (order, _) = open_repair_order(&db, "node-a", &req("SN-L")).await.unwrap();
+        let ouid = order["order_uuid"].as_str().unwrap().to_string();
+        link_order_to_unit(&db, "node-a", &ouid, "unit-xyz").await.unwrap();
+
+        let stored: Option<Value> = db
+            .query("SELECT unit_id FROM type::record('order', $id) LIMIT 1")
+            .bind(("id", ouid))
+            .await
+            .unwrap()
+            .take(0)
+            .unwrap();
+        assert_eq!(stored.unwrap()["unit_id"], json!("unit-xyz"));
     }
 }

@@ -242,6 +242,16 @@ pub async fn mcp_session_login(
             Json(json!({ "error": "observer role has no MCP agent surface" })),
         );
     }
+    // Same fence as auth_middleware's POS rule: a cashier works the register
+    // and has no WMS surface, so it must not mint an Agent-tier bearer either
+    // (MCP dispatch never passes through that middleware — review 2026-09-30,
+    // F10-7/F11-3). Only admin and operator accounts get MCP sessions.
+    if role != "admin" && role != "operator" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": format!("role '{role}' has no MCP agent surface") })),
+        );
+    }
     let tier = if role == "admin" { "master" } else { "agent" };
 
     // 32 random bytes → base64url. Only its hash is persisted.

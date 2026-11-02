@@ -23,6 +23,28 @@ use eck_core::sync::hedera::HederaClient;
 use eck_core::sync::relay_client::RelayClient;
 use eck_core::utils::identity::ServerIdentity;
 
+// jemalloc as the global allocator on Linux/glibc (feature `jemalloc`, default-on).
+// glibc malloc retained ~445 MiB of freed memory on the 3.3 GiB kiosk (measured
+// 2026-09-27 by the malloc_trim thread); jemalloc returns dirty pages to the OS on
+// its own (decay + background thread). See .eck/MEMORY_PLAYBOOK.md.
+#[cfg(all(feature = "jemalloc", target_os = "linux", target_env = "gnu"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+// Compiled-in jemalloc options. The crate is built with the `_rjem_` symbol prefix
+// (we do NOT replace libc malloc for C code), so the config symbol is
+// `_rjem_malloc_conf` and the runtime override env var is `_RJEM_MALLOC_CONF`.
+//  - background_thread: purge on a timer even when the process is idle
+//  - dirty_decay_ms / muzzy_decay_ms: return freed pages after 5 s / immediately
+//  - narenas:4: default is 4×CPUs; fewer arenas = less per-arena slack on small boxes
+#[cfg(all(feature = "jemalloc", target_os = "linux", target_env = "gnu"))]
+const JEMALLOC_CONF: &[u8] = b"background_thread:true,dirty_decay_ms:5000,muzzy_decay_ms:0,narenas:4\0";
+#[cfg(all(feature = "jemalloc", target_os = "linux", target_env = "gnu"))]
+#[allow(non_upper_case_globals)]
+#[export_name = "_rjem_malloc_conf"]
+pub static malloc_conf: Option<&'static libc::c_char> =
+    Some(unsafe { &*(JEMALLOC_CONF.as_ptr() as *const libc::c_char) });
+
 #[derive(Serialize)]
 struct HealthResponse {
     status: String,
@@ -51,6 +73,12 @@ pub struct AppState {
     pub port: u16,
     pub setup_password: RwLock<Option<String>>,
     pub ws_tx: tokio::sync::broadcast::Sender<String>,
+    /// Live set of dashboard browsers (kiosk screens) currently holding an
+    /// authenticated `/E/ws` socket — the PDA scan-mirror target list
+    /// (`GET /api/screens`). RAM only, keyed by the browser-persisted
+    /// `screen_id`; inserted on WS connect, removed on disconnect. See
+    /// `handlers::ws` and `.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md` §5.
+    pub screens: Arc<RwLock<std::collections::HashMap<String, crate::handlers::ws::ScreenInfo>>>,
     pub agent_controller: Arc<services::agent_manager::AgentController>,
     /// `"full"` (default) or `"cache"`. Cache nodes keep heartbeating but skip
     /// the periodic merkle sync — they pull entities on demand instead.
@@ -71,6 +99,14 @@ pub struct AppState {
     /// WASM plugin engine + registry (`.eck/WASM_ARCHITECTURE.md`). `None`
     /// unless `ECK_PLUGIN_RUNTIME=1` — off by default, zero behavior change.
     pub plugins: Option<PluginRuntime>,
+    /// This node's fully-assembled axum Router, published once `main` finishes
+    /// building it. The cross-NAT `api_call` mesh-task (`services::api_tunnel`)
+    /// runs a synthetic, loopback-origin PDA HTTP request through it with
+    /// `oneshot`, so an off-LAN phone reaches the same routed handlers (and
+    /// their auth/active-device middleware) it would hit over the LAN. Set from
+    /// `main` after the router is built; empty during the brief boot window
+    /// (the poller then answers "tunnel not ready" and the PDA retries).
+    pub tunnel_router: Arc<std::sync::OnceLock<Router>>,
 }
 
 /// The WASM plugin subsystem, held together so admin handlers get one `Option`
@@ -78,7 +114,10 @@ pub struct AppState {
 /// `ECK_PLUGIN_RUNTIME=1`; inert (never referenced) otherwise.
 pub struct PluginRuntime {
     pub engine: PluginEngine,
-    pub registry: PluginRegistry,
+    /// `Arc` so the embedded POS can SHARE this exact registry (one node-local
+    /// failure latch, one mesh-backed blob store across the ingest + POS hook
+    /// seams).
+    pub registry: Arc<PluginRegistry>,
 }
 
 impl AppState {
@@ -225,7 +264,19 @@ fn main() {
         .max_blocking_threads(max_blocking)
         .build()
         .expect("Failed to build tokio runtime");
-    runtime.block_on(async_main());
+    // Drive the top-level future from a thread with a deep stack, not from the
+    // bare main thread: `thread_stack_size` above covers tokio workers only, and
+    // the startup `DEFINE TABLE …` batch runs inside this future. SurrealDB 3.3's
+    // query parser overflowed the 1 MB Windows main-thread default (3.2 fit);
+    // Linux's 8 MB default is close enough that we do not want to find out.
+    let main_thread = std::thread::Builder::new()
+        .name("wms-main".into())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || runtime.block_on(async_main()))
+        .expect("Failed to spawn the wms main thread");
+    if main_thread.join().is_err() {
+        std::process::exit(101);
+    }
 }
 
 async fn async_main() {
@@ -423,6 +474,12 @@ async fn async_main() {
              DEFINE TABLE IF NOT EXISTS document_raw SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS registered_device SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS file_resource SCHEMALESS;
+             -- Node-local chat telemetry (chat_log.rs). Strict-mode nodes (the
+             -- kiosk) refuse writes to undefined tables: every turn logged
+             -- `[chat-log] ensure_session failed: The table 'chat_session'
+             -- does not exist` until these were defined here.
+             DEFINE TABLE IF NOT EXISTS chat_session SCHEMALESS;
+             DEFINE TABLE IF NOT EXISTS chat_turn SCHEMALESS;
              -- OVERWRITE (not IF NOT EXISTS): the original definition said
              -- IN record, which SurrealDB reads as the table literally named
              -- record — so EVERY RELATE (user, order, …) failed coercion and
@@ -488,6 +545,11 @@ async fn async_main() {
              DEFINE TABLE IF NOT EXISTS vision_analysis SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS soll SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS repair_event SCHEMALESS;
+             -- Domain-event log (.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md §3): mesh-
+             -- synced (in SYNC_ENTITY_TYPES), so — like every other synced table —
+             -- it MUST exist before the live-watch LIVE SELECT bridges start or
+             -- its watcher dies at boot and local writes never reach the merkle tree.
+             DEFINE TABLE IF NOT EXISTS event SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS crm_update_log SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS opportunity SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS trip SCHEMALESS;
@@ -508,6 +570,12 @@ async fn async_main() {
              DEFINE TABLE IF NOT EXISTS product_alias SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS category SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS menu_item SCHEMALESS;
+             -- POS fiscal records (ecKasse): both are in SYNC_ENTITY_TYPES, so
+             -- they MUST exist before the live-watch bridges start or their
+             -- watcher dies at boot and local writes never reach the merkle
+             -- tree. Harmless (stay empty) on a node without POS enabled.
+             DEFINE TABLE IF NOT EXISTS transaction SCHEMALESS;
+             DEFINE TABLE IF NOT EXISTS storno_log SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS odoo_warehouse SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS odoo_location SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS odoo_product SCHEMALESS;
@@ -519,6 +587,20 @@ async fn async_main() {
              -- boot and local writes never reach the merkle tree.
              DEFINE TABLE IF NOT EXISTS receipt SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS receipt_unit SCHEMALESS;
+             -- Examination-bundle write path (mcp/bundles.rs). `device` and
+             -- `device_event` are in SYNC_ENTITY_TYPES (deterministic ids);
+             -- staging, protocol numbering and the write audit are NODE-LOCAL
+             -- by design (one authoritative protocol writer, ECK_PROTOCOL_WRITER=1).
+             DEFINE TABLE IF NOT EXISTS device SCHEMALESS;
+             DEFINE TABLE IF NOT EXISTS device_event SCHEMALESS;
+             DEFINE INDEX IF NOT EXISTS device_serial_norm ON device FIELDS serial_norm;
+             DEFINE INDEX IF NOT EXISTS device_event_serial ON device_event FIELDS serial_norm;
+             DEFINE INDEX IF NOT EXISTS device_event_protocol ON device_event FIELDS protocol_no;
+             DEFINE TABLE IF NOT EXISTS bundle_staging SCHEMALESS;
+             DEFINE TABLE IF NOT EXISTS protocol_reservation SCHEMALESS;
+             DEFINE INDEX IF NOT EXISTS protocol_reservation_bundle ON protocol_reservation FIELDS bundle_id;
+             DEFINE TABLE IF NOT EXISTS protocol_counter SCHEMALESS;
+             DEFINE TABLE IF NOT EXISTS mcp_write_audit SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS vault_share SCHEMALESS;
              DEFINE TABLE IF NOT EXISTS vault_node SCHEMALESS;
              DEFINE INDEX IF NOT EXISTS vault_share_key ON vault_share FIELDS tenant, node_id, kind UNIQUE;
@@ -919,7 +1001,10 @@ async fn async_main() {
         &RelayClient::relay_urls_from_env(),
         &instance_id,
         &mesh_id,
-    );
+    )
+    // Sync-kind envelopes over the relay queue are HMAC'd with the mesh
+    // secret; the relay poller on the receiving node verifies them.
+    .with_envelope_secret(sync_secret.as_deref());
     let sync_engine_role = std::env::var("MESH_NODE_ROLE")
         .ok()
         .filter(|s| !s.trim().is_empty())
@@ -1169,11 +1254,17 @@ async fn async_main() {
         });
     }
 
+    // WS broadcast channel — created BEFORE the scheduler spawn so the provider
+    // watchdog can push dashboard alerts (scraper/provider outages) on the same
+    // `ws_tx` the AI Observer and the rest of AppState use.
+    let (ws_tx, _) = tokio::sync::broadcast::channel(256);
+
     // Spawn scraper scheduler (hourly: OPAL/DHL/Zoho, daily 06:00: Excel/Exact Online)
     if std::env::var("ENABLE_SCRAPERS").unwrap_or_default() == "true" {
         let sched_db = db.clone();
         let sched_iid = instance_id.clone();
-        tokio::spawn(services::scheduler::start_cron_jobs(sched_db, sched_iid));
+        let sched_ws = ws_tx.clone();
+        tokio::spawn(services::scheduler::start_cron_jobs(sched_db, sched_iid, sched_ws));
         info!("Scraper scheduler spawned");
     } else {
         info!("Scrapers disabled (ENABLE_SCRAPERS != true). Run on edge node only.");
@@ -1211,7 +1302,6 @@ async fn async_main() {
         info!("=================================================");
     }
 
-    let (ws_tx, _) = tokio::sync::broadcast::channel(256);
     let hedera = HederaClient::from_env();
 
     // Build the xelixir AgentController before AppState so it can be shared
@@ -1303,7 +1393,7 @@ async fn async_main() {
             );
         }
         info!("ECK_PLUGIN_RUNTIME=1 — WASM plugin engine + registry initialized (licensed)");
-        Some(PluginRuntime { engine, registry })
+        Some(PluginRuntime { engine, registry: Arc::new(registry) })
     } else {
         None
     };
@@ -1321,13 +1411,19 @@ async fn async_main() {
         port,
         setup_password: RwLock::new(setup_password),
         ws_tx,
+        screens: Arc::new(RwLock::new(std::collections::HashMap::new())),
         agent_controller: agent_controller.clone(),
         node_role,
         i18n_lang_jobs: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         pii_reveal: Arc::new(crate::mcp::reveal::PiiRevealStore::new()),
         fuzzy_index: fuzzy_index.clone(),
         plugins,
+        tunnel_router: Arc::new(std::sync::OnceLock::new()),
     });
+
+    // Examination-bundle write path: legacy protocol seed (writer node only,
+    // ECK_PROTOCOL_WRITER=1) + 48 h staging GC at boot and hourly.
+    crate::mcp::bundles::spawn_maintenance(app_state.db.clone());
 
     // Fuzzy PII index (`.eck/PPRL_FUZZY.md` §C): load once now (after schema
     // init) and refresh every 10 min so mesh-synced `document.pii_fuzzy` and
@@ -1434,6 +1530,17 @@ async fn async_main() {
         let img_state = app_state.clone();
         tokio::spawn(async move {
             ai::image_summary::start_image_summary_worker(img_state).await;
+        });
+    }
+
+    // Spawn OCR-verify worker (.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md §11): an
+    // async cheap-text-model review of OCR-captured unit serials. Effective mode
+    // = ECK_OCR_VERIFY (off|dry|on) when set, else dry on the AI author node,
+    // else off; a node with no AI credentials never runs it. Additive only.
+    {
+        let ocr_state = app_state.clone();
+        tokio::spawn(async move {
+            ai::ocr_verify::start_ocr_verify_worker(ocr_state).await;
         });
     }
 
@@ -1809,9 +1916,16 @@ async fn async_main() {
         .route("/warehouse/:id", get(handlers::warehouse::get))
         // RMA / Orders
         .route("/rma", get(handlers::rma::list_orders).post(handlers::rma::create_order))
+        .route("/repairs/board", get(handlers::rma::board))
         .route("/rma/search", post(handlers::rma::search_orders))
         .route("/rma/:id", get(handlers::rma::get_order).put(handlers::rma::update_order).delete(handlers::rma::delete_order))
         .route("/rma/:id/generate-link", post(handlers::rma::generate_agreement_link))
+        // Entity read model — object page + scan tray (any logged-in role incl. observer)
+        .route("/entity/:kind/:id", get(handlers::entity::get_entity))
+        // Plan panel + capture (.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md §8). Device
+        // JWT accepted (same group as /scan + /receiving/*): the PDA has only a
+        // device JWT. The capture handler also enforces require_active_device.
+        .route("/entity/:kind/:id/capture", post(handlers::capture::capture))
         // Menu (categories + items)
         .route("/menu/categories", get(handlers::menu::list_categories).post(handlers::menu::create_category))
         .route("/menu/categories/:id", put(handlers::menu::update_category).delete(handlers::menu::delete_category))
@@ -1886,6 +2000,10 @@ async fn async_main() {
         // PDA (movFast Android client) — heartbeat, scan, repair, picking, explorer
         .route("/status", get(handlers::pda::status))
         .route("/scan", post(handlers::pda::handle_scan))
+        // Scan mirroring (.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md §5): live dashboard
+        // screens a PDA can mirror scans to, + the PDA's chosen mirror target.
+        .route("/screens", get(handlers::ws::list_screens))
+        .route("/pda/mirror", post(handlers::pda::set_mirror))
         .route("/repair/event", post(handlers::pda::repair_event))
         .route("/repair/consume", post(handlers::pda::consume))
         // Receiving (Eingang/Ausgang) — receipt header + the units it became
@@ -1901,6 +2019,13 @@ async fn async_main() {
         .route("/receiving/receipts/:receipt_id/repair", post(handlers::receiving::set_repair))
         // Walk-in intake: find the Zoho ticket behind an OCR'd Reparaturauftrag
         .route("/receiving/tickets/lookup", get(handlers::receiving::lookup_tickets))
+        // Plan panel — derived, stateless plan (receipt/ticket/shipment/serial)
+        .route("/receiving/plan", get(handlers::receiving::get_plan))
+        // OCR review (.eck/ENTITY_PAGES_AND_SCAN_MIRROR.md §10): the PDA offers
+        // the word boxes a worker tapped off a camera still and asks which ones
+        // look like a serial/model/etc. Same device-JWT group as /scan and
+        // /receiving/*; require_active_device is enforced inside the handler.
+        .route("/ai/ocr-hints", post(handlers::ocr_hints::ocr_hints))
         .route("/upload/image", post(handlers::files::upload))
         .route("/users/active", get(handlers::pda::active_users))
         .route("/users/verify-pin", post(handlers::pda::verify_pin))
@@ -1968,6 +2093,11 @@ async fn async_main() {
         .route("/auth/me", get(handlers::auth::me))
         // Self-service password change (acts on the caller's own token subject).
         .route("/auth/change-password", post(handlers::auth::change_password))
+        // Dashboard alerts: unread list is readable by any authenticated role
+        // (kiosk observer must see the banner); dismiss enforces admin/operator
+        // inside the handler (mirrors the config POST pattern below).
+        .route("/alerts/unread", get(handlers::alerts::list_unread))
+        .route("/alerts/:id/read", post(handlers::alerts::mark_read))
         // i18n language set — any authenticated token (incl. kiosk observer);
         // NOT admin-only so the kiosk language button can read it.
         .route("/i18n/languages", get(handlers::i18n::languages))
@@ -2033,6 +2163,7 @@ async fn async_main() {
         // SQL reachable on every public node. Handler double-checks admin.
         .route("/admin/query", post(handlers::admin::query))
         // One-shot ops/backfill tools (mesh-wide effects)
+        .route("/admin/backfill/unit-order-links", post(handlers::admin::backfill_unit_order_links))
         .route("/support/backfill-assignees", post(handlers::support::backfill_assignees))
         .route("/support/backfill-customfields", post(handlers::support::backfill_customfields))
         .route("/support/backfill-meta", post(handlers::support::backfill_meta))
@@ -2292,12 +2423,17 @@ async fn async_main() {
         // MCP agent surface (business-graph tools) — Bearer-gated inside the
         // handler (Master vs Agent tier), so it is mounted outside the /X
         // service-token layer. See wms/src/mcp/.
-        .route("/mcp", post(mcp::mcp_handler))
+        // 32 MiB: examination-bundle chunks arrive as base64 inside JSON-RPC
+        // (the relay caps a call at 1 MiB; direct callers may send more).
+        .route("/mcp", post(mcp::mcp_handler).layer(DefaultBodyLimit::max(32 * 1024 * 1024)))
         // Direct twin of the relay `/E/c/*` channel: accepts the same paid
         // SubscriptionCert-signed request straight from the LAN / a public node,
         // no relay hop. Cert-gated inside the handler (no bearer), so mounted
         // outside the /X service-token layer. See wms/src/services/client_mcp.rs.
-        .route("/mcp/signed", post(mcp::mcp_signed_handler))
+        .route(
+            "/mcp/signed",
+            post(mcp::mcp_signed_handler).layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
+        )
         .route("/E/auth/setup-status", get(handlers::auth::setup_status))
         .route("/E/auth/login", post(handlers::auth::login))
         // Scraper reverse proxy: /S/* → http://127.0.0.1:$SCRAPER_PORT/*
@@ -2328,10 +2464,15 @@ async fn async_main() {
             app_state.server_identity.clone(),
             app_state.jwt_secret.clone(),
             app_state.sync_secret.clone(),
+            // Share the host's plugin registry (same failure latch + mesh blob
+            // store) so the POS hot-path hooks reuse the licence decision wms
+            // already made; the POS builds its own pos_hot_path engine.
+            app_state.plugins.as_ref().map(|rt| Arc::clone(&rt.registry)),
         );
         // Table DDL + fiscal-WAL replay (crash between TSE sign and business
         // write) — must finish before the first sale is accepted.
         pos::init_fiscal(&pos_state).await;
+        pos::spawn_intent_dispatcher(&pos_state);
         info!("POS module enabled — ecKasse mounted at /K/");
         app.merge(pos::router(pos_state))
     } else {
@@ -2349,6 +2490,13 @@ async fn async_main() {
         app
     };
 
+    // Publish the finished Router to the cross-NAT `api_call` tunnel
+    // (services::api_tunnel): the mesh-relay poller runs synthetic PDA requests
+    // through this exact `app` with `oneshot`. Clone (Router is cheap to clone)
+    // so `app` can still be moved into `axum::serve` below. `set` only fails if
+    // already set, which cannot happen here.
+    let _ = app_state.tunnel_router.set(app.clone());
+
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     info!("eckWMS listening on {}", addr);
@@ -2361,6 +2509,7 @@ async fn async_main() {
     // ECK_SELF_WATCHDOG_INTERVAL_SECS=0. The listener is already bound here, and
     // the watchdog waits out its own grace window before the first probe.
     services::self_watchdog::spawn(port, tokio::runtime::Handle::current());
+    services::self_watchdog::spawn_alloc_stats();
 
     // Release the encrypted data volume on a graceful stop, but ONLY when the
     // operator asked for it (ECK_DATAFS_UNMOUNT_ON_EXIT=1). Default off: leaving

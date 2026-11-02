@@ -71,7 +71,21 @@ fn simhash(text: &str) -> u64 {
 /// token. That lets Channel B derive a `FuzzySig` for tokens that appear ONLY
 /// as `Name_<hex>` in NER/LLM-extracted prose (no structured clear field to
 /// re-derive from) — see [`fuzzy_sig_for_token`] and `derive_pii_fuzzy`.
+///
+/// Idempotent: if `text` is ALREADY exactly one PPRL token, it is returned
+/// (trimmed) unchanged, and NO MINT-LOG signature is recorded for it. The vault
+/// tokenizes stored meta at ingest (`services::support::tokenize_meta_into_vault`),
+/// so downstream maskers — the summariser prompt scrubber, the embedding
+/// ident/address maskers — routinely re-apply this to a value that is already a
+/// token. Re-hashing a token would mint a second-level `Address_<hash-of-token>`
+/// that decodes to nothing, and a MINT-LOG entry for it would poison fuzzy
+/// lookup. The class label is deliberately ignored here: a token is opaque no
+/// matter which field slot re-masks it, so a class mismatch still returns it
+/// untouched.
 pub fn obfuscate_pii(text: &str, pii_type: &str) -> String {
+    if parse_pii_token(text).is_some() {
+        return text.trim().to_string();
+    }
     let token = format!("{}_{:016X}", pii_type, simhash(text));
     if text.chars().filter(|c| c.is_alphabetic()).count() >= 2 {
         match pii_type {
@@ -1131,6 +1145,44 @@ mod tests {
         let token = obfuscate_pii("Ivan Petrov", "Name");
         assert!(token.starts_with("Name_"));
         assert_eq!(token.len(), 5 + 16); // "Name_" + 16 hex chars
+    }
+
+    #[test]
+    fn obfuscate_idempotent_on_matching_token() {
+        setup();
+        // An already-minted token re-masked under its own class comes back
+        // verbatim (vault tokenizes stored meta at ingest; downstream maskers
+        // re-apply this) — no second-level hash.
+        let t = "Address_DEADBEEF00000000";
+        assert_eq!(obfuscate_pii(t, "Address"), t);
+    }
+
+    #[test]
+    fn obfuscate_idempotent_on_class_mismatch() {
+        setup();
+        // A token re-masked under a DIFFERENT class is STILL returned unchanged:
+        // a token is opaque regardless of which field slot re-masks it.
+        let t = "Name_CC0068898836CB06";
+        assert_eq!(obfuscate_pii(t, "Address"), t);
+    }
+
+    #[test]
+    fn obfuscate_mints_fresh_token_for_plain_text() {
+        setup();
+        let token = obfuscate_pii("Ivan Petrov", "Name");
+        assert_eq!(parse_pii_token(&token), Some("Name"), "not a well-formed Name token: {token}");
+        assert_ne!(token, "Ivan Petrov");
+    }
+
+    #[test]
+    fn obfuscate_trims_whitespace_around_token() {
+        setup();
+        // A token with surrounding whitespace returns the TRIMMED token, not a
+        // re-hash of the padded string.
+        assert_eq!(
+            obfuscate_pii("  Address_DEADBEEF00000000  ", "Address"),
+            "Address_DEADBEEF00000000"
+        );
     }
 
     #[test]

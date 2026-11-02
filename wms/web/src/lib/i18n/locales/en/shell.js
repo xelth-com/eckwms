@@ -32,6 +32,11 @@ export default {
   logout: 'Logout',
   language: 'Language',
   change_language: 'Change language',
+  // Scan-mirror screen name (PDA scan tray target)
+  screen_label: 'Screen',
+  screen_rename: 'Rename this screen',
+  // In-app input method (physical-keyboard IME) indicator
+  ime_hint: 'Input language: {lang}. Click, or press Shift+Space, to switch to and from English (Alt+Shift / Ctrl+Shift also work).',
   lang_other: 'Other',
   add_language: 'Add language',
   add_language_hint: 'e.g. fr',
@@ -77,6 +82,7 @@ export default {
   copied_with_prompt: 'Copied with prompt!',
   alert_report_sent: 'Encrypted report automatically sent to Remote Support on {date}',
   acknowledge_dismiss: 'Acknowledge & Dismiss',
+  toast_alert_resolved: 'Recovered: {title}',
 
   // Ambiguous scan modal
   ambiguous_title: 'Multiple Matches Found',

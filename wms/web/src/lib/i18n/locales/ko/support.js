@@ -58,6 +58,7 @@ export default {
     fetch_from_home: "홈 노드에서 원본 가져오기",
     no_content: "(내용 없음)",
     attachment_alt: "첨부파일",
+    attachment_open_failed: "첨부파일을 열 수 없습니다: {error}",
     pii_restored_title: "로컬 데이터에서 복원됨",
     pii_unrestored_title: "복원할 수 없음 - 소스가 이 노드에 없음",
     translating_to: "{lang}(으)로 번역 중…",

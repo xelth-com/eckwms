@@ -274,6 +274,11 @@ pub struct FromReceiptBody {
     pub country: Option<String>,
     pub customer: Option<String>,
     pub serial: Option<String>,
+    /// Which unit of the receipt this order is for (`receipt_unit` record-id
+    /// leaf). When given, idempotency is keyed on the (receipt, unit) pair so a
+    /// multi-device parcel can mint one order per device. When absent, the first
+    /// serial-like unit is used (today's behaviour).
+    pub unit_id: Option<String>,
 }
 
 /// Render a `datetime`/string field as `YYYY-MM-DD`. SurrealDB datetimes come
@@ -423,15 +428,70 @@ pub async fn from_receipt(
         )
     })?;
 
-    // ── idempotency: one order per receipt ──
-    let existing: Option<Value> = state
+    // ── units of the receipt (needed to choose the unit + key idempotency) ──
+    let units: Vec<Value> = state
         .db
-        .query("SELECT * FROM order WHERE metadata.receipt_uuid = $r LIMIT 1")
+        .query(
+            "SELECT record::id(id) AS unit_id, barcode, serial, code, created_at \
+             FROM receipt_unit WHERE receipt_id = $r ORDER BY created_at ASC",
+        )
         .bind(("r", receipt_id.clone()))
         .await
         .map_err(db_err)?
         .take(0)
         .map_err(db_err)?;
+
+    // The unit this order is for: an explicit body `unit_id`, else the first
+    // serial-like unit (today's behaviour). This is the UUID link's anchor.
+    let chosen_unit_id: Option<String> = match trimmed(&body.unit_id) {
+        Some(uid) => {
+            if !units
+                .iter()
+                .any(|u| str_field(u, "unit_id").as_deref() == Some(uid.as_str()))
+            {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("unit '{uid}' does not belong to receipt '{receipt_id}'"),
+                ));
+            }
+            Some(uid)
+        }
+        None => units.iter().find_map(|u| {
+            ["serial", "barcode"]
+                .iter()
+                .any(|k| str_field(u, k).map(|s| claimlist::looks_like_serial(&s)).unwrap_or(false))
+                .then(|| str_field(u, "unit_id"))
+                .flatten()
+        }),
+    };
+
+    // ── idempotency ──
+    // Per (receipt, unit) when a unit is pinned (explicit body `unit_id`, or the
+    // receipt holds several units — so the 2nd device of a parcel can get its
+    // own order); otherwise the legacy one-order-per-receipt rule. Same response
+    // shape in both cases.
+    let per_unit = body.unit_id.is_some() || units.len() > 1;
+    let existing: Option<Value> = match (per_unit, chosen_unit_id.as_deref()) {
+        (true, Some(uid)) => state
+            .db
+            .query("SELECT * FROM order WHERE unit_id = $u LIMIT 1")
+            .bind(("u", uid.to_string()))
+            .await
+            .map_err(db_err)?
+            .take(0)
+            .map_err(db_err)?,
+        // Single-unit receipt, or a multi-unit receipt with no serial-like unit
+        // to anchor on: fall back to the receipt-level rule (never mint an
+        // unanchored duplicate).
+        _ => state
+            .db
+            .query("SELECT * FROM order WHERE metadata.receipt_uuid = $r LIMIT 1")
+            .bind(("r", receipt_id.clone()))
+            .await
+            .map_err(db_err)?
+            .take(0)
+            .map_err(db_err)?,
+    };
     if let Some(order) = existing {
         return Ok(Json(json!({
             "ok": true,
@@ -441,17 +501,11 @@ pub async fn from_receipt(
     }
 
     // ── derived defaults ──
-    let units: Vec<Value> = state
-        .db
-        .query(
-            "SELECT barcode, serial, code, created_at FROM receipt_unit \
-             WHERE receipt_id = $r ORDER BY created_at ASC",
-        )
-        .bind(("r", receipt_id.clone()))
-        .await
-        .map_err(db_err)?
-        .take(0)
-        .map_err(db_err)?;
+    let chosen_unit: Option<&Value> = chosen_unit_id.as_deref().and_then(|uid| {
+        units
+            .iter()
+            .find(|u| str_field(u, "unit_id").as_deref() == Some(uid))
+    });
 
     // The Zoho ticket the receiver attached at the counter. Everything the
     // caller left out is filled from it — the whole point of matching the
@@ -468,6 +522,14 @@ pub async fn from_receipt(
     };
 
     let serial = trimmed(&body.serial)
+        .or_else(|| {
+            // Prefer the chosen unit's serial, then any serial-like unit.
+            chosen_unit.and_then(|u| {
+                ["serial", "barcode"]
+                    .iter()
+                    .find_map(|k| str_field(u, k).filter(|s| claimlist::looks_like_serial(s)))
+            })
+        })
         .or_else(|| {
             units.iter().find_map(|u| {
                 ["serial", "barcode"]
@@ -552,6 +614,9 @@ pub async fn from_receipt(
         "serial_number": serial,
         "issue_description": issue,
         "parts_used": [],
+        // Top-level UUID link (order → unit); `null` when no unit could be
+        // anchored. The unit → order side is stamped right after the mint below.
+        "unit_id": chosen_unit_id,
         "metadata": {
             "receipt_uuid": receipt_id,
             "source": "claimlist/from-receipt",
@@ -577,6 +642,16 @@ pub async fn from_receipt(
         .put_synced_entity("order", &uuid, fields)
         .await
         .map_err(db_err)?;
+
+    // Stamp the unit → order side of the UUID link (the order → unit side is the
+    // top-level `unit_id` written above). Through `put_synced_entity` so the
+    // `receipt_unit` write advances `_vclock` and reaches the mesh.
+    if let Some(uid) = chosen_unit_id.as_deref() {
+        state
+            .put_synced_entity("receipt_unit", uid, json!({ "order_uuid": uuid }))
+            .await
+            .map_err(db_err)?;
+    }
 
     // `created_at` must be a real `datetime`, so it is stamped server-side — an
     // RFC3339 string bound through serde would poison ORDER BY / arithmetic.

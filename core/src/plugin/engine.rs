@@ -24,6 +24,20 @@ const DEFAULT_MAX_MEMORY_BYTES: u64 = 32 * 1024 * 1024;
 /// first wins. Per-hook tuning is a later concern.
 const DEFAULT_FUEL: u64 = 1_000_000_000;
 
+/// Hot-path (POS) wall-clock budget — far tighter than [`DEFAULT_TIMEOUT_MS`].
+/// POS hooks (`pos_price_rules`, `pos_receipt_render`) run INLINE on the sale
+/// path (price rules before the TSE sign, receipt render at print time), so a
+/// slow or hostile plugin must not stall a checkout. A trip is never an error
+/// that blocks the sale — the pos side consumes it as "no adjustments / no
+/// extra lines" (see `hooks::PosHookSkip`). 50 ms is comfortably above a
+/// well-behaved pure hook yet short enough to be invisible to the cashier.
+pub const POS_HOT_PATH_TIMEOUT_MS: u64 = 50;
+
+/// Hot-path (POS) fuel cap — an order of magnitude below [`DEFAULT_FUEL`], for
+/// the same reason: a hot-path hook does a tiny, bounded amount of work on a
+/// cart/receipt snapshot. Whichever of fuel / wall-clock trips first wins.
+pub const POS_HOT_PATH_FUEL: u64 = 100_000_000;
+
 /// Per-call resource limits, all three enforced inside [`PluginEngine::run`].
 ///
 /// The limits are baked into the compiled module (memory + timeout live on the
@@ -46,6 +60,21 @@ impl Default for PluginLimits {
         Self {
             timeout_ms: DEFAULT_TIMEOUT_MS,
             fuel: Some(DEFAULT_FUEL),
+            max_memory_bytes: DEFAULT_MAX_MEMORY_BYTES,
+        }
+    }
+}
+
+impl PluginLimits {
+    /// Tight limit profile for the hot-path POS hooks (`pos_price_rules`,
+    /// `pos_receipt_render`): [`POS_HOT_PATH_TIMEOUT_MS`] wall clock /
+    /// [`POS_HOT_PATH_FUEL`] fuel, with the default (ample) memory ceiling — a
+    /// cart/receipt snapshot is tiny, so memory is not the lever here, latency
+    /// is. Build the POS engine with `PluginEngine::new(PluginLimits::pos_hot_path(), identity)`.
+    pub fn pos_hot_path() -> Self {
+        Self {
+            timeout_ms: POS_HOT_PATH_TIMEOUT_MS,
+            fuel: Some(POS_HOT_PATH_FUEL),
             max_memory_bytes: DEFAULT_MAX_MEMORY_BYTES,
         }
     }
@@ -549,4 +578,300 @@ mod tests {
         assert_eq!(out["meta_patch"]["category"], serde_json::json!("hardware"));
         assert!(!out["notes"].as_array().unwrap().is_empty());
     }
+
+    // ===================== POS hot-path hooks (end-to-end) =====================
+
+    use crate::plugin::{
+        encode_pos_price_rules_input, encode_pos_receipt_render_input, finalize_pos_price_rules,
+        finalize_pos_receipt_render, AdjustmentKind, AdjustmentTarget, PosCartItem,
+        PosPriceRulesInput, PosPriceRulesOutcome, PosReceiptRenderInput, PosReceiptRenderOutcome,
+        POS_HOT_PATH_FUEL, POS_HOT_PATH_TIMEOUT_MS,
+    };
+
+    /// Build a WAT module that ignores its input and emits `payload` verbatim
+    /// through the extism kernel ABI — lets a test stand in for "what a real
+    /// (e.g. happy-hour) plugin returns for a given cart", without a wasm32
+    /// toolchain. The host side (decode + validation + finalize) is what we
+    /// exercise; the in-plugin pricing decision is the plugin author's job.
+    fn const_output_wat(export: &str, payload: &str) -> String {
+        let bytes = payload.as_bytes();
+        let len = bytes.len();
+        let mut stores = String::new();
+        for (i, b) in bytes.iter().enumerate() {
+            stores.push_str(&format!(
+                "(call $store_u8 (i64.add (local.get $out) (i64.const {i})) (i32.const {b}))\n"
+            ));
+        }
+        format!(
+            r#"
+            (module
+              (import "extism:host/env" "alloc" (func $alloc (param i64) (result i64)))
+              (import "extism:host/env" "store_u8" (func $store_u8 (param i64 i32)))
+              (import "extism:host/env" "output_set" (func $output_set (param i64 i64)))
+              (func (export "{export}") (result i32)
+                (local $out i64)
+                (local.set $out (call $alloc (i64.const {len})))
+                {stores}
+                (call $output_set (local.get $out) (i64.const {len}))
+                (i32.const 0)))
+            "#
+        )
+    }
+
+    fn pos_engine() -> PluginEngine {
+        PluginEngine::new(PluginLimits::pos_hot_path(), identity())
+    }
+
+    fn sample_cart() -> PosPriceRulesInput {
+        PosPriceRulesInput {
+            business_time: "2026-10-06T18:00:00+02:00".to_string(),
+            currency: "EUR".to_string(),
+            actor_role: "cashier".to_string(),
+            customer_tags: vec![],
+            items: vec![PosCartItem {
+                index: 0,
+                item_id: "beer-1".to_string(),
+                name: "Pils 0.5".to_string(),
+                category: Some("drinks".to_string()),
+                quantity: 1.0,
+                unit_price: 10.0,
+                tax_rate: 19.0,
+                line_total: 10.0,
+            }],
+            subtotal: 10.0,
+        }
+    }
+
+    #[test]
+    fn pos_hot_path_limits_are_tight() {
+        let limits = PluginLimits::pos_hot_path();
+        assert_eq!(limits.timeout_ms, POS_HOT_PATH_TIMEOUT_MS);
+        assert_eq!(limits.fuel, Some(POS_HOT_PATH_FUEL));
+        assert!(limits.timeout_ms < PluginLimits::default().timeout_ms);
+        assert!(limits.fuel.unwrap() < PluginLimits::default().fuel.unwrap());
+    }
+
+    #[test]
+    fn happy_hour_plugin_proposal_is_validated_and_applied() {
+        // What a happy-hour plugin returns for business_time in [17:00, 19:00):
+        // 20% off the "drinks" line (index 0).
+        let payload = r#"{"adjustments":[{"target":"item","item_index":0,"kind":"percent","value":20.0,"label":"Happy Hour","rule_id":"happy_hour_drinks"}]}"#;
+        let wat = const_output_wat("pos_price_rules", payload);
+        let bytes = wasm(&wat);
+        let sha = sha256_hex(&bytes);
+        let engine = pos_engine();
+        let input = sample_cart();
+        let envelope = encode_pos_price_rules_input(&input).unwrap();
+
+        let result = engine.run(
+            &sha,
+            &[],
+            || Ok::<_, String>(bytes.clone()),
+            "pos_price_rules",
+            &envelope,
+            ctx("pos_price_rules"),
+        );
+        match finalize_pos_price_rules(result, &input) {
+            PosPriceRulesOutcome::Applied(adj) => {
+                assert_eq!(adj.len(), 1);
+                assert_eq!(adj[0].target, AdjustmentTarget::Item);
+                assert_eq!(adj[0].kind, AdjustmentKind::Percent);
+                assert_eq!(adj[0].value, 20.0);
+            }
+            other => panic!("expected Applied, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn negative_driving_proposal_is_rejected_end_to_end() {
+        // Absolute 9999 off a 10.00 line → would go negative → whole proposal out.
+        let payload = r#"{"adjustments":[{"target":"item","item_index":0,"kind":"absolute","value":9999.0,"label":"Oops","rule_id":"bad"}]}"#;
+        let wat = const_output_wat("pos_price_rules", payload);
+        let bytes = wasm(&wat);
+        let sha = sha256_hex(&bytes);
+        let engine = pos_engine();
+        let input = sample_cart();
+        let envelope = encode_pos_price_rules_input(&input).unwrap();
+
+        let result = engine.run(
+            &sha,
+            &[],
+            || Ok::<_, String>(bytes.clone()),
+            "pos_price_rules",
+            &envelope,
+            ctx("pos_price_rules"),
+        );
+        assert!(matches!(
+            finalize_pos_price_rules(result, &input),
+            PosPriceRulesOutcome::Skipped(_)
+        ));
+    }
+
+    #[test]
+    fn item_index_out_of_range_is_rejected_end_to_end() {
+        let payload = r#"{"adjustments":[{"target":"item","item_index":99,"kind":"percent","value":10.0,"label":"x","rule_id":"x"}]}"#;
+        let wat = const_output_wat("pos_price_rules", payload);
+        let bytes = wasm(&wat);
+        let sha = sha256_hex(&bytes);
+        let engine = pos_engine();
+        let input = sample_cart();
+        let envelope = encode_pos_price_rules_input(&input).unwrap();
+
+        let result = engine.run(
+            &sha,
+            &[],
+            || Ok::<_, String>(bytes.clone()),
+            "pos_price_rules",
+            &envelope,
+            ctx("pos_price_rules"),
+        );
+        assert!(matches!(
+            finalize_pos_price_rules(result, &input),
+            PosPriceRulesOutcome::Skipped(_)
+        ));
+    }
+
+    #[test]
+    fn receipt_plugin_esc_injection_is_rejected_end_to_end() {
+        // Footer line carrying a raw ESC byte (\u001b @ ...) → ESC/POS injection.
+        let payload = r#"{"header_lines":[],"footer_lines":["\u001b@malicious"]}"#;
+        let wat = const_output_wat("pos_receipt_render", payload);
+        let bytes = wasm(&wat);
+        let sha = sha256_hex(&bytes);
+        let engine = pos_engine();
+        let input = PosReceiptRenderInput {
+            transaction: serde_json::json!({ "id": "tx-1" }),
+            locale: "de-DE".to_string(),
+            business_time: "2026-10-06T18:00:00+02:00".to_string(),
+        };
+        let envelope = encode_pos_receipt_render_input(&input).unwrap();
+
+        let result = engine.run(
+            &sha,
+            &[],
+            || Ok::<_, String>(bytes.clone()),
+            "pos_receipt_render",
+            &envelope,
+            ctx("pos_receipt_render"),
+        );
+        assert!(matches!(
+            finalize_pos_receipt_render(result),
+            PosReceiptRenderOutcome::Skipped(_)
+        ));
+    }
+
+    #[test]
+    fn receipt_plugin_three_footer_lines_is_applied_end_to_end() {
+        let payload = r#"{"header_lines":[],"footer_lines":["Thank you!","Come again","www.example.de"]}"#;
+        let wat = const_output_wat("pos_receipt_render", payload);
+        let bytes = wasm(&wat);
+        let sha = sha256_hex(&bytes);
+        let engine = pos_engine();
+        let input = PosReceiptRenderInput {
+            transaction: serde_json::json!({ "id": "tx-1" }),
+            locale: "de-DE".to_string(),
+            business_time: "2026-10-06T18:00:00+02:00".to_string(),
+        };
+        let envelope = encode_pos_receipt_render_input(&input).unwrap();
+
+        let result = engine.run(
+            &sha,
+            &[],
+            || Ok::<_, String>(bytes.clone()),
+            "pos_receipt_render",
+            &envelope,
+            ctx("pos_receipt_render"),
+        );
+        match finalize_pos_receipt_render(result) {
+            PosReceiptRenderOutcome::Applied(lines) => {
+                assert_eq!(lines.footer_lines.len(), 3);
+                assert!(lines.header_lines.is_empty());
+            }
+            other => panic!("expected Applied, got {other:?}"),
+        }
+    }
+
+    /// End-to-end against the REAL POS happy-hour demo plugin
+    /// (`examples/plugins/pos_happy_hour`), not a hand-written WAT fixture —
+    /// proves an actual extism-pdk (Rust) build of BOTH POS hooks round-trips
+    /// through the hot-path engine.
+    ///
+    /// Not run by default: it needs a real compiled `.wasm` (the wasm32 rustup
+    /// target). Build it with `scripts/build-pos-demo-plugin.ps1`, then run:
+    ///   `$env:ECK_POS_DEMO_PLUGIN_WASM = "<path from the script's output>"`
+    ///   `cargo test -p eck_core --lib -- --ignored demo_pos_happy_hour_plugin`
+    #[test]
+    #[ignore = "requires ECK_POS_DEMO_PLUGIN_WASM (built via scripts/build-pos-demo-plugin.ps1)"]
+    fn demo_pos_happy_hour_plugin_prices_drinks_and_renders_footer() {
+        let path = std::env::var("ECK_POS_DEMO_PLUGIN_WASM").expect(
+            "set ECK_POS_DEMO_PLUGIN_WASM to the built demo plugin's .wasm path (see scripts/build-pos-demo-plugin.ps1)",
+        );
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let sha = sha256_hex(&bytes);
+        let engine = pos_engine();
+
+        // business_time 18:00 (inside happy hour) + a "drinks" line → 20 % off.
+        let input = sample_cart();
+        let envelope = encode_pos_price_rules_input(&input).unwrap();
+        let result = engine.run(
+            &sha,
+            &[],
+            || Ok::<_, String>(bytes.clone()),
+            "pos_price_rules",
+            &envelope,
+            ctx("pos_price_rules"),
+        );
+        match finalize_pos_price_rules(result, &input) {
+            PosPriceRulesOutcome::Applied(adj) => {
+                assert_eq!(adj.len(), 1, "one drinks line → one adjustment");
+                assert_eq!(adj[0].target, AdjustmentTarget::Item);
+                assert_eq!(adj[0].kind, AdjustmentKind::Percent);
+                assert_eq!(adj[0].value, 20.0);
+                assert_eq!(adj[0].rule_id, "happy_hour_drinks");
+            }
+            other => panic!("expected Applied, got {other:?}"),
+        }
+
+        // Receipt render → one happy-hour footer line.
+        let rinput = PosReceiptRenderInput {
+            transaction: serde_json::json!({ "uuid": "tx-1", "total_amount": 8.0 }),
+            locale: "de-DE".to_string(),
+            business_time: "2026-10-06T18:00:00+02:00".to_string(),
+        };
+        let renvelope = encode_pos_receipt_render_input(&rinput).unwrap();
+        let rresult = engine.run(
+            &sha,
+            &[],
+            || Ok::<_, String>(bytes.clone()),
+            "pos_receipt_render",
+            &renvelope,
+            ctx("pos_receipt_render"),
+        );
+        match finalize_pos_receipt_render(rresult) {
+            PosReceiptRenderOutcome::Applied(lines) => {
+                assert_eq!(lines.footer_lines.len(), 1);
+                assert!(lines.footer_lines[0].contains("Happy Hour"), "got {:?}", lines.footer_lines);
+                assert!(lines.header_lines.is_empty());
+            }
+            other => panic!("expected Applied, got {other:?}"),
+        }
+
+        // Outside happy hour (09:00) → no adjustment.
+        let mut morning = sample_cart();
+        morning.business_time = "2026-10-06T09:00:00+02:00".to_string();
+        let menvelope = encode_pos_price_rules_input(&morning).unwrap();
+        let mresult = engine.run(
+            &sha,
+            &[],
+            || Ok::<_, String>(bytes.clone()),
+            "pos_price_rules",
+            &menvelope,
+            ctx("pos_price_rules"),
+        );
+        match finalize_pos_price_rules(mresult, &morning) {
+            PosPriceRulesOutcome::Applied(adj) => assert!(adj.is_empty(), "no happy hour at 09:00"),
+            other => panic!("expected Applied(empty), got {other:?}"),
+        }
+    }
+
 }

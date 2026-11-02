@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use chrono::{Timelike, Utc};
 use eck_core::db::SurrealDb;
 use serde_json::{json, Value};
@@ -6,8 +8,53 @@ use tracing::{debug, info, warn, error};
 use super::support;
 use crate::handlers::scraper_proxy::scraper_base;
 
+/// Consecutive-failure streaks for the `warn!`-only hourly tasks (Odoo,
+/// claimlist), kept across hourly cycles so a persistent outage — not a single
+/// blip — is what raises a dashboard alert. See [`track_task_health`].
+static ODOO_FAILS: AtomicU32 = AtomicU32::new(0);
+static CLAIMLIST_FAILS: AtomicU32 = AtomicU32::new(0);
+
+/// How many consecutive failures of a `warn!`-only task raise an alert.
+const TASK_FAIL_ALERT_THRESHOLD: u32 = 3;
+
+/// Update a task's consecutive-failure streak and raise/resolve its dashboard
+/// alert. On success: reset the streak and, if it had alerted, resolve. On
+/// failure: bump the streak and raise once it reaches the threshold.
+async fn track_task_health(
+    db: &SurrealDb,
+    ws: &tokio::sync::broadcast::Sender<String>,
+    counter: &AtomicU32,
+    key: &str,
+    title: &str,
+    ok: bool,
+    last_error: &str,
+) {
+    if ok {
+        let prev = counter.swap(0, Ordering::Relaxed);
+        if prev >= TASK_FAIL_ALERT_THRESHOLD {
+            crate::services::alerts::resolve(db, Some(ws), key, "recovered: task succeeded").await;
+        }
+    } else {
+        let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+        if n >= TASK_FAIL_ALERT_THRESHOLD {
+            let message = format!(
+                "{} consecutive failures. Last error: {}",
+                n,
+                safe_trunc(last_error, 400)
+            );
+            crate::services::alerts::raise(db, Some(ws), key, "warning", title, &message).await;
+        }
+    }
+}
+
 /// Start all background cron jobs. Call once from main via `tokio::spawn`.
-pub async fn start_cron_jobs(db: SurrealDb, instance_id: String) {
+/// `ws_tx` is the dashboard WS broadcast channel — the provider watchdog pushes
+/// scraper/provider outage alerts on it (same channel as the AI Observer).
+pub async fn start_cron_jobs(
+    db: SurrealDb,
+    instance_id: String,
+    ws_tx: tokio::sync::broadcast::Sender<String>,
+) {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .build()
@@ -18,6 +65,7 @@ pub async fn start_cron_jobs(db: SurrealDb, instance_id: String) {
         let db = db.clone();
         let client = client.clone();
         let iid = instance_id.clone();
+        let ws = ws_tx.clone();
         tokio::spawn(async move {
             // Wait 30s after startup before first run
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
@@ -27,37 +75,110 @@ pub async fn start_cron_jobs(db: SurrealDb, instance_id: String) {
                 info!("[scheduler] Starting hourly sync cycle");
                 // Self-heal: on edge nodes the Node scraper dies with reboots;
                 // respawn it here instead of requiring a manual /api/scraper/start.
-                crate::handlers::scraper_proxy::ensure_scraper_running().await;
-                sync_opal(&db, &client, &iid).await;
-                sync_dhl(&db, &client, &iid).await;
+                // A failed respawn is a dashboard alert immediately — don't wait
+                // for the three providers to time out one by one.
+                if !crate::handlers::scraper_proxy::ensure_scraper_running().await {
+                    crate::services::alerts::raise(
+                        &db,
+                        Some(&ws),
+                        "scraper:process",
+                        "critical",
+                        "Scraper process unreachable",
+                        "The Node/Bun scraper on this node is down and could not be respawned; \
+                         the scheduler retries hourly — check `POST /api/scraper/start` and \
+                         scraper/scraper.err.log.",
+                    )
+                    .await;
+                }
+                // Every provider pass is guarded: a panic in any one of them must
+                // not kill the hourly loop for the rest of the process lifetime
+                // (a died task leaves no row and no alert otherwise).
                 {
-                    // Guarded: a panic inside one Zoho pass must not kill the
-                    // hourly loop for the rest of the process lifetime.
+                    let (db2, c2, i2) = (db.clone(), client.clone(), iid.clone());
+                    run_guarded(&db, &iid, "opal", async move {
+                        sync_opal(&db2, &c2, &i2).await;
+                    })
+                    .await;
+                }
+                {
+                    let (db2, c2, i2) = (db.clone(), client.clone(), iid.clone());
+                    run_guarded(&db, &iid, "dhl", async move {
+                        sync_dhl(&db2, &c2, &i2).await;
+                    })
+                    .await;
+                }
+                {
                     let (db2, c2, i2) = (db.clone(), client.clone(), iid.clone());
                     run_guarded(&db, &iid, "zoho_desk", async move {
                         sync_zoho(&db2, &c2, &i2, false).await;
                     })
                     .await;
                 }
-                // Odoo mirror pull (dormant unless ODOO_URL is configured) —
-                // keeps odoo_* master-data tables fresh on the always-on node.
-                if std::env::var("ODOO_URL").is_ok() {
-                    match crate::services::odoo::pull_master_data(&db, &iid, 0, 0).await {
-                        Ok(c) => info!("[scheduler] odoo mirror pull: {}", c),
-                        Err(e) => warn!("[scheduler] odoo mirror pull failed: {}", e),
-                    }
-                }
-                // Odoo on-hand projection (no-op unless ODOO_WRITE_ENABLED=true)
-                match crate::services::odoo::project_dirty(&db).await {
-                    Ok(s) => debug!("[scheduler] odoo projection: {}", s),
-                    Err(e) => warn!("[scheduler] odoo projection failed: {}", e),
+                // Odoo mirror pull (dormant unless ODOO_URL is configured) +
+                // on-hand projection (no-op unless ODOO_WRITE_ENABLED=true). Both
+                // only `warn!` on failure, so a persistent outage is otherwise
+                // invisible — track a consecutive-failure streak and raise a
+                // dashboard alert after 3 in a row (skip entirely when ODOO_URL
+                // is unset: the pull no-ops and there is nothing to watch).
+                {
+                    let odoo_configured = std::env::var("ODOO_URL").is_ok();
+                    let (db2, i2, ws2) = (db.clone(), iid.clone(), ws.clone());
+                    run_guarded(&db, &iid, "odoo", async move {
+                        let mut ok = true;
+                        let mut last_err = String::new();
+                        if odoo_configured {
+                            match crate::services::odoo::pull_master_data(&db2, &i2, 0, 0).await {
+                                Ok(c) => info!("[scheduler] odoo mirror pull: {}", c),
+                                Err(e) => {
+                                    warn!("[scheduler] odoo mirror pull failed: {}", e);
+                                    ok = false;
+                                    last_err = e.to_string();
+                                }
+                            }
+                        }
+                        match crate::services::odoo::project_dirty(&db2).await {
+                            Ok(s) => debug!("[scheduler] odoo projection: {}", s),
+                            Err(e) => {
+                                warn!("[scheduler] odoo projection failed: {}", e);
+                                ok = false;
+                                if last_err.is_empty() {
+                                    last_err = e.to_string();
+                                }
+                            }
+                        }
+                        if odoo_configured {
+                            track_task_health(&db2, &ws2, &ODOO_FAILS, "provider:odoo", "Odoo sync failing", ok, &last_err).await;
+                        }
+                    })
+                    .await;
                 }
                 // Claimlist reader (no-op unless CLAIMLIST_TOKEN_FILE is set;
-                // cheap metadata poll, downloads only on workbook change)
-                match crate::services::claimlist::check_and_ingest(&db).await {
-                    Ok(s) => debug!("[scheduler] claimlist check: {}", s),
-                    Err(e) => warn!("[scheduler] claimlist check failed: {}", e),
+                // cheap metadata poll, downloads only on workbook change). Same
+                // warn!-only blind spot → same consecutive-failure alerting.
+                {
+                    let (db2, ws2) = (db.clone(), ws.clone());
+                    run_guarded(&db, &iid, "claimlist", async move {
+                        let configured = std::env::var("CLAIMLIST_TOKEN_FILE").is_ok();
+                        match crate::services::claimlist::check_and_ingest(&db2).await {
+                            Ok(s) => {
+                                debug!("[scheduler] claimlist check: {}", s);
+                                if configured {
+                                    track_task_health(&db2, &ws2, &CLAIMLIST_FAILS, "provider:claimlist", "Claimlist reader failing", true, "").await;
+                                }
+                            }
+                            Err(e) => {
+                                warn!("[scheduler] claimlist check failed: {}", e);
+                                if configured {
+                                    track_task_health(&db2, &ws2, &CLAIMLIST_FAILS, "provider:claimlist", "Claimlist reader failing", false, &e.to_string()).await;
+                                }
+                            }
+                        }
+                    })
+                    .await;
                 }
+                // Deterministic outage watchdog: turn silent provider failures
+                // into deduplicated dashboard alerts (self-clearing on recovery).
+                crate::services::provider_health::check(&db, Some(&ws)).await;
             }
         });
     }
@@ -67,12 +188,13 @@ pub async fn start_cron_jobs(db: SurrealDb, instance_id: String) {
         let db = db.clone();
         let client = client.clone();
         let iid = instance_id.clone();
+        let ws = ws_tx.clone();
         tokio::spawn(async move {
             // Check if daily sync was missed (e.g. PC was off) — run once on startup if >24h ago
             tokio::time::sleep(std::time::Duration::from_secs(45)).await;
             if should_run_daily_catchup(&db).await {
                 info!("[scheduler] Daily sync catch-up: last run >24h ago, running now");
-                run_daily_sync(&db, &client, &iid).await;
+                run_daily_sync(&db, &client, &iid, &ws).await;
             }
 
             // `ECK_DAILY_SYNC_HOUR` (0-23, default 6, LOCAL clock of the box —
@@ -89,7 +211,7 @@ pub async fn start_cron_jobs(db: SurrealDb, instance_id: String) {
                 let hour = chrono::Local::now().hour();
                 if hour == daily_hour {
                     info!("[scheduler] Starting daily morning sync ({daily_hour:02}:00 local)");
-                    run_daily_sync(&db, &client, &iid).await;
+                    run_daily_sync(&db, &client, &iid, &ws).await;
                     // Sleep 23h to prevent re-trigger within the same day
                     tokio::time::sleep(std::time::Duration::from_secs(23 * 3600)).await;
                 }
@@ -241,7 +363,7 @@ pub async fn sync_opal(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
         }
         Err(e) => {
             warn!("[scheduler] OPAL sync: scraper unreachable: {}", e);
-            log_sync(db, instance_id, "opal", "error", started, 0, 0, 0, 1, &e.to_string()).await;
+            log_sync(db, instance_id, "opal", "error", started, 0, 0, 0, 1, &format!("scraper unreachable: {}", e)).await;
         }
     }
 }
@@ -283,7 +405,7 @@ pub async fn sync_dhl(db: &SurrealDb, client: &reqwest::Client, instance_id: &st
         }
         Err(e) => {
             warn!("[scheduler] DHL sync: scraper unreachable: {}", e);
-            log_sync(db, instance_id, "dhl", "error", started, 0, 0, 0, 1, &e.to_string()).await;
+            log_sync(db, instance_id, "dhl", "error", started, 0, 0, 0, 1, &format!("scraper unreachable: {}", e)).await;
         }
     }
 }
@@ -303,9 +425,23 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
         .send()
         .await;
 
+    // Pagination that aborted mid-walk: the scraper still returns 200 with the
+    // tickets it managed to fetch plus `partial:true` + an `error`. Carry that
+    // through so the run is logged `partial` (not a clean `ok`) — or `error`
+    // when NOTHING was fetched (a broken session looks like a quiet feed).
+    let mut partial_fetch = false;
+    let mut partial_error = String::new();
     let mut tickets: Vec<Value> = match tickets_res {
         Ok(resp) if resp.status().is_success() => {
             let body: Value = resp.json().await.unwrap_or(json!({}));
+            if body.get("partial").and_then(|v| v.as_bool()) == Some(true) {
+                partial_fetch = true;
+                partial_error = body
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("partial ticket fetch")
+                    .to_string();
+            }
             body.get("tickets").and_then(|v| v.as_array()).cloned()
                 .or_else(|| body.as_array().cloned())
                 .unwrap_or_default()
@@ -318,7 +454,7 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
         }
         Err(e) => {
             warn!("[scheduler] Zoho: scraper unreachable: {}", e);
-            log_sync(db, instance_id, "zoho_desk", "error", started, 0, 0, 0, 1, &e.to_string()).await;
+            log_sync(db, instance_id, "zoho_desk", "error", started, 0, 0, 0, 1, &format!("scraper unreachable: {}", e)).await;
             return;
         }
     };
@@ -524,11 +660,20 @@ pub async fn sync_zoho(db: &SurrealDb, client: &reqwest::Client, instance_id: &s
         }
     }
 
-    let status = if errors > 0 { "partial" } else { "ok" };
+    let mut status = if errors > 0 { "partial" } else { "ok" };
+    if partial_fetch {
+        // ≥1 ticket imported despite the aborted walk → partial; nothing fetched
+        // at all (first page failed) → error, so the watchdog treats it as the
+        // outage it is instead of a quiet empty feed.
+        status = if tickets.is_empty() { "error" } else { "partial" };
+        if error_detail.len() < 500 {
+            error_detail.push_str(&format!("partial fetch: {}; ", partial_error));
+        }
+    }
     if full_sync {
         support::set_rearm_budget(None);
     }
-    info!("[scheduler] Zoho sync done: {} updated, {} skipped, {} errors", updated, skipped, errors);
+    info!("[scheduler] Zoho sync done: {} updated, {} skipped, {} errors (status={})", updated, skipped, errors, status);
     log_sync(db, instance_id, "zoho_desk", status, started, created, updated, skipped, errors, &error_detail).await;
 }
 
@@ -767,6 +912,20 @@ pub async fn sync_excel(db: &SurrealDb, client: &reqwest::Client, instance_id: &
     match res {
         Ok(resp) if resp.status().is_success() => {
             let body: Value = resp.json().await.unwrap_or(json!({}));
+            // The Excel endpoint answers HTTP 200 with `{success:false, error}`
+            // for a missing file/sheet or a reader-side exception. Treated as a
+            // 0-row success this would keep the watchdog green forever — surface
+            // it as an outage instead.
+            if body.get("success").and_then(|v| v.as_bool()) == Some(false) {
+                let msg = body
+                    .get("error")
+                    .or_else(|| body.get("message"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("scraper reported success=false");
+                warn!("[scheduler] Excel sync reported success=false: {}", safe_trunc(msg, 200));
+                log_sync(db, instance_id, "excel", "error", started, 0, 0, 0, 1, safe_trunc(msg, 500)).await;
+                return;
+            }
             let rows: Vec<Value> = body.get("repairs").and_then(|v| v.as_array()).cloned()
                 .unwrap_or_default();
             info!("[scheduler] Excel: fetched {} rows", rows.len());
@@ -959,15 +1118,48 @@ async fn log_sync(
     }
 }
 
-async fn run_daily_sync(db: &SurrealDb, client: &reqwest::Client, instance_id: &str) {
-    crate::handlers::scraper_proxy::ensure_scraper_running().await;
-    let (db2, c2, i2) = (db.clone(), client.clone(), instance_id.to_string());
-    run_guarded(db, instance_id, "zoho_desk", async move {
-        sync_zoho(&db2, &c2, &i2, true).await;
-    })
-    .await;
-    sync_exact_online(db, client, instance_id).await;
-    sync_excel(db, client, instance_id).await;
+async fn run_daily_sync(
+    db: &SurrealDb,
+    client: &reqwest::Client,
+    instance_id: &str,
+    ws: &tokio::sync::broadcast::Sender<String>,
+) {
+    if !crate::handlers::scraper_proxy::ensure_scraper_running().await {
+        crate::services::alerts::raise(
+            db,
+            Some(ws),
+            "scraper:process",
+            "critical",
+            "Scraper process unreachable",
+            "The Node/Bun scraper on this node is down and could not be respawned; \
+             the scheduler retries hourly — check `POST /api/scraper/start` and \
+             scraper/scraper.err.log.",
+        )
+        .await;
+    }
+    {
+        let (db2, c2, i2) = (db.clone(), client.clone(), instance_id.to_string());
+        run_guarded(db, instance_id, "zoho_desk", async move {
+            sync_zoho(&db2, &c2, &i2, true).await;
+        })
+        .await;
+    }
+    {
+        let (db2, c2, i2) = (db.clone(), client.clone(), instance_id.to_string());
+        run_guarded(db, instance_id, "exact_online", async move {
+            sync_exact_online(&db2, &c2, &i2).await;
+        })
+        .await;
+    }
+    {
+        let (db2, c2, i2) = (db.clone(), client.clone(), instance_id.to_string());
+        run_guarded(db, instance_id, "excel", async move {
+            sync_excel(&db2, &c2, &i2).await;
+        })
+        .await;
+    }
+    // Watchdog pass after the daily providers ran (covers exact_online/excel).
+    crate::services::provider_health::check(db, Some(ws)).await;
 }
 
 // ── Attachment-extraction sweep ───────────────────────────────────

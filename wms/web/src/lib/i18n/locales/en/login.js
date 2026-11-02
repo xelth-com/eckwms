@@ -12,4 +12,5 @@ export default {
   login: 'Login',
   err_fill_fields: 'Please fill in all fields',
   err_login_failed: 'Login failed',
+  kiosk_countdown: 'Kiosk view starts in {time}',
 };

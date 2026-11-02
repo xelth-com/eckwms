@@ -2,7 +2,9 @@
 //!
 //! During the transition off the old "Reparaturliste" flow, the tenant's weekly
 //! reporting still runs off an online Excel workbook on their SharePoint
-//! ("(EVERYONE) Claimlist Germany_weekly report 1.xlsx", sheet `ClaimList`).
+//! ("(EVERYONE) Claimlist Germany_weekly report_Updated 07.10.26 1.xlsx" since
+//! 2026-10-30 — HQ re-creates the file now and then; the share URL is config, see
+//! `CLAIMLIST_SHARE_URL` below — sheet `ClaimList`).
 //! We do NOT write that file — a Claude-in-Excel agent sitting in the workbook
 //! enters rows from our JSON export. This module is the READER half: it pulls
 //! the workbook headless over MS Graph, snapshots the `ClaimList` rows into a
